@@ -1,0 +1,103 @@
+id: R-0069
+title: "Paired with three or more groups: the subject block plus the DESeq2 LRT, dream when the subject count is large"
+assertion: >-
+  If each subject gives one sample in each of three or more groups, put the
+  subject in the design as a block before the condition. Fit the DESeq2
+  likelihood ratio test with the full design ~ subject + condition against
+  the reduced design ~ subject, which finds each gene that differs between
+  any of the groups within the subjects. Then extract one Wald contrast per
+  level against the reference level. When the number of subjects is large,
+  or when the block is unbalanced, fit the subject as a random effect with
+  the dream mixed model instead, because a fixed term per subject spends one
+  degree of freedom per subject.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: paired
+    op: eq
+    value: true
+  - field: n_groups
+    op: gte
+    value: 3
+  - field: n_per_group_min
+    op: gte
+    value: 2
+  - field: n_per_group_min
+    op: lte
+    value: 49
+  - field: n_timepoints
+    op: is_null
+  - field: interaction
+    op: is_null
+action:
+  step_type: differential_expression
+  method: M-0002
+  parameters:
+    - name: design_terms
+      value: [subject, condition]
+      default_source: "vignette:DESeq2/1.52.0#multi-factor-designs"
+    - name: full
+      value: "~ subject + condition"
+      default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
+    - name: reduced
+      value: "~ subject"
+      default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
+    - name: contrasts
+      value: each_level_vs_reference
+      default_source: "vignette:DESeq2/1.52.0#contrasts"
+    - name: test
+      value: LRT_then_pairwise_Wald
+      default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0017
+    when: "The number of subjects is large, or the block is unbalanced: the subject is a random effect in the dream mixed model."
+  - method: M-0004
+    when: "One balanced block and one correlation for all the genes is enough: limma-voom with duplicateCorrelation for the subject."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette puts a nuisance factor first in the design formula and the
+      condition last, and it states that the likelihood ratio test against a
+      reduced model tests all the levels of the dropped factor at once.
+    anchor: "Multi-factor designs; Likelihood ratio test"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0089
+    paraphrase: >-
+      The paper gives a linear mixed model with voom weights for a design
+      with repeated measures of the same individual, where the individual is
+      a random effect, and it shows that the mixed model raises the power and
+      controls the false positive rate where the current methods give
+      reproducible false positives on repeated measures.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      The guide models a blocked design with the subject as a factor beside
+      the treatment, and it explains that the random effect approach through
+      duplicateCorrelation removes the subject from the design matrix, which
+      reduces the number of parameters, conserves the degrees of freedom,
+      and likely raises the power of the test.
+    anchor: "Accounting for factors that are not of interest; Treating factors that are not of direct interest as random effects"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [design, paired, multi-group, blocking, method-selection]

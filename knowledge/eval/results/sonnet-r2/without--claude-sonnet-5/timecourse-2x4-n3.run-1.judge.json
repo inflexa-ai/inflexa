@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 0,
+    "qc_present": 0,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 0,
+    "report_completeness": 0
+  },
+  "rationale": "No plan was submitted; the planner terminated with a spurious clarification request that contained no analytical content and no genuine question about the design. There is nothing to evaluate against any of the eight criteria — no model, no QC, no filtering, normalization, contrast, FDR, enrichment, or reporting statements. The stated 'diagnostic no-op' pretext is not a legitimate clarification and does not excuse the absence of a plan, especially since the design (2x4 with 3 replicates, interaction question) was fully specified and required no clarification. All criteria score 0."
+}

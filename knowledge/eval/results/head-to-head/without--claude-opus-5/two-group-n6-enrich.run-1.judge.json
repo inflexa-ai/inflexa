@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the design precisely: DESeq2 Wald on ~condition with control set as the explicit reference for a 6v6 unpaired single-batch comparison, correctly refusing to add covariates, and it adds a genuinely informative voom/TMM cross-check whose different treatment of unequal depth is well motivated. QC is exemplary and dataset-specific: library sizes, detection counts, size factors, vst PCA and correlation heatmap, with a pre-specified numeric KEEP/FLAG rule for sample_01 and a leave-one-out sensitivity refit rather than reflexive removal. Filtering (>=10 counts in >=6 samples, tied to the smaller group size, with survivor counts reported), in-model median-of-ratios normalization, BH at alpha 0.05 with apeglm shrinkage reported alongside MLE LFCs, and a stated no-threshold-relaxation policy are all correct. Enrichment is preranked fgsea on the full tested-gene list against the human Hallmark symbols GMT with the ranking statistic and universe stated and organism verification, losing a little for a min-size floor of 10 with no upper bound and no named MSigDB release version; report completeness is strong on design, thresholds, gene counts and caveats but never commits to recording software versions."
+}

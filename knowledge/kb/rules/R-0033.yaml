@@ -1,0 +1,74 @@
+id: R-0033
+title: "Sample structure QC on every count dataset: blind vst, PCA on the top variable genes, sample distance heatmap"
+assertion: >-
+  With raw counts, run the sample structure QC before the model. Apply the
+  variance stabilizing transformation blind to the design, compute a PCA on
+  the 500 genes with the highest variance, and draw a heatmap of the
+  Euclidean distances between the samples. Color each plot by the condition
+  and by the batch. The plots show whether the samples group by the
+  condition, whether a batch drives the primary axis of variance, and whether
+  one sample departs from its group, before any test runs.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+action:
+  step_type: qc_sample_structure
+  method: M-0006
+  parameters:
+    - name: n_top_genes
+      value: 500
+      default_source: "doi:10.12688/f1000research.7035.1"
+    - name: transform
+      value: vst_blind
+      default_source: "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0040
+    paraphrase: >-
+      The workflow transforms the counts to a log scale with stabilized
+      variance before the exploratory analysis, draws a heatmap of the
+      Euclidean distances between the samples, and draws a PCA with plotPCA
+      on the genes with the highest variance, with the samples colored by the
+      experimental factors.
+    anchor: "Exploratory analysis and visualization; Sample distances; PCA plot"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette states that vst and rlog take a blind argument, that blind
+      is TRUE by default so the transformation estimates the dispersion with
+      an intercept only, and that this setting is the one for a sample
+      quality assessment that the design does not bias. It then draws the
+      sample-to-sample distance heatmap and the principal component plot on
+      the transformed values.
+    anchor: "Data transformations and visualization, Blind dispersion estimation; Heatmap of the sample-to-sample distances; Principal component plot of the samples"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0012
+    paraphrase: >-
+      The survey lists the checks that come after quantification: the
+      correlation between the replicates, a principal component analysis, and
+      a clustering of the samples. These checks show whether the replicates
+      group by the condition and whether a batch effect is present, before
+      the differential expression test.
+    anchor: "Quality control; Reproducibility"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [qc, sample-structure]

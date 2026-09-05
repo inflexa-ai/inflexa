@@ -1,0 +1,1886 @@
+{
+  "campaign": "phase0",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "confounded-batch-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T05:05:56.196Z",
+  "elapsedMs": 572770,
+  "outcome": "plan_submitted",
+  "planId": "pln-661dbd7e",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC: VST, PCA, sample distances",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "PC1 separating 'condition' cannot be distinguished from PC1 separating 'batch' — state this explicitly in the output, do not interpret it as a condition effect",
+          "With only 12 samples, PCA is a QC/visualization diagnostic, not a hypothesis test"
+        ],
+        "context": "Raw salmon gene-level counts for 12 lung samples with metadata condition and batch columns. Batch is perfectly confounded with condition (B1=all control, B2=all treated), so any separation on PC1 driven by condition is mathematically identical to separation driven by batch — this step must make that visible, not resolve it.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap"
+        ],
+        "question": "Do the 12 lung samples (counts.csv, 12000 genes x 12 samples) separate by condition (treated/control), by batch (B1/B2), or both, given that batch B1 holds all 6 controls and batch B2 holds all 6 treated samples?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Consensus rule R-0033: run blind VST, PCA on top-500-variable genes, and a sample-distance heatmap as sample-structure QC before any model, colored by condition and by batch.",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use variance-stabilizing transformation with blind=TRUE (no design-aware dispersion estimation at this stage)",
+          "Compute PCA on the top 500 most-variable genes",
+          "Color the PCA plot by condition AND by batch (they will be identical groupings — report this explicitly)",
+          "Compute and plot the sample-to-sample Euclidean distance heatmap",
+          "Report per-sample library sizes from the raw counts",
+          "Probe for DESeq2 and pheatmap availability before use; if pheatmap is absent, fall back to a base-R heatmap"
+        ],
+        "acceptance_criteria": [
+          "VST(blind) matrix computed and used for PCA and the distance heatmap",
+          "PCA plot (or coordinates) produced with points labeled/colored by both condition and batch",
+          "Sample distance heatmap produced",
+          "Per-sample library size table reported",
+          "Output explicitly states that condition and batch groupings are identical in this dataset"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, treated vs control (confounded with batch)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group and 3-6 replicates per cell, DESeq2 sets padj to NA (rather than replacing the count) for Cook's-distance outliers — report these separately from independent-filtering removals",
+          "Any biological interpretation of the resulting gene list is confounded with a batch/processing effect and must be reported as such, not as a clean treatment effect",
+          "apeglm requires a single model coefficient; if the contrast cannot be expressed as one coefficient use ashr instead"
+        ],
+        "context": "12000 x 12 raw integer gene-level counts from salmon (first column gene symbol) and a 12-row metadata table (condition, batch). Batch B1 contains only controls and batch B2 contains only treated samples — the design matrix for ~condition + batch would not be full rank. Per the confounding rule, do not fit a batch term and do not apply any batch-removal method (ComBat-seq, limma removeBatchEffect, SVA); doing so would remove the condition effect along with the batch. The correct response is to fit ~condition only and label every result as confounded.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "ashr"
+        ],
+        "question": "Which genes are differentially expressed between treated (n=6, batch B2) and control (n=6, batch B1) in counts.csv, using DESeq2 on raw counts with condition as the sole model term, and how many of those calls are corroborated by an independent edgeR quasi-likelihood test?",
+        "grounding": {
+          "claims": [
+            "R-0005@668f",
+            "R-0036@9786",
+            "R-0002@087b",
+            "R-0029@fa6d",
+            "R-0026@762e",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0010@91a5",
+            "R-0043@4f55",
+            "R-0037@e6d8",
+            "R-0042@54e1",
+            "R-0041@059a"
+          ],
+          "reason": "R-0005 (flag, strength consensus) forbids fitting a batch term or applying any batch-removal method when batch is perfectly confounded with condition, since the model matrix is not full rank; the permitted outcome chosen here is 'confounded_label_or_stop', specifically the label path — fit ~condition only and report every result as confounded rather than stopping, since a usable gene list is still the deliverable the research question asks for. All other steps follow the standard DESeq2 two-group procedure (R-0002/R-0029 filter, R-0026 normalization, R-0036 explicit reference level, R-0001/R-0039 Wald test with outlier handling, R-0009 apeglm shrinkage, R-0010/R-0043/R-0037 BH selection, R-0042 edgeR overlap as robustness, R-0041 reporting fields).",
+          "status": "flagged",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Pre-filter: keep a gene only if it has >=10 counts in at least 6 samples (the smallest group size) — keep this minimal, do not filter further",
+          "Do not pre-normalize or pre-scale counts; let DESeq2 estimate median-of-ratios size factors internally",
+          "Design formula is ~condition ONLY. Do NOT add a batch term. Do NOT run ComBat-seq, limma::removeBatchEffect, SVA, or any batch-correction/removal method on these counts — the design is not full rank and any such correction would remove the condition effect together with the batch effect",
+          "Set the condition factor's reference level explicitly to 'control' before fitting; name the contrast as condition, treated, control so a positive log2FC means higher expression in treated",
+          "Run the DESeq2 Wald test, then shrink log2 fold changes with apeglm (fall back to ashr only if apeglm is unavailable or the comparison is not a single coefficient)",
+          "Extract results with alpha=0.05, BH adjustment, independent filtering ON, and pass alpha=0.05 to results() so the independent-filtering threshold matches the reporting cutoff",
+          "Select the final differentially expressed gene list by adjusted p-value < 0.05, not by unadjusted p-value or fold change alone",
+          "Report genes flagged as Cook's-distance count outliers (padj set to NA) separately from genes removed by independent filtering",
+          "Probe for edgeR availability; if present, run edgeR's quasi-likelihood F-test on the same filtered counts with the same ~condition-only design as a robustness check, and report the number of genes each method calls significant plus the size of the intersection (treat the intersection as the higher-confidence set); if edgeR is unavailable, report DESeq2 results alone and state that no second method was run",
+          "State explicitly and prominently in the output: because batch is perfectly confounded with condition, this analysis assumes no residual batch effect beyond condition; every differentially expressed gene reported here is equally explainable as a B2-vs-B1 processing/batch effect as a treatment effect, and this cannot be resolved with this dataset's design",
+          "Report package versions (DESeq2, apeglm, edgeR if used), the design formula, the contrast, the alpha threshold, the number of genes tested after filtering, and the number of DE genes"
+        ],
+        "acceptance_criteria": [
+          "Genes filtered to >=10 counts in >=6 samples before modeling",
+          "DESeq2 fit with design ~condition only, reference level explicitly set to control, no batch term, no batch-correction method applied",
+          "Wald test run, apeglm (or ashr) shrinkage applied, results extracted at alpha=0.05 with independent filtering",
+          "Final DE gene table reported with baseMean, shrunken log2FC, lfcSE, stat, pvalue, padj, and MLE log2FC alongside the shrunken value",
+          "Count of genes tested after filtering and count of genes with padj<0.05 reported",
+          "If edgeR ran, the overlap between DESeq2 and edgeR significant gene sets is reported as the high-confidence set",
+          "Output contains an explicit, unambiguous confounding caveat labeling every DE result as inseparable from a batch effect"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Over-representation analysis of DE genes (confounded caveat carried forward)",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If the DE gene list from T1S2 is small (e.g., under ~10-15 genes) ORA may have very limited power — report this if it occurs",
+          "Long or highly expressed genes are more easily called significant by count-based DE tests, which can bias ORA results even with a tested-gene universe — state this",
+          "This step is enrichment-only; it does not and cannot resolve the batch confound identified in T1S1/T1S2"
+        ],
+        "context": "T1S2 produces a DESeq2 (and possibly edgeR) differential expression table for treated vs control lung samples, with every result explicitly labeled as confounded with batch. This step characterizes the DE gene list functionally, using over-representation analysis rather than ranked GSEA, per the situation-specific method restriction for a confounded design.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "msigdbr",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which biological pathways or processes are over-represented among the genes called differentially expressed between treated and control in T1S2, using the tested genes as the statistical universe?",
+        "grounding": {
+          "claims": [
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0054@801e",
+            "R-0052@620a",
+            "R-0051@01ca",
+            "R-0048@500d"
+          ],
+          "reason": "Situation-specific validation (known_confounded batch) rejected ranked/preranked GSEA (R-0007/M-0010) and permitted only over-representation analysis with an explicit universe (M-0011); universe, size window, redundancy-collapse and reporting fields follow R-0046, R-0047, R-0054, R-0052, R-0051, and gene-set collection order follows R-0048.",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use over-representation analysis (ORA) with an explicit universe — NOT ranked/preranked GSEA — because the design is confounded",
+          "Set the universe to exactly the genes that passed the low-count filter and were tested in T1S2, never the whole genome/annotation",
+          "Input gene list: genes with padj < 0.05 from the DESeq2 results in T1S2",
+          "Restrict tested gene sets to those with 15-500 members among the tested-gene universe",
+          "Use Benjamini-Hochberg adjustment for the enrichment p-values",
+          "Attempt human MSigDB Hallmark gene sets first (e.g., via msigdbr); if unavailable, fall back to Reactome/WikiPathways/GO gene sets if importable (e.g., via clusterProfiler + org.Hs.eg.db); if no gene set reference is available at all, skip enrichment and report explicitly that no gene-set reference was available in this environment, returning only the DE gene table from T1S2",
+          "Collapse redundant/overlapping significant gene sets and report one representative per group, keeping the full table as a supplement",
+          "Report the gene set database and version used, the universe size, the size window, and the adjustment method",
+          "Carry forward the confounding caveat: since the input gene list may reflect a batch effect rather than a treatment effect, any enriched pathway is equally confounded and must be reported as a hypothesis, not a finding"
+        ],
+        "acceptance_criteria": [
+          "Universe set to the T1S2 tested-gene list, not the whole genome",
+          "ORA run on the padj<0.05 gene list (or enrichment explicitly skipped and reported as such if no gene-set reference is available)",
+          "Gene sets restricted to 15-500 members, BH-adjusted",
+          "Report states the gene-set database, version, universe size, and size window",
+          "Redundant significant sets are collapsed with one representative reported per group",
+          "Output explicitly restates the batch-confounding caveat from T1S2"
+        ]
+      }
+    ],
+    "title": "Treated vs control DE in lung RNA-seq, confounded batch",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The counts.csv (12000 genes x 12 samples, salmon-derived integer counts) and metadata.csv (12 samples: condition, batch) describe 6 treated vs 6 control lung samples, but batch B1 holds every control and batch B2 holds every treated sample — the design matrix for condition + batch is not full rank, so batch cannot be modeled or removed (ComBat-seq, removeBatchEffect, SVA) without also removing the condition effect. The plan therefore: (1) runs sample-structure QC (blind VST, PCA, sample-distance heatmap) colored by both condition and batch to make the confounding visible rather than hidden; (2) runs the standard DESeq2 raw-count pipeline (minimal pre-filter, median-of-ratios normalization, ~condition design with an explicit reference level, Wald test, apeglm LFC shrinkage, BH-adjusted independent filtering at alpha 0.05), with edgeR QLF as a second method for a robustness overlap check, and every output explicitly labeled as confounded with batch — the 'treated vs control' signal is statistically indistinguishable from a 'B2 vs B1' processing effect; (3) runs over-representation analysis (not ranked GSEA, per the confounded-design rule) on the significant gene list against Hallmark/GO/Reactome gene sets using the tested genes as the universe, carrying the same confounding caveat forward. No step attempts to correct or hide the confound; the deliverable is a gene list with an explicit, unavoidable interpretive limitation."
+  },
+  "usage": {
+    "inputTokens": 12409777,
+    "outputTokens": 22068,
+    "cacheCreationInputTokens": 275757,
+    "cacheReadInputTokens": 12131606,
+    "reasoningTokens": 3786
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "known_confounded",
+        "quality_flags": []
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "fgsea",
+          "tximport",
+          "ashr",
+          "pheatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark gene sets human"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "known_confounded",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA and sample distance heatmap colored by condition and batch",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep gene with >=10 counts in >= smallest group size (6)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "~condition only, no batch term (batch perfectly confounded with condition); results labeled confounded",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, alpha 0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked on Wald statistic vs MSigDB Hallmark",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "known_confounded",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA and sample distance heatmap colored by condition and batch",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep gene with >=10 counts in >= smallest group size (6)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "~condition only, no batch term (batch perfectly confounded with condition); results labeled confounded",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, alpha 0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "Over-representation analysis with an explicit universe (tested genes) on significant genes, MSigDB Hallmark",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "msigdbr",
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene set"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdbr"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "R packages"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "enrichment"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "category": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": ""
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "atlas_singlecell"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "categories",
+        "limit": 1
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "language": "r"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "deseq"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "limit": 10
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "language": "python"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "numpy"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "numpy",
+          "pandas"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pandas"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ok"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "b"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "c"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "d"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "e"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "f"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "g"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "h"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "i"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "j"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "k"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "l"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "m"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "n"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "o"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "p"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "q"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "r"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "s"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "t"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "u"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "v"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "w"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "x"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "y"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "z"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "test"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "x"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "y"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "z"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reference"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "annotation"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "go"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "a"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "lung"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "counts"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "metadata"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathway"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "disease"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "samples"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "c"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "d"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "e"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "f"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "g"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "h"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "i"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "j"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "k"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "l"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "m"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "n"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "o"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "p"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "q"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "r"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "s"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "t"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "u"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "v"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "w"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "bb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cc"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "dd"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ee"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ff"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gg"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hh"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ii"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "jj"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "kk"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ll"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "mm"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "nn"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "oo"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pp"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "qq"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "rr"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ss"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "tt"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "uu"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "vv"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ww"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "xx"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "yy"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "zz"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "aaa"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "bbb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ccc"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ddd"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "eee"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "fff"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ggg"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hhh"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "iii"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "jjj"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "kkk"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "lll"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "mmm"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "nnn"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ooo"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ppp"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "qqq"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "rrr"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "sss"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ttt"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "uuu"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "vvv"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "www"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "xxx"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "yyy"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "zzz"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "1"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "2"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "3"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "4"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "5"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "6"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "7"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "8"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "9"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "0"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "RNA"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "DESeq2"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "MSigDB"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "WikiPathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Gene Ontology"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "KEGG"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtf"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "genome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "signature"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "tf"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "network"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "panel"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cell type"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "markers"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "liver"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "mouse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "drug"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "compound"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "variant"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "methylation"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "chromatin"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "microbiome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "proteomics"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "spatial"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "multiome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "metabolomics"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "lipid"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "safety"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "toxcast"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "clinical"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "survival"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "TCGA"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cancer"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTEx"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "baseline"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "knockout"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "open targets"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "PRISM"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "CMap"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "connectivity"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "structure"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "smiles"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "protein"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control DE in lung RNA-seq, confounded batch",
+          "analytical_narrative": "The counts.csv (12000 genes x 12 samples, salmon-derived integer counts) and metadata.csv (12 samples: condition, batch) describe 6 treated vs 6 control lung samples, but batch B1 holds every control and batch B2 holds every treated sample — the design matrix for condition + batch is not full rank, so batch cannot be modeled or removed (ComBat-seq, removeBatchEffect, SVA) without also removing the condition effect. The plan therefore: (1) runs sample-structure QC (blind VST, PCA, sample-distance heatmap) colored by both condition and batch to make the confounding visible rather than hidden; (2) runs the standard DESeq2 raw-count pipeline (minimal pre-filter, median-of-ratios normalization, ~condition design with an explicit reference level, Wald test, apeglm LFC shrinkage, BH-adjusted independent filtering at alpha 0.05), with edgeR QLF as a second method for a robustness overlap check, and every output explicitly labeled as confounded with batch — the 'treated vs control' signal is statistically indistinguishable from a 'B2 vs B1' processing effect; (3) runs over-representation analysis (not ranked GSEA, per the confounded-design rule) on the significant gene list against Hallmark/GO/Reactome gene sets using the tested genes as the universe, carrying the same confounding caveat forward. No step attempts to correct or hide the confound; the deliverable is a gene list with an explicit, unavoidable interpretive limitation.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC: VST, PCA, sample distances",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 12 lung samples (counts.csv, 12000 genes x 12 samples) separate by condition (treated/control), by batch (B1/B2), or both, given that batch B1 holds all 6 controls and batch B2 holds all 6 treated samples?",
+              "context": "Raw salmon gene-level counts for 12 lung samples with metadata condition and batch columns. Batch is perfectly confounded with condition (B1=all control, B2=all treated), so any separation on PC1 driven by condition is mathematically identical to separation driven by batch — this step must make that visible, not resolve it.",
+              "constraints": [
+                "Use variance-stabilizing transformation with blind=TRUE (no design-aware dispersion estimation at this stage)",
+                "Compute PCA on the top 500 most-variable genes",
+                "Color the PCA plot by condition AND by batch (they will be identical groupings — report this explicitly)",
+                "Compute and plot the sample-to-sample Euclidean distance heatmap",
+                "Report per-sample library sizes from the raw counts",
+                "Probe for DESeq2 and pheatmap availability before use; if pheatmap is absent, fall back to a base-R heatmap"
+              ],
+              "caveats": [
+                "PC1 separating 'condition' cannot be distinguished from PC1 separating 'batch' — state this explicitly in the output, do not interpret it as a condition effect",
+                "With only 12 samples, PCA is a QC/visualization diagnostic, not a hypothesis test"
+              ],
+              "acceptance_criteria": [
+                "VST(blind) matrix computed and used for PCA and the distance heatmap",
+                "PCA plot (or coordinates) produced with points labeled/colored by both condition and batch",
+                "Sample distance heatmap produced",
+                "Per-sample library size table reported",
+                "Output explicitly states that condition and batch groupings are identical in this dataset"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Consensus rule R-0033: run blind VST, PCA on top-500-variable genes, and a sample-distance heatmap as sample-structure QC before any model, colored by condition and by batch."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, treated vs control (confounded with batch)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between treated (n=6, batch B2) and control (n=6, batch B1) in counts.csv, using DESeq2 on raw counts with condition as the sole model term, and how many of those calls are corroborated by an independent edgeR quasi-likelihood test?",
+              "context": "12000 x 12 raw integer gene-level counts from salmon (first column gene symbol) and a 12-row metadata table (condition, batch). Batch B1 contains only controls and batch B2 contains only treated samples — the design matrix for ~condition + batch would not be full rank. Per the confounding rule, do not fit a batch term and do not apply any batch-removal method (ComBat-seq, limma removeBatchEffect, SVA); doing so would remove the condition effect along with the batch. The correct response is to fit ~condition only and label every result as confounded.",
+              "constraints": [
+                "Pre-filter: keep a gene only if it has >=10 counts in at least 6 samples (the smallest group size) — keep this minimal, do not filter further",
+                "Do not pre-normalize or pre-scale counts; let DESeq2 estimate median-of-ratios size factors internally",
+                "Design formula is ~condition ONLY. Do NOT add a batch term. Do NOT run ComBat-seq, limma::removeBatchEffect, SVA, or any batch-correction/removal method on these counts — the design is not full rank and any such correction would remove the condition effect together with the batch effect",
+                "Set the condition factor's reference level explicitly to 'control' before fitting; name the contrast as condition, treated, control so a positive log2FC means higher expression in treated",
+                "Run the DESeq2 Wald test, then shrink log2 fold changes with apeglm (fall back to ashr only if apeglm is unavailable or the comparison is not a single coefficient)",
+                "Extract results with alpha=0.05, BH adjustment, independent filtering ON, and pass alpha=0.05 to results() so the independent-filtering threshold matches the reporting cutoff",
+                "Select the final differentially expressed gene list by adjusted p-value < 0.05, not by unadjusted p-value or fold change alone",
+                "Report genes flagged as Cook's-distance count outliers (padj set to NA) separately from genes removed by independent filtering",
+                "Probe for edgeR availability; if present, run edgeR's quasi-likelihood F-test on the same filtered counts with the same ~condition-only design as a robustness check, and report the number of genes each method calls significant plus the size of the intersection (treat the intersection as the higher-confidence set); if edgeR is unavailable, report DESeq2 results alone and state that no second method was run",
+                "State explicitly and prominently in the output: because batch is perfectly confounded with condition, this analysis assumes no residual batch effect beyond condition; every differentially expressed gene reported here is equally explainable as a B2-vs-B1 processing/batch effect as a treatment effect, and this cannot be resolved with this dataset's design",
+                "Report package versions (DESeq2, apeglm, edgeR if used), the design formula, the contrast, the alpha threshold, the number of genes tested after filtering, and the number of DE genes"
+              ],
+              "caveats": [
+                "With n=6 per group and 3-6 replicates per cell, DESeq2 sets padj to NA (rather than replacing the count) for Cook's-distance outliers — report these separately from independent-filtering removals",
+                "Any biological interpretation of the resulting gene list is confounded with a batch/processing effect and must be reported as such, not as a clean treatment effect",
+                "apeglm requires a single model coefficient; if the contrast cannot be expressed as one coefficient use ashr instead"
+              ],
+              "acceptance_criteria": [
+                "Genes filtered to >=10 counts in >=6 samples before modeling",
+                "DESeq2 fit with design ~condition only, reference level explicitly set to control, no batch term, no batch-correction method applied",
+                "Wald test run, apeglm (or ashr) shrinkage applied, results extracted at alpha=0.05 with independent filtering",
+                "Final DE gene table reported with baseMean, shrunken log2FC, lfcSE, stat, pvalue, padj, and MLE log2FC alongside the shrunken value",
+                "Count of genes tested after filtering and count of genes with padj<0.05 reported",
+                "If edgeR ran, the overlap between DESeq2 and edgeR significant gene sets is reported as the high-confidence set",
+                "Output contains an explicit, unambiguous confounding caveat labeling every DE result as inseparable from a batch effect"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "edgeR",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0005@668f",
+                  "R-0036@9786",
+                  "R-0002@087b",
+                  "R-0029@fa6d",
+                  "R-0026@762e",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0010@91a5",
+                  "R-0043@4f55",
+                  "R-0037@e6d8",
+                  "R-0042@54e1",
+                  "R-0041@059a"
+                ],
+                "reason": "R-0005 (flag, strength consensus) forbids fitting a batch term or applying any batch-removal method when batch is perfectly confounded with condition, since the model matrix is not full rank; the permitted outcome chosen here is 'confounded_label_or_stop', specifically the label path — fit ~condition only and report every result as confounded rather than stopping, since a usable gene list is still the deliverable the research question asks for. All other steps follow the standard DESeq2 two-group procedure (R-0002/R-0029 filter, R-0026 normalization, R-0036 explicit reference level, R-0001/R-0039 Wald test with outlier handling, R-0009 apeglm shrinkage, R-0010/R-0043/R-0037 BH selection, R-0042 edgeR overlap as robustness, R-0041 reporting fields)."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Over-representation analysis of DE genes (confounded caveat carried forward)",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological pathways or processes are over-represented among the genes called differentially expressed between treated and control in T1S2, using the tested genes as the statistical universe?",
+              "context": "T1S2 produces a DESeq2 (and possibly edgeR) differential expression table for treated vs control lung samples, with every result explicitly labeled as confounded with batch. This step characterizes the DE gene list functionally, using over-representation analysis rather than ranked GSEA, per the situation-specific method restriction for a confounded design.",
+              "constraints": [
+                "Use over-representation analysis (ORA) with an explicit universe — NOT ranked/preranked GSEA — because the design is confounded",
+                "Set the universe to exactly the genes that passed the low-count filter and were tested in T1S2, never the whole genome/annotation",
+                "Input gene list: genes with padj < 0.05 from the DESeq2 results in T1S2",
+                "Restrict tested gene sets to those with 15-500 members among the tested-gene universe",
+                "Use Benjamini-Hochberg adjustment for the enrichment p-values",
+                "Attempt human MSigDB Hallmark gene sets first (e.g., via msigdbr); if unavailable, fall back to Reactome/WikiPathways/GO gene sets if importable (e.g., via clusterProfiler + org.Hs.eg.db); if no gene set reference is available at all, skip enrichment and report explicitly that no gene-set reference was available in this environment, returning only the DE gene table from T1S2",
+                "Collapse redundant/overlapping significant gene sets and report one representative per group, keeping the full table as a supplement",
+                "Report the gene set database and version used, the universe size, the size window, and the adjustment method",
+                "Carry forward the confounding caveat: since the input gene list may reflect a batch effect rather than a treatment effect, any enriched pathway is equally confounded and must be reported as a hypothesis, not a finding"
+              ],
+              "caveats": [
+                "If the DE gene list from T1S2 is small (e.g., under ~10-15 genes) ORA may have very limited power — report this if it occurs",
+                "Long or highly expressed genes are more easily called significant by count-based DE tests, which can bias ORA results even with a tested-gene universe — state this",
+                "This step is enrichment-only; it does not and cannot resolve the batch confound identified in T1S1/T1S2"
+              ],
+              "acceptance_criteria": [
+                "Universe set to the T1S2 tested-gene list, not the whole genome",
+                "ORA run on the padj<0.05 gene list (or enrichment explicitly skipped and reported as such if no gene-set reference is available)",
+                "Gene sets restricted to 15-500 members, BH-adjusted",
+                "Report states the gene-set database, version, universe size, and size window",
+                "Redundant significant sets are collapsed with one representative reported per group",
+                "Output explicitly restates the batch-confounding caveat from T1S2"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "msigdbr",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0054@801e",
+                  "R-0052@620a",
+                  "R-0051@01ca",
+                  "R-0048@500d"
+                ],
+                "reason": "Situation-specific validation (known_confounded batch) rejected ranked/preranked GSEA (R-0007/M-0010) and permitted only over-representation analysis with an explicit universe (M-0011); universe, size window, redundancy-collapse and reporting fields follow R-0046, R-0047, R-0054, R-0052, R-0051, and gene-set collection order follows R-0048."
+              }
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-04",
+    "digest": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+  }
+}

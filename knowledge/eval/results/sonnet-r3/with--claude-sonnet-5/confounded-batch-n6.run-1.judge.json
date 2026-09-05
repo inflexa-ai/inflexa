@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly diagnoses the perfect confound, refuses ComBat-seq/SVA/removeBatchEffect and a rank-deficient ~batch+condition design, fits condition alone, and propagates a confounded label to every table, plot, and the final report — exactly the reference behavior. QC is design-aware (blind VST, PCA and distance heatmap annotated by both condition and batch, library sizes, explicit check of whether PC1 tracks the co-varying split), though it never states a policy for what would be done with an outlier or shallow sample beyond leaving Cook's filtering on. Filtering (>=10 counts in >=6 samples, justified by smallest group size), median-of-ratios normalization inside the model, the explicit control reference level and named contrast, and BH at alpha 0.05 with apeglm shrinkage and matched independent filtering are all correct and stated. Enrichment is well specified (full ranked list by Wald stat, tested-gene universe for any ORA, named collections with versions, 15-500 size window, caveats repeated), but running three pathway collections on an axis that is admittedly indistinguishable from processing batch adds interpretive surface that is not warranted by the question asked. Reporting is complete: versions, formula, thresholds, tested vs significant counts, diagnostics, and a hard final caveat paragraph."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the question as an interaction, fits ~ genotype + treatment + genotype:treatment in a single DESeq2 GLM, names the interaction coefficient as the headline test, and adds simple effects within each genotype for direction, explicitly warning against using the combined 'condition' column. QC is concrete and design-aware (order-checked sample matching, genotype x treatment cross-tab, VST PCA and sample-distance heatmap colored by both factors, library sizes with a 3x flag, explicit outlier policy). The filter (count >= 10 in at least 4 samples = smallest group size) is minimal and justified, size factors are specified inside DESeq2 with an explicit prohibition on feeding CPM into the model, and BH at alpha 0.05 with apeglm/ashr shrinkage (correctly reserving ashr for linear-combination contrasts) is stated. Enrichment is preranked fgsea by the interaction statistic with named human collections and BH correction, and the caveat correctly restricts background to tested genes, though no explicit size window or collection version is given and the ORA/GSEA universe point is only stated in a caveat. Reporting covers design, thresholds, packages, and the n=4 power and 12000-gene caveats, but does not explicitly commit to reporting software versions or the number of genes tested after filtering alongside the significant counts."
+}

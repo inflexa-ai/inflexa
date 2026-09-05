@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 1,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses the perfect batch/condition confound, refuses ComBat-seq/SVA/RUVSeq, avoids a rank-deficient batch term, and labels every result as 'treated-vs-control OR B2-vs-B1', which matches the reference almost exactly; it does not offer to stop and request a rebalanced design up front but does recommend one, which is acceptable. QC is concrete and design-specific (cross-tab, library sizes, PCA and clustering read against both labels) but no outlier or shallow-sample policy is stated. The biggest gap is the complete absence of any low-count filter, and the DE step is thin on statistical specifics: the design formula and reference level are only implied rather than written, alpha is hedged ('e.g., 0.05'), BH is never named, and no log-fold-change shrinkage is planned. Normalization is properly kept inside the model via size factors/TMM, though the Wilcoxon-on-normalized-counts fallback is a weak contingency. Omitting enrichment is the right call here and is explicitly justified; the report is thorough on design and caveats but omits software versions."
+}

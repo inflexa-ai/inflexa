@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies raw counts with 3v3 unpaired single-batch structure and applies a negative binomial Wald test with apeglm shrinkage, BH at alpha=0.05, independent filtering left on, and an explicit statement that alpha is not lowered to compensate for low power; the edgeR QLF intersection cross-check is a reasonable but non-essential addition, and calling the intersection the 'high-confidence set' is a convention rather than a calibrated inference. QC is dataset-specific and well specified: blind VST, PCA on top 500 variable genes, sample-distance heatmap, library sizes, a stated flag-not-drop policy, and reconciliation of the extra counts column against metadata. The filter (>=10 counts in >=3 samples, the smallest group size) is minimal and justified, and normalization is kept inside the model via median-of-ratios with no pre-normalized input. The design formula, control reference level, and named (condition, treated, control) contrast are explicit, and the report step covers versions, tested and significant gene counts, diagnostics, and the n=3 power caveat that absence is not evidence of no effect. Enrichment is arguably beyond the asked question, but it is defensible here given low power and is executed correctly with the full ranked list on the Wald stat, tested genes as universe, 15-500 size window, and named collection versions."
+}

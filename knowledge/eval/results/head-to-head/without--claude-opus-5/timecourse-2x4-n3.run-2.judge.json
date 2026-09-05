@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan targets the condition×time interaction exactly as the reference requires: DESeq2 nbinomLRT with full ~condition + time + condition:time against reduced ~condition + time, time kept as a 4-level factor with an explicit justification against a continuous/spline term, followed by per-timepoint treated-vs-control contrasts via a condition_time reparameterization for interpretation, plus an orthogonal limma-voom joint F-test on the interaction coefficient block. QC (name-based sample matching, balance table, library sizes, VST PCA colored by condition and shaped by time, correlation heatmap) precedes testing with an explicit outlier policy, the filter (≥10 counts in ≥3 samples) is minimal and tied to the smallest cell, and normalization stays inside the models (DESeq2 size factors, TMM for voom) with raw integers preserved. BH at pre-specified 0.05/0.10, shrunken interaction coefficients, and explicit handling of independent-filtering NAs are all stated; the design formulas, reference level, and reduced model are verbatim. Enrichment is sensibly staged (GSEA on all tested genes ranked by the unsigned LRT statistic, ORA per trajectory cluster against the expression-filtered universe, hallmark and GO-BP) but no gene-set size window or collection version is given, and the final report does not commit to naming software versions."
+}

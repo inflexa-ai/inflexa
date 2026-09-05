@@ -1,0 +1,11 @@
+id: M-0016
+label: "tximport gene-level summarization of transcript quantifications"
+description: >-
+  Import Salmon or kallisto transcript estimates, sum them to the gene level,
+  and carry the average transcript length as an offset into the count model.
+packages:
+  - name: tximport
+    track: bioconductor
+    biotools: tximport
+    version_range: ">=1.30"
+    bioconductor: "3.23"

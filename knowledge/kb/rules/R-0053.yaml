@@ -1,0 +1,53 @@
+id: R-0053
+title: "Correlated genes in a set: camera, a competitive test on the limma fit that accounts for inter-gene correlation"
+assertion: >-
+  With log-scale expression values and a limma fit, test the gene sets with
+  camera. A competitive test that treats the genes as independent gives too
+  many false positives when the genes of a set are correlated. The genes of a
+  real pathway are correlated. camera inflates the variance of the set
+  statistic by a factor that matches the inter-gene correlation. Call it with
+  inter.gene.cor set to NA, thus it estimates the correlation of each set from
+  the data, because the default of limma is a fixed value of 0.01. Report the
+  estimated correlation beside the result.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: log_normalized
+action:
+  step_type: enrichment
+  method: M-0021
+severity: info
+strength: common_practice
+evidence_quality: high
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0030
+    paraphrase: >-
+      A competitive gene set test assumes that the genes are independent, and
+      even a small positive inter-gene correlation inflates its false discovery
+      rate. camera estimates the correlation from the residuals of the linear
+      model and applies a variance inflation factor, which restores the control
+      of the error rate.
+    anchor: "Abstract; Methods, Variance inflation factor; Results"
+    retrieved: "2026-09-03"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0029
+    paraphrase: >-
+      The benchmark evaluates the type I error rate of each method under sample
+      permutation, because a gene permutation treats the genes as independent,
+      and it finds that the error rates differ between the methods.
+    anchor: "Results, Type I error rate; Discussion"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [enrichment, inter-gene-correlation, camera]

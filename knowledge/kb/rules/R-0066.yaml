@@ -1,0 +1,70 @@
+id: R-0066
+title: "Unknown count source: name the quantifier and the count type before the model, because a length-scaled TPM table is not a count table"
+assertion: >-
+  If the source of the count table is not known, find the quantifier and the
+  type of the values before the model. A table of TPM, FPKM, or length-scaled
+  values is not a table of counts, and a count model on such a table gives a
+  wrong dispersion and a wrong test. A table with only integers can still be
+  a rounded abundance. Look at the file header, the value range, and the
+  presence of non-integer values, and ask the data owner for the pipeline.
+  Then set the count source and continue with the import rule for that
+  source. Do not guess the source from the file name.
+modality: bulk_rna_seq
+conditions:
+  - field: count_source
+    op: eq
+    value: unknown
+  - field: data_state
+    op: eq
+    value: counts
+action:
+  step_type: model_design
+  parameters:
+    - name: count_provenance
+      value: name_quantifier_and_count_type_before_model
+      default_source: "vignette:DESeq2/1.52.0#why-un-normalized-counts"
+severity: warn
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0059
+    paraphrase: >-
+      The review states that RPKM and TPM give the relative abundance of a
+      transcript within the sequenced population, thus the values depend on
+      the composition of the sample, and that a comparison of the values
+      across samples or across sequencing protocols is a misuse when the
+      composition differs.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0060
+    paraphrase: >-
+      The paper shows that RPKM is inconsistent between samples, because the
+      total of the RPKM values differs from sample to sample, and it proposes
+      TPM as a unit whose total is the same in each sample.
+    anchor: "Abstract; RPKM is inconsistent among samples"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette states that the input must be un-normalized raw counts,
+      because the model corrects for the library size and the dispersion
+      estimation depends on the count scale, and that normalized values must
+      not be given as the count matrix.
+    anchor: "Why un-normalized counts?"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [import, quantification, provenance]

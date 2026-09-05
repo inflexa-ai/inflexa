@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject with ~ subject + condition in DESeq2, testing the condition coefficient with control explicitly releveled as reference — exactly the reference approach, and the pairing check in QC is dataset-specific rather than generic. QC covers VST-based PCA, sample distance heatmap colored by subject and condition, and a flag-not-drop outlier policy, though library size per sample is only implied rather than plotted. The filter (>=10 counts in >=5 samples, the smallest group size) is minimal and justified relative to DESeq2's later independent filtering, and normalization is left to median-of-ratios inside the model with no pre-normalized input. FDR handling is exemplary: p-value histogram inspection, results(alpha=0.05) with independent filtering, padj-only calling with no post hoc LFC threshold, apeglm shrinkage reported alongside unshrunken LFC and lfcSE, and Cook's NAs separated from filtering NAs. GSEA is well-specified (Wald stat ranking, full tested list, named collections with versions, 15-500 size window, BH, leading edge, redundancy collapse) and the reproducibility/report section names design, contrast, counts, diagnostics, versions and caveats; the only small gap is that the design caveat is framed mainly around enrichment method-dependence rather than the n=5 subject-level power limit."
+}

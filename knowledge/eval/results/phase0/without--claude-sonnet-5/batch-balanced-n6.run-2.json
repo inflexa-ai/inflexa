@@ -1,0 +1,299 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "batch-balanced-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T04:44:06.844Z",
+  "elapsedMs": 40036,
+  "outcome": "plan_submitted",
+  "planId": "pln-8857a455",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and design verification of counts/metadata",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If the actual metadata does not confirm perfect 3/3 batch balance per condition, report the true cross-tabulation rather than assuming the profile description is exact"
+        ],
+        "context": "Input files: counts.csv (12000 x 13, gene symbol column + 12 sample columns, raw salmon gene-level integer counts) and metadata.csv (12 x 3: sample, condition, batch). Design is stated as 6 treated vs 6 control with two known processing batches balanced across conditions.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the raw counts (12000 genes x 12 samples) and metadata (condition, batch) match the stated 6 treated vs 6 control design with batches balanced across condition, and are there low-count genes/samples to flag before modeling?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not drop or impute samples without flagging it explicitly",
+          "Do not perform normalization here — this is a QC/verification step only, normalization happens inside the DE model in T1S2"
+        ],
+        "acceptance_criteria": [
+          "Reports sample counts per condition and per batch, confirming 6v6 and batch balance (or flags any deviation found in the actual files)",
+          "Reports count matrix dimensions and library size distribution per sample",
+          "Flags genes with all-zero or near-zero counts across samples (to inform, not perform, filtering — actual independent filtering happens in DESeq2)",
+          "Confirms metadata sample IDs match count matrix column names exactly (order and identity)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control adjusted for batch",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group the analysis is modestly powered; do not overstate significance of borderline genes",
+          "Verify no perfect confounding between batch and condition columns before fitting — if the real metadata differs from the stated balanced design, the batch term may be inestimable or aliased with condition"
+        ],
+        "context": "Raw integer counts (12000 genes x 12 samples) with a fully balanced 2x2 design (condition x batch, 3 samples per cell). Batch is a known, recorded technical covariate — not something requiring surrogate variable estimation. The correct model is a generalized linear model with batch and condition as covariates, testing the condition coefficient.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "edgeR",
+          "limma"
+        ],
+        "question": "Which of the 12000 genes are significantly differentially expressed between treated and control kidney samples when adjusting for the two known processing batches (design ~batch + condition)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use raw integer counts as DESeq2/edgeR input — do not pre-normalize with CPM/TPM before feeding the count-based model",
+          "Design formula must be ~batch + condition (batch first) so the condition effect is adjusted for batch",
+          "Apply shrinkage to log fold changes for reporting/ranking, but report raw (MLE) LFC and shrunk LFC separately so the two are not conflated"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 (or, if unavailable, edgeR/limma-voom as a documented fallback) is run with a design including batch as a covariate and condition as the term of interest",
+          "Output table includes gene symbol, log2 fold change (shrunk, e.g. apeglm/ashr if available), p-value, and BH-adjusted p-value for every tested gene",
+          "Reports number of genes at padj < 0.05 and independent-filtering behavior (genes excluded due to low mean count)",
+          "Explicitly checks and reports the model's residual degrees of freedom given n=12, 2 batch levels, 2 condition levels, confirming the design is estimable",
+          "If the chosen DE package is unavailable in the sandbox, the step reports the substitution made and why, rather than failing silently"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are exploratory/interpretive given the modest sample size of the underlying DE call; do not present pathway hits as confirmed mechanism"
+        ],
+        "context": "Input is the DE gene table (gene symbol, log2FC, padj) from T1S2 for human kidney tissue treated vs control. No local gene-set reference collection was found provisioned in this environment at planning time; the executing agent must re-check availability at run time since references can be staged later.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "fgsea"
+        ],
+        "question": "What biological pathways or gene sets are enriched among genes significantly altered by treatment in kidney tissue (from the batch-adjusted DE result)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Match gene identifier namespace (symbol) between the DE table and whatever gene-set reference is used",
+          "If no reference gene sets are available in the sandbox, report the significant/ranked gene list as the final output rather than fabricating enrichment results"
+        ],
+        "acceptance_criteria": [
+          "Uses the significant gene list (padj < 0.05, or top-ranked genes by shrunk LFC if fewer than ~10 genes pass threshold) from T1S2 as input",
+          "Reports which gene-set reference (e.g., MSigDB Hallmark, GO, Reactome) was actually available and used, or explicitly states none was available and returns only the ranked/significant gene table as the deliverable",
+          "Output includes enriched term, gene overlap, and adjusted p-value for each significant pathway",
+          "Uses human (Homo sapiens) gene identifiers/annotation consistent with the gene symbols in counts.csv"
+        ]
+      }
+    ],
+    "title": "Kidney bulk RNA-seq treated vs control DE with batch adjustment",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is a 12000-gene x 12-sample raw-count matrix (salmon gene-level counts) from human kidney tissue, with 6 treated vs 6 control samples processed across two known batches that are balanced across condition (3 treated + 3 control per batch). Because batch is balanced with respect to condition, it can be included as a covariate in the differential expression model without collinearity with the condition of interest, and a design-matrix based test (DESeq2 with ~batch+condition) is the correct approach — no surrogate-variable estimation is needed since batch is known and recorded. The plan: (1) load and QC-filter the raw counts and metadata, verifying the stated design (6v6, 2 batches balanced); (2) run DESeq2 with the two-covariate design to test condition while adjusting for batch, applying independent filtering and shrinkage-based log fold changes for a stable, ranked gene list; (3) run functional enrichment on the significant DE genes to interpret biological pathways affected by treatment, reporting gracefully if organism gene-set references are unavailable in this environment. Steps are ordered so QC/DE precedes interpretation, and each step declares the packages it needs so the executing agent can verify availability before running."
+  },
+  "usage": {
+    "inputTokens": 93726,
+    "outputTokens": 3184,
+    "cacheCreationInputTokens": 19863,
+    "cacheReadInputTokens": 73803,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "sva",
+          "apeglm",
+          "ashr",
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark gene sets human"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 batch effect design formula differential expression RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 batch effect design formula",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney bulk RNA-seq treated vs control DE with batch adjustment",
+          "analytical_narrative": "The dataset is a 12000-gene x 12-sample raw-count matrix (salmon gene-level counts) from human kidney tissue, with 6 treated vs 6 control samples processed across two known batches that are balanced across condition (3 treated + 3 control per batch). Because batch is balanced with respect to condition, it can be included as a covariate in the differential expression model without collinearity with the condition of interest, and a design-matrix based test (DESeq2 with ~batch+condition) is the correct approach — no surrogate-variable estimation is needed since batch is known and recorded. The plan: (1) load and QC-filter the raw counts and metadata, verifying the stated design (6v6, 2 batches balanced); (2) run DESeq2 with the two-covariate design to test condition while adjusting for batch, applying independent filtering and shrinkage-based log fold changes for a stable, ranked gene list; (3) run functional enrichment on the significant DE genes to interpret biological pathways affected by treatment, reporting gracefully if organism gene-set references are unavailable in this environment. Steps are ordered so QC/DE precedes interpretation, and each step declares the packages it needs so the executing agent can verify availability before running.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and design verification of counts/metadata",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the raw counts (12000 genes x 12 samples) and metadata (condition, batch) match the stated 6 treated vs 6 control design with batches balanced across condition, and are there low-count genes/samples to flag before modeling?",
+              "acceptance_criteria": [
+                "Reports sample counts per condition and per batch, confirming 6v6 and batch balance (or flags any deviation found in the actual files)",
+                "Reports count matrix dimensions and library size distribution per sample",
+                "Flags genes with all-zero or near-zero counts across samples (to inform, not perform, filtering — actual independent filtering happens in DESeq2)",
+                "Confirms metadata sample IDs match count matrix column names exactly (order and identity)"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input files: counts.csv (12000 x 13, gene symbol column + 12 sample columns, raw salmon gene-level integer counts) and metadata.csv (12 x 3: sample, condition, batch). Design is stated as 6 treated vs 6 control with two known processing batches balanced across conditions.",
+              "constraints": [
+                "Do not drop or impute samples without flagging it explicitly",
+                "Do not perform normalization here — this is a QC/verification step only, normalization happens inside the DE model in T1S2"
+              ],
+              "caveats": [
+                "If the actual metadata does not confirm perfect 3/3 batch balance per condition, report the true cross-tabulation rather than assuming the profile description is exact"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control adjusted for batch",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are significantly differentially expressed between treated and control kidney samples when adjusting for the two known processing batches (design ~batch + condition)?",
+              "acceptance_criteria": [
+                "DESeq2 (or, if unavailable, edgeR/limma-voom as a documented fallback) is run with a design including batch as a covariate and condition as the term of interest",
+                "Output table includes gene symbol, log2 fold change (shrunk, e.g. apeglm/ashr if available), p-value, and BH-adjusted p-value for every tested gene",
+                "Reports number of genes at padj < 0.05 and independent-filtering behavior (genes excluded due to low mean count)",
+                "Explicitly checks and reports the model's residual degrees of freedom given n=12, 2 batch levels, 2 condition levels, confirming the design is estimable",
+                "If the chosen DE package is unavailable in the sandbox, the step reports the substitution made and why, rather than failing silently"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "edgeR",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer counts (12000 genes x 12 samples) with a fully balanced 2x2 design (condition x batch, 3 samples per cell). Batch is a known, recorded technical covariate — not something requiring surrogate variable estimation. The correct model is a generalized linear model with batch and condition as covariates, testing the condition coefficient.",
+              "constraints": [
+                "Use raw integer counts as DESeq2/edgeR input — do not pre-normalize with CPM/TPM before feeding the count-based model",
+                "Design formula must be ~batch + condition (batch first) so the condition effect is adjusted for batch",
+                "Apply shrinkage to log fold changes for reporting/ranking, but report raw (MLE) LFC and shrunk LFC separately so the two are not conflated"
+              ],
+              "caveats": [
+                "With n=6 per group the analysis is modestly powered; do not overstate significance of borderline genes",
+                "Verify no perfect confounding between batch and condition columns before fitting — if the real metadata differs from the stated balanced design, the batch term may be inestimable or aliased with condition"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment of DE genes",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "What biological pathways or gene sets are enriched among genes significantly altered by treatment in kidney tissue (from the batch-adjusted DE result)?",
+              "acceptance_criteria": [
+                "Uses the significant gene list (padj < 0.05, or top-ranked genes by shrunk LFC if fewer than ~10 genes pass threshold) from T1S2 as input",
+                "Reports which gene-set reference (e.g., MSigDB Hallmark, GO, Reactome) was actually available and used, or explicitly states none was available and returns only the ranked/significant gene table as the deliverable",
+                "Output includes enriched term, gene overlap, and adjusted p-value for each significant pathway",
+                "Uses human (Homo sapiens) gene identifiers/annotation consistent with the gene symbols in counts.csv"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Input is the DE gene table (gene symbol, log2FC, padj) from T1S2 for human kidney tissue treated vs control. No local gene-set reference collection was found provisioned in this environment at planning time; the executing agent must re-check availability at run time since references can be staged later.",
+              "constraints": [
+                "Match gene identifier namespace (symbol) between the DE table and whatever gene-set reference is used",
+                "If no reference gene sets are available in the sandbox, report the significant/ranked gene list as the final output rather than fabricating enrichment results"
+              ],
+              "caveats": [
+                "Enrichment results are exploratory/interpretive given the modest sample size of the underlying DE call; do not present pathway hits as confirmed mechanism"
+              ]
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

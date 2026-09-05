@@ -1,0 +1,67 @@
+id: R-0091
+title: "Time course with three or more time points: report the trajectories of the significant genes by cluster, not one fold change"
+assertion: >-
+  With three or more time points, the time course test finds the genes
+  whose profile over time differs between the conditions, and one log2 fold
+  change does not describe such a gene. For the significant genes, extract
+  the log2 fold change at each time point against the first time point,
+  cluster the genes by these profiles, and report each cluster with its
+  mean trajectory and its members. Show the normalized counts over time for
+  the top genes of each cluster. State the number of clusters and the
+  clustering method in the report.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_timepoints
+    op: gte
+    value: 3
+  - field: question
+    op: in
+    value: [differential_expression, full_plan]
+  - field: n_per_group_min
+    op: gte
+    value: 2
+action:
+  step_type: report
+  parameters:
+    - name: time_course_report
+      value: trajectory_clusters
+      default_source: "vignette:DESeq2/1.52.0#time-course-experiments"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      In the time course example the vignette tests the condition-specific
+      change over time with the likelihood ratio test, plots the normalized
+      counts of a significant gene over time per condition, and then
+      clusters the significant genes by their log2 fold changes at each time
+      point with a heatmap of the profiles.
+    anchor: "Time course experiments"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0075
+    paraphrase: >-
+      The comparison of time course tools finds that on a short series under
+      eight time points the pairwise approach outperformed most of the time
+      course tools, that the false positive candidates differ between the
+      tools, and that an overlap of the candidate lists reduces them. It
+      does not evaluate the form of the report.
+    anchor: "Abstract"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [report, time-course, clustering]

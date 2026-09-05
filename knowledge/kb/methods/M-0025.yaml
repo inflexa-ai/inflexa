@@ -1,0 +1,16 @@
+id: M-0025
+label: "Surrogate variable analysis (sva) with the surrogate variables as design covariates"
+description: >-
+  Estimation of the unmeasured sources of variation from the expression data
+  with the condition as the known factor, then the surrogate variables enter
+  the design formula as covariates beside the condition. The counts stay
+  unchanged, and the differential expression test runs on the extended
+  design. For a suspected batch without a recorded batch variable.
+packages:
+  - name: sva
+    track: bioconductor
+    biotools: sva
+    version_range: ">=3.50"
+    bioconductor: "3.23"
+templates:
+  - tpl-deseq2-sva

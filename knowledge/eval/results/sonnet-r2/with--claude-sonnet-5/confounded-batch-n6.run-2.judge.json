@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect batch-condition confound, refuses to add a rank-deficient batch term, explicitly forbids ComBat-seq/removeBatchEffect/SVA, and labels every table, figure, and conclusion as unattributable to treatment alone; it proceeds under a stated assumption rather than stopping, which the reference permits, though it never offers the option of requesting a rebalanced design. QC is design-specific and strong (blind VST, PCA colored by condition and shaped by batch to make the overlap visible, distance heatmap, library sizes), with outlier handling deferred to Cook's flagging at the results step. Filtering (>=10 counts in >=6 samples, the smallest group size), in-model median-of-ratios normalization, explicit reference level and contrast, BH at alpha 0.05 with apeglm shrinkage and a p-value histogram check are all correct and stated. The enrichment steps are the weak point: two full ORA rounds on a gene list that cannot be attributed to treatment add little beyond confounded noise, and the justification for choosing ORA over preranked GSEA rests on an invented 'knowledge-check' rule, though the universe, size window, and collection versions are specified properly. Reporting is complete: design, formula, thresholds, tested/significant/NA-flagged counts, package and gene-set versions, and a closing deconfounding caveat."
+}

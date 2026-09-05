@@ -1,0 +1,72 @@
+id: R-0071
+title: "TPM, FPKM, or log-scale input: sample structure QC on the log values, with PCA and sample distances"
+assertion: >-
+  If the input is a TPM or FPKM table, transform it to log2(value + 1) and do
+  the sample structure QC on that matrix. If the input is already on the log
+  scale, use the values as they are and do not transform them again. Make a
+  PCA or MDS plot on the most variable genes, a sample distance heatmap, and a
+  count of detected genes per sample, colored by condition and by each
+  processing variable. Do not apply the variance stabilizing transformation of
+  a count model, because it expects raw counts. A protocol difference among
+  the samples appears as structure on this plot, and the plan must name it
+  before the model.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [tpm_or_fpkm, log_normalized]
+action:
+  step_type: qc_sample_structure
+  method: M-0026
+  parameters:
+    - name: transform
+      value: log2_plus_1_unless_already_log
+      default_source: "guide:limma/2026-05-19#data-exploration"
+    - name: n_top_genes
+      value: 500
+      default_source: "guide:limma/2026-05-19#multidimensional-scaling-plots"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0008
+    paraphrase: >-
+      The guide explores the sample structure with a multidimensional scaling
+      plot on the log-expression values before the linear model fit. The
+      distances come from the 500 most variable genes, and the plot shows
+      the group separation and an outlier sample.
+    anchor: "Data exploration; Multidimensional scaling plots"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0012
+    paraphrase: >-
+      The survey lists PCA and clustering of the samples on transformed
+      expression values as the checks of the reproducibility among replicates
+      and of the presence of an outlier sample.
+    anchor: "Quality control; Reproducibility among replicates"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0059
+    paraphrase: >-
+      The review states that RPKM and TPM are relative abundances that depend
+      on the composition of the sequenced RNA. Thus values from different
+      sequencing protocols, or from conditions with a different RNA
+      repertoire, are not directly comparable, and the plan must name the
+      protocol of each sample.
+    anchor: "Abstract; Typical scenarios of misuse"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [qc, data-state, tpm, log-scale]

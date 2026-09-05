@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the question as a condition-by-time interaction and specifies the DESeq2 LRT of ~condition+time+condition:time against ~condition+time, with time as an ordered factor, explicit reference levels, and per-time-point simple-effect contrasts plus trajectory clustering to describe the pattern for significant genes - exactly the reference approach, and matched to the 2x4xn=3 design including an honest power caveat about the difference-of-differences. QC is concrete (blind VST, PCA on top 500, distance heatmap colored by condition and time, library sizes, named rather than silently dropped outliers), though there is no batch variable considered or covariate colouring beyond the two design factors. Filtering (>=10 counts in >=3 samples, tied to the smallest cell, with retained-gene count reported) and normalization (median-of-ratios inside the model, explicit prohibition on pre-normalizing) are both correct and justified. FDR is BH at padj<0.05 with independent filtering on, thresholds set in the test, ashr shrinkage for the non-reference simple-effect contrasts (LRT genes are legitimately ranked by the chi-square statistic). Enrichment is well-specified - full pre-filtered tested list as the ranked universe, signed t3 Wald statistic as an explicitly stated and justified metric, named collections with versions, 15-500 size window, BH, leading edge, redundancy collapse - with the only weakness being that the endpoint-only ranking is a partial proxy for the omnibus interaction, which the plan itself flags. The consolidated report names design, thresholds, gene counts, diagnostics, versions, seed, and caveats."
+}

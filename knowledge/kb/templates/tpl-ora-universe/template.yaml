@@ -1,0 +1,127 @@
+id: tpl-ora-universe
+version: 1.0.0
+label: "Over-representation analysis with an explicit universe, clusterProfiler enricher"
+language: R
+method: M-0011
+step_types: [enrichment]
+edam_operations: [EDAM:operation_3501]
+citations: [S-0019, S-0026, S-0027, S-0028, S-0031]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  notes: >-
+    A differential expression results table with the columns `gene`,
+    `log2_fold_change`, and `adjusted_pvalue`, plus a GMT file of gene sets in
+    the same identifier space. The universe is the set of tested genes: every
+    row with a non-missing adjusted p-value. The gene list is the rows under
+    the adjusted p-value cutoff and over the fold change cutoff, in the selected
+    direction. The test is the hypergeometric test of clusterProfiler::enricher
+    with Benjamini-Hochberg adjustment, and every set is reported.
+parameters:
+  - name: results_path
+    type: string
+    description: "Path of the differential expression results CSV with the columns gene, log2_fold_change, and adjusted_pvalue."
+    adaptable: true
+  - name: gmt_path
+    type: string
+    description: "Path of the GMT file of gene sets, one set per line, in the identifier space of the results table."
+    adaptable: true
+  - name: padj_cutoff
+    type: number
+    description: "A gene enters the gene list when its adjusted p-value is under this cutoff."
+    adaptable: true
+    default: 0.05
+    default_source: "doi:10.1038/s41596-018-0103-9"
+    minimum: 0
+    maximum: 1
+  - name: lfc_cutoff
+    type: number
+    description: "A gene enters the gene list when its absolute log2 fold change is at least this value. 0 applies no fold change filter."
+    adaptable: true
+    default: 0
+    default_source: "doi:10.1038/s41596-018-0103-9"
+    minimum: 0
+  - name: direction
+    type: string
+    description: "The direction of the gene list: both signs, only the up-regulated genes, or only the down-regulated genes."
+    adaptable: true
+    default: both
+    default_source: "doi:10.1038/s41596-018-0103-9"
+    enum: [both, up, down]
+  - name: min_size
+    type: integer
+    description: "A gene set is tested when at least this many of its genes are in the universe."
+    adaptable: true
+    default: 15
+    default_source: "doi:10.1038/s41596-018-0103-9"
+    minimum: 1
+  - name: max_size
+    type: integer
+    description: "A gene set is tested when at most this many of its genes are in the universe."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.1038/s41596-018-0103-9"
+    minimum: 1
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example ora or ora_up."
+    adaptable: true
+    default: ora
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: results
+    path: "{{results_path}}"
+    format: EDAM:format_3752
+    description: "Differential expression results, one row per gene, CSV."
+  - name: gene_sets
+    path: "{{gmt_path}}"
+    format: EDAM:format_2330
+    description: "Gene sets, GMT."
+outputs:
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested gene set: pathway, gene_ratio, bg_ratio, fold_enrichment, pvalue, padj, count, genes (semicolon-joined)."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The inputs, the size of the gene list and of the universe, the counts of tested and significant sets, the thresholds, the package versions."
+  - name: dot_plot
+    path: "figures/{prefix}_dotplot.png"
+    description: "Dot plot of the top 20 sets by adjusted p-value: fold enrichment against set, sized by count, colored by padj (and PDF)."
+  - name: bar_plot
+    path: "figures/{prefix}_barplot.png"
+    description: "Bar plot of the top 20 sets by adjusted p-value: -log10 padj per set, filled by count (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: clusterProfiler
+    version: "4.20.0"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n6-hallmark
+    dataset: two_group_n6/seed-1
+    slots:
+      results_path: /work/data/de_results.csv
+      gmt_path: /work/refs/hallmark.gmt
+    expect:
+      - "exists output/ora_results.csv"
+      - "exists output/ora_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/ora_dotplot.png"
+      - "exists figures/ora_dotplot.pdf"
+      - "exists figures/ora_barplot.png"
+      - "exists figures/ora_barplot.pdf"
+      - "csv_rows output/ora_results.csv >= 10"
+      - "json output/ora_summary.json n_universe >= 5000"
+      - "json output/ora_summary.json n_sets_tested >= 10"
+      - "truth_set_recall output/ora_results.csv >= 0.6"

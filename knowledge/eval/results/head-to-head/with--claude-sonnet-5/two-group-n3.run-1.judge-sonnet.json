@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan uses DESeq2 Wald (plus an edgeR QLF cross-check, reported as intersection not union) with median-of-ratios/TMM normalization inside each model, a minimal justified low-count filter, explicit design ~condition with control releveled as reference and named contrast, BH-FDR at alpha=0.05 with apeglm shrinkage kept separate from the unshrunken test statistics, and never lowers alpha to compensate for n=3. QC (blind VST PCA, sample distances, library size flags with an explicit no-silent-drop policy) precedes testing. GSEA is well justified over ORA given expected short significant list, uses the full ranked list on the Wald statistic, states database/version/universe/size window, though it introduces a second tool (edgeR) and enrichment layer beyond the minimal reference plan, adding complexity not strictly requested but not incorrect. The final report explicitly front-loads the power caveat, states versions, design, thresholds, gene counts up/down, and reproducibility record, meeting completeness fully; minor deduction for slight scope creep (dual DE tools) relative to the reference's single-method expectation."
+}

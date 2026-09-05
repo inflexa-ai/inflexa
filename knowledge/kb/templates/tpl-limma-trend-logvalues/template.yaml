@@ -1,0 +1,199 @@
+id: tpl-limma-trend-logvalues
+version: 1.0.0
+label: "limma-trend two-group differential expression on log-scale expression values"
+language: R
+method: M-0005
+step_types: [filter_low_counts, normalize, model_design, differential_expression, multiple_testing]
+edam_operations: [EDAM:operation_3223]
+citations: [S-0007, S-0008, S-0041, S-0042, S-0059, S-0067]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates]
+  min_replicates: 2
+  conditions:
+    - field: data_state
+      op: in
+      value: [tpm_or_fpkm, log_normalized]
+    - field: paired
+      op: eq
+      value: false
+    - field: interaction
+      op: is_null
+    - field: n_timepoints
+      op: is_null
+  notes: >-
+    An abundance matrix whose first column is the gene identifier and whose
+    header holds the sample identifiers, plus a sample table with one row per
+    sample. The values are TPM, FPKM, or RPKM on the linear scale, or values
+    that are already on a log2 scale, for example log-CPM or microarray
+    intensities. A linear-scale value becomes log2(value + offset). A log-scale
+    value stays as it is. No count model applies to such values. The condition
+    column is renamed to `condition` inside the script, thus the design formula
+    names `condition` and any other column of the sample table by its own name.
+    One contrast: test level against reference level.
+parameters:
+  - name: abundance_path
+    type: string
+    description: "Path of the abundance matrix CSV, first column gene id, header sample ids, TPM or FPKM or RPKM, or log2 values when values_are_log is true."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the abundance matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the denominator of the fold change, for example Control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The level of the condition that is the numerator of the fold change, for example Treated."
+    adaptable: true
+  - name: design
+    type: formula
+    description: "The design formula. It must end with condition. Put a balanced batch or a covariate before it, for example ~ batch + condition."
+    adaptable: true
+    default: "~ condition"
+    default_source: "doi:10.12688/f1000research.27893.1"
+    pattern: "condition\\s*$"
+  - name: values_are_log
+    type: boolean
+    description: "True when the matrix already holds log2 values, for example log-CPM or microarray intensities. False when it holds TPM, FPKM, or RPKM on the linear scale, which the script transforms with log2(value + log_offset)."
+    adaptable: true
+    default: false
+  - name: log_offset
+    type: number
+    description: "The offset added before the log2 transform of a linear-scale value, to keep a zero finite and to damp the variance of a low value. Unused when values_are_log is true."
+    adaptable: true
+    default: 1
+    default_source: "guide:limma/2026-05-19#limma-trend"
+    minimum: 0
+  - name: expression_floor
+    type: number
+    description: "A gene stays when its log2 expression is at least this floor in at least min_samples samples. 1 keeps a gene with TPM of at least 1 under the default offset."
+    adaptable: true
+    default: 1
+    default_source: "guide:limma/2026-05-19#filtering"
+  - name: min_samples
+    type: integer
+    description: "The minimum number of samples for the expression filter. Absent, the script uses the smallest group size."
+    adaptable: true
+    required: false
+    minimum: 1
+  - name: trend
+    type: boolean
+    description: "The trend argument of eBayes: the prior variance follows the mean log expression. The method is limma-trend, thus the value is pinned to true."
+    adaptable: false
+    default: true
+    default_source: "guide:limma/2026-05-19#limma-trend"
+  - name: robust
+    type: boolean
+    description: "The robust argument of eBayes: the hyperparameters are estimated with protection against a hypervariable gene."
+    adaptable: true
+    default: true
+    default_source: "doi:10.1214/16-AOAS920"
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff that counts a gene as significant in the summary and the figures."
+    adaptable: false
+    default: 0.05
+    default_source: "guide:limma/2026-05-19#multiple-testing-across-genes-and-contrasts"
+  - name: lfc_threshold
+    type: number
+    description: "A log2 fold change threshold tested with treat (TREAT). 0 tests against no change with eBayes."
+    adaptable: true
+    default: 0
+    default_source: "guide:limma/2026-05-19#tests-relative-to-a-threshold-treat"
+    minimum: 0
+  - name: n_top_genes_mds
+    type: integer
+    description: "The number of most variable genes for the MDS plot."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 50
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example de or treated_vs_control."
+    adaptable: true
+    default: de
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: abundance
+    path: "{{abundance_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample abundance values, CSV: TPM, FPKM, RPKM, or log2 values."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+outputs:
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested gene: gene, log_expression_mean (mean log2 expression), log2_fold_change, pvalue, adjusted_pvalue (BH)."
+  - name: log_expression
+    path: "output/{prefix}_log_expression.csv"
+    format: EDAM:format_3752
+    description: "The log2 expression values after the filter, genes by samples, for downstream visualization."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The contrast, the design, the transform, the counts of tested and significant genes, the thresholds, the package versions."
+  - name: mds
+    path: "figures/{prefix}_mds.png"
+    description: "MDS plot of the samples on the top variable genes, colored by condition (and PDF)."
+  - name: mean_variance
+    path: "figures/{prefix}_mean_variance.png"
+    description: "The limma-trend mean-variance relation: sqrt residual standard deviation against mean log2 expression, with the fitted trend (and PDF)."
+  - name: volcano
+    path: "figures/{prefix}_volcano.png"
+    description: "Volcano plot, log2 fold change against -log10 adjusted p-value (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: limma
+    version: "3.68.5"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n6-tpm
+    dataset: two_group_n6/seed-1
+    slots:
+      abundance_path: /work/data/tpm.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+    expect:
+      - "exists output/de_results.csv"
+      - "exists output/de_log_expression.csv"
+      - "exists output/de_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/de_mds.png"
+      - "exists figures/de_mds.pdf"
+      - "exists figures/de_mean_variance.png"
+      - "exists figures/de_mean_variance.pdf"
+      - "exists figures/de_volcano.png"
+      - "exists figures/de_volcano.pdf"
+      - "csv_rows output/de_results.csv >= 5000"
+      - "json output/de_summary.json n_genes_tested >= 5000"
+      - "truth_recall output/de_results.csv >= 0.35"
+      - "truth_fdr output/de_results.csv <= 0.1"

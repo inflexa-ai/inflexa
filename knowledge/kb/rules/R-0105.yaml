@@ -1,0 +1,58 @@
+id: R-0105
+title: "The report lists the leading edge genes of each significant gene set"
+assertion: >-
+  In the report of a ranked enrichment analysis, list the leading edge genes
+  of each significant set. The leading edge is the subset of the set that
+  sits before the peak of the running enrichment score, thus these genes
+  carry the signal of the set. A set name alone does not say which genes
+  drove it, and two sets with one leading edge are one finding. Give the
+  leading edge with the gene-level statistic of each member, and mark the
+  overlap of the leading edges between the reported sets.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: question
+    op: in
+    value: [enrichment, full_plan]
+action:
+  step_type: report
+  parameters:
+    - name: leading_edge
+      value: per_significant_set
+      default_source: "doi:10.1073/pnas.0506580102"
+severity: info
+strength: common_practice
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0024
+    paraphrase: >-
+      GSEA defines the leading edge subset as the members of a set that
+      appear in the ranked list before the peak of the running sum, and it
+      presents this subset as the core that accounts for the enrichment
+      signal, with the overlap of leading edges between sets as a guide to
+      the biology.
+    anchor: "Overview of GSEA; Leading-edge analysis"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0025
+    paraphrase: >-
+      fgsea computes the same enrichment statistic on the ranked list and
+      returns for each set the genes of its leading edge beside the
+      enrichment score and the adjusted p-value.
+    anchor: "Methods; Results"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [report, enrichment, leading-edge]

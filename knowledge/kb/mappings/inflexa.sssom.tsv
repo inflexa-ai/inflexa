@@ -1,0 +1,13 @@
+# curie_map:
+#   INFLEXA: https://inflexa.ai/knowledge/term/
+#   OBI: http://purl.obolibrary.org/obo/OBI_
+#   skos: http://www.w3.org/2004/02/skos/core#
+# mapping_set_id: https://inflexa.ai/knowledge/mappings/inflexa.sssom.tsv
+# mapping_set_version: 0.1.0
+# license: https://creativecommons.org/licenses/by/4.0/
+# creator_id: inflexa
+subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	author_id	mapping_date	comment
+INFLEXA:bulk_rna_seq_assay	bulk RNA-seq assay	skos:exactMatch	OBI:0001271	RNA-seq assay	semapv:ManualMappingCuration	inflexa	2026-09-04	The modality of the Phase 0 corpus.
+INFLEXA:batch_balanced	balanced batch	sssom:NoTermFound		 	semapv:ManualMappingCuration	inflexa	2026-09-04	No term for a batch as a design property in OBI, STATO, OBCS, or EDAM.
+INFLEXA:batch_confounded	confounded batch	sssom:NoTermFound		 	semapv:ManualMappingCuration	inflexa	2026-09-04	No term for confounding as a design property in the four vocabularies.
+INFLEXA:design_to_method_rule	design-to-method rule	sssom:NoTermFound		 	semapv:ManualMappingCuration	inflexa	2026-09-04	The conditional rule is expressible in none of the four vocabularies.

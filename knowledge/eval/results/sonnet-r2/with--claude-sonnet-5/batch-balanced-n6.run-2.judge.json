@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference design exactly: the balanced batch enters as a covariate in ~batch + condition with control explicitly set as reference, counts are never adjusted or pre-normalized before the model, and DESeq2 Wald with an edgeR QL cross-check on the identical filtered matrix and design is appropriate for n=6 per group. QC precedes the test with blind VST PCA colored by both condition and batch, sample distance heatmap, library sizes, and an explicit no-silent-drop policy for outliers, plus a stated interpretation of whether batch or condition drives PC1/PC2; only a concrete threshold-based outlier rule is missing. Filtering (>=10 counts in >=6 samples, the smallest group size) is minimal and justified, alpha=0.05 is set inside results() with independent filtering on, and apeglm shrinkage is applied to the condition coefficient for ranking. The reporting step is thorough on versions, design, contrast, thresholds, tested and significant gene counts, diagnostics, and caveats. Enrichment is technically well specified (full ranked list on the Wald statistic, size window, named collections with versions), but it was not asked for by this question and adds unwarranted scope, including an unverified assumption of human HGNC symbols."
+}

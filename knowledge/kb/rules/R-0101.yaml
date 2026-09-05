@@ -1,0 +1,73 @@
+id: R-0101
+title: "Gene identifiers for enrichment: map symbols to Entrez with the organism annotation package, report the unmapped share, and never mix identifier spaces"
+assertion: >-
+  Before the enrichment test, map the gene identifiers of the result table to
+  the identifier space of the collection. For human or mouse, map a symbol or
+  an Ensembl identifier to the Entrez identifier with org.Hs.eg.db or
+  org.Mm.eg.db, and keep the annotation package version. A symbol changes
+  between annotation releases, and one symbol can map to several Entrez
+  identifiers, thus a part of the list does not map or maps twice. Report
+  the share of the tested genes that did not map, and drop a gene with a
+  many-to-many map with a stated count. Do not mix two identifier spaces in
+  one list or between the list and the universe.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: organism
+    op: in
+    value: [human, mouse]
+action:
+  step_type: enrichment
+  parameters:
+    - name: id_mapping
+      value: to_entrez_with_orgdb
+      default_source: "doi:10.1016/j.xinn.2021.100141"
+    - name: report_unmapped_share
+      value: true
+      default_source: "doi:10.1038/nprot.2009.97"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0076
+    paraphrase: >-
+      The relations between the identifier sets of the public databases are
+      biologically complex, and the content of the databases changes over
+      time, thus a gene-to-transcript-to-protein map has typical problems
+      that the protocol discusses.
+    anchor: "Abstract; Introduction"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0053
+    paraphrase: >-
+      clusterProfiler gives bitr for the translation between identifier
+      types through an organism annotation package, and its enrichment
+      functions take a keyType argument, thus the input and the collection
+      must share one identifier space.
+    anchor: "Functional enrichment analysis; Gene ID conversion"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0027
+    paraphrase: >-
+      The survey finds that 95% of the over-representation analyses did not
+      use or did not describe an appropriate background list, and that the
+      misuse of the tools changes the result substantially.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, annotation, identifiers]

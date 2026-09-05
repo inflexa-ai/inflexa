@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 3,
+    "qc_present": 2,
+    "low_count_filter": 4,
+    "normalization": 8,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 2,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly diagnoses the n=1 vs n=1 design and explains why DESeq2/edgeR dispersion estimation is impossible, but it then makes an edgeR exactTest with an assumed BCV=0.4 the primary analysis, generating p-values and BH-FDR that the reference explicitly rules out; the extensive caveating does not make invented inference valid, and ranking by FDR effectively presents an arbitrary assumed dispersion as significance. Sample-structure QC is essentially absent (no library-size comparison, no mapping-rate or outlier policy beyond normalization), and the low-count filter is left as a vague 'e.g., CPM/count threshold' with no justification. Normalization is handled correctly inside edgeR via TMM/library size, and the contrast direction (treated vs control) is explicit and checked against metadata, though no design formula or reference level is formally specified. Enrichment is not warranted from an unreplicated comparison, yet the plan runs ORA on a top-gene list with no universe, no collection version, and no gene-set size window; the report names method, design and caveats but omits software versions, alpha, and counts of tested/significant genes."
+}

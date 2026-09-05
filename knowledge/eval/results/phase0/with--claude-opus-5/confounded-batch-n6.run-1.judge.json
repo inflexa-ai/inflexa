@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly diagnoses the perfect confounding, explicitly refuses a batch term (rank deficiency) and explicitly forbids ComBat-seq, removeBatchEffect, sva and RUV with the right reason, and labels every artifact and the report as treatment-plus-batch, which is exactly the reference behavior; it also names the concrete experimental fix and rules out a computational rescue. QC is confound-aware and specific (cross-tab, library sizes, blind VST, top-500 PCA, distance heatmap, explicit statement that colouring by condition equals colouring by batch, flag-not-drop policy for outliers at n=6). Filtering (>=10 counts in >=6, the smallest group size) is minimal and justified, size factors and TMM are estimated inside the models with no pre-normalization, the reference level is set by relevel, the contrast direction is stated, BH at alpha 0.05 with independent filtering, apeglm shrinkage on the named coefficient, and any fold-change threshold is tested via lfcThreshold rather than post hoc. Enrichment was not strictly warranted by the question but is well specified (full ranked list, Wald statistic named and justified, tested-gene universe, 15-500 window after intersection, collection/version reporting, confounded labelling) and is correctly framed as optional annotation, so it loses only a little for scope. Reporting is complete: versions, design, contrast, thresholds, n tested out of 12,000, n DE per method and intersection, NA accounting, session info, and the confounding statement placed before any gene table."
+}

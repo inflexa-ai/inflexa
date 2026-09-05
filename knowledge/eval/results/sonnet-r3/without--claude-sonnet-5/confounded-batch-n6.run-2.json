@@ -1,0 +1,283 @@
+{
+  "campaign": "sonnet-r3",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "confounded-batch-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T09:10:28.159Z",
+  "elapsedMs": 38675,
+  "outcome": "plan_submitted",
+  "planId": "pln-964efbf9",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, and confound verification",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not attempt any batch-correction (ComBat, limma removeBatchEffect, SVA-based adjustment) at this stage as a 'fix' — with a fully confounded design this either removes the condition signal or does nothing meaningful, and doing so here would misrepresent the analysis as deconfounded when it cannot be",
+          "This dataset is small (n=12); interpret PCA and clustering qualitatively, not as a formal test"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the raw salmon gene counts (12000 genes x 12 samples, excluding the gene-symbol column) show the expected library size and expression distributions, and does the metadata confirm that batch B1 = all 6 controls and batch B2 = all 6 treated samples with no partial overlap?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Library size, gene detection rate, and count distribution reported per sample",
+          "Cross-tabulation of condition x batch explicitly shown, confirming perfect confound (or reporting if the profile's confound claim does not hold)",
+          "Low-count genes filtered using a standard rule (e.g. CPM/edgeR-style filterByExpr or minimum count in >= smallest group size) before DE",
+          "Normalized (e.g. VST or rlog) expression matrix produced and saved for downstream use",
+          "PCA or hierarchical clustering of samples colored by both condition and batch, demonstrating that condition and batch separate identically on PC1 (or wherever the confound manifests)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: treated vs control (confounded with batch)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Never report this list as a 'treatment effect' without the batch-confound caveat attached in the same breath",
+          "Shrinkage (apeglm) is for effect-size stabilization only and does not address the confound"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between the 6 treated (batch B2) and 6 control (batch B1) lung samples using a simple ~condition DESeq2 model, given that batch cannot be added as a covariate because condition and batch are perfectly collinear (design matrix would be rank-deficient)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run with design ~condition only (explicitly document that ~condition + batch was not used because it is not estimable — batch is a linear combination of the intercept and condition)",
+          "Full results table with log2FoldChange, p-value, and BH-adjusted p-value for all tested genes, plus MA plot and p-value histogram for diagnostic sanity",
+          "Significant gene list at a stated threshold (e.g. padj < 0.05) reported with counts up/down",
+          "Explicit written statement in the output that this contrast is mathematically identical to a batch B1-vs-B2 contrast, so every gene called 'differential' reflects treatment, batch, or both, and this cannot be resolved from this dataset alone",
+          "p-value histogram checked for the expected roughly-uniform-plus-left-peak shape as a basic model sanity check, not as evidence of deconfounding"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Exploratory surrogate variable analysis (diagnostic, not corrective)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group and a fully confounded 2-group design, SVA has very limited power to distinguish biological surrogate variables from the batch/condition axis itself — treat any 'orthogonal' SV finding with skepticism given the small sample size",
+          "Do not feed SVs back into the primary reported DE model in this plan; this step is diagnostic only"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "sva",
+          "DESeq2"
+        ],
+        "question": "Does SVA, run on the normalized counts against the ~condition model, recover a surrogate variable that is essentially identical to the known condition/batch split, or does it find any structure orthogonal to it — and does adding SVs to the DESeq2 model change the gene list meaningfully?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "exploratory_analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "SVA run with the full model ~condition and null model ~1 on the filtered/normalized count matrix",
+          "Correlation of each recovered surrogate variable against the known condition/batch label reported numerically",
+          "If a surrogate variable correlates near-perfectly with condition/batch (expected given perfect confounding), state explicitly that including it in the model would be equivalent to removing the condition effect entirely, and therefore SVs are NOT added to the final DE model in T1S2",
+          "If any surrogate variable is found to be substantially orthogonal to condition/batch, report it as a candidate unmodeled source of variation (e.g. RNA quality) without re-running the primary DE contrast on it unless it materially changes conclusions",
+          "Conclusion states plainly whether this exploratory step changes or confirms the caveat issued in T1S2 — it should not be spun as a fix"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on the treated-vs-control (batch-confounded) DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Gene symbols in the counts file must be matched to the WikiPathways GMT's HGNC symbol space; report any genes that fail to map rather than silently dropping them without a count"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea"
+        ],
+        "question": "What WikiPathways human pathways are enriched among genes called significant in the treated-vs-control contrast (T1S2), understanding that the enrichment describes whatever functional signal — treatment, batch/processing artifact, or an inseparable mix of both — drives that gene list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Over-representation or GSEA-style enrichment run against the human WikiPathways gene sets confirmed present in the environment (/mnt/refs/managed/wikipathways-human) using the significant gene list (and/or full ranked list) from T1S2",
+          "Enriched pathways reported with adjusted p-values and gene overlap counts",
+          "Output explicitly reiterates the batch confound caveat: any enriched pathway could reflect a real treatment mechanism, a batch/technical artifact (e.g. stress-response, sequencing-lane effects), or both, and this analysis cannot distinguish them",
+          "If common technical-artifact pathway signatures are among the top hits (e.g. general stress response, RNA processing), flag this as a signal consistent with unresolved batch effect rather than treatment biology"
+        ]
+      }
+    ],
+    "title": "Lung treated vs control DE despite batch confound",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The 12-sample lung dataset (6 treated in batch B2, 6 control in batch B1, 12000 x 13 raw salmon counts) has treatment perfectly confounded with processing batch. No statistical method — including DESeq2 with a batch term, ComBat, or SVA — can separate a batch effect from a condition effect when every treated sample sits in one batch and every control in the other: the design matrix is singular for any model with both terms, and any batch-correction step removes the condition signal along with the batch signal (or vice versa) because they are mathematically identical contrasts here. The correct and only defensible course is to run the standard DESeq2 differential expression contrast, but treat every resulting DE gene as a treatment-OR-batch signal, not a treatment signal, and state this as the central limitation rather than attempting a fix that would either do nothing or silently fabricate an unconfounding. The plan therefore: (1) performs QC/normalization and confirms the confound structure directly from counts+metadata, (2) runs the DE contrast as specified, flagging that batch cannot be included as a covariate (design is confounded, model is not full rank) and that the result estimates a combined batch+treatment effect, (3) uses surrogate variable analysis (SVA) in an exploratory, clearly-labeled capacity only — not to deconfound, since it cannot when the design is fully confounded, but to check whether it recovers a variable that behaves like the known batch/condition axis or something orthogonal, informing how strongly the caveat should be stated, (4) sends the resulting DE gene list to pathway enrichment against human WikiPathways gene sets to describe what functional signal (batch, treatment, or an inseparable mix) is present. No step claims to recover a deconfounded treatment effect, and the final report step's job is explicitly to state this limitation to the user rather than presenting the DE list as a clean treatment signature."
+  },
+  "usage": {
+    "inputTokens": 43272,
+    "outputTokens": 3364,
+    "cacheCreationInputTokens": 34118,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Lung treated vs control DE despite batch confound",
+          "analytical_narrative": "The 12-sample lung dataset (6 treated in batch B2, 6 control in batch B1, 12000 x 13 raw salmon counts) has treatment perfectly confounded with processing batch. No statistical method — including DESeq2 with a batch term, ComBat, or SVA — can separate a batch effect from a condition effect when every treated sample sits in one batch and every control in the other: the design matrix is singular for any model with both terms, and any batch-correction step removes the condition signal along with the batch signal (or vice versa) because they are mathematically identical contrasts here. The correct and only defensible course is to run the standard DESeq2 differential expression contrast, but treat every resulting DE gene as a treatment-OR-batch signal, not a treatment signal, and state this as the central limitation rather than attempting a fix that would either do nothing or silently fabricate an unconfounding. The plan therefore: (1) performs QC/normalization and confirms the confound structure directly from counts+metadata, (2) runs the DE contrast as specified, flagging that batch cannot be included as a covariate (design is confounded, model is not full rank) and that the result estimates a combined batch+treatment effect, (3) uses surrogate variable analysis (SVA) in an exploratory, clearly-labeled capacity only — not to deconfound, since it cannot when the design is fully confounded, but to check whether it recovers a variable that behaves like the known batch/condition axis or something orthogonal, informing how strongly the caveat should be stated, (4) sends the resulting DE gene list to pathway enrichment against human WikiPathways gene sets to describe what functional signal (batch, treatment, or an inseparable mix) is present. No step claims to recover a deconfounded treatment effect, and the final report step's job is explicitly to state this limitation to the user rather than presenting the DE list as a clean treatment signature.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization, and confound verification",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the raw salmon gene counts (12000 genes x 12 samples, excluding the gene-symbol column) show the expected library size and expression distributions, and does the metadata confirm that batch B1 = all 6 controls and batch B2 = all 6 treated samples with no partial overlap?",
+              "acceptance_criteria": [
+                "Library size, gene detection rate, and count distribution reported per sample",
+                "Cross-tabulation of condition x batch explicitly shown, confirming perfect confound (or reporting if the profile's confound claim does not hold)",
+                "Low-count genes filtered using a standard rule (e.g. CPM/edgeR-style filterByExpr or minimum count in >= smallest group size) before DE",
+                "Normalized (e.g. VST or rlog) expression matrix produced and saved for downstream use",
+                "PCA or hierarchical clustering of samples colored by both condition and batch, demonstrating that condition and batch separate identically on PC1 (or wherever the confound manifests)"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do not attempt any batch-correction (ComBat, limma removeBatchEffect, SVA-based adjustment) at this stage as a 'fix' — with a fully confounded design this either removes the condition signal or does nothing meaningful, and doing so here would misrepresent the analysis as deconfounded when it cannot be",
+                "This dataset is small (n=12); interpret PCA and clustering qualitatively, not as a formal test"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: treated vs control (confounded with batch)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are differentially expressed between the 6 treated (batch B2) and 6 control (batch B1) lung samples using a simple ~condition DESeq2 model, given that batch cannot be added as a covariate because condition and batch are perfectly collinear (design matrix would be rank-deficient)?",
+              "acceptance_criteria": [
+                "DESeq2 run with design ~condition only (explicitly document that ~condition + batch was not used because it is not estimable — batch is a linear combination of the intercept and condition)",
+                "Full results table with log2FoldChange, p-value, and BH-adjusted p-value for all tested genes, plus MA plot and p-value histogram for diagnostic sanity",
+                "Significant gene list at a stated threshold (e.g. padj < 0.05) reported with counts up/down",
+                "Explicit written statement in the output that this contrast is mathematically identical to a batch B1-vs-B2 contrast, so every gene called 'differential' reflects treatment, batch, or both, and this cannot be resolved from this dataset alone",
+                "p-value histogram checked for the expected roughly-uniform-plus-left-peak shape as a basic model sanity check, not as evidence of deconfounding"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Never report this list as a 'treatment effect' without the batch-confound caveat attached in the same breath",
+                "Shrinkage (apeglm) is for effect-size stabilization only and does not address the confound"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Exploratory surrogate variable analysis (diagnostic, not corrective)",
+              "track": "T1",
+              "step_type": "exploratory_analysis",
+              "question": "Does SVA, run on the normalized counts against the ~condition model, recover a surrogate variable that is essentially identical to the known condition/batch split, or does it find any structure orthogonal to it — and does adding SVs to the DESeq2 model change the gene list meaningfully?",
+              "acceptance_criteria": [
+                "SVA run with the full model ~condition and null model ~1 on the filtered/normalized count matrix",
+                "Correlation of each recovered surrogate variable against the known condition/batch label reported numerically",
+                "If a surrogate variable correlates near-perfectly with condition/batch (expected given perfect confounding), state explicitly that including it in the model would be equivalent to removing the condition effect entirely, and therefore SVs are NOT added to the final DE model in T1S2",
+                "If any surrogate variable is found to be substantially orthogonal to condition/batch, report it as a candidate unmodeled source of variation (e.g. RNA quality) without re-running the primary DE contrast on it unless it materially changes conclusions",
+                "Conclusion states plainly whether this exploratory step changes or confirms the caveat issued in T1S2 — it should not be spun as a fix"
+              ],
+              "packages": [
+                "sva",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=6 per group and a fully confounded 2-group design, SVA has very limited power to distinguish biological surrogate variables from the batch/condition axis itself — treat any 'orthogonal' SV finding with skepticism given the small sample size",
+                "Do not feed SVs back into the primary reported DE model in this plan; this step is diagnostic only"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on the treated-vs-control (batch-confounded) DE gene list",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "What WikiPathways human pathways are enriched among genes called significant in the treated-vs-control contrast (T1S2), understanding that the enrichment describes whatever functional signal — treatment, batch/processing artifact, or an inseparable mix of both — drives that gene list?",
+              "acceptance_criteria": [
+                "Over-representation or GSEA-style enrichment run against the human WikiPathways gene sets confirmed present in the environment (/mnt/refs/managed/wikipathways-human) using the significant gene list (and/or full ranked list) from T1S2",
+                "Enriched pathways reported with adjusted p-values and gene overlap counts",
+                "Output explicitly reiterates the batch confound caveat: any enriched pathway could reflect a real treatment mechanism, a batch/technical artifact (e.g. stress-response, sequencing-lane effects), or both, and this analysis cannot distinguish them",
+                "If common technical-artifact pathway signatures are among the top hits (e.g. general stress response, RNA processing), flag this as a signal consistent with unresolved batch effect rather than treatment biology"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Gene symbols in the counts file must be matched to the WikiPathways GMT's HGNC symbol space; report any genes that fail to map rather than silently dropping them without a count"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

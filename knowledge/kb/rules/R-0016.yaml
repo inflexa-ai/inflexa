@@ -1,0 +1,84 @@
+id: R-0016
+title: "Two replicates per group: edgeR quasi-likelihood first, DESeq2 as the second method, and a stated low-power caution"
+assertion: >-
+  If the smallest group holds exactly two replicates, run the edgeR
+  quasi-likelihood F-test first, and run the DESeq2 Wald test as the second
+  method. Report the overlap of the two gene sets. With two replicates, both
+  tests keep the false positive rate near the nominal level, but they find
+  only the genes with a large fold change. State in the report that the
+  power is low, and that a gene not in the list is not shown to be unchanged.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: eq
+    value: 2
+  - field: n_groups
+    op: gte
+    value: 2
+  - field: n_per_group_max
+    op: lte
+    value: 11
+action:
+  step_type: differential_expression
+  method: M-0003
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0001
+    when: "Run DESeq2 as the second method on the same counts and report the overlap of the two gene sets."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0011
+    paraphrase: >-
+      At two or three replicates per condition, edgeR and DESeq2 keep the
+      false positive rate under control, but they find only a small share of
+      the true differentially expressed genes, most of them with a large fold
+      change. The authors recommend at least six replicates per condition.
+    anchor: "Results, Tool performance; Discussion, Recommendations"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0004
+    paraphrase: >-
+      edgeR v4 refines the quasi-likelihood pipeline with a bias-corrected
+      deviance for small counts. The paper states that the quasi-F-tests give
+      rigorous control of the false discovery rate even for small sample
+      sizes, and more rigorous error rate control than other methods.
+    anchor: "Abstract; Quasi-likelihood; Correcting quasi-likelihood for bias"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0005
+    paraphrase: >-
+      The guide recommends the quasi-likelihood F-test over the likelihood
+      ratio test, because the F-test reflects the uncertainty in the
+      dispersion estimate of each gene and gives a more reliable error rate
+      control when the number of replicates is small.
+    anchor: "Testing for DE genes; the quasi-likelihood F-test"
+    retrieved: "2026-09-03"
+  - direction: disputes
+    eco: ECO:0000033
+    cito: cito:disagreesWith
+    source: S-0012
+    paraphrase: >-
+      The survey names three replicates as the minimum for any inferential
+      analysis, thus an inference at two replicates goes below the minimum the
+      survey recommends, and the report must say so.
+    anchor: "Experimental design"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [design, replicates, method-selection, warn]

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly matches the design: raw Salmon counts into a negative binomial model (DESeq2 Wald with apeglm shrinkage), no batch term because the study is single-batch and unpaired, an edgeR QLF cross-check reported as an intersection rather than a union, and an explicit refusal to lower alpha to compensate for n=3. QC precedes testing with blind VST PCA, sample-distance heatmap, library sizes, and a no-silent-drop policy; the filter (>=10 counts in >=3 samples, the smallest group size) is minimal and justified; normalization is median-of-ratios and TMM inside the respective models with no pre-normalized input. The formula ~condition with control explicitly releveled and the contrast named, BH at alpha 0.05 with independent filtering, selection on padj rather than fold change, and a p-value histogram check before trusting adjustment are all stated. Enrichment was not requested and is arguably scope creep, but it is executed correctly (full ranked list on the Wald statistic, named collections and versions, 15-500 size window, tested-gene universe, per-collection BH, flagged as hypothesis-generating), and the final report names methods, versions, design, thresholds, tested and significant counts, and puts the low-power caveat before the gene tables."
+}

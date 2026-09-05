@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the design precisely: unpaired 6v6, single batch, raw counts, so DESeq2 Wald on ~condition with control as explicit reference and apeglm shrinkage at BH 0.05 is the right choice, with an edgeR QL cross-check that adds rather than substitutes. QC is dataset-specific and comes first: blind VST PCA colored by condition with sample_01 labeled, distance heatmap, library size and detected-gene plots, and an explicit evidence-based keep/exclude decision rather than a silent default, with the correct note that depth widens CIs via size factors rather than biasing LFC. Filtering (>=10 counts in at least 6 samples, the smallest group size) is minimal and justified, and normalization stays inside the model with no pre-scaling. Enrichment uses the full post-filter ranked list with the Wald statistic named as the metric, Hallmark with a 15-500 size window, BH pathway p-values, collection version stated, and leading-edge reporting; the report enumerates versions, design, contrast, thresholds, tested and significant gene counts, diagnostics, the sample_01 decision, and discovery-stage caveats. Only minor quibble: the filter threshold could interact with sample_01's depth and no sensitivity check on that is stated."
+}

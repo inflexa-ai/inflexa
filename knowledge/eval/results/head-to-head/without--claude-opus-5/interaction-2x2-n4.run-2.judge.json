@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the question as an interaction estimand, fits ~genotype + treatment + genotype:treatment with explicit reference levels, tests the interaction coefficient by Wald with an LRT against the additive reduced model, and derives simple effects from the single fit rather than per-genotype refits — precisely the reference approach, with an explicit refusal to collapse into a one-factor condition model or to treat discordant simple effects as an interaction. QC is design-aware (PCA/VST, sample distances, library sizes, dispersions, colored by both factors, with an explicit note that no batch column exists so PCA is the only handle), though the outlier handling is 'name it' rather than a stated inclusion/exclusion rule. Filtering (>=10 counts in >=4 samples, tied to the smallest group) is minimal and justified; normalization is size factors inside DESeq2 with raw integer counts preserved and VST used only for visualization; BH at FDR<0.05 with apeglm/ashr shrinkage on the interaction coefficient is correct, with shrinkage properly reserved for ranking. Enrichment is well specified (preranked fgsea on the signed interaction Wald statistic across all tested genes, ORA against the tested-gene universe with a minimum set size, human HGNC symbol space, hallmark + GO-BP, leading edge, redundancy collapsing) but omits collection versions and a set-size window. Reporting covers design, thresholds, tested and significant gene counts including the null case, and honest power/detectable-effect caveats; only explicit software versions are missing."
+}

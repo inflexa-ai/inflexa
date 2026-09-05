@@ -1,0 +1,68 @@
+id: R-0032
+title: "Strandedness declared but not checked: make sure of the library strandedness against the quantification before the analysis"
+assertion: >-
+  If the metadata declares a strand protocol but no check confirms it, make
+  sure of the strandedness before the count matrix enters the analysis.
+  Compare the declared protocol with the library format that the quantifier
+  infers, for example the library format counts of Salmon, or with an
+  inference on the aligned reads, for example infer_experiment of RSeQC. Look
+  at the value across every sample in the MultiQC report, because one sample
+  with a different value points to a mixed protocol. A wrong strand setting
+  counts the antisense reads, loses a large share of the reads, or assigns
+  the reads to the wrong gene. Record the confirmed protocol in the plan.
+modality: bulk_rna_seq
+conditions:
+  - field: strandedness
+    op: eq
+    value: declared_unverified
+action:
+  step_type: qc_sample_structure
+  parameters:
+    - name: strandedness_check
+      value: required
+      default_source: "doi:10.1186/s13059-016-0881-8"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0012
+    paraphrase: >-
+      The survey notes that a strand-specific library needs the strand setting
+      at the read counting step, and it lists RSeQC and Qualimap among the
+      tools for a check of the mapped reads that shows the properties of the
+      library.
+    anchor: "Quality control of the alignment; Transcript quantification"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0037
+    paraphrase: >-
+      MultiQC gathers the per-sample logs of many quality control,
+      alignment, and quantification tools into one report, so that a value
+      that differs between the samples of one study is visible in one table
+      or plot.
+    anchor: "Abstract; Implementation"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0039
+    paraphrase: >-
+      The survey of published RNA-seq studies finds that many studies do not
+      report the strand protocol of the library, that the setting changes the
+      quantification result, and thus it lists the strand protocol among the
+      details that a study must report.
+    anchor: "Results; Discussion"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [qc, strandedness, library-type]

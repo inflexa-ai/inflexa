@@ -1,0 +1,62 @@
+id: R-0100
+title: "Mouse and a human-only gene set: map to human orthologs with babelgene and report the share of genes that mapped"
+assertion: >-
+  For a mouse dataset, the mouse MSigDB collections stay the default. If a
+  needed gene set exists only for human, for example a published signature or
+  a custom list, map the mouse genes to their human orthologs with the
+  babelgene ortholog table before the test. Keep only the one-to-one
+  orthologs, and report the share of the tested genes that mapped, the share
+  that mapped many-to-many, and the version of the ortholog table. A gene
+  without an ortholog leaves the test, thus the report states the loss.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: organism
+    op: eq
+    value: mouse
+  - field: question
+    op: in
+    value: [enrichment, full_plan]
+action:
+  step_type: enrichment
+  parameters:
+    - name: human_only_set_policy
+      value: babelgene_one_to_one_orthologs
+      default_source: "doi:10.1038/s41592-023-02014-7"
+    - name: report_mapped_share
+      value: true
+      default_source: "doi:10.1038/s41592-023-02014-7"
+severity: info
+strength: common_practice
+evidence_quality: low
+recommendation_strength: conditional
+evidence:
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0032
+    paraphrase: >-
+      The letter presents mouse collections in MSigDB, built from the human
+      collections with a curated orthology map, for a mouse dataset that
+      before this was mapped to human orthologs by the user.
+    anchor: "Abstract; Introduction; Results"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0086
+    paraphrase: >-
+      An orthology database gives one-to-one, one-to-many, and many-to-many
+      ortholog relations between two species, thus a map between the gene
+      spaces of two species is not complete and not always unique.
+    anchor: "Introduction; Orthology inference"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, orthology, mouse, needs-source]

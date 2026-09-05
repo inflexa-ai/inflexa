@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 0,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 5
+  },
+  "rationale": "DESeq2 Wald with ~condition on raw counts for an unpaired 6v6 single-batch design is appropriate, and the dedicated QC step (library sizes, size factors, PCA/sample distances, explicit outlier policy plus a keep-and-sensitivity strategy for sample_01) is a strength. Normalization is correctly left to median-of-ratios inside the model, but no low-count/independent expression filter is specified at all (independent filtering is mentioned only as a p-value step, not a pre-filter), and the reference level for 'condition' is never stated even though the contrast direction is named. FDR uses BH at padj<0.05, but there is no apeglm/lfcShrink step, and the added |log2FC|>1 cut on unshrunken fold changes is a post hoc threshold rather than part of the test. Enrichment is preranked fgsea on the full ranked list with a stated statistic and the 50 human hallmark sets, but no MSigDB version or min/max set size window is given; reporting names DESeq2/fgsea and thresholds and DE counts but omits software versions and a full caveat discussion (e.g., unbalanced 5v6 power loss is noted only in passing)."
+}

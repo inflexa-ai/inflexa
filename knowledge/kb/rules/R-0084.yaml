@@ -1,0 +1,79 @@
+id: R-0084
+title: "Suspected batch: the p-value histogram does not clear the batch; fix the design first, then re-estimate the null if the histogram stays irregular"
+assertion: >-
+  With a suspected batch, do not read a clean p-value histogram as proof of
+  a clean fit. An unmodeled batch correlates the samples, widens the null
+  distribution, and inflates the test statistics, thus the histogram shows
+  an excess of small p-values that looks like a strong result. Estimate the
+  batch with surrogate variables and add them to the design before the
+  multiple testing adjustment. If the histogram of the fit with the
+  surrogate variables has a hill in the middle or rises toward one, the null
+  p-values are not uniform, and the Benjamini-Hochberg adjusted p-values are
+  not reliable. Do not report those adjusted p-values as the result. State
+  the shape of the histogram, and if an empirical null tool such as fdrtool
+  is available, re-estimate the null from the test statistics and report the
+  estimated share of null genes.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: batch
+    op: eq
+    value: suspected
+  - field: n_per_group_min
+    op: gte
+    value: 2
+action:
+  step_type: multiple_testing
+  parameters:
+    - name: null_distribution_check
+      value: fix_design_then_empirical_null
+      default_source: "doi:10.3390/ht7030023"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0056
+    paraphrase: >-
+      The discussion states that a correlation among the samples from an
+      unmeasured confounding variable widens the null distribution and
+      inflates the test statistics, and that the p-value histogram is of
+      little help there, because it then looks like an ideal result with an
+      excess of small p-values. The remedies section names a revised design
+      and a different test as the answers to an irregular histogram.
+    anchor: "Section 2.5, Remedies; Section 3.2, Summary"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0057
+    paraphrase: >-
+      fdrtool takes p-values, z-scores, t-scores, or correlations as input,
+      estimates both the local and the tail area false discovery rate, and
+      fits an empirical null model where possible, to take account of an
+      over-dispersion or an under-dispersion of the theoretical null.
+    anchor: "Abstract"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0061
+    paraphrase: >-
+      The sva package estimates surrogate variables for the unmodeled sources
+      of variation in a high-throughput experiment, so that the analyst can
+      add them to the model and adjust the test for a batch that the metadata
+      does not record.
+    anchor: "Abstract"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [multiple-testing, batch, p-value-histogram, warn]

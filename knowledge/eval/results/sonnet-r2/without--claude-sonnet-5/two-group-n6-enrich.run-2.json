@@ -1,0 +1,257 @@
+{
+  "campaign": "sonnet-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n6-enrich",
+  "run": 2,
+  "startedAt": "2026-09-05T08:09:01.654Z",
+  "elapsedMs": 27556,
+  "outcome": "plan_submitted",
+  "planId": "pln-a009bbf2",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and outlier characterization of sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "How does sample_01's library depth (reported ~4x below median) affect count distribution, size factors, and PCA clustering relative to the other 11 samples in counts.csv, and does it group with its labeled condition or as an outlier?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Report per-sample library sizes (column sums) for all 12 samples from counts.csv, flagging sample_01 explicitly",
+          "Report DESeq2 size factors for all samples computed on the full 12-sample count matrix",
+          "Produce a PCA or sample-distance plot (e.g., rlog/vst-transformed) showing where sample_01 falls relative to its condition group",
+          "State explicitly whether sample_01 appears as a genuine biological outlier vs. a technical depth artifact, to inform the sensitivity analysis"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, all 12 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes are differentially expressed between AD lesional (n=6) and control (n=6) skin samples in counts.csv, using the full 12-sample cohort with standard DESeq2 median-of-ratios normalization?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Fit DESeq2 with design ~condition (lesional vs control) on raw integer counts from counts.csv joined to metadata.csv",
+          "Report full DE results table: log2FoldChange, p-value, BH-adjusted p-value (padj) for all ~12000 genes",
+          "Apply independent filtering; report number of genes at padj < 0.05 and |log2FC| > 1",
+          "Note sample_01's estimated size factor and Cook's distance influence on the fit"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DESeq2 sensitivity analysis excluding sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the DE results between AD lesional and control change materially when sample_01 (library size ~4x below median) is excluded, leaving an unbalanced 5 vs 6 (or 6 vs 5) comparison?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Refit DESeq2 with design ~condition on the 11 remaining samples after removing sample_01",
+          "Report the resulting DE table (log2FoldChange, padj) for all genes",
+          "Compare gene overlap (Jaccard or simple set overlap) and log2FC correlation of significant genes (padj<0.05) between this result and the full 12-sample result from T1S2",
+          "Flag any gene called significant only in one of the two analyses as sample_01-sensitive"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark pathway enrichment on robust DE signature",
+        "agent": "enrichment-agent",
+        "track": "2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea"
+        ],
+        "question": "Which of the 50 MSigDB human hallmark gene sets are enriched among genes ranked by DESeq2 test statistic (or log2FC) for the AD lesional vs control contrast, and are the enriched pathways consistent between the full-cohort and sample_01-excluded analyses?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Confirm the human hallmark GMT reference (50 HALLMARK_* gene sets, HGNC symbols) is present before running; if absent, report the gap rather than fabricate results",
+          "Run pre-ranked GSEA (fgsea) on the DESeq2 ranked gene list (by signed -log10(p) x sign(log2FC) or Wald statistic) from the full 12-sample result (T1S2) against all 50 hallmark sets",
+          "Repeat the same enrichment on the sample_01-excluded result (T1S3) and report which hallmark pathways are significant (padj<0.05) in both vs. only one",
+          "Report normalized enrichment score (NES), p-value, and adjusted p-value for every hallmark pathway tested, sorted by significance",
+          "Present a final gene-level and pathway-level summary that is explicit about which findings are robust to sample_01 and which are driven by it"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark enrichment",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "This is a bulk RNA-seq experiment (Salmon-derived gene-level counts, 12000 genes x 12 samples, 6 lesional AD vs 6 control, unpaired, single batch). The counts.csv and metadata.csv are staged inputs; sample_01 has a library size ~4x below the median, which is a QC-relevant outlier that could distort size-factor normalization and inflate variance for that sample specifically. Rather than silently dropping or silently keeping it, the plan runs a dedicated QC/outlier-characterization step first, then runs the DESeq2 differential expression twice — once with all 12 samples (using DESeq2's standard median-of-ratios normalization, which is robust to moderate library-size differences) and once as a sensitivity analysis excluding sample_01 — so the DE result is not hostage to a single low-depth sample. The two are compared to establish which DE genes are robust to this sample's presence versus driven by it. Enrichment against the 50 MSigDB human hallmark gene sets (the reference available for human) is then run on the robust DE result (ranked list, using fgsea/GSEA), giving both which genes and which hallmark pathways differ between lesional and control skin. All steps operate on human (Homo sapiens) data matching the human hallmark reference; no cross-species substitution is used."
+  },
+  "usage": {
+    "inputTokens": 138892,
+    "outputTokens": 2477,
+    "cacheCreationInputTokens": 77315,
+    "cacheReadInputTokens": 61541,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "pydeseq2",
+          "fgsea",
+          "clusterProfiler",
+          "gseapy"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark enrichment",
+          "analytical_narrative": "This is a bulk RNA-seq experiment (Salmon-derived gene-level counts, 12000 genes x 12 samples, 6 lesional AD vs 6 control, unpaired, single batch). The counts.csv and metadata.csv are staged inputs; sample_01 has a library size ~4x below the median, which is a QC-relevant outlier that could distort size-factor normalization and inflate variance for that sample specifically. Rather than silently dropping or silently keeping it, the plan runs a dedicated QC/outlier-characterization step first, then runs the DESeq2 differential expression twice — once with all 12 samples (using DESeq2's standard median-of-ratios normalization, which is robust to moderate library-size differences) and once as a sensitivity analysis excluding sample_01 — so the DE result is not hostage to a single low-depth sample. The two are compared to establish which DE genes are robust to this sample's presence versus driven by it. Enrichment against the 50 MSigDB human hallmark gene sets (the reference available for human) is then run on the robust DE result (ranked list, using fgsea/GSEA), giving both which genes and which hallmark pathways differ between lesional and control skin. All steps operate on human (Homo sapiens) data matching the human hallmark reference; no cross-species substitution is used.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and outlier characterization of sample_01",
+              "track": "1",
+              "step_type": "qc",
+              "question": "How does sample_01's library depth (reported ~4x below median) affect count distribution, size factors, and PCA clustering relative to the other 11 samples in counts.csv, and does it group with its labeled condition or as an outlier?",
+              "acceptance_criteria": [
+                "Report per-sample library sizes (column sums) for all 12 samples from counts.csv, flagging sample_01 explicitly",
+                "Report DESeq2 size factors for all samples computed on the full 12-sample count matrix",
+                "Produce a PCA or sample-distance plot (e.g., rlog/vst-transformed) showing where sample_01 falls relative to its condition group",
+                "State explicitly whether sample_01 appears as a genuine biological outlier vs. a technical depth artifact, to inform the sensitivity analysis"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, all 12 samples",
+              "track": "1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between AD lesional (n=6) and control (n=6) skin samples in counts.csv, using the full 12-sample cohort with standard DESeq2 median-of-ratios normalization?",
+              "acceptance_criteria": [
+                "Fit DESeq2 with design ~condition (lesional vs control) on raw integer counts from counts.csv joined to metadata.csv",
+                "Report full DE results table: log2FoldChange, p-value, BH-adjusted p-value (padj) for all ~12000 genes",
+                "Apply independent filtering; report number of genes at padj < 0.05 and |log2FC| > 1",
+                "Note sample_01's estimated size factor and Cook's distance influence on the fit"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "DESeq2 sensitivity analysis excluding sample_01",
+              "track": "1",
+              "step_type": "differential_expression",
+              "question": "Do the DE results between AD lesional and control change materially when sample_01 (library size ~4x below median) is excluded, leaving an unbalanced 5 vs 6 (or 6 vs 5) comparison?",
+              "acceptance_criteria": [
+                "Refit DESeq2 with design ~condition on the 11 remaining samples after removing sample_01",
+                "Report the resulting DE table (log2FoldChange, padj) for all genes",
+                "Compare gene overlap (Jaccard or simple set overlap) and log2FC correlation of significant genes (padj<0.05) between this result and the full 12-sample result from T1S2",
+                "Flag any gene called significant only in one of the two analyses as sample_01-sensitive"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark pathway enrichment on robust DE signature",
+              "track": "2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB human hallmark gene sets are enriched among genes ranked by DESeq2 test statistic (or log2FC) for the AD lesional vs control contrast, and are the enriched pathways consistent between the full-cohort and sample_01-excluded analyses?",
+              "acceptance_criteria": [
+                "Confirm the human hallmark GMT reference (50 HALLMARK_* gene sets, HGNC symbols) is present before running; if absent, report the gap rather than fabricate results",
+                "Run pre-ranked GSEA (fgsea) on the DESeq2 ranked gene list (by signed -log10(p) x sign(log2FC) or Wald statistic) from the full 12-sample result (T1S2) against all 50 hallmark sets",
+                "Repeat the same enrichment on the sample_01-excluded result (T1S3) and report which hallmark pathways are significant (padj<0.05) in both vs. only one",
+                "Report normalized enrichment score (NES), p-value, and adjusted p-value for every hallmark pathway tested, sorted by significance",
+                "Present a final gene-level and pathway-level summary that is explicit about which findings are robust to sample_01 and which are driven by it"
+              ],
+              "packages": [
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+id: R-0025
+title: "Suspected batch with no known batch variable: estimate surrogate variables and add them as covariates, never test on adjusted counts"
+assertion: >-
+  If a batch is suspected and no recorded processing variable explains the
+  sample structure, estimate surrogate variables from the counts with the
+  condition as the known factor. Add the surrogate variables to the design
+  formula as covariates beside the condition. Do not give the counts that a
+  removal method adjusted to the differential expression test. Such a test
+  does not account for the information that the adjustment consumed, and it
+  reports confidence that the data does not support. State the number of
+  surrogate variables and the reason for it in the plan, and keep the number
+  small in relation to the number of samples.
+modality: bulk_rna_seq
+conditions:
+  - field: batch
+    op: eq
+    value: suspected
+action:
+  step_type: model_design
+  parameters:
+    - name: surrogate_variables
+      value: as_covariates
+      default_source: "doi:10.1038/nrg2825"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0015
+    paraphrase: >-
+      The review describes surrogate variable analysis as a method that
+      estimates the unmeasured sources of variation from the data, when the
+      processing variables are not recorded, and that adds the estimates to
+      the statistical model as covariates. It warns that no such method
+      replaces a design where the conditions are spread across the batches.
+    anchor: "Statistical solutions"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0016
+    paraphrase: >-
+      When a method adjusts the data for a batch and keeps the group
+      difference, a test on the adjusted data gives p-values that are too
+      small, because the adjustment uses information that the later test does
+      not account for. The paper favors a batch term in the model over an
+      adjustment of the data.
+    anchor: "Abstract; Discussion"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [batch, design, surrogate-variables]

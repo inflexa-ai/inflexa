@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly frames the question as a genotype-by-treatment interaction, fits ~ genotype + treatment + genotype:treatment in DESeq2, tests the interaction coefficient, and then extracts simple effects within each genotype via a group-means reparameterization on the same filtered counts — exactly the reference approach, with an appropriate caveat that main effects are not interpretable as averages when the interaction is significant. QC (PCA colored/shaped by both factors, sample-distance heatmap, ID matching, outlier/batch flagging) precedes modeling, the filter (count ≥ 10 in ≥ 4 samples) is minimal and justified by the smallest group size, and raw counts go into the model with VST used only for visualization, though size-factor normalization inside DESeq2 is implied rather than stated. BH padj < 0.05 is stated with apeglm/ashr shrinkage and a fallback caveat. Weaknesses: the reference level for genotype/treatment is never declared; enrichment assumes Homo sapiens for a brain knockout study that is plausibly mouse, names no collection version and no gene-set size window; and the reporting acceptance criteria omit software versions."
+}

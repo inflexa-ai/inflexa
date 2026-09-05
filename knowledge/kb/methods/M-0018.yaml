@@ -1,0 +1,13 @@
+id: M-0018
+label: "ComBat-seq batch adjustment of raw counts"
+description: >-
+  Negative binomial batch adjustment that returns integer counts, with the
+  biological variables of interest kept in the model. Only for a downstream
+  use that needs adjusted counts, never as a substitute for a batch term in
+  the design.
+packages:
+  - name: sva
+    track: bioconductor
+    biotools: sva
+    version_range: ">=3.50"
+    bioconductor: "3.23"

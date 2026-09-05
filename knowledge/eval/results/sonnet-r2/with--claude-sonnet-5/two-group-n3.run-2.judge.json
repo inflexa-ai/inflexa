@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference almost exactly: DESeq2 negative-binomial Wald test on raw Salmon counts for an unpaired 3v3 single-batch design, with an edgeR QLF cross-check labeled secondary and no batch correction applied since none is declared. QC (blind VST, PCA on top 500 variable genes, sample-distance heatmap, library sizes) precedes testing with an explicit no-silent-removal policy, the low-count filter (>=10 counts in >=3 samples) is minimal and justified by the smallest group size, normalization is internal median-of-ratios with an explicit prohibition on pre-normalized input, and the design formula with control releveled as reference makes the contrast direction unambiguous. BH at alpha=0.05 is stated in results(), apeglm shrinkage is used for the reported fold change, selection is on padj only, and the plan explicitly refuses to loosen alpha while repeatedly stating the low-power caveat at n=3. The final report names methods, versions, design, thresholds, tested and significant gene counts, diagnostics, and design caveats. Enrichment was not requested and is arguably not warranted at this replicate count; the plan runs both ORA and preranked GSEA anyway, though it does so correctly (tested-gene universe, unthresholded stat-ranked list, named collections with versions, 15-500 size window) and hedges when few genes are significant, so the scope creep costs only modestly."
+}

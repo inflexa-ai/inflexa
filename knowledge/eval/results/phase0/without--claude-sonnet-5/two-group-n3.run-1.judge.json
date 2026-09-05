@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly selects a negative-binomial count model (DESeq2 primary, edgeR fallback) with empirical Bayes dispersion shrinkage for an unpaired 3v3 single-batch design, explicitly rejects a per-gene t-test, keeps alpha at 0.05/0.1 with BH, and applies apeglm/ashr shrinkage to the reported fold changes; the small-n power caveat is carried through rather than compensated for by moving the threshold. QC is dataset-specific and substantive (ID reconciliation of the 7-column/6-row discrepancy, library sizes, detected genes, PCA/sample correlation), though the outlier policy is 'flag' rather than a stated decision rule. Normalization is only implied by the phrase 'library-size normalization' inside the model and is never explicitly named as size factors/TMM nor is pre-normalized input explicitly excluded, and the design is given only as '~condition' without stating the reference level or contrast direction. The enrichment step is the weakest: no ORA universe, no gene-set size window, no collection version, and it asserts human gene sets although the organism is nowhere established for this liver dataset. Reporting is otherwise near-complete but omits software versions."
+}

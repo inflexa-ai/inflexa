@@ -1,0 +1,85 @@
+id: R-0095
+title: "GO over-representation of a discrete list: enrichGO with the tested genes as the universe, one named ontology, and rrvgo term reduction"
+assertion: >-
+  For a human or mouse dataset, when the question is about a discrete gene
+  list, run the Gene Ontology over-representation test with enrichGO. Set the
+  universe to the tested genes, name the ontology (biological process by
+  default), and map the genes with the organism annotation package. The GO
+  terms nest, thus one finding returns as many overlapping terms. Reduce the
+  significant terms to representative terms with rrvgo by semantic similarity,
+  and report the representative terms with the full table as a supplement.
+  The ranked test on the full list stays the first enrichment method.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: in
+    value: [human, mouse]
+action:
+  step_type: enrichment
+  method: M-0032
+  parameters:
+    - name: go_ontology
+      value: BP
+      default_source: "doi:10.1016/j.xinn.2021.100141"
+    - name: go_term_reduction
+      value: rrvgo_semantic_similarity
+      default_source: "doi:10.17912/micropub.biology.000811"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0010
+    when: "The full ranked list is available: the ranked test finds a coordinated small change that a list cutoff removes."
+  - method: M-0011
+    when: "The collection is not GO, for example the MSigDB Hallmark sets on a discrete list."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0053
+    paraphrase: >-
+      clusterProfiler gives enrichGO for an over-representation test against
+      one GO ontology with an organism annotation package, with a universe
+      argument for the background, and a simplify function that removes
+      redundant terms by semantic similarity.
+    anchor: "Functional enrichment analysis; Gene Ontology analysis"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0054
+    paraphrase: >-
+      rrvgo takes a list of GO terms with a score, computes the semantic
+      similarity between the terms, clusters them, and returns one
+      representative term per cluster, thus a long list of GO terms becomes
+      readable.
+    anchor: "Description; Methods"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0055
+    paraphrase: >-
+      A GO enrichment result holds many terms that are near each other in the
+      ontology, and this redundancy hides the result. REVIGO clusters the
+      terms by semantic similarity and keeps a representative of each cluster.
+    anchor: "Abstract; Introduction"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:citesAsAuthority
+    source: S-0065
+    paraphrase: >-
+      The Gene Ontology has three ontologies, biological process, molecular
+      function, and cellular component, each a directed acyclic graph in which
+      a gene annotated to a term is annotated to every parent term.
+    anchor: "The three ontologies; The structure of the ontologies"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, gene-ontology, universe, redundancy]

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies that a 1v1 design supports no dispersion estimate and therefore no valid test, and it explicitly forbids DESeq2/edgeR/limma testing, per-gene Poisson or Fisher substitutes, and any p-value or FDR column at the gene level, delivering size-factor-normalized counts and a descriptive log2FC ranking with an MA plot that exposes the count-dependence of the ratios. QC is appropriately scoped: library sizes, detection counts, size factors, and an explicit statement that PCA and sample-distance clustering are uninformative with two samples rather than producing them as theatre; the filter (>=10 counts in >=1 sample, tied to smallest group size, with retained-gene count reported) is minimal and justified, and median-of-ratios factors are computed on raw counts with no pre-scaling. There is no design formula because none is fittable, but the contrast is named explicitly (condition, numerator treated, denominator control) with the reference level set non-alphabetically, which is the right substitute. The main weakness is Step 3: running preranked GSEA with permutation p-values and BH adjustment on a ranking that has no inferential basis manufactures set-level significance from noise, and the caveats and conditional skip do not fully offset that; omitting enrichment entirely would have been the cleaner call. The final report is exemplary, leading with zero determinable DE genes, the reason, and a concrete replicated design (>=3, preferably >=5 per condition) with dispersion estimation, shrinkage, and BH."
+}

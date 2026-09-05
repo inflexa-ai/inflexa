@@ -1,0 +1,63 @@
+id: R-0004
+title: "TPM, FPKM, or RPKM input: limma on log values, never a count model"
+assertion: >-
+  If the expression values are TPM, FPKM, or RPKM, do not use DESeq2, edgeR, or
+  voom. The count models assume integer counts with a negative binomial
+  variance, and normalized abundances break that model. Use limma with
+  trend=TRUE on log2-transformed values, and ask for the raw counts or the
+  transcript quantifications when they exist.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: tpm_or_fpkm
+action:
+  step_type: differential_expression
+  method: M-0005
+  forbids: [M-0001, M-0002, M-0003, M-0004, M-0017, M-0019]
+  parameters:
+    - name: trend
+      value: true
+      default_source: "guide:limma/2026-05-19#limma-trend"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0001
+    paraphrase: >-
+      DESeq2 models the read counts with a negative binomial distribution whose
+      mean is scaled by a sample-specific size factor. The model takes raw
+      counts as input, and normalized values are not a valid input.
+    anchor: "Methods, Model and normalization"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0006
+    paraphrase: >-
+      voom computes precision weights from the mean-variance relation of
+      log-counts per million, which it estimates from the raw counts and the
+      library sizes. The method takes counts, not pre-normalized abundances.
+    anchor: "Methods, voom"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0008
+    paraphrase: >-
+      The guide gives the limma-trend approach for log-expression values that
+      are already on a normalized scale: eBayes with trend=TRUE fits a
+      mean-variance trend to the prior variances.
+    anchor: "Differential expression, limma-trend"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [data-state, method-selection]

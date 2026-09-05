@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 3,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The plan matches the design well: DESeq2 on raw counts with a single condition factor, unpaired n=6 vs 6, single batch explicitly noted as requiring no blocking term, and the shallow sample handled exactly as the reference asks — retained as primary, inspected on library size, detection rate and VST PCA, with a stated leave-one-out sensitivity run rather than a silent drop. Weak points: no low-count pre-filter is specified at all (DESeq2 independent filtering is conflated with it), and no LFC shrinkage (apeglm) is mentioned, with the |log2FC|>1 cut applied post hoc instead of via lfcThreshold; the claim that sample_01 has a \"larger size factor\" is also backwards. Enrichment is well specified — preranked GSEA on the full ranked list with the ranking statistic named, ORA with an explicit background — but omits the MSigDB version and the 15–500 set-size window, and the ORA universe is \"all 12000 profiled genes\" rather than the genes actually tested. Reporting covers design, thresholds, significant-gene counts and small-sample caveats, but names no software or gene-set database versions."
+}

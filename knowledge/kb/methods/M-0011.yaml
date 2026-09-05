@@ -1,0 +1,15 @@
+id: M-0011
+label: "Over-representation analysis with an explicit universe"
+edam_operation: EDAM:operation_3501
+description: >-
+  Hypergeometric over-representation of a discrete gene list against gene sets,
+  with the universe restricted to the genes that the differential expression test
+  actually tested, and Benjamini-Hochberg adjustment.
+packages:
+  - name: clusterProfiler
+    track: bioconductor
+    biotools: clusterprofiler
+    version_range: ">=4.10"
+    bioconductor: "3.23"
+templates:
+  - tpl-ora-universe

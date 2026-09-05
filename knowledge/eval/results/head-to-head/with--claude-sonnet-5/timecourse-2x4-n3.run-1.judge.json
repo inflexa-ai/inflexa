@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 0,
+    "qc_present": 0,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 0,
+    "report_completeness": 0
+  },
+  "rationale": "No plan was submitted; the planner ended in a clarification request without proposing any analysis. There is nothing to evaluate against any of the eight criteria, so each scores 0, including enrichment, since the omission is not a stated deliberate choice but an absence of a plan entirely. The design here (2 conditions x 4 time points, 3 replicates, raw counts) is fully specified and standard, so a clarification stop was not warranted; an LRT of ~condition+time+condition:time against ~condition+time could have been proposed directly."
+}

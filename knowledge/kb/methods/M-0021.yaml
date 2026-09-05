@@ -1,0 +1,15 @@
+id: M-0021
+label: "camera competitive gene set test on the limma fit"
+edam_operation: EDAM:operation_3501
+description: >-
+  A competitive gene set test that estimates the inter-gene correlation within
+  each set from the data and adjusts the test for it, on a limma linear model
+  fit.
+packages:
+  - name: limma
+    track: bioconductor
+    biotools: limma
+    version_range: ">=3.60"
+    bioconductor: "3.23"
+templates:
+  - tpl-camera-hallmark

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the paired structure and specifies a subject-blocked model (~subject + condition in DESeq2, with an edgeR/limma blocking fallback), explicitly forbidding an unpaired two-group test, which matches the reference. QC is present but thin: library sizes and 'PCA or sample correlation to check pairing' are named without coloring by condition/subject or any stated outlier policy. The filter (count >= 10 in at least 5 of 10 samples) is minimal and tied to group size, and raw counts are correctly fed to the count model with no pre-normalization, though size factors/TMM are never named as the in-model normalization. BH at a pre-specified padj < 0.05 is stated, but no LFC shrinkage (lfcShrink/apeglm) is requested for the reported effect sizes, and the reference level for condition is never explicitly set. Enrichment names plausible collections and correctly restricts the universe to the tested background, but omits versions and gene-set size windows; the report covers design, thresholds, up/down counts and n=5 caveats but not software versions."
+}

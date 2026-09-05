@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan opens correctly: it names the n=1-per-group design, states that within-group variance is unestimable, and makes T1S1 a purely descriptive normalized fold-change ranking with explicit prohibition of p-values, good pairwise QC (library sizes, size factors, MA plot, treated-vs-control scatter, Pearson/Spearman, count densities), and a minimal justified filter (sum raw counts >= 10, with the retained count reported). Normalization is handled properly (median-of-ratios/TMM size factors reported; no pre-normalized values fed to a count model). However, T1S2 then runs edgeR exactTest with assumed BCVs and reports BH-adjusted FDR counts at alpha 0.05/0.1, and even calls the BCV=0.4 count 'the upper bound on any claim' — this is exactly the fabricated-inference the reference forbids, and the sensitivity framing does not undo the fact that p-values and significance counts are produced and quoted. The plan also never states the replication level that would license inference (at least two, preferably three or more per group), and it layers ORA plus preranked enrichment on unreplicated fold changes; the universe, collection, version and BH correction are specified well, but a size window is missing and the enrichment is arguably not warranted at all here. Reporting is otherwise complete on methods, versions, thresholds and design caveats."
+}

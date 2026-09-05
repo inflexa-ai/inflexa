@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the unpaired, single-batch, 6v6 raw-count design with DESeq2 Wald on ~condition plus an edgeR QL cross-check, and it handles the shallow sample exactly as the reference requires: keep it in the primary model, inspect it on PCA, distance heatmap, library size, detected genes and size factor, with removal only on stated evidence, plus a leave-one-out sensitivity run. Filtering is minimal and justified (>=10 counts in >=6 samples, the smallest group size), normalization stays inside the models (median-of-ratios and TMM, no pre-scaling), the reference level and contrast direction are explicit, and BH at alpha 0.05 with apeglm shrinkage (ashr fallback) is specified with NA causes broken down. Enrichment is preranked fgsea on the full tested list with the Wald statistic named as the ranking metric, Hallmark restricted to 15-500 after intersection with the tested universe, mapping rate and provenance reported; the only softness is the unresolved gene-set availability, though the fallback is honest rather than fabricated. The consolidated report front-loads versions, design, thresholds, tested and significant counts, sample_01 handling, and a concrete limitations paragraph, meeting the reference on completeness."
+}

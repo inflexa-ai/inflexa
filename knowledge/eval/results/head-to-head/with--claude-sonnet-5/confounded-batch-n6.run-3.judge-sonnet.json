@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies perfect confounding, refuses to fit a batch term or apply ComBat/SVA/removeBatchEffect, and labels every result as confounded rather than causal, matching the reference exactly. QC (blind VST, PCA colored by both condition and batch, sample distances, library sizes) precedes testing with explicit commentary on the confound. Filtering (>=10 counts in >=6 samples) is minimal and justified by group size, and normalization is done inside DESeq2/edgeR via size factors/TMM with no pre-adjustment. Design formula (~condition), reference level, and contrast are explicit; BH FDR at 0.05 with apeglm shrinkage and independent filtering is properly specified, though running edgeR in parallel is extra but harmless and not penalized much. Enrichment appropriately uses ORA with a stated universe and GSVA rather than preranked GSEA (justified since no valid rank metric exists here), though the enrichment step somewhat undercuts the confounding stance by treating DE/pathway hits as biologically interpretable gene sets without repeating the caveat as strongly as ideal — still reasonably handled. The final report is thorough, naming methods, versions, thresholds, gene counts, and caveats, fully satisfying completeness."
+}

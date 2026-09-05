@@ -1,0 +1,15 @@
+id: M-0017
+label: "dream mixed model (variancePartition)"
+edam_operation: EDAM:operation_3223
+description: >-
+  voom weights with a linear mixed model that holds a random effect for the
+  subject, for repeated measures with more than one random term or an
+  unbalanced block.
+packages:
+  - name: variancePartition
+    track: bioconductor
+    biotools: variancepartition
+    version_range: ">=1.40"
+    bioconductor: "3.23"
+templates:
+  - tpl-dream-repeated

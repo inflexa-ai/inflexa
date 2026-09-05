@@ -1,0 +1,57 @@
+id: R-0044
+title: "Log-scale or abundance data: Benjamini-Hochberg adjustment through limma topTable with adjust.method BH"
+assertion: >-
+  With expression values that are already on a normalized log scale, take
+  the results from the limma fit with topTable and adjust.method set to BH,
+  which is the default. The adjusted p-value controls the false discovery
+  rate over the genes in the fit, and a cutoff of 0.05 gives a set in which
+  at most 5 percent of the genes are expected false. limma has no independent
+  filter, thus remove the genes with low expression before the fit, and the
+  adjustment then runs over the tested genes only. Report the number of
+  tested genes beside the number of significant genes.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [tpm_or_fpkm, log_normalized]
+action:
+  step_type: multiple_testing
+  parameters:
+    - name: adjustment
+      value: BH
+      default_source: "guide:limma/2026-05-19#statistics-for-differential-expression"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0008
+    paraphrase: >-
+      The guide states that topTable adjusts the p-values for multiple
+      testing with the Benjamini and Hochberg method by default, that a
+      cutoff of 0.05 on the adjusted p-value gives an expected proportion of
+      false discoveries of 5 percent in the selected genes, and that
+      decideTests applies the same adjustment across the genes.
+    anchor: "Chapter 13, Statistics for Differential Expression, Summary; Multiple Testing Across Contrasts"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0019
+    paraphrase: >-
+      The paper defines the false discovery rate as the expected proportion
+      of false rejections among the rejected hypotheses, and it gives a
+      step-up procedure on the ordered p-values that controls it at a chosen
+      level.
+    anchor: "Abstract; Section 2, The false discovery rate; Section 3, The procedure"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [multiple-testing, limma]

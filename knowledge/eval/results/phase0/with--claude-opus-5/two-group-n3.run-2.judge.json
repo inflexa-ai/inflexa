@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference precisely: DESeq2 Wald on raw Salmon gene-level counts with ~condition, explicit control reference level and named numerator/denominator contrast, minimal >=10-in-3 filter, median-of-ratios normalization inside the model with an explicit ban on pre-normalization, BH at alpha 0.05 passed to results(), and apeglm shrinkage with ashr fallback, plus an edgeR QL cross-check with TMM as an independent check rather than a union. QC precedes the model with blind VST, PCA on top-500 variable genes, sample-distance heatmap, library sizes and zero fractions, and an explicit policy that dropping a sample leaves n=2 and must be reported. The n=3 power limitation is addressed quantitatively via dataset-fitted dispersions and a non-circular power table, with no loosening of alpha. Enrichment is preranked fgsea on the full tested list with the Wald statistic justified, Hallmark human, 15-500 size window applied after intersection, ORA universe restricted to tested genes, provenance and mapping counts required, and a no-fabrication rule if no collection resolves; only slight deduction because collection version is contingent on runtime resolution. The report step names methods, observed session versions, design, thresholds, tested and significant counts, outlier-NA vs independent-filter NA separately, degraded steps, and leads with the power caveat."
+}

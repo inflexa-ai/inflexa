@@ -1,0 +1,67 @@
+id: R-0063
+title: "Interaction with three or fewer replicates per cell: low power for the interaction term, report the simple effects beside it"
+assertion: >-
+  With an interaction question and three or fewer replicates in a cell of the
+  design, the interaction term has low power. The interaction coefficient is
+  a difference of two differences, thus its standard error is larger than
+  the standard error of a main effect at the same replicate number. Keep the
+  interaction test as the primary result, but report the simple effects in
+  each level beside it, with the same threshold. State the power limit in
+  the report, and do not loosen the threshold to compensate. A gene that is
+  absent from the interaction list is not shown to have the same effect in
+  both levels.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: interaction
+    op: eq
+    value: true
+  - field: n_per_group_max
+    op: lte
+    value: 3
+action:
+  step_type: differential_expression
+  parameters:
+    - name: interaction_power_caution
+      value: true
+      default_source: "doi:10.1261/rna.053959.115"
+    - name: report_simple_effects
+      value: true
+      default_source: "vignette:DESeq2/1.52.0#interactions"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0011
+    paraphrase: >-
+      With three replicates per condition, most tools find only 20 to 40
+      percent of the genes that the full set of replicates finds, but more
+      than 85 percent of the genes with a change above fourfold. The study
+      recommends at least six replicates, and at least 12 when a small
+      change matters.
+    anchor: "Abstract; Results, Tool performance; Discussion"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0077
+    paraphrase: >-
+      On simulated counts from six public datasets, the power of the
+      differential expression tools rises with the sample size, and a larger
+      sample size raises the power more than a larger sequencing depth. A
+      paired design raises the power further.
+    anchor: "Abstract; Results, Power analysis"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [design, interaction, replicates, power]

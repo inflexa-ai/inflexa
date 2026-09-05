@@ -1,0 +1,50 @@
+id: R-0057
+title: "Population-scale cohorts: TMM normalization for the limma-voom path"
+assertion: >-
+  If each group holds 50 or more samples and the test is limma-voom, normalize
+  with the TMM scaling factors of edgeR before voom. The factors enter the
+  log counts per million that voom models, and the counts stay untransformed.
+  Do not pre-normalize the counts with a size factor from a different method.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 50
+action:
+  step_type: normalize
+  method: M-0009
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0006
+    paraphrase: >-
+      voom computes the log counts per million from the counts and the
+      normalized library sizes, where the library sizes are scaled by the TMM
+      factors of edgeR, and it models the mean-variance trend of those values.
+    anchor: "Methods, Normalization; voom: variance modeling at the observation-level"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0041
+    paraphrase: >-
+      The workflow applies the TMM normalization to the DGEList before the
+      voom transformation and the linear model, and it keeps the counts as
+      counts with the scaling factors beside them.
+    anchor: "Normalising gene expression distributions; Removing heteroscedascity from count data"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [normalization, population-scale]

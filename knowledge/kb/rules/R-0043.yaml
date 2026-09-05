@@ -1,0 +1,60 @@
+id: R-0043
+title: "Select the results by the adjusted p-value, not by the unadjusted p-value or by the fold change alone"
+assertion: >-
+  Select the differentially expressed genes by the adjusted p-value at the
+  stated false discovery rate, for example padj below 0.05, or below 0.1
+  with the DESeq2 default alpha. Do not select by the unadjusted p-value,
+  because with tens of thousands of tests a cutoff of 0.05 on the raw
+  p-value gives hundreds of false positives by chance alone. Do not select
+  by the fold change alone, because a large estimate from a low count gene
+  carries no evidence of an effect. If the question includes an effect size
+  threshold, test against it inside the model, as rule R-0037 states.
+  Report the cutoff and the number of genes that pass it.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: multiple_testing
+  parameters:
+    - name: filter_results_by
+      value: adjusted_pvalue
+      default_source: "doi:10.1111/j.2517-6161.1995.tb02031.x"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0019
+    paraphrase: >-
+      The paper defines the false discovery rate as the expected proportion
+      of false rejections among the rejected hypotheses, gives a step-up
+      procedure on the ordered p-values that controls it, and shows that the
+      procedure keeps more power than the control of the family-wise error
+      rate.
+    anchor: "Abstract; Section 2, The false discovery rate; Section 3, The procedure"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette selects the genes by the Benjamini-Hochberg adjusted
+      p-value, states that the cutoff on padj must match the alpha of
+      results, and explains that a set with padj below 0.1 holds 10 percent
+      false positives in expectation. It also states that the log2 fold
+      change of a low count gene is noisy, and that the shrinkage is for the
+      ranking and the visualization.
+    anchor: "p-values and adjusted p-values; Log fold change shrinkage for visualization and ranking"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [multiple-testing, thresholds]

@@ -1,0 +1,541 @@
+{
+  "campaign": "head-to-head",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "batch-balanced-n6",
+  "run": 3,
+  "startedAt": "2026-09-05T10:57:26.394Z",
+  "elapsedMs": 63486,
+  "outcome": "plan_submitted",
+  "planId": "pln-5db3d0a5",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (VST, PCA, distances)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 12 kidney samples (6 treated, 6 control) separate by condition on a blind-VST PCA, and does the 2-level processing batch align with a major axis of variance or with condition (i.e. is it really balanced and non-confounding)?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Raw-count bulk RNA-seq QC per M-0006: blind VST + PCA + sample-distance heatmap colored by condition and batch, run before modeling.",
+          "status": "grounded",
+          "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Blind VST computed on raw counts and a PCA plot (colored by condition, shaped/colored by batch) produced on the top 500 variable genes",
+          "Sample-to-sample Euclidean distance heatmap produced with condition and batch annotations",
+          "Library size per sample reported and any sample departing >2x from median flagged",
+          "Batch balance confirmed against metadata.csv (3 treated + 3 control per batch level, or as actually observed) and reported explicitly"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Filter, build design (~batch+condition), DESeq2 Wald test, apeglm shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which of the 12000 kidney genes are differentially expressed between treated (6) and control (6) samples, after accounting for the 2-level balanced processing batch as a covariate?",
+        "grounding": {
+          "claims": [
+            "R-0002@087b",
+            "R-0029@fa6d",
+            "R-0006@c407",
+            "R-0036@9786",
+            "R-0026@762e",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0010@91a5",
+            "R-0043@4f55",
+            "R-0083@12de",
+            "R-0085@c24d",
+            "R-0087@c53d"
+          ],
+          "reason": "Known-balanced batch, unpaired, 6v6, salmon-derived gene counts (no per-sample quant files to re-import): DESeq2 Wald test on ~batch+condition, apeglm shrinkage of condition coefficient, BH FDR 0.05 with independent filtering, per M-0001/M-0007/M-0008/M-0012/M-0013 and design rules R-0006/R-0012/R-0036.",
+          "status": "grounded",
+          "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Pre-filter keeps genes with >=10 counts in >=6 samples (smallest group size) before DESeqDataSetFromMatrix",
+          "Design formula is ~ batch + condition with condition releveled so 'control' is the explicit reference",
+          "DESeq() run with default median-of-ratios normalization (no pre-normalized/batch-adjusted counts fed to the model)",
+          "results() called with contrast=c('condition','treated','control') and alpha=0.05",
+          "apeglm lfcShrink applied to the condition coefficient; results table carries both shrunken and unshrunken log2FoldChange plus lfcSE",
+          "p-value histogram of the Wald test plotted and its shape (flat/left-skewed vs irregular) reported before adjustment",
+          "Any gene with an NA padj from Cook's-distance outlier flagging (small n<7/group) reported apart from independent-filtering NAs",
+          "MA plot and dispersion plot produced as fit diagnostics",
+          "Full DESeq2 results table (gene, baseMean, log2FC shrunken/unshrunken, lfcSE, stat, pvalue, padj) exported"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR quasi-likelihood cross-check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Does an independent edgeR quasi-likelihood F-test on the same ~batch+condition design and the same 12 kidney samples agree with the DESeq2 call set, and what is the size of the high-confidence intersection vs the method-specific genes?",
+        "grounding": {
+          "claims": [
+            "R-0001@9a17",
+            "R-0042@54e1"
+          ],
+          "reason": "6 replicates/group is within the 2-11 range where DESeq2 and edgeR QL each serve as the other's robustness check; report the intersection as the high-confidence set per R-0042.",
+          "status": "grounded",
+          "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Same pre-filtered count matrix and design (~batch+condition) used as in T1S2",
+          "TMM normalization, glmQLFit and glmQLFTest run on the condition coefficient",
+          "Genes at FDR<0.05 reported for edgeR and compared against the DESeq2 padj<0.05 list from T1S2",
+          "Venn-style overlap counts (DESeq2-only, edgeR-only, intersection) reported; intersection labeled as the high-confidence set"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA (Hallmark, then Reactome, GO BP) on DESeq2 Wald statistic",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which biological pathways/processes are coordinately shifted between treated and control kidney samples, ranked on the full DESeq2 gene list (not just the significant subset)?",
+        "grounding": {
+          "claims": [
+            "R-0007@b99a",
+            "R-0045@f652",
+            "R-0047@fd9d",
+            "R-0048@500d",
+            "R-0098@d01b",
+            "R-0052@620a",
+            "R-0099@0a77",
+            "R-0103@93aa",
+            "R-0105@c4a8"
+          ],
+          "reason": "Disputed ranking metric (R-0007) resolved as the DESeq2 Wald statistic (stat) per R-0099; Hallmark first then Reactome/GO per R-0048/R-0098, using the human hallmark and Reactome GMTs staged in refs; GO BP GMT staged as a third collection since KEGG is not served locally beyond MEDICUS.",
+          "status": "grounded",
+          "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "All tested genes (post pre-filter) ranked by the DESeq2 Wald 'stat' column (chosen ranking metric, stated explicitly in output)",
+          "fgsea run against MSigDB Hallmark human gene sets (50 sets) first; gene sets restricted to 15-500 members among tested genes",
+          "Second pass run against Reactome human pathways and MSigDB GO Biological Process sets, same size window and BH correction",
+          "Leading-edge genes reported for every significant (padj<0.05) set in each collection",
+          "Redundant/overlapping significant sets collapsed to representative sets (e.g. by leading-edge Jaccard overlap), full table kept as supplement",
+          "Report states gene-set collection name and version/date, ranking metric, universe (tested genes), and size window",
+          "If fewer than ~50 genes pass padj<0.05 in T1S2, explicitly note that an over-representation analysis was NOT run for that reason and only the ranked (fgsea) result is reported"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Consolidated DE + enrichment report with reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "fgsea"
+        ],
+        "question": "What is the final, reproducible summary of treated-vs-control differential expression and pathway enrichment in kidney tissue, accounting for the balanced processing batch?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0086@becf",
+            "R-0087@c53d",
+            "R-0085@c24d",
+            "R-0105@c4a8",
+            "R-0042@54e1"
+          ],
+          "reason": "Report step consolidates all reporting rules returned by the knowledge service: named method/versions/design/thresholds, fit diagnostics, shrunken vs unshrunken LFC, enrichment provenance, and a full reproducibility record.",
+          "status": "grounded",
+          "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Report states: method (DESeq2 Wald + apeglm, edgeR QL cross-check), package versions, design formula (~batch+condition), contrast (condition treated vs control, batch as covariate), thresholds (padj<0.05), number of genes tested after filtering, number of DE genes per method and the overlap",
+          "Fit diagnostics (MA plot, dispersion plot) and the p-value histogram included before the gene tables",
+          "Gene table includes shrunken and unshrunken log2FC with lfcSE, ranked by shrunken log2FC",
+          "Enrichment section states gene-set database names/versions, ranking metric, universe, size window, and lists leading-edge genes for significant sets",
+          "Explicit caveat that enrichment method choice affects results, and that the ORA/GSEA distinction (or its absence, if <50 DE genes) is stated",
+          "Reproducibility record includes sessionInfo-equivalent (R package versions), any random seeds used, and gene-set collection versions/dates",
+          "Explicit note that gene-level counts (not per-sample transcript quantifications) were the input, so transcript-length-offset import via tximport could not be performed"
+        ]
+      }
+    ],
+    "title": "Kidney treated vs control DE with batch-balanced design",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq kidney tissue, 6 treated vs 6 control samples, salmon-derived raw gene-level counts (12000 genes x 12 samples in counts.csv; metadata.csv carries condition and a 2-level batch that is balanced across conditions). Because the input is already gene-level counts (no per-sample transcript-level quantification files available to re-import with tximport), the DESeq2 path proceeds directly from the count matrix using the knowledge-service-recommended design ~ batch + condition, with batch as a fixed covariate (R-0006, R-0012) rather than removing it from the counts. The plan runs: (1) sample-structure QC (blind VST, PCA, sample-distance heatmap colored by condition and batch) to confirm the batch is a real balanced covariate and to catch outliers before modeling; (2) minimal low-count pre-filtering; (3) DESeq2 median-of-ratios normalization built into the same model as (4) the Wald test on the condition coefficient with the explicit reference level and named contrast (treated vs control); (5) apeglm shrinkage of the condition log2FC; (6) BH-adjusted results with independent filtering at alpha 0.05, plus the p-value histogram diagnostic; (7) an edgeR quasi-likelihood F-test on the same design as a robustness cross-check, reporting the DESeq2/edgeR overlap as the high-confidence set (R-0001, R-0042); (8) preranked fgsea against MSigDB Hallmark (staged locally) using the DESeq2 Wald statistic as the ranking metric, followed by Reactome and GO BP as secondary collections, each with the size window 15-500 and BH correction; (9) a final report step consolidating diagnostics, gene tables (shrunken and unshrunken LFC), enrichment tables with leading-edge genes, and a full reproducibility record (session info, seed, package and gene-set-collection versions). tximport-based transcript-length offset import (R-0018) is not applicable because only gene-level count and metadata CSVs are provided, not per-sample salmon quant files — this is noted as a limitation in the report rather than silently skipped."
+  },
+  "usage": {
+    "inputTokens": 610596,
+    "outputTokens": 5663,
+    "cacheCreationInputTokens": 139052,
+    "cacheReadInputTokens": 471448,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "known_balanced",
+        "blocking_factor": "batch"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "tximport",
+          "clusterProfiler",
+          "rrvgo",
+          "edgeR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "GSVA"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene length"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtf"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "annotation human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with batch-balanced design",
+          "analytical_narrative": "The dataset is bulk RNA-seq kidney tissue, 6 treated vs 6 control samples, salmon-derived raw gene-level counts (12000 genes x 12 samples in counts.csv; metadata.csv carries condition and a 2-level batch that is balanced across conditions). Because the input is already gene-level counts (no per-sample transcript-level quantification files available to re-import with tximport), the DESeq2 path proceeds directly from the count matrix using the knowledge-service-recommended design ~ batch + condition, with batch as a fixed covariate (R-0006, R-0012) rather than removing it from the counts. The plan runs: (1) sample-structure QC (blind VST, PCA, sample-distance heatmap colored by condition and batch) to confirm the batch is a real balanced covariate and to catch outliers before modeling; (2) minimal low-count pre-filtering; (3) DESeq2 median-of-ratios normalization built into the same model as (4) the Wald test on the condition coefficient with the explicit reference level and named contrast (treated vs control); (5) apeglm shrinkage of the condition log2FC; (6) BH-adjusted results with independent filtering at alpha 0.05, plus the p-value histogram diagnostic; (7) an edgeR quasi-likelihood F-test on the same design as a robustness cross-check, reporting the DESeq2/edgeR overlap as the high-confidence set (R-0001, R-0042); (8) preranked fgsea against MSigDB Hallmark (staged locally) using the DESeq2 Wald statistic as the ranking metric, followed by Reactome and GO BP as secondary collections, each with the size window 15-500 and BH correction; (9) a final report step consolidating diagnostics, gene tables (shrunken and unshrunken LFC), enrichment tables with leading-edge genes, and a full reproducibility record (session info, seed, package and gene-set-collection versions). tximport-based transcript-length offset import (R-0018) is not applicable because only gene-level count and metadata CSVs are provided, not per-sample salmon quant files — this is noted as a limitation in the report rather than silently skipped.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC (VST, PCA, distances)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 12 kidney samples (6 treated, 6 control) separate by condition on a blind-VST PCA, and does the 2-level processing batch align with a major axis of variance or with condition (i.e. is it really balanced and non-confounding)?",
+              "acceptance_criteria": [
+                "Blind VST computed on raw counts and a PCA plot (colored by condition, shaped/colored by batch) produced on the top 500 variable genes",
+                "Sample-to-sample Euclidean distance heatmap produced with condition and batch annotations",
+                "Library size per sample reported and any sample departing >2x from median flagged",
+                "Batch balance confirmed against metadata.csv (3 treated + 3 control per batch level, or as actually observed) and reported explicitly"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Raw-count bulk RNA-seq QC per M-0006: blind VST + PCA + sample-distance heatmap colored by condition and batch, run before modeling."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Filter, build design (~batch+condition), DESeq2 Wald test, apeglm shrinkage",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 kidney genes are differentially expressed between treated (6) and control (6) samples, after accounting for the 2-level balanced processing batch as a covariate?",
+              "acceptance_criteria": [
+                "Pre-filter keeps genes with >=10 counts in >=6 samples (smallest group size) before DESeqDataSetFromMatrix",
+                "Design formula is ~ batch + condition with condition releveled so 'control' is the explicit reference",
+                "DESeq() run with default median-of-ratios normalization (no pre-normalized/batch-adjusted counts fed to the model)",
+                "results() called with contrast=c('condition','treated','control') and alpha=0.05",
+                "apeglm lfcShrink applied to the condition coefficient; results table carries both shrunken and unshrunken log2FoldChange plus lfcSE",
+                "p-value histogram of the Wald test plotted and its shape (flat/left-skewed vs irregular) reported before adjustment",
+                "Any gene with an NA padj from Cook's-distance outlier flagging (small n<7/group) reported apart from independent-filtering NAs",
+                "MA plot and dispersion plot produced as fit diagnostics",
+                "Full DESeq2 results table (gene, baseMean, log2FC shrunken/unshrunken, lfcSE, stat, pvalue, padj) exported"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+                "claims": [
+                  "R-0002@087b",
+                  "R-0029@fa6d",
+                  "R-0006@c407",
+                  "R-0036@9786",
+                  "R-0026@762e",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0010@91a5",
+                  "R-0043@4f55",
+                  "R-0083@12de",
+                  "R-0085@c24d",
+                  "R-0087@c53d"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Known-balanced batch, unpaired, 6v6, salmon-derived gene counts (no per-sample quant files to re-import): DESeq2 Wald test on ~batch+condition, apeglm shrinkage of condition coefficient, BH FDR 0.05 with independent filtering, per M-0001/M-0007/M-0008/M-0012/M-0013 and design rules R-0006/R-0012/R-0036."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "edgeR quasi-likelihood cross-check",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Does an independent edgeR quasi-likelihood F-test on the same ~batch+condition design and the same 12 kidney samples agree with the DESeq2 call set, and what is the size of the high-confidence intersection vs the method-specific genes?",
+              "acceptance_criteria": [
+                "Same pre-filtered count matrix and design (~batch+condition) used as in T1S2",
+                "TMM normalization, glmQLFit and glmQLFTest run on the condition coefficient",
+                "Genes at FDR<0.05 reported for edgeR and compared against the DESeq2 padj<0.05 list from T1S2",
+                "Venn-style overlap counts (DESeq2-only, edgeR-only, intersection) reported; intersection labeled as the high-confidence set"
+              ],
+              "packages": [
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+                "claims": [
+                  "R-0001@9a17",
+                  "R-0042@54e1"
+                ],
+                "reason": "6 replicates/group is within the 2-11 range where DESeq2 and edgeR QL each serve as the other's robustness check; report the intersection as the high-confidence set per R-0042."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA (Hallmark, then Reactome, GO BP) on DESeq2 Wald statistic",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways/processes are coordinately shifted between treated and control kidney samples, ranked on the full DESeq2 gene list (not just the significant subset)?",
+              "acceptance_criteria": [
+                "All tested genes (post pre-filter) ranked by the DESeq2 Wald 'stat' column (chosen ranking metric, stated explicitly in output)",
+                "fgsea run against MSigDB Hallmark human gene sets (50 sets) first; gene sets restricted to 15-500 members among tested genes",
+                "Second pass run against Reactome human pathways and MSigDB GO Biological Process sets, same size window and BH correction",
+                "Leading-edge genes reported for every significant (padj<0.05) set in each collection",
+                "Redundant/overlapping significant sets collapsed to representative sets (e.g. by leading-edge Jaccard overlap), full table kept as supplement",
+                "Report states gene-set collection name and version/date, ranking metric, universe (tested genes), and size window",
+                "If fewer than ~50 genes pass padj<0.05 in T1S2, explicitly note that an over-representation analysis was NOT run for that reason and only the ranked (fgsea) result is reported"
+              ],
+              "packages": [
+                "fgsea",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+                "claims": [
+                  "R-0007@b99a",
+                  "R-0045@f652",
+                  "R-0047@fd9d",
+                  "R-0048@500d",
+                  "R-0098@d01b",
+                  "R-0052@620a",
+                  "R-0099@0a77",
+                  "R-0103@93aa",
+                  "R-0105@c4a8"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "Disputed ranking metric (R-0007) resolved as the DESeq2 Wald statistic (stat) per R-0099; Hallmark first then Reactome/GO per R-0048/R-0098, using the human hallmark and Reactome GMTs staged in refs; GO BP GMT staged as a third collection since KEGG is not served locally beyond MEDICUS."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Consolidated DE + enrichment report with reproducibility record",
+              "track": "T3",
+              "step_type": "report",
+              "question": "What is the final, reproducible summary of treated-vs-control differential expression and pathway enrichment in kidney tissue, accounting for the balanced processing batch?",
+              "acceptance_criteria": [
+                "Report states: method (DESeq2 Wald + apeglm, edgeR QL cross-check), package versions, design formula (~batch+condition), contrast (condition treated vs control, batch as covariate), thresholds (padj<0.05), number of genes tested after filtering, number of DE genes per method and the overlap",
+                "Fit diagnostics (MA plot, dispersion plot) and the p-value histogram included before the gene tables",
+                "Gene table includes shrunken and unshrunken log2FC with lfcSE, ranked by shrunken log2FC",
+                "Enrichment section states gene-set database names/versions, ranking metric, universe, size window, and lists leading-edge genes for significant sets",
+                "Explicit caveat that enrichment method choice affects results, and that the ORA/GSEA distinction (or its absence, if <50 DE genes) is stated",
+                "Reproducibility record includes sessionInfo-equivalent (R package versions), any random seeds used, and gene-set collection versions/dates",
+                "Explicit note that gene-level counts (not per-sample transcript quantifications) were the input, so transcript-length-offset import via tximport could not be performed"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0086@becf",
+                  "R-0087@c53d",
+                  "R-0085@c24d",
+                  "R-0105@c4a8",
+                  "R-0042@54e1"
+                ],
+                "reason": "Report step consolidates all reporting rules returned by the knowledge service: named method/versions/design/thresholds, fit diagnostics, shrunken vs unshrunken LFC, enrichment provenance, and a full reproducibility record."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+  }
+}

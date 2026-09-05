@@ -1,0 +1,58 @@
+id: R-0037
+title: "A fold change threshold belongs in the test: lfcThreshold or TREAT, not a post-hoc filter on the estimate"
+assertion: >-
+  If the question asks for the genes with an effect of at least a stated
+  size, test against that threshold inside the model. In DESeq2, pass the
+  threshold as lfcThreshold to results, and to lfcShrink for the posterior
+  probability. In edgeR and in limma, use glmTreat or treat. A post-hoc
+  filter on the estimated fold change after a test of the zero null keeps
+  the genes with the noisiest estimates and gives no false discovery rate
+  control for the threshold question. State the threshold in the plan, and
+  report the number of genes that pass it.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: multiple_testing
+  parameters:
+    - name: lfc_threshold_policy
+      value: test_against_threshold
+      default_source: "doi:10.1093/bioinformatics/btp053"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0022
+    paraphrase: >-
+      The paper shows that a fold change cutoff applied after an ordinary
+      test does not control the false discovery rate for the threshold
+      question. It gives TREAT, a moderated t-test of the null that the true
+      log fold change is at most the threshold, with formal error rate
+      control and a ranking that favors a large and well-supported effect.
+    anchor: "Abstract; Introduction; Methods, TREAT"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette tests a fold change threshold with the lfcThreshold
+      argument of results and the altHypothesis greaterAbs, so the p-value
+      refers to the null that the absolute log2 fold change is at most the
+      threshold, and it states that lfcShrink with apeglm accepts the same
+      threshold and returns s-values.
+    anchor: "Tests of log2 fold change above or below a threshold"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [multiple-testing, fold-change-threshold]

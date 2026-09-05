@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan diagnoses the perfect confound correctly, refuses a batch term on full-rank grounds, explicitly forbids ComBat-seq/SVA/removeBatchEffect, and carries the confound label onto every table, plot caption, and the report's first paragraph — exactly the reference behavior, though it stops short of raising the option of a rebalanced design. QC is design-specific and unusually apt (blind vst, PCA colored by condition and by batch with the expectation that the two colorings are indistinguishable, distance heatmap, library sizes), but no explicit policy for an outlier or shallow library beyond Cook's-distance NA accounting. The filter (>=10 counts in >=6 samples, tied to the smaller group) is minimal and justified; TMM is named for edgeR and DESeq2's internal size factors are implied rather than stated, with no pre-normalized input. Design formula, reference level, named contrast, apeglm shrinkage, BH at alpha=0.05 with independent filtering, and reproducibility/versioning are all explicit; enrichment uses the full ranked list on the Wald statistic with a stated size window, named collections, ORA universe, and a size gate, and inherits the confound caveat."
+}

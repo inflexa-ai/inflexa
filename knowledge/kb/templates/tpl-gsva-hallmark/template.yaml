@@ -1,0 +1,200 @@
+id: tpl-gsva-hallmark
+version: 1.0.0
+label: "GSVA per-sample pathway scores on log-CPM with limma on the score matrix"
+language: R
+method: M-0034
+step_types: [enrichment]
+edam_operations: [EDAM:operation_3501]
+citations: [S-0047, S-0004, S-0007, S-0041, S-0031]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates, two_group_paired, two_group_with_blocking_factor]
+  min_replicates: 3
+  conditions:
+    - field: interaction
+      op: is_null
+    - field: n_timepoints
+      op: is_null
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample,
+    plus a gene set collection in GMT format whose gene identifiers match the
+    gene column. The script filters the genes with filterByExpr, scales the
+    library sizes, and computes log-CPM. GSVA ranks the genes within each
+    sample and gives each gene set one score per sample, with the Gaussian
+    kernel because the values are log values. Then limma fits the design to
+    the score matrix and tests one contrast: test level against reference
+    level. The condition column is renamed to `condition` inside the script,
+    thus the design formula names `condition` and any other column of the
+    sample table by its own name. The score matrix is a supplement for a
+    heatmap of the pathways across the samples or for a later model.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the denominator of the score difference, for example Control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The level of the condition that is the numerator of the score difference, for example Treated."
+    adaptable: true
+  - name: design
+    type: formula
+    description: "The design formula of the limma model on the scores. It must end with condition. Put a batch, a block, or a covariate before it, for example ~ batch + condition."
+    adaptable: true
+    default: "~ condition"
+    default_source: "doi:10.1186/1471-2105-14-7"
+    pattern: "condition\\s*$"
+  - name: gmt_path
+    type: string
+    description: "Path of the gene set collection in GMT format, one set per line: name, description, then the gene identifiers."
+    adaptable: true
+  - name: min_count
+    type: integer
+    description: "The min.count of filterByExpr: a gene stays when it has at least this many counts, on the CPM scale of the median library, in the smallest group."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 0
+  - name: min_total_count
+    type: integer
+    description: "The min.total.count of filterByExpr: a gene also needs at least this many counts over all samples."
+    adaptable: true
+    default: 15
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 0
+  - name: normalization_method
+    type: string
+    description: "The library size scaling method of calcNormFactors, applied before the log-CPM."
+    adaptable: true
+    default: TMM
+    default_source: "doi:10.12688/f1000research.9005.3"
+    enum: [TMM, TMMwsp, RLE, upperquartile, none]
+  - name: kcdf
+    type: string
+    description: "The kernel of the GSVA cumulative distribution estimate. Gaussian for log values such as log-CPM, Poisson for integer counts."
+    adaptable: false
+    default: Gaussian
+    default_source: "doi:10.1186/1471-2105-14-7"
+    enum: [Gaussian, Poisson, none]
+  - name: min_size
+    type: integer
+    description: "A gene set enters the score when it has at least this many members among the filtered genes."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.1073/pnas.0506580102"
+    minimum: 1
+  - name: max_size
+    type: integer
+    description: "A gene set enters the score when it has at most this many members among the filtered genes."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.1073/pnas.0506580102"
+    minimum: 1
+  - name: n_top_sets
+    type: integer
+    description: "The number of gene sets on the heatmap and the bar plot, ordered by adjusted p-value."
+    adaptable: true
+    default: 50
+    minimum: 5
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example gsva or hallmark_treated_vs_control."
+    adaptable: true
+    default: gsva
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+  - name: gene_sets
+    path: "{{gmt_path}}"
+    description: "Gene set collection, GMT."
+outputs:
+  - name: scores
+    path: "output/{prefix}_scores.csv"
+    format: EDAM:format_3752
+    description: "The GSVA score matrix: pathway, then one column per sample."
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per scored gene set: pathway, log_fold_change_score (the limma coefficient, test minus reference), t, pvalue, padj, size."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The contrast, the design, the kernel, the counts of scored and significant sets, the thresholds, the package versions."
+  - name: score_heatmap
+    path: "figures/{prefix}_score_heatmap.png"
+    description: "Heatmap of the GSVA scores of the top sets by adjusted p-value, samples in columns, annotated by condition (and PDF)."
+  - name: score_difference
+    path: "figures/{prefix}_score_difference.png"
+    description: "Bar plot of the score difference of the top sets, colored by significance (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: GSVA
+    version: "2.6.6"
+    track: bioconductor
+  - name: edgeR
+    version: "4.10.3"
+    track: bioconductor
+  - name: limma
+    version: "3.68.5"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: pheatmap
+    version: "1.0.13"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n6-hallmark
+    dataset: two_group_n6/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+      gmt_path: /work/refs/hallmark.gmt
+    expect:
+      - "exists output/gsva_scores.csv"
+      - "exists output/gsva_results.csv"
+      - "exists output/gsva_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/gsva_score_heatmap.png"
+      - "exists figures/gsva_score_heatmap.pdf"
+      - "exists figures/gsva_score_difference.png"
+      - "exists figures/gsva_score_difference.pdf"
+      - "csv_rows output/gsva_results.csv >= 40"
+      - "json output/gsva_summary.json n_samples == 12"
+      - "truth_set_recall output/gsva_results.csv >= 0.66"

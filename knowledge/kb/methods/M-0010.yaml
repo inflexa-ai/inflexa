@@ -1,0 +1,15 @@
+id: M-0010
+label: "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark"
+edam_operation: EDAM:operation_3501
+description: >-
+  Gene set enrichment on the full ranked list of genes, with the DESeq2 Wald
+  statistic as the rank, the MSigDB Hallmark collection, a set size window,
+  and Benjamini-Hochberg adjustment of the permutation p-values.
+packages:
+  - name: fgsea
+    track: bioconductor
+    biotools: fgsea
+    version_range: ">=1.30"
+    bioconductor: "3.23"
+templates:
+  - tpl-fgsea-preranked

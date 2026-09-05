@@ -1,0 +1,67 @@
+id: R-0026
+title: "Normalization is inside the model: median-of-ratios size factors for DESeq2, no pre-normalized counts"
+assertion: >-
+  With raw counts on the DESeq2 path, do not scale, transform, or normalize
+  the counts before the model. DESeq2 estimates a size factor per sample with
+  the median-of-ratios method, and it applies the size factor as an offset
+  inside the negative binomial model. A count that a script scaled before the
+  model breaks the mean-variance relation that the model expects, and thus it
+  breaks the dispersion estimate. On the edgeR path and on the limma-voom
+  path, the same principle holds with TMM scaling factors in place of the size
+  factors.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+action:
+  step_type: normalize
+  method: M-0008
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+alternatives:
+  - method: M-0009
+    when: "The test runs on the edgeR path or on the limma-voom path: TMM scaling factors take the place of the size factors, inside the model in the same way."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0001
+    paraphrase: >-
+      DESeq2 estimates a size factor per sample as the median of the ratios of
+      the counts of that sample to a pseudo-reference sample, and the size
+      factor enters the negative binomial generalized linear model as a scale
+      of the expected count, not as a transformation of the counts.
+    anchor: "Methods, Model and normalization"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0002
+    paraphrase: >-
+      The vignette states that the input must hold raw counts, because the
+      model corrects for the library size internally, and that transformed or
+      normalized values, such as counts scaled by the library size, must not
+      be used as input.
+    anchor: "Input data, Why un-normalized counts?"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0012
+    paraphrase: >-
+      The survey states that a length-normalized unit such as RPKM or TPM does
+      not serve a comparison between samples, and that the between-sample
+      normalizations inside the differential expression tools, such as TMM and
+      the DESeq median-of-ratios, perform well.
+    anchor: "Differential expression analysis; Normalization"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [normalization, size-factors]

@@ -1,0 +1,15 @@
+id: M-0005
+label: "limma linear model on log-scale expression values"
+edam_operation: EDAM:operation_3223
+description: >-
+  A linear model with empirical Bayes moderation on values that are already on a
+  normalized log scale, with trend=TRUE. The method for TPM, FPKM, log-CPM, and
+  microarray intensities, where a count model does not apply.
+packages:
+  - name: limma
+    track: bioconductor
+    biotools: limma
+    version_range: ">=3.60"
+    bioconductor: "3.23"
+templates:
+  - tpl-limma-trend-logvalues

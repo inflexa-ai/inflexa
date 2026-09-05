@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 7,
+    "low_count_filter": 6,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the paired structure and specifies DESeq2 with ~subject + condition, explicitly forbidding model simplification of the blocking term and warning about sample-order mismatches that would silently break the pairing — this is dataset-specific and correct. Normalization is handled properly inside the model with raw integer counts and no pre-transformation. QC is present (PCA/sample correlation colored by subject and condition, dispersion, library sizes) but there is no stated policy for what to do with an outlier or shallow library, and the filter is only 'essentially zero counts across all 10 samples', which is vague and less justified than a min-count-in-n-samples rule. FDR is stated at BH padj<0.05 but lfcShrink/apeglm appears only in the package list and is never stated as producing the reported effect sizes, and the nominal-p reporting risks post hoc thresholding. Enrichment names a collection and organism and includes both ORA and preranked GSEA, but omits the ranking metric, the explicit ORA universe (tested genes), the collection version, and a gene-set size window; the report lacks software versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan selects the correct negative binomial framework for a 3v3 unpaired single-batch raw-count design (DESeq2 Wald with an edgeR quasi-likelihood cross-check), correctly omits any batch or blocking term, and refuses to compensate for low n by adjusting alpha, instead stating the power limitation explicitly up front. QC is concrete and design-aware: library sizes, blind VST PCA on top-500 variance genes colored by condition, sample-distance heatmap, and reconciliation of the sample/metadata mismatch before any test, though the outlier policy is only implied rather than pre-specified. Filtering (>=10 counts in at least 3 samples, tied to the smallest group), in-model median-of-ratios and TMM normalization with an explicit prohibition on pre-normalized input, the releveled ~condition formula with a named contrast, and BH at 0.05 with apeglm shrinkage are all stated correctly. Enrichment was not asked for and is arguably scope creep here, but it is executed properly (full unthresholded ranked list, Wald statistic named, tested-gene restriction, named collections with versions, 15-500 size window, no ORA substitution when the hit list is small), so it loses only a little. The report specification is unusually complete: methods, versions, formula, contrast, thresholds, tested and significant counts, Cook's-flagged versus independently filtered genes, diagnostics, and the n=3 caveat."
+}

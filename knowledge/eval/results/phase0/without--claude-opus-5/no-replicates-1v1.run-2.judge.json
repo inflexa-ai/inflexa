@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses the unreplicated design, refuses data-driven dispersion estimation, forbids pseudo-replication, and names replication (n>=3) as the fix, which is the core of a correct answer; but it then generates nominal p-values and BH-FDR counts under assumed BCVs of 0.1/0.2/0.4, which the reference explicitly rules out — the caveats soften but do not remove the manufactured inference. QC is well matched to a 2-sample design (library sizes, detection rate, MA plot, log-CPM correlation and scatter) rather than boilerplate PCA, though no outlier policy is possible or stated. The low-count filter is only loosely specified ('non-zero counts... threshold stated'), and normalization is reasonable (CPM/log-CPM plus median-of-ratios-style size factors) but the NB sensitivity test is said to run off the normalized matrix from T1S1, which risks feeding scaled values into a count model. There is no design formula to state, and the plan does at least fix the contrast direction and use verbatim condition labels; enrichment is appropriately conditional and flagged as non-inferential, but lacks an explicit ORA universe, collection version, and size window."
+}

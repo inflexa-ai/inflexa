@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly frames the question as an interaction, fits ~genotype + treatment + genotype:treatment, tests the genotypeKO.treatmentdrug coefficient as the primary answer, and obtains both simple effects by a second relevel so each is a named coefficient eligible for apeglm — a cleaner solution than the reference's ashr-on-contrast, with a magnitude/SE consistency check between parameterizations and an edgeR QL confirmation on the identical filtered set and design. QC is design-aware (blind VST, PCA with percent variance, distance heatmap, library sizes, per-cell inspection, flag-don't-drop policy), the filter is minimal and tied to the smallest cell size, and normalization is explicitly internal (size factors / TMM) with no pre-scaling. Multiple testing is BH per contrast at alpha=0.05 passed into results(), with independent filtering and Cook's-flagged NAs reported separately, and shrunken vs unshrunken LFCs shown side by side. Enrichment is preranked fgsea on the full ranked list by Wald stat, with named collections, stated versions, a 15-500 size window, per-collection FDR, and a correct warning that simple-effect enrichment is descriptive rather than a test of genotype-dependence. Minor gaps: no batch/covariate column exists to color by and the plan does not say so explicitly, and software/package versions are not named for the report the way collection versions are."
+}

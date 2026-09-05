@@ -1,0 +1,69 @@
+id: R-0081
+title: "Organism other: the report names the annotation source, its release, and the gene identifier space"
+assertion: >-
+  If the organism is neither human nor mouse, the report names the annotation
+  source, its release, and the identifier space of the genes, for example the
+  Ensembl gene identifiers of the release in use. The curated gene set
+  collections do not exist for such an organism. Thus an enrichment result
+  comes from an ortholog map to human or from Gene Ontology, and the report
+  names the map, its source, and the share of genes that mapped. A reader
+  cannot check a result on an unnamed annotation. Keep one identifier space
+  through the analysis, and report each conversion with the count of genes
+  lost.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: other
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: report
+  parameters:
+    - name: annotation_report
+      value: [annotation_source, release, identifier_space, ortholog_map, mapped_share]
+      default_source: "doi:10.1038/nprot.2009.97"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0076
+    paraphrase: >-
+      The protocol maps gene identifiers among annotation sources with
+      biomaRt against a named release of a database, and it notes that a
+      mapping is not one-to-one for every identifier.
+    anchor: "Introduction; Procedure"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0086
+    paraphrase: >-
+      OMA gives orthology relations among many species per release, and it
+      distinguishes a one-to-one ortholog from a one-to-many and a
+      many-to-many relation.
+    anchor: "Abstract; Website overhaul"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0039
+    paraphrase: >-
+      The survey of published RNA-seq studies finds that the reports often do
+      not give the methodological information that a reader needs, the
+      biological references such as the annotation among it, and it names
+      this omission as a limit on the reproducibility of the results.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [report, organism, annotation]

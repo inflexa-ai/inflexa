@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies this as an interaction question and fits ~genotype+treatment+genotype:treatment with explicit reference levels (WT, vehicle), extracting the interaction coefficient plus simple effects within each genotype rather than collapsing to four groups. QC precedes the model with blind VST PCA, sample distance heatmap, library sizes, and an explicit outlier-naming policy. Filtering (>=10 counts in >=4 samples) is minimal and tied to the smallest cell size, and normalization is done via DESeq2 size factors with no pre-normalization. Shrinkage is correctly split between apeglm (single-coefficient contrasts) and ashr (summed contrast), with BH-FDR applied per table and appropriate caveats about interaction power. Enrichment uses full ranked lists by Wald stat per contrast with stated collections/versions and size windows, with ORA properly gated and using tested-gene universe; only minor deduction for not stating exact GSEA parameters like permutation number/seed. The final report is thorough, naming versions, thresholds, gene counts, and design-specific caveats about interaction power."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly frames the question as a genotype x treatment interaction, fits a single DESeq2 model with ~genotype + treatment + genotype:treatment, tests the interaction coefficient as primary, derives the two simple treatment effects as contrasts from the same fit rather than by subsetting, adds an LRT against the additive reduced model, and explicitly warns that a difference in significance is not a significant difference. Reference levels, resultsNames verification, a minimal justified filter (>=10 counts in >=4 samples, the smallest group size), model-internal normalization (size factors; TMM for the voom cross-check), apeglm/ashr shrinkage, padj tiers at 0.05/0.10, and DESeq2 independent filtering are all named. QC is thorough (library sizes, size factors, VST PCA by both factors, sample-distance heatmap, dispersion plot) with an honest policy of reporting unmodelled structure given no batch column, though an explicit outlier-handling decision rule is only implicit. Enrichment is well specified: full ranked universe, stated ranking metric, human hallmark and GO-BP, 15-500 size window after universe intersection, seed and permutation count, per-collection BH, collapsePathways, and a null-result guard — only the collection version string is left to runtime. Reporting is strong on design, thresholds, gene counts and power caveats, but software versions are not explicitly required in the deliverables."
+}

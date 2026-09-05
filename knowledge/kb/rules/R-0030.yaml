@@ -1,0 +1,55 @@
+id: R-0030
+title: "A large library size range: the size factors account for depth, and a depth difference alone is not a reason to drop a sample"
+assertion: >-
+  If a sample has a library size far below the others, the normalization step
+  does not remove it. The size factor of the sample scales the expected count
+  of each gene for that sample, thus a depth difference alone does not bias
+  the fold change. A low-depth sample carries less information and gives a
+  wider confidence interval, and that is the correct behavior of the model.
+  Remove the sample only for a stated reason from the sample structure QC,
+  for example a failed library or an identity doubt, not for its depth alone.
+modality: bulk_rna_seq
+conditions:
+  - field: quality_flags
+    op: contains
+    value: [low_depth_sample]
+action:
+  step_type: normalize
+  parameters:
+    - name: depth_policy
+      value: size_factors_account_for_depth
+      default_source: "doi:10.1186/s13059-014-0550-8"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0001
+    paraphrase: >-
+      The model holds a size factor per sample that accounts for the
+      sequencing depth and the RNA composition of the sample, estimated with
+      the median-of-ratios method, and the size factor scales the expected
+      count of each gene in that sample.
+    anchor: "Methods, Model and normalization"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0040
+    paraphrase: >-
+      The workflow estimates the size factors before the transformations and
+      the exploratory plots, states that the transformations account for the
+      differences in library size, and keeps every sample through the sample
+      distance and the PCA plots before any decision about a removal.
+    anchor: "Exploratory analysis and visualization; The variance stabilizing transformation; Sample distances"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [normalization, library-size]

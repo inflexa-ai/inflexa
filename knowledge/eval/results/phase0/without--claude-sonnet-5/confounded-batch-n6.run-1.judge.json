@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 1,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly diagnoses the perfect 6/6 confound, refuses ComBat-seq/SVA/removeBatchEffect with a sound rank-deficiency argument, fits condition as the sole term, and labels every result as condition-and/or-batch — this is the central requirement and it is handled well, though it stops short of recommending a rebalanced design as the primary deliverable rather than a caveat. QC is specific and design-aware (library sizes, detection rate, PCA colored by both factors, explicit condition×batch cross-tab) but lacks any stated policy for an outlier or shallow-library sample. A low-count filter is never mentioned anywhere, which is a clear omission; normalization is handled inside DESeq2/edgeR from raw counts, but the plan does not explicitly state that size factors are estimated within the model. The formula is described in prose but never written out with a stated reference level or named contrast, and BH at two alphas is given without any log fold-change shrinkage for the reported effects. Enrichment is run with an explicit 12,000-gene universe and an organism check, but no collection version or gene-set size window, and running it at all on a fully confounded list is defensible only because of the strong flagging; the report names method, design, thresholds, and gene counts but omits software versions."
+}

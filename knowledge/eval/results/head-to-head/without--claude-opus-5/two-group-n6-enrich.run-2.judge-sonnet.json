@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan uses DESeq2 with ~condition, control as reference, apeglm shrinkage, BH at 0.05, and correctly notes no batch/pairing term exists to add, fitting the unpaired 6v6 single-batch design. QC is thorough (library size, size factors, PCA, correlation heatmap, PC-vs-depth check) with an explicit keep/exclude policy plus a leave-one-out sensitivity analysis, going beyond the reference's minimum. Low-count filtering (>=10 counts in >=6 samples) is reasonable though slightly more specific/arbitrary than DESeq2's built-in independent filtering the reference implies. Normalization is correctly done inside DESeq2 on raw counts with no pre-normalization. GSEA is preranked on the Wald statistic over the full gene list against Hallmark with a 15-500 size window and BH correction, matching the reference closely, though exact MSigDB version pinning is left to 'the environment's reference store' rather than stated upfront. Reporting is detailed with counts, thresholds, and caveats, but package/tool versions (DESeq2, fgsea, MSigDB release) are not explicitly pinned in the plan text, slightly short of full report_completeness."
+}

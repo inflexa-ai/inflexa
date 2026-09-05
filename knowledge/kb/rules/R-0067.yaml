@@ -1,0 +1,80 @@
+id: R-0067
+title: "Outlier sample with three or more replicates: keep the sample and down-weight it, remove it only with a stated criterion"
+assertion: >-
+  If a sample is flagged as an outlier and the smallest group holds three or
+  more replicates, keep the sample and down-weight it. The limma path does
+  this with voomWithQualityWeights, which estimates a weight per sample from
+  the fit and gives a poor sample a small weight. The edgeR path does this
+  with the robust dispersion estimation, which gives an outlier count a small
+  observation weight. Remove the sample only with a stated technical
+  criterion, for example a failed library or a wrong identity, and report
+  the analysis with the sample and without the sample. Removal without a
+  criterion selects the result.
+modality: bulk_rna_seq
+conditions:
+  - field: quality_flags
+    op: contains
+    value: [outlier_sample]
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 3
+action:
+  step_type: differential_expression
+  method: M-0023
+  parameters:
+    - name: outlier_sample_policy
+      value: down_weight_not_remove
+      default_source: "doi:10.1093/nar/gkv412"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0024
+    when: "The analysis stays on the count model: the edgeR robust dispersion estimation down-weights the outlier observations."
+  - method: M-0001
+    when: "The outlier is in a few genes, not in the whole sample: DESeq2 replaces or flags a count outlier per gene with Cook's distance at this replicate number."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0046
+    paraphrase: >-
+      The paper combines the voom observation weights with a weight per
+      sample that the data estimates, and it shows that the sample weights
+      improve the power when the quality of the samples varies, without the
+      removal of a sample.
+    anchor: "Abstract; Results, Sample-specific quality weights"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0066
+    paraphrase: >-
+      The paper adds observation weights to the edgeR negative binomial
+      model, so that an outlier count gets a small weight in the dispersion
+      estimation and in the test, and it shows that the weights keep the
+      false discovery rate under control in the presence of outliers.
+    anchor: "Abstract; Methods, Observation weights"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:citesAsEvidence
+    source: S-0083
+    paraphrase: >-
+      The paper gives the empirical array quality weights for the linear
+      model, where the weight of each array comes from its residual variance,
+      and it shows that the weights are a better use of a poor array than
+      its removal.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [qc, outlier-sample, sample-weights, method-selection]

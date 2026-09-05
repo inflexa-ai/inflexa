@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan places the balanced batch as a fixed covariate in ~ batch + condition, sets control as reference, uses DESeq2 Wald with apeglm shrinkage and BH FDR, and explicitly forbids feeding removeBatchEffect/ComBat output into testing (visualization only) — exactly the reference behavior. QC is concrete and design-specific: cross-tabulation of condition x batch with a stop rule if a cell is empty, sample-ID concordance, library sizes, VST PCA colored by condition and shaped by batch, distance heatmap, PC variance reported, and no sample dropped without stated justification. The low-count filter (>=10 counts in >=6 samples, tied to the smallest group size) is minimal and justified, and retained gene counts are reported; normalization is implicitly DESeq2 size factors inside the model, though size factor estimation is never named explicitly. Enrichment uses the full ranked Wald statistic for fgsea with a 15-500 size window, named human collections, and the tested genes as ORA universe with a sensible skip rule, losing a little for not pinning collection versions. Reporting covers thresholds, tested and significant counts, p-value histogram, dispersion fit, and n=6 power caveats, with a clearly labeled batch-omitted sensitivity refit; software versions are not explicitly required."
+}

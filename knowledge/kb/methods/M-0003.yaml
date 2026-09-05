@@ -1,0 +1,15 @@
+id: M-0003
+label: "edgeR quasi-likelihood F-test"
+edam_operation: EDAM:operation_3223
+description: >-
+  Negative binomial generalized linear model with quasi-likelihood dispersion
+  and an F-test, TMM normalization, and filterByExpr. Robust at small replicate
+  numbers and the usual second method beside DESeq2 for a fixed-effects design.
+packages:
+  - name: edgeR
+    track: bioconductor
+    biotools: edger
+    version_range: ">=4.4"
+    bioconductor: "3.23"
+templates:
+  - tpl-edger-ql

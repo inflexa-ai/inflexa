@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference exactly: an interaction LRT of ~condition + time + condition:time against ~condition + time with time as a 4-level factor, explicit reference levels, per-timepoint simple-effect contrasts drawn from the same fit, and an honest note that baseline (t0) differences can drive interactions at n=3. QC is thorough and design-aware (library sizes, PCA/MDS by condition and time, correlation heatmap, per-cell replicate table, no silent sample dropping). Filtering is CPM-based tied to the smallest design cell (n=3) and reported before/after, though the exact threshold is left to the executor; normalization is median-of-ratios or TMM inside the model with VST/log-CPM reserved for visualization only. BH at a stated alpha with 0.01/0.05/0.10 sensitivity and a p-value histogram is specified, and the plan says to state whether log2FCs are shrunken, but it does not commit to applying shrinkage for reported interaction effects. Enrichment uses the post-filter universe, named human collections, both ORA and rank-based GSEA with the statistic stated, and a plain fallback if no reference store exists; the report specifies toolchain, thresholds, gene counts, residual df, and power caveats."
+}

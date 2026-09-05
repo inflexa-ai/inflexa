@@ -1,0 +1,59 @@
+id: R-0017
+title: "Three replicates per group: low power, interpret with caution, and do not loosen the threshold to compensate"
+assertion: >-
+  If the smallest group holds three replicates, the test has low power. Both count models find only a small share of the true differentially
+  expressed genes, most of them with a large fold change. Interpret the
+  result with caution, and state the power limit in the report. Keep alpha
+  at its default value, and do not change the threshold to compensate for
+  the small design. A gene that is not in the list is not shown to be
+  unchanged.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: eq
+    value: 3
+action:
+  step_type: differential_expression
+  parameters:
+    - name: power_caution
+      value: true
+      default_source: "doi:10.1261/rna.053959.115"
+severity: warn
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0011
+    paraphrase: >-
+      With three replicates per condition, the tools find only a fraction of
+      the true differentially expressed genes, and the missed genes are
+      mostly the genes with a small fold change. The false positive rate of
+      edgeR and DESeq2 stays near the nominal level at this replicate
+      number, thus the loss is in power, not in control.
+    anchor: "Results, Tool performance; Testing tool false positive rates; Discussion"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0012
+    paraphrase: >-
+      The survey states that biological replication is necessary for
+      inference, that the power to detect differential expression rises more
+      with the number of replicates than with the sequencing depth, and that
+      a small number of replicates limits the detection of a small fold
+      change.
+    anchor: "Experimental design; Differential expression analysis"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [design, replicates, power, warn]

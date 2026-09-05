@@ -1,0 +1,56 @@
+id: R-0058
+title: "Population-scale cohorts: filterByExpr before voom"
+assertion: >-
+  If each group holds 50 or more samples and the test is limma-voom, filter
+  the genes with filterByExpr and the group before the normalization. The
+  mean-variance trend of voom depends on the removal of the genes with no
+  worthwhile counts, because such genes sit at the low end of the trend and
+  distort it. Report the number of genes kept.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 50
+action:
+  step_type: filter_low_counts
+  method: M-0022
+  parameters:
+    - name: filter
+      value: filterByExpr
+      default_source: "guide:edgeR/2026-04-25#filtering"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0041
+    paraphrase: >-
+      The workflow removes the genes with low counts with filterByExpr before
+      the normalization and the voom step, because a gene that is not
+      expressed at a worthwhile level in a minimum number of samples adds
+      noise to the mean-variance trend and to the multiple testing.
+    anchor: "Removing genes that are lowly expressed"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0006
+    paraphrase: >-
+      voom fits the mean-variance trend of the log counts per million across
+      the genes, and the fit assumes a filter of the genes with very low
+      counts, whose variance the trend cannot describe.
+    anchor: "Methods, Filtering; voom: variance modeling at the observation-level"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [filtering, population-scale]

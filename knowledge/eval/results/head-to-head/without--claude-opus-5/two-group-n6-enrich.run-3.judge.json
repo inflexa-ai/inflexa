@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the design precisely: unpaired 6v6, single batch, no spurious covariates, DESeq2 Wald with ~condition, control releveled as reference and the sign convention stated. QC is exemplary and dataset-specific — library sizes, detected genes, size factors checked against the depth ratio, VST PCA and correlation heatmap, and an explicit evidence-based retain-or-drop verdict for sample_01 plus a prespecified 11-sample sensitivity run with concordance metrics, which is exactly the careful handling requested. Filtering (>=10 in >=6 samples) is minimal and justified by the already pre-filtered ~12k symbol matrix, and normalization stays inside the model with explicit prohibition of CPM/TPM or downsampling. Deductions: the |log2FC| > 1 cutoff is applied post hoc to shrunken values rather than via lfcThreshold in the test (the plan flags the inconsistency but does not resolve it), the MSigDB hallmark release version is never pinned, and the reporting spec does not commit to naming package/software versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 3,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses the fatal absence of replication, explicitly forbids DESeq2/edgeR dispersion-based p-values, and centers on descriptive normalized counts and log2 fold change, which matches the reference; the NOISeq addition is defensible and hedged as a non-p-value heuristic, though it edges toward presenting a thresholded probability as a de facto significance call, and the plan never names the design that would support inference (>=3 per group). Sample QC is thin: mapping is verified and normalization applied, but library sizes, detection rates, and any outlier/shallow-sample policy are not stated, and no substitute for PCA/distances at n=2 is offered. Low-count handling is flagged and justified but the threshold is left unspecified; normalization is inside the workflow via TMM/CPM with a fallback, though feeding pre-normalized counts into NOISeq is loose. Enrichment is not warranted for a 1v1 descriptive comparison and is included anyway without an explicit universe, collection version, or gene-set size window, and it assumes human without the species being established; reporting covers design caveats but omits software versions, gene counts tested, and explicit thresholds."
+}

@@ -1,0 +1,72 @@
+id: R-0028
+title: "filterByExpr is the low count filter of the edgeR path and of the limma path"
+assertion: >-
+  On the edgeR path and on the limma-voom path, filter the low count genes
+  with filterByExpr on the raw counts, with the group or the design as its
+  argument. The filter keeps a gene with about 10 counts or more in at least
+  as many samples as the smallest group holds, and it scales the count
+  threshold by the library size. Apply the filter before the TMM factors and
+  before the dispersion estimate. The filter removes the genes with no power,
+  and it stabilizes the mean-variance trend that voom and the quasi-likelihood
+  dispersion estimate depend on.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: eq
+    value: 2
+action:
+  step_type: filter_low_counts
+  method: M-0022
+  parameters:
+    - name: filter
+      value: filterByExpr
+      default_source: "guide:edgeR/2026-04-25#filtering"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0005
+    paraphrase: >-
+      The guide gives a rule of thumb of a count of 5 to 10 in a library as
+      the floor of a worthwhile gene, and it describes filterByExpr as the
+      function that keeps a gene with worthwhile counts in a minimum number of
+      samples, where that number is the smallest group size. The cutoff of the
+      function is a count over the median library size, not a fixed count.
+    anchor: "Filtering"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0041
+    paraphrase: >-
+      The workflow removes the genes with low expression with filterByExpr at
+      its default settings, which keeps a gene with about 10 read counts or
+      more in a minimal number of samples set by the group sizes, and it shows
+      the density of the log counts per million before and after the filter.
+    anchor: "Data pre-processing, Removing genes that are lowly expressed"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0004
+    paraphrase: >-
+      The paper presents the edgeR pipeline with filterByExpr as the filter
+      step before the library size normalization and the dispersion estimate,
+      and it describes the quasi-likelihood pipeline as the recommended
+      workflow.
+    anchor: "Filtering low count features; Quasi-likelihood"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [filtering, edger, limma]

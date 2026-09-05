@@ -1,0 +1,76 @@
+id: R-0089
+title: "Population-scale cohorts: report the effect size beside the p-value, because a tiny effect reaches significance"
+assertion: >-
+  If each group holds 50 or more samples, the report gives the log2 fold
+  change and its confidence interval beside each adjusted p-value. At this
+  sample size the test has the power to call a fold change that is too small
+  to matter, thus a list sorted by the p-value alone puts genes with no
+  useful effect at the top. Sort the table by the effect size within the
+  significant set, and state the number of significant genes above a named
+  fold change threshold. If the question asks for an effect of at least a
+  stated size, test against that threshold with lfcThreshold or TREAT.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: n_per_group_min
+    op: gte
+    value: 50
+  - field: question
+    op: in
+    value: [differential_expression, full_plan]
+action:
+  step_type: report
+  parameters:
+    - name: effect_size_beside_pvalue
+      value: true
+      default_source: "doi:10.1093/bioinformatics/btp053"
+    - name: sort_significant_by
+      value: effect_size
+      default_source: "doi:10.1093/bioinformatics/btp053"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0022
+    paraphrase: >-
+      With enough samples a test of the zero null gives significance to a
+      fold change that is too small to be of interest, and a ranking by the
+      p-value then favors such genes. The paper gives a test against a fold
+      change threshold as the remedy, so that significance carries an
+      effect of a stated size.
+    anchor: "Introduction; Section 2, The TREAT method"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0011
+    paraphrase: >-
+      With more replicates the tools find a larger share of the true
+      differentially expressed genes, and the genes with a small fold change
+      are the ones that enter the significant set as the replicate number
+      grows.
+    anchor: "Results, Effect of replicate number; Discussion"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0023
+    paraphrase: >-
+      The study examines differential expression on population-level cohorts
+      with dozens to hundreds of samples per condition, and it shows that the
+      choice of the test changes the significant set at this sample size.
+    anchor: "Abstract; Results and discussion"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [report, population-scale, effect-size]

@@ -1,0 +1,347 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T04:40:15.717Z",
+  "elapsedMs": 48072,
+  "outcome": "plan_submitted",
+  "planId": "pln-ca8722eb",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Reconcile counts and metadata, QC diagnostics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The counts file is described as 12000 x 7 while metadata has 6 rows — this mismatch must be resolved and reported, not silently patched",
+          "Do not drop a sample based on QC appearance alone without flagging the power cost explicitly"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn",
+          "scikit-learn"
+        ],
+        "question": "Do the counts.csv (12000 genes x 7 sample columns) and metadata.csv (6 samples, condition: treated/control) align, and are there sample-level anomalies (outliers, low library size, or mislabeling) that would compromise a 3-vs-3 comparison?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports which sample columns in counts.csv match the 6 sample IDs in metadata.csv and explicitly flags any extra/unmatched column",
+          "Computes library size (total counts) per sample and flags any sample with a library size markedly discordant from the group mean",
+          "Produces a PCA or hierarchical clustering plot on variance-stabilized/log-CPM values labeled by condition (treated vs control) to check that replicates cluster by group",
+          "Produces a sample-sample correlation heatmap",
+          "States explicitly that with n=3/group, no single QC step can be used to justify discarding a sample without strong cause, since doing so would drop power further"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Must probe for DESeq2/apeglm/ashr availability before use and degrade to edgeR if absent — package presence is unconfirmed for this environment",
+          "n=3/group is the minimum DESeq2 supports for dispersion estimation; do not overstate confidence in the dispersion fit",
+          "Unpaired single-batch design means no batch term is needed, but this should be stated as an assumption from the metadata, not silently assumed"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "edgeR",
+          "pandas"
+        ],
+        "question": "Which of the ~12000 liver genes are differentially expressed between drug-treated (n=3) and control (n=3) samples, using a negative-binomial model appropriate for raw Salmon gene-level counts?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Uses DESeq2 (or, if unavailable, edgeR) with a design of ~condition (treated vs control) on raw integer counts, confirmed to be the reconciled sample set from T1S1",
+          "Reports size-factor normalization, dispersion estimates, and confirms the negative-binomial dispersion fit is stable given n=3 per group",
+          "Applies independent filtering and Benjamini-Hochberg FDR correction; reports gene counts at FDR<0.05, FDR<0.1, and nominal p<0.05 thresholds separately so the FDR-vs-nominal gap at low n is visible",
+          "Applies log fold-change shrinkage (apeglm or ashr if available, otherwise normal shrinkage) and reports shrunken LFC alongside raw LFC",
+          "Outputs a full results table (gene, baseMean, log2FoldChange, shrunken LFC, p-value, padj) and a volcano plot",
+          "Explicitly reports that with 3 replicates per group, statistical power is limited to genes with large effect sizes and low within-group variance; states the estimated minimum detectable fold change is not formally computed here but flags this as a known limitation of n=3 designs",
+          "If DESeq2 is unavailable, falls back to edgeR quasi-likelihood F-test and states this substitution explicitly in the output"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Power and confidence assessment for the n=3 design",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Post-hoc power/stability analysis cannot substitute for a priori power calculation and must not be reported as such",
+          "Leave-one-out resampling at n=3 leaves only n=2 in the held-out group, which itself has very limited power — frame results as qualitative robustness signal, not a formal power estimate"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Given only 3 replicates per group, how much confidence can be placed in the DE calls from T1S2 — what fold-change/variance regime was this study powered to detect, and how stable are the significance calls?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistical_diagnostics",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Reports the empirical coefficient of variation / dispersion distribution across genes from the DESeq2 fit and relates it to expected detectable fold-change at n=3 (e.g., via a power curve or dispersion-vs-power reference, using standard RNA-seq power relationships)",
+          "Performs a leave-one-out or jackknife-style resampling (dropping one sample at a time from the 3-vs-3 design where at least 2 remain per group) to report how stable the top DE gene list is to removal of any single replicate, as a direct empirical check on n=3 fragility",
+          "Explicitly states in output that formal a priori power calculations were not part of the original experimental design and that this step assesses achieved/post-hoc confidence only, which is inherently limited",
+          "Summarizes, in plain terms, which DE calls are robust (survive resampling, large effect, low dispersion) versus fragile (sensitive to single-sample removal)"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway enrichment on DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Must confirm a human-specific gene set collection is actually available before committing to a specific database name in output",
+          "Do not treat enrichment significance as adding independent statistical confidence beyond what the DE analysis already established"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "Are the genes differentially expressed between treated and control liver samples enriched for specific biological pathways or gene sets, and how should that enrichment be interpreted given the small underlying gene list from an n=3 design?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Runs over-representation or gene set enrichment analysis on the DESeq2 results from T1S2 (using FDR<0.1 gene list for over-representation, and the full ranked gene list by shrunken LFC/stat for GSEA/fgsea) against a human gene set collection (e.g., Hallmark, GO, Reactome) confirmed present in the environment before use",
+          "If no human pathway gene set reference is available in the environment, explicitly reports that enrichment could not be run and states this as a gap rather than fabricating pathway results",
+          "Reports enriched terms with FDR-adjusted enrichment p-values, not raw p-values",
+          "States explicitly that enrichment run on a DE list derived from n=3/group carries the same power limitations as the upstream DE call, and results should be treated as hypothesis-generating"
+        ]
+      }
+    ],
+    "title": "Liver drug-treated vs control DE analysis (n=3/group)",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq raw gene-level counts from Salmon (12000 genes x 7 samples file, but metadata lists 6 samples: 3 treated vs 3 control, unpaired, single batch) in human liver tissue under drug treatment. With only n=3 per group, a standard negative-binomial GLM (DESeq2) is the right statistical model for count data at this scale, but power is inherently limited: at n=3/group, only genes with large, consistent fold changes will reach significance after multiple-testing correction, and moderate effects will be missed (false negatives). The plan therefore (1) reconciles the counts file's 7 columns against the 6-sample metadata before any modeling, (2) runs QC/exploratory diagnostics (library size, PCA, sample correlation) to catch outliers or mislabeling that would be catastrophic at this sample size, (3) fits DESeq2 with a two-group design and shrunken log fold changes, (4) explicitly quantifies statistical power/confidence given n=3 via dispersion diagnostics, independent filtering, and reporting of both nominal and FDR-adjusted results with effect-size shrinkage, and (5) contextualizes any significant DE genes with pathway enrichment, flagging that enrichment on a small, possibly underpowered gene list should be read as hypothesis-generating. Every step is explicit that n=3/group limits confidence and that results should be treated as a discovery-phase, not confirmatory, analysis."
+  },
+  "usage": {
+    "inputTokens": 95026,
+    "outputTokens": 3684,
+    "cacheCreationInputTokens": 21221,
+    "cacheReadInputTokens": 73745,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "ashr",
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db",
+          "pheatmap",
+          "EnhancedVolcano"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 RNA-seq small sample size three replicates power differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "31992223"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treated vs control DE analysis (n=3/group)",
+          "analytical_narrative": "The dataset is bulk RNA-seq raw gene-level counts from Salmon (12000 genes x 7 samples file, but metadata lists 6 samples: 3 treated vs 3 control, unpaired, single batch) in human liver tissue under drug treatment. With only n=3 per group, a standard negative-binomial GLM (DESeq2) is the right statistical model for count data at this scale, but power is inherently limited: at n=3/group, only genes with large, consistent fold changes will reach significance after multiple-testing correction, and moderate effects will be missed (false negatives). The plan therefore (1) reconciles the counts file's 7 columns against the 6-sample metadata before any modeling, (2) runs QC/exploratory diagnostics (library size, PCA, sample correlation) to catch outliers or mislabeling that would be catastrophic at this sample size, (3) fits DESeq2 with a two-group design and shrunken log fold changes, (4) explicitly quantifies statistical power/confidence given n=3 via dispersion diagnostics, independent filtering, and reporting of both nominal and FDR-adjusted results with effect-size shrinkage, and (5) contextualizes any significant DE genes with pathway enrichment, flagging that enrichment on a small, possibly underpowered gene list should be read as hypothesis-generating. Every step is explicit that n=3/group limits confidence and that results should be treated as a discovery-phase, not confirmatory, analysis.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Reconcile counts and metadata, QC diagnostics",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the counts.csv (12000 genes x 7 sample columns) and metadata.csv (6 samples, condition: treated/control) align, and are there sample-level anomalies (outliers, low library size, or mislabeling) that would compromise a 3-vs-3 comparison?",
+              "acceptance_criteria": [
+                "Reports which sample columns in counts.csv match the 6 sample IDs in metadata.csv and explicitly flags any extra/unmatched column",
+                "Computes library size (total counts) per sample and flags any sample with a library size markedly discordant from the group mean",
+                "Produces a PCA or hierarchical clustering plot on variance-stabilized/log-CPM values labeled by condition (treated vs control) to check that replicates cluster by group",
+                "Produces a sample-sample correlation heatmap",
+                "States explicitly that with n=3/group, no single QC step can be used to justify discarding a sample without strong cause, since doing so would drop power further"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn",
+                "scikit-learn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "The counts file is described as 12000 x 7 while metadata has 6 rows — this mismatch must be resolved and reported, not silently patched",
+                "Do not drop a sample based on QC appearance alone without flagging the power cost explicitly"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the ~12000 liver genes are differentially expressed between drug-treated (n=3) and control (n=3) samples, using a negative-binomial model appropriate for raw Salmon gene-level counts?",
+              "acceptance_criteria": [
+                "Uses DESeq2 (or, if unavailable, edgeR) with a design of ~condition (treated vs control) on raw integer counts, confirmed to be the reconciled sample set from T1S1",
+                "Reports size-factor normalization, dispersion estimates, and confirms the negative-binomial dispersion fit is stable given n=3 per group",
+                "Applies independent filtering and Benjamini-Hochberg FDR correction; reports gene counts at FDR<0.05, FDR<0.1, and nominal p<0.05 thresholds separately so the FDR-vs-nominal gap at low n is visible",
+                "Applies log fold-change shrinkage (apeglm or ashr if available, otherwise normal shrinkage) and reports shrunken LFC alongside raw LFC",
+                "Outputs a full results table (gene, baseMean, log2FoldChange, shrunken LFC, p-value, padj) and a volcano plot",
+                "Explicitly reports that with 3 replicates per group, statistical power is limited to genes with large effect sizes and low within-group variance; states the estimated minimum detectable fold change is not formally computed here but flags this as a known limitation of n=3 designs",
+                "If DESeq2 is unavailable, falls back to edgeR quasi-likelihood F-test and states this substitution explicitly in the output"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "edgeR",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Must probe for DESeq2/apeglm/ashr availability before use and degrade to edgeR if absent — package presence is unconfirmed for this environment",
+                "n=3/group is the minimum DESeq2 supports for dispersion estimation; do not overstate confidence in the dispersion fit",
+                "Unpaired single-batch design means no batch term is needed, but this should be stated as an assumption from the metadata, not silently assumed"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Power and confidence assessment for the n=3 design",
+              "track": "T1",
+              "step_type": "statistical_diagnostics",
+              "question": "Given only 3 replicates per group, how much confidence can be placed in the DE calls from T1S2 — what fold-change/variance regime was this study powered to detect, and how stable are the significance calls?",
+              "acceptance_criteria": [
+                "Reports the empirical coefficient of variation / dispersion distribution across genes from the DESeq2 fit and relates it to expected detectable fold-change at n=3 (e.g., via a power curve or dispersion-vs-power reference, using standard RNA-seq power relationships)",
+                "Performs a leave-one-out or jackknife-style resampling (dropping one sample at a time from the 3-vs-3 design where at least 2 remain per group) to report how stable the top DE gene list is to removal of any single replicate, as a direct empirical check on n=3 fragility",
+                "Explicitly states in output that formal a priori power calculations were not part of the original experimental design and that this step assesses achieved/post-hoc confidence only, which is inherently limited",
+                "Summarizes, in plain terms, which DE calls are robust (survive resampling, large effect, low dispersion) versus fragile (sensitive to single-sample removal)"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "caveats": [
+                "Post-hoc power/stability analysis cannot substitute for a priori power calculation and must not be reported as such",
+                "Leave-one-out resampling at n=3 leaves only n=2 in the held-out group, which itself has very limited power — frame results as qualitative robustness signal, not a formal power estimate"
+              ]
+            },
+            {
+              "id": "T1S4",
+              "name": "Pathway enrichment on DE gene list",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Are the genes differentially expressed between treated and control liver samples enriched for specific biological pathways or gene sets, and how should that enrichment be interpreted given the small underlying gene list from an n=3 design?",
+              "acceptance_criteria": [
+                "Runs over-representation or gene set enrichment analysis on the DESeq2 results from T1S2 (using FDR<0.1 gene list for over-representation, and the full ranked gene list by shrunken LFC/stat for GSEA/fgsea) against a human gene set collection (e.g., Hallmark, GO, Reactome) confirmed present in the environment before use",
+                "If no human pathway gene set reference is available in the environment, explicitly reports that enrichment could not be run and states this as a gap rather than fabricating pathway results",
+                "Reports enriched terms with FDR-adjusted enrichment p-values, not raw p-values",
+                "States explicitly that enrichment run on a DE list derived from n=3/group carries the same power limitations as the upstream DE call, and results should be treated as hypothesis-generating"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Must confirm a human-specific gene set collection is actually available before committing to a specific database name in output",
+                "Do not treat enrichment significance as adding independent statistical confidence beyond what the DE analysis already established"
+              ]
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

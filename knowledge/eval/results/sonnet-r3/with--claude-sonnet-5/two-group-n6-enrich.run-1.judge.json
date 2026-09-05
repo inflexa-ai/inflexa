@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the design precisely: unpaired 6v6, single batch, raw counts, DESeq2 Wald with ~condition and an explicitly releveled control reference and a named contrast, plus an edgeR QL cross-check that is presented as robustness rather than double-dipping. QC precedes testing with blind VST PCA, a distance heatmap, and per-sample library size and detected-gene counts, and the low-depth sample_01 decision is required to be written with a rationale rather than defaulted, exactly as the reference asks. Normalization is median-of-ratios inside the model with an explicit prohibition on pre-scaling; inference uses BH at a stated alpha=0.05 with independent filtering, apeglm shrinkage for reported effects, and p-value/MA/dispersion diagnostics. Enrichment is preranked fgsea on the full tested-gene list with the Wald statistic named as the metric, Hallmark with a stated version and a 15-500 size window applied after intersection, and a sensible guard against an underpowered ORA. The only small deduction is the filter: >=10 counts in >=6 samples is defensible and tied to group size but is slightly stricter than a minimal filter and the retained-gene count is only reported, not sanity-checked against an alternative."
+}

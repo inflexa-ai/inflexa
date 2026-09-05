@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect confound, refuses to fit a batch term or apply ComBat-seq/SVA/removeBatchEffect, and labels every downstream artifact as confounded, matching the reference exactly. QC (blind VST PCA/distance heatmap colored by condition and batch, library sizes) precedes testing, filtering is minimal and justified (>=10 counts in >=6 samples), normalization is DESeq2 median-of-ratios computed inside DESeq2 (not pre-adjusted), and the design/contrast/reference level are explicit with correct rationale for omitting batch. BH FDR at alpha=0.05 with apeglm shrinkage and thresholds set inside results() are all present. Enrichment is reasonably restrained (ORA with explicit universe, GSVA framed descriptively, GSEA explicitly avoided) though the GSVA supplement adds some risk of overinterpretation despite caveats; report completeness is thorough with versions, design, thresholds, counts, and prominent caveats."
+}

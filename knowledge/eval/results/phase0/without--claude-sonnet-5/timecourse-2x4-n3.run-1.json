@@ -1,0 +1,373 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "timecourse-2x4-n3",
+  "run": 1,
+  "startedAt": "2026-09-05T04:54:21.117Z",
+  "elapsedMs": 48717,
+  "outcome": "plan_submitted",
+  "planId": "pln-a18c0fb5",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, and design matrix setup",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Package availability is unknown in this sandbox — probe for DESeq2/edgeR before importing and report if neither is present",
+          "Verify time_hours vs time (t0..t3) are consistent (i.e., time_hours is just the numeric encoding of the categorical time factor) rather than a finer continuous grid",
+          "Do not drop samples without explicit justification from QC metrics"
+        ],
+        "context": "Input is /eval-phase0-without-timecourse-2x4-n3-1/data/inputs/counts/counts.csv (12000 x 25, gene symbol + 24 sample columns of raw integer salmon counts) and /eval-phase0-without-timecourse-2x4-n3-1/data/inputs/metadata/metadata.csv (24 x 4: sample, condition, time, time_hours). This step establishes the count matrix and design table used by all downstream modeling.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR"
+        ],
+        "question": "Do the raw counts (12000 genes x 24 samples) and metadata (condition, time, time_hours) support a 2x4 factorial design with adequate library sizes and no obvious outlier samples per condition:time cell?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Use raw counts as provided; do not pre-normalize before handing to DESeq2/edgeR (they require raw counts)",
+          "Treat time as a categorical 4-level factor given only 3 replicates per cell"
+        ],
+        "acceptance_criteria": [
+          "Counts matrix loaded with genes as rows, 24 samples as columns, matched exactly to metadata sample identifiers",
+          "Library size and count distribution (e.g. via PCA or hierarchical clustering) reported per sample, flagging any sample that is an outlier within its condition:time group",
+          "A categorical 'time' factor (t0..t3) and 'condition' factor are constructed and cross-tabulated to confirm 3 replicates per of the 8 condition:time cells (24 samples total)",
+          "Low-count genes filtered by a stated, justified threshold (e.g. minimum count sum across samples) before differential testing"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 LRT: condition x time interaction beyond shared time trend",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=3 per condition:time cell, power to detect subtle interaction effects is limited — state this explicitly alongside the significant gene count",
+          "Do not confuse the interaction term result with a simple pairwise condition contrast at a single time point — report only the interaction (LRT) result here",
+          "Multiple testing correction (BH) must be applied across all 12000 tested genes, not just a pre-filtered subset"
+        ],
+        "context": "This step directly answers the research question: genes whose time course differs between the two conditions, over and above the trend common to both. The LRT interaction test is the standard approach for a categorical 2xK factorial design with limited replicates.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "limma",
+          "edgeR"
+        ],
+        "question": "Which genes have a statistically significant condition:time interaction — i.e., a treatment-specific time trajectory that differs from the trajectory shared by both conditions — when comparing a full model (~condition + time + condition:time) against a reduced model (~condition + time) via DESeq2 likelihood ratio test?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Reduced model must be ~condition + time (never dropping condition alone) so that both the treatment main effect and the time main effect are already absorbed before testing the interaction",
+          "Report results for all genes passing the T1S1 filter, not a further arbitrary subset"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 dataset built with design ~condition + time + condition:time (both factors categorical, time releveled so t0 is the reference)",
+          "DESeq(dds, test='LRT', reduced=~condition+time, full=~condition+time+condition:time) run successfully on the filtered count matrix from T1S1",
+          "Output table includes gene symbol, LRT statistic, raw p-value, BH-adjusted p-value (padj) for the interaction term, for all tested genes",
+          "Genes with padj < 0.05 (or a stated alternative threshold if power is limited) are flagged as showing a treatment-specific temporal change beyond the shared trend, with the count of significant genes reported explicitly",
+          "If DESeq2 is unavailable, an equivalent limma-voom full-vs-reduced moderated F-test is run instead and this substitution is stated in the output"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Cluster interaction-significant genes into temporal patterns",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If the significant gene count from T1S2 is very small (e.g. <10), state that clustering is underpowered/uninformative rather than force a cluster structure",
+          "Use variance-stabilized values (e.g. DESeq2 vst/rlog), not raw counts, for trajectory computation"
+        ],
+        "context": "Turns the interaction gene list from T1S2 into an interpretable set of temporal response patterns, useful for downstream biological interpretation and enrichment.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "stats"
+        ],
+        "question": "Among genes with a significant condition:time interaction (T1S2), what distinct temporal patterns (e.g. divergence starting early vs late, transient vs sustained) characterize the treatment-specific response across t0-t3?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "pattern_analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Only cluster genes that passed the T1S2 interaction significance threshold — do not expand to the full gene set"
+        ],
+        "acceptance_criteria": [
+          "Variance-stabilized or log-normalized expression extracted for the T1S2 significant gene set across all 24 samples",
+          "Per-gene condition-mean trajectories computed at each of the 4 time points and the difference-of-trajectories (treatment minus control) plotted/summarized",
+          "Genes grouped into a small number of interpretable clusters (e.g. via hierarchical clustering on scaled trajectory-difference profiles) with cluster sizes reported",
+          "Representative genes per cluster listed with their padj and fold-change trajectory"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of treatment-specific interaction genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Do not substitute a non-human reference",
+          "Treat an empty/unavailable reference as a reportable gap in the final output, not a step failure that halts the DAG"
+        ],
+        "context": "No pathway/gene-set reference store is currently provisioned in this environment (checked at planning time). This step must re-check reference availability at run time since the host may stage it later, and degrade to reporting the gap if still absent, rather than blocking the whole analysis.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea"
+        ],
+        "question": "Are the genes showing a significant condition:time interaction (T1S2) enriched for specific biological pathways or gene sets, distinguishing the treatment-specific response from generic time-dependent processes?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Foreground gene list must be exactly the T1S2 interaction-significant genes; background must be the T1S1 filtered gene universe"
+        ],
+        "acceptance_criteria": [
+          "Over-representation or gene set enrichment analysis run on the T1S2 significant gene list (as foreground) against the full filtered gene set from T1S1 (as background)",
+          "If a pathway/gene-set reference (e.g. curated pathway collections) is available in the environment for Homo sapiens, enrichment results reported with adjusted p-values and gene overlap counts per pathway",
+          "If no such reference is available at run time, the step explicitly reports this as a gap rather than fabricating or skipping silently"
+        ]
+      }
+    ],
+    "title": "DESeq2 LRT for treatment x time interaction",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is a 2-condition x 4-timepoint (t0-t3) bulk RNA-seq time course with 3 replicates per cell (25 columns total = 24 samples + gene symbol column, matching the 24x4 metadata), raw salmon-derived integer counts across 12000 genes. The research question — genes with a treatment-specific change over time beyond the shared time trend — is a classic condition x time interaction question, best answered with DESeq2's likelihood ratio test (LRT): fit a full model ~condition + time + condition:time and a reduced model ~condition + time, so the LRT isolates genes whose time trajectory differs by condition (interaction) after already accounting for the additive condition and time main effects (the 'shared time trend'). Given only 3 replicates per condition:time cell, time is treated as a categorical factor (4 levels) rather than a continuous spline, which is appropriate for a well-powered but small n and avoids assuming a specific functional shape. Because package availability is unknown, the plan requires the executing agent to probe for DESeq2 first; if genuinely absent, it must fall back to a limma-voom equivalent (same full/reduced design compared via moderated F-test) rather than fail outright. Steps: (1) QC/normalization and design matrix construction, (2) DESeq2 LRT for the interaction term producing a ranked gene list with FDR, (3) clustering of significant interaction genes into trajectory patterns (e.g., diverging early vs late) for interpretability, (4) enrichment analysis of the interaction-significant gene set against pathway gene sets, contingent on reference availability. No reference store is currently provisioned; the enrichment step is written to degrade to a reported gap (not a failure) if no gene-set reference materializes at run time."
+  },
+  "usage": {
+    "inputTokens": 114073,
+    "outputTokens": 4218,
+    "cacheCreationInputTokens": 21391,
+    "cacheReadInputTokens": 92610,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "splines",
+          "sva"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 likelihood ratio test time course interaction treatment condition RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 likelihood ratio test time series design interaction term",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 time course RNA-seq analysis",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "DESeq2 LRT for treatment x time interaction",
+          "analytical_narrative": "The dataset is a 2-condition x 4-timepoint (t0-t3) bulk RNA-seq time course with 3 replicates per cell (25 columns total = 24 samples + gene symbol column, matching the 24x4 metadata), raw salmon-derived integer counts across 12000 genes. The research question — genes with a treatment-specific change over time beyond the shared time trend — is a classic condition x time interaction question, best answered with DESeq2's likelihood ratio test (LRT): fit a full model ~condition + time + condition:time and a reduced model ~condition + time, so the LRT isolates genes whose time trajectory differs by condition (interaction) after already accounting for the additive condition and time main effects (the 'shared time trend'). Given only 3 replicates per condition:time cell, time is treated as a categorical factor (4 levels) rather than a continuous spline, which is appropriate for a well-powered but small n and avoids assuming a specific functional shape. Because package availability is unknown, the plan requires the executing agent to probe for DESeq2 first; if genuinely absent, it must fall back to a limma-voom equivalent (same full/reduced design compared via moderated F-test) rather than fail outright. Steps: (1) QC/normalization and design matrix construction, (2) DESeq2 LRT for the interaction term producing a ranked gene list with FDR, (3) clustering of significant interaction genes into trajectory patterns (e.g., diverging early vs late) for interpretability, (4) enrichment analysis of the interaction-significant gene set against pathway gene sets, contingent on reference availability. No reference store is currently provisioned; the enrichment step is written to degrade to a reported gap (not a failure) if no gene-set reference materializes at run time.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization, and design matrix setup",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Do the raw counts (12000 genes x 24 samples) and metadata (condition, time, time_hours) support a 2x4 factorial design with adequate library sizes and no obvious outlier samples per condition:time cell?",
+              "acceptance_criteria": [
+                "Counts matrix loaded with genes as rows, 24 samples as columns, matched exactly to metadata sample identifiers",
+                "Library size and count distribution (e.g. via PCA or hierarchical clustering) reported per sample, flagging any sample that is an outlier within its condition:time group",
+                "A categorical 'time' factor (t0..t3) and 'condition' factor are constructed and cross-tabulated to confirm 3 replicates per of the 8 condition:time cells (24 samples total)",
+                "Low-count genes filtered by a stated, justified threshold (e.g. minimum count sum across samples) before differential testing"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input is /eval-phase0-without-timecourse-2x4-n3-1/data/inputs/counts/counts.csv (12000 x 25, gene symbol + 24 sample columns of raw integer salmon counts) and /eval-phase0-without-timecourse-2x4-n3-1/data/inputs/metadata/metadata.csv (24 x 4: sample, condition, time, time_hours). This step establishes the count matrix and design table used by all downstream modeling.",
+              "caveats": [
+                "Package availability is unknown in this sandbox — probe for DESeq2/edgeR before importing and report if neither is present",
+                "Verify time_hours vs time (t0..t3) are consistent (i.e., time_hours is just the numeric encoding of the categorical time factor) rather than a finer continuous grid",
+                "Do not drop samples without explicit justification from QC metrics"
+              ],
+              "constraints": [
+                "Use raw counts as provided; do not pre-normalize before handing to DESeq2/edgeR (they require raw counts)",
+                "Treat time as a categorical 4-level factor given only 3 replicates per cell"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 LRT: condition x time interaction beyond shared time trend",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes have a statistically significant condition:time interaction — i.e., a treatment-specific time trajectory that differs from the trajectory shared by both conditions — when comparing a full model (~condition + time + condition:time) against a reduced model (~condition + time) via DESeq2 likelihood ratio test?",
+              "acceptance_criteria": [
+                "DESeq2 dataset built with design ~condition + time + condition:time (both factors categorical, time releveled so t0 is the reference)",
+                "DESeq(dds, test='LRT', reduced=~condition+time, full=~condition+time+condition:time) run successfully on the filtered count matrix from T1S1",
+                "Output table includes gene symbol, LRT statistic, raw p-value, BH-adjusted p-value (padj) for the interaction term, for all tested genes",
+                "Genes with padj < 0.05 (or a stated alternative threshold if power is limited) are flagged as showing a treatment-specific temporal change beyond the shared trend, with the count of significant genes reported explicitly",
+                "If DESeq2 is unavailable, an equivalent limma-voom full-vs-reduced moderated F-test is run instead and this substitution is stated in the output"
+              ],
+              "packages": [
+                "DESeq2",
+                "limma",
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "This step directly answers the research question: genes whose time course differs between the two conditions, over and above the trend common to both. The LRT interaction test is the standard approach for a categorical 2xK factorial design with limited replicates.",
+              "caveats": [
+                "With n=3 per condition:time cell, power to detect subtle interaction effects is limited — state this explicitly alongside the significant gene count",
+                "Do not confuse the interaction term result with a simple pairwise condition contrast at a single time point — report only the interaction (LRT) result here",
+                "Multiple testing correction (BH) must be applied across all 12000 tested genes, not just a pre-filtered subset"
+              ],
+              "constraints": [
+                "Reduced model must be ~condition + time (never dropping condition alone) so that both the treatment main effect and the time main effect are already absorbed before testing the interaction",
+                "Report results for all genes passing the T1S1 filter, not a further arbitrary subset"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Cluster interaction-significant genes into temporal patterns",
+              "track": "T1",
+              "step_type": "pattern_analysis",
+              "question": "Among genes with a significant condition:time interaction (T1S2), what distinct temporal patterns (e.g. divergence starting early vs late, transient vs sustained) characterize the treatment-specific response across t0-t3?",
+              "acceptance_criteria": [
+                "Variance-stabilized or log-normalized expression extracted for the T1S2 significant gene set across all 24 samples",
+                "Per-gene condition-mean trajectories computed at each of the 4 time points and the difference-of-trajectories (treatment minus control) plotted/summarized",
+                "Genes grouped into a small number of interpretable clusters (e.g. via hierarchical clustering on scaled trajectory-difference profiles) with cluster sizes reported",
+                "Representative genes per cluster listed with their padj and fold-change trajectory"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "stats"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Turns the interaction gene list from T1S2 into an interpretable set of temporal response patterns, useful for downstream biological interpretation and enrichment.",
+              "caveats": [
+                "If the significant gene count from T1S2 is very small (e.g. <10), state that clustering is underpowered/uninformative rather than force a cluster structure",
+                "Use variance-stabilized values (e.g. DESeq2 vst/rlog), not raw counts, for trajectory computation"
+              ],
+              "constraints": [
+                "Only cluster genes that passed the T1S2 interaction significance threshold — do not expand to the full gene set"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of treatment-specific interaction genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Are the genes showing a significant condition:time interaction (T1S2) enriched for specific biological pathways or gene sets, distinguishing the treatment-specific response from generic time-dependent processes?",
+              "acceptance_criteria": [
+                "Over-representation or gene set enrichment analysis run on the T1S2 significant gene list (as foreground) against the full filtered gene set from T1S1 (as background)",
+                "If a pathway/gene-set reference (e.g. curated pathway collections) is available in the environment for Homo sapiens, enrichment results reported with adjusted p-values and gene overlap counts per pathway",
+                "If no such reference is available at run time, the step explicitly reports this as a gap rather than fabricating or skipping silently"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "No pathway/gene-set reference store is currently provisioned in this environment (checked at planning time). This step must re-check reference availability at run time since the host may stage it later, and degrade to reporting the gap if still absent, rather than blocking the whole analysis.",
+              "caveats": [
+                "Do not substitute a non-human reference",
+                "Treat an empty/unavailable reference as a reportable gap in the final output, not a step failure that halts the DAG"
+              ],
+              "constraints": [
+                "Foreground gene list must be exactly the T1S2 interaction-significant genes; background must be the T1S1 filtered gene universe"
+              ]
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

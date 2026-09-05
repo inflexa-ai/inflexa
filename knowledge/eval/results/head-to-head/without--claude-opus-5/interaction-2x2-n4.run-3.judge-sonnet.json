@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies this as an interaction question, uses a single DESeq2 model with ~genotype+treatment+genotype:treatment, extracts the interaction coefficient as primary with apeglm/ashr shrinkage, and derives simple effects from the same fitted model rather than subset re-fitting, exactly matching the reference. QC (library size, VST PCA colored by both factors, sample distances, dispersion plot) precedes testing with an explicit no-batch-correction policy. The filter (>=10 counts in >=4 samples, the smallest group size) is minimal and justified, and normalization is correctly left inside DESeq2/edgeR-TMM with no pre-normalization. BH correction, explicit alpha tiers (0.05/0.10 exploratory), and shrinkage are all stated. GSEA is well-justified given interaction underpowering, with full ranked universe, named human hallmark/GO-BP collections, size windows, and separate BH correction per collection. Minor deductions: the limma-voom check partially duplicates rather than strictly following the reference's edgeR QL suggestion (acceptable alternative), and report_completeness would benefit from a final consolidated summary step explicitly listing all versions/counts/caveats in one place rather than distributed across steps."
+}

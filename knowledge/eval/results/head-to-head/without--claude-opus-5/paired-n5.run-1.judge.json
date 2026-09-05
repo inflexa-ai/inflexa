@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject (~subject + condition) in DESeq2 with a limma-voom confirmation using the same blocking, explicitly verifies the 5x2 pairing in the metadata, and adds a per-subject delta matrix that directly addresses the 'within each subject' phrasing while correctly labelling it descriptive rather than a test. QC is concrete and design-aware (library sizes, PCA coloured by subject and condition, correlation heatmap, an explicit no-drop-without-justification policy noting the cost of losing a pair), and filtering uses filterByExpr with the paired design rather than an arbitrary cutoff. Normalization is inside the models (median-of-ratios size factors reported; TMM for voom), with VST used only for visualization. Reference level, contrast, blocking term and the apeglm/ashr fallback are all explicit, BH at stated alphas (0.05 and 0.10) with shrunken LFCs for ranking and a p-value histogram diagnostic. GSEA is appropriately preferred over ORA on the full shrunken-LFC ranking with a named human collection, size window applied after intersecting the tested universe, permutation count, match-fraction reporting and redundancy collapsing — only minor deduction because the concrete MSigDB version is deferred to run time rather than pinned. Reporting is thorough: methods, designs, thresholds, retained-gene counts, directional hit counts, blocked-vs-unblocked sensitivity, and honest power caveats at n=5 pairs."
+}

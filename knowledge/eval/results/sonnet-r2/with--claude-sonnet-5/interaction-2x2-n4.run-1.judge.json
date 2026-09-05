@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames the question as a genotype x treatment interaction, specifies ~genotype+treatment+genotype:treatment with explicit reference levels (WT, vehicle), tests the interaction coefficient first and then both simple effects as named contrasts, and correctly chooses ashr over apeglm for non-single-coefficient contrasts. Filtering (>=10 counts in >=4 samples, justified by the smallest cell size), median-of-ratios normalization inside the model, per-contrast BH at alpha=0.05 with independent filtering and p-value histogram inspection are all explicit and appropriate. QC covers blind VST, PCA colored by both factors, and a distance heatmap, but omits library size/depth inspection and states only that deviant samples will be 'flagged' without a decision rule for exclusion. Enrichment is well specified (preranked fgsea on the Wald statistic, fixed local Hallmark/Reactome versions, 15-500 size window intersected with tested genes, leading edge, no ORA on short lists), but it assumes human gene sets and org.Hs.eg.db for what is most plausibly a mouse knockout brain study, with no species check or ortholog mapping step. Reporting is thorough: design, contrasts, thresholds, gene counts, versions, diagnostics, seeds, and an explicit power caveat for the n=4 difference-of-differences."
+}

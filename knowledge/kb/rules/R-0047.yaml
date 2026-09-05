@@ -1,0 +1,54 @@
+id: R-0047
+title: "Gene set size window: keep a set with 15 to 500 genes among the tested genes"
+assertion: >-
+  Before the enrichment test, remove a gene set with fewer than 15 members or
+  more than 500 members among the tested genes. A very small set gives an
+  unstable enrichment statistic, and a very large set is not specific to one
+  process. Apply the window after the intersection of each set with the tested
+  genes. Report the window with the results.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: enrichment
+  parameters:
+    - name: min_size
+      value: 15
+      default_source: "doi:10.1073/pnas.0506580102"
+    - name: max_size
+      value: 500
+      default_source: "doi:10.1073/pnas.0506580102"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0024
+    paraphrase: >-
+      The method restricts each gene set to the genes of the expression dataset
+      and then keeps only the sets inside a size window. The limits of 15 and
+      500 genes are the defaults of the GSEA software that accompanies the paper.
+    anchor: "Methods, Gene sets"
+    retrieved: "2026-09-03"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0027
+    paraphrase: >-
+      The survey finds that the parameters of an enrichment analysis are seldom
+      reported, and that the result depends on them, thus each parameter of the
+      tool must be stated with the result.
+    anchor: "Results; Discussion, Recommendations"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [enrichment, gene-set-size]

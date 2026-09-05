@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly uses ~subject + condition in both DESeq2 and limma-voom, treats subject as a factor, verifies pairing empirically, and directly addresses the 'within each subject' phrasing with a per-subject delta/consistency score rather than only a pooled contrast. QC (library size, PCA by subject/condition, correlation heatmap) precedes testing with an explicit no-drop-without-justification policy; filtering uses filterByExpr with the paired design (well justified, not arbitrary). Normalization is internal (DESeq2 median-of-ratios, edgeR TMM) with VST only for visualization, and shrinkage (apeglm/ashr) plus BH FDR at stated thresholds are used correctly, including honest reporting if zero hits occur. GSEA uses the full ranking with stated metric, human collections, size window, universe-intersection fraction, and redundancy collapsing, losing only a touch for not naming exact MSigDB version. Reporting is thorough, including method comparison, per-subject consistency, and explicit power/df caveats."
+}

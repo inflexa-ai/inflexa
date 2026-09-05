@@ -1,0 +1,235 @@
+{
+  "campaign": "sonnet-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "no-replicates-1v1",
+  "run": 2,
+  "startedAt": "2026-09-05T08:51:32.499Z",
+  "elapsedMs": 27602,
+  "outcome": "plan_submitted",
+  "planId": "pln-9e8ab220",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and normalization of the 2-sample count matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only one sample per group, standard filterByExpr-style rules calibrated for replicated designs are not directly applicable; use a simple detection-based filter and state it explicitly."
+        ],
+        "context": "Input is /data/inputs/counts/counts.csv (12000 x 3 incl. gene symbol column) and /data/inputs/metadata/metadata.csv (2 samples x 2 columns), raw salmon gene-level integer counts, human liver, treated vs control.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2"
+        ],
+        "question": "What are the library sizes, gene detection rates, and normalized expression values for the treated and control liver samples in counts.csv (12000 genes x 2 samples)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do not fabricate replicate structure; treat design strictly as 1 treated vs 1 control."
+        ],
+        "acceptance_criteria": [
+          "Library size, number of detected genes (count>0), and normalization factors (e.g., TMM or size factors) reported per sample",
+          "A normalized expression matrix (e.g., CPM or DESeq2 size-factor-normalized counts) is produced and saved",
+          "Low-count genes are flagged/filtered using an explicit, stated threshold (e.g., CPM>1 in at least 1 sample) given only 2 samples total"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "No-replicate differential expression: fold-change ranking + caveated dispersion-based test",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This is fundamentally an n=1 vs n=1 comparison; any 'significant' gene list from a fixed-dispersion test is a heuristic ranking aid, not a validated inferential result — this must be stated plainly in the output, not buried in a caveat.",
+          "Do not present DESeq2/edgeR default per-gene dispersion estimation as valid here — those routines require replicates and will either error or silently misbehave with n=1 per group."
+        ],
+        "context": "Direct continuation of T1S1's normalized/filtered matrix; produces the core gene list answering the research question.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes show the largest expression differences between the single treated and single control liver sample, ranked by log2 fold-change, and — as a secondary, explicitly caveated statistic — which genes pass a fixed-dispersion-based significance test?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "State the chosen fixed dispersion (or equivalent assumption) and its justification explicitly in the results.",
+          "Primary ranking must be log2 fold-change on normalized counts, not a p-value, given the lack of replication."
+        ],
+        "acceptance_criteria": [
+          "A full gene table with log2FC (treated vs control) and normalized counts per sample, ranked by |log2FC|, is produced for all filtered genes",
+          "A secondary p-value/FDR column is computed only via a method that does not require within-group variance estimation from these samples (e.g., edgeR exactTest or glmFit with a literature-typical fixed dispersion value such as 0.1–0.4, or a Poisson-based test) — the fixed dispersion value and its source must be stated in the output",
+          "The report explicitly states that no biological replication exists, so the secondary p-values reflect an assumed (not estimated) dispersion and must not be interpreted as validated statistical significance",
+          "Top 50 up- and down-regulated genes by log2FC are listed as the primary deliverable"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment on the ranked DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results inherit the uncertainty of the underlying n=1-vs-1 fold-change ranking; treat pathway hits as hypothesis-generating, not confirmatory."
+        ],
+        "context": "Reference data available: /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt (HGNC gene symbols, matching the gene-symbol-indexed counts.csv).",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which biological pathways (WikiPathways human) are enriched among genes most strongly up- or down-regulated between the treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the human WikiPathways gene sets (organism must match Homo sapiens; do not substitute the rat or mouse WikiPathways files present in the reference store)."
+        ],
+        "acceptance_criteria": [
+          "Enrichment (e.g., GSEA-style on the log2FC-ranked list or overrepresentation on top 50 up/down genes) is run against the WikiPathways human gene sets",
+          "Output lists pathway name, WikiPathways ID, gene overlap, and enrichment statistic/FDR",
+          "If the WikiPathways human GMT file is confirmed present, it is used; if absent at run time, the step reports this gap rather than substituting a non-human gene set"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control DE (n=1 each, no replicates)",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is 12000 genes x 2 samples (counts.csv), with metadata.csv defining a single treated and a single control liver sample — no biological replication. Standard replicate-based DE tools (DESeq2, edgeR with per-gene dispersion) cannot estimate within-group variance from n=1 vs n=1, so any p-value from those models would be fabricated precision. The only statistically honest approaches for a 1-vs-1 design are: (1) fold-change/rank-based ranking without a p-value, or (2) a count model that borrows dispersion from an external source (e.g., edgeR's estimateGLMCommonDisp with a fixed prior dispersion, or DESeq2 run with 'blind'-independent dispersion set manually) — both of which produce estimates whose uncertainty is not empirically grounded in this data and must be flagged as such. The plan proceeds with (a) rigorous QC/normalization, (b) an explicit no-replicate DE approach that reports log2FC ranking and uses a fixed/heuristic dispersion only as a secondary, clearly caveated statistic, and (c) pathway enrichment on the ranked gene list against WikiPathways human gene sets to give the top DE genes biological context. No survival/PK/clinical-outcome data are present, so no translational biomarker or safety steps are added."
+  },
+  "usage": {
+    "inputTokens": 43224,
+    "outputTokens": 2399,
+    "cacheCreationInputTokens": 34070,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control DE (n=1 each, no replicates)",
+          "analytical_narrative": "The dataset is 12000 genes x 2 samples (counts.csv), with metadata.csv defining a single treated and a single control liver sample — no biological replication. Standard replicate-based DE tools (DESeq2, edgeR with per-gene dispersion) cannot estimate within-group variance from n=1 vs n=1, so any p-value from those models would be fabricated precision. The only statistically honest approaches for a 1-vs-1 design are: (1) fold-change/rank-based ranking without a p-value, or (2) a count model that borrows dispersion from an external source (e.g., edgeR's estimateGLMCommonDisp with a fixed prior dispersion, or DESeq2 run with 'blind'-independent dispersion set manually) — both of which produce estimates whose uncertainty is not empirically grounded in this data and must be flagged as such. The plan proceeds with (a) rigorous QC/normalization, (b) an explicit no-replicate DE approach that reports log2FC ranking and uses a fixed/heuristic dispersion only as a secondary, clearly caveated statistic, and (c) pathway enrichment on the ranked gene list against WikiPathways human gene sets to give the top DE genes biological context. No survival/PK/clinical-outcome data are present, so no translational biomarker or safety steps are added.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and normalization of the 2-sample count matrix",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What are the library sizes, gene detection rates, and normalized expression values for the treated and control liver samples in counts.csv (12000 genes x 2 samples)?",
+              "acceptance_criteria": [
+                "Library size, number of detected genes (count>0), and normalization factors (e.g., TMM or size factors) reported per sample",
+                "A normalized expression matrix (e.g., CPM or DESeq2 size-factor-normalized counts) is produced and saved",
+                "Low-count genes are flagged/filtered using an explicit, stated threshold (e.g., CPM>1 in at least 1 sample) given only 2 samples total"
+              ],
+              "packages": [
+                "edgeR",
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With only one sample per group, standard filterByExpr-style rules calibrated for replicated designs are not directly applicable; use a simple detection-based filter and state it explicitly."
+              ],
+              "constraints": [
+                "Do not fabricate replicate structure; treat design strictly as 1 treated vs 1 control."
+              ],
+              "context": "Input is /data/inputs/counts/counts.csv (12000 x 3 incl. gene symbol column) and /data/inputs/metadata/metadata.csv (2 samples x 2 columns), raw salmon gene-level integer counts, human liver, treated vs control."
+            },
+            {
+              "id": "T1S2",
+              "name": "No-replicate differential expression: fold-change ranking + caveated dispersion-based test",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes show the largest expression differences between the single treated and single control liver sample, ranked by log2 fold-change, and — as a secondary, explicitly caveated statistic — which genes pass a fixed-dispersion-based significance test?",
+              "acceptance_criteria": [
+                "A full gene table with log2FC (treated vs control) and normalized counts per sample, ranked by |log2FC|, is produced for all filtered genes",
+                "A secondary p-value/FDR column is computed only via a method that does not require within-group variance estimation from these samples (e.g., edgeR exactTest or glmFit with a literature-typical fixed dispersion value such as 0.1–0.4, or a Poisson-based test) — the fixed dispersion value and its source must be stated in the output",
+                "The report explicitly states that no biological replication exists, so the secondary p-values reflect an assumed (not estimated) dispersion and must not be interpreted as validated statistical significance",
+                "Top 50 up- and down-regulated genes by log2FC are listed as the primary deliverable"
+              ],
+              "packages": [
+                "edgeR",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "This is fundamentally an n=1 vs n=1 comparison; any 'significant' gene list from a fixed-dispersion test is a heuristic ranking aid, not a validated inferential result — this must be stated plainly in the output, not buried in a caveat.",
+                "Do not present DESeq2/edgeR default per-gene dispersion estimation as valid here — those routines require replicates and will either error or silently misbehave with n=1 per group."
+              ],
+              "constraints": [
+                "State the chosen fixed dispersion (or equivalent assumption) and its justification explicitly in the results.",
+                "Primary ranking must be log2 fold-change on normalized counts, not a p-value, given the lack of replication."
+              ],
+              "context": "Direct continuation of T1S1's normalized/filtered matrix; produces the core gene list answering the research question."
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment on the ranked DE gene list",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which biological pathways (WikiPathways human) are enriched among genes most strongly up- or down-regulated between the treated and control liver samples?",
+              "acceptance_criteria": [
+                "Enrichment (e.g., GSEA-style on the log2FC-ranked list or overrepresentation on top 50 up/down genes) is run against the WikiPathways human gene sets",
+                "Output lists pathway name, WikiPathways ID, gene overlap, and enrichment statistic/FDR",
+                "If the WikiPathways human GMT file is confirmed present, it is used; if absent at run time, the step reports this gap rather than substituting a non-human gene set"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Enrichment results inherit the uncertainty of the underlying n=1-vs-1 fold-change ranking; treat pathway hits as hypothesis-generating, not confirmatory."
+              ],
+              "constraints": [
+                "Use the human WikiPathways gene sets (organism must match Homo sapiens; do not substitute the rat or mouse WikiPathways files present in the reference store)."
+              ],
+              "context": "Reference data available: /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt (HGNC gene symbols, matching the gene-symbol-indexed counts.csv)."
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

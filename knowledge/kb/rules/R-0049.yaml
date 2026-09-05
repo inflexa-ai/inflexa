@@ -1,0 +1,57 @@
+id: R-0049
+title: "Mouse: the mouse MSigDB collections, not a human collection with a symbol map"
+assertion: >-
+  For a mouse dataset, run the enrichment against the mouse MSigDB
+  collections, with the mouse Hallmark collection first. Do not map the mouse
+  genes to human symbols and then use a human collection. The mouse Hallmark collection is the human collection mapped to mouse
+  genes by MSigDB with a curated orthology, and the other mouse collections
+  add sets from mouse data. A symbol map of your own drops each gene without
+  a one-to-one ortholog and differs from run to run, thus use the curated
+  mouse collection.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: organism
+    op: eq
+    value: mouse
+action:
+  step_type: enrichment
+  parameters:
+    - name: gene_set_collection
+      value: msigdb_hallmark_mouse
+      default_source: "doi:10.1038/s41592-023-02014-7"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0032
+    paraphrase: >-
+      Before the mouse release, MSigDB held human gene sets only, and a mouse
+      study had to convert its genes to human orthologs, which loses the
+      mouse-specific genes and sets. The mouse collections give native mouse
+      gene sets with mouse identifiers, a mouse hallmark collection among them.
+    anchor: "Abstract; Main text, The mouse collections of MSigDB"
+    retrieved: "2026-09-03"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0031
+    paraphrase: >-
+      The hallmark collection was built from the human gene sets of MSigDB and
+      refined with human expression datasets, thus its members are human gene
+      identifiers.
+    anchor: "Methods, Founder sets and refinement"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [enrichment, gene-set-collection, mouse]

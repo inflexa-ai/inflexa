@@ -1,0 +1,62 @@
+id: R-0082
+title: "A low-depth sample with 3 or fewer replicates: keep the sample and add a sensitivity run without it to the report"
+assertion: >-
+  If a group has 3 or fewer replicates and one sample has a library size far
+  below the median, keep the sample in the primary analysis and run the
+  analysis a second time without it. Report the two result sets side by side:
+  the number of significant genes in each and the overlap. With so few
+  replicates, one sample sets much of the dispersion estimate. Thus the
+  primary result depends on it, and a reader must see the size of that
+  dependence. Removal from the primary analysis needs a stated reason. If the
+  group would fall to one sample, the second run has no inference, and the
+  report states this instead.
+modality: bulk_rna_seq
+conditions:
+  - field: quality_flags
+    op: contains
+    value: [low_depth_sample]
+  - field: n_per_group_min
+    op: lte
+    value: 3
+  - field: n_per_group_min
+    op: gte
+    value: 2
+action:
+  step_type: report
+  parameters:
+    - name: low_depth_sensitivity
+      value: run_without_sample_report_both
+      default_source: "doi:10.1261/rna.053959.115"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0011
+    paraphrase: >-
+      The study subsamples the replicates of a highly replicated two-condition
+      experiment and shows that with few replicates a tool recovers a smaller
+      and less stable share of the differentially expressed genes. It recommends at least six
+      replicates per condition, and twelve when the aim is every gene.
+    anchor: "Abstract; Results; Effect of replicate number"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0012
+    paraphrase: >-
+      The survey advises that a sample outlier is examined with clustering
+      and PCA before a decision, and that the decision and its reason go
+      into the report.
+    anchor: "Quality control of the count data; Sample outliers"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [report, library-size, replicates, quality-flag]

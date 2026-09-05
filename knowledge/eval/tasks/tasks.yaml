@@ -1,0 +1,151 @@
+# The Phase 0 task set: the eight design patterns of the evaluation, one
+# simulated dataset each. Each task names the pattern, the research question,
+# the facts of the profile that the planner sees, a reference paragraph for
+# the judge, and deterministic expectations over the plan text.
+#
+# `must_match` and `must_not_match` are case-insensitive regular expressions
+# over the joined text of the plan (title, narrative, and every step field).
+
+- id: two-group-n3
+  pattern: two_group_n3
+  question: "Which genes are differentially expressed between the treated and the control samples, and how confident can we be with three replicates per group?"
+  tissue: liver
+  condition: "drug treatment"
+  experimental_design: "3 treated vs 3 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: []
+  reference: >-
+    Raw counts, two groups, three replicates each. The method is a negative
+    binomial count model: DESeq2 Wald test or edgeR quasi-likelihood, with a
+    minimal low count filter, normalization inside the model, Benjamini-Hochberg
+    at 0.05, and apeglm shrinkage of the reported fold change. A sample structure
+    QC (PCA, sample distances) precedes the test. The plan states that power is
+    low at three replicates and does not lower alpha to compensate. TPM or
+    pre-normalized values, ComBat, or a t-test on counts are wrong.
+  must_match: ["DESeq2|edgeR", "(PCA|principal component)", "(adjusted p|padj|FDR|false discovery)"]
+  must_not_match: ["ComBat", "t-test on (the )?counts"]
+
+- id: two-group-n6-enrich
+  pattern: two_group_n6
+  question: "Which genes and which hallmark pathways change between treated and control? One sample looks shallow; handle it carefully."
+  tissue: skin
+  condition: "atopic dermatitis lesional vs control"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: ["Sample sample_01 has a library size about 4x below the median"]
+  reference: >-
+    Raw counts, six replicates per group, one low depth sample. QC keeps the
+    low depth sample, inspects it on the PCA and the distance heatmap, and
+    reports its library size; removal only with a stated reason. DESeq2 Wald or
+    edgeR QL with apeglm shrinkage, BH at 0.05. Enrichment on the full ranked
+    list (fgsea preranked, MSigDB Hallmark, set size 15 to 500) with the ranking
+    statistic stated; ORA only with the tested genes as the universe. The report
+    names the versions, the thresholds, the gene set database and its version.
+  must_match: ["DESeq2|edgeR", "hallmark", "(fgsea|GSEA|preranked|ORA|over-representation|enrich)", "(library size|sequencing depth|low[- ]depth|shallow)"]
+  must_not_match: ["remove sample_01 (before|prior)", "KEGG"]
+
+- id: paired-n5
+  pattern: paired_n5
+  question: "Which genes respond to treatment within each subject? Each of the five subjects contributes a control and a treated sample."
+  tissue: blood
+  condition: "treatment"
+  experimental_design: "5 subjects, each with a control and a treated sample (paired), raw counts from STAR/featureCounts"
+  count_source: star_featurecounts
+  concerns: []
+  reference: >-
+    A paired design. The subject enters the design as a blocking term
+    (~ subject + condition in DESeq2 or edgeR), or limma-voom with
+    duplicateCorrelation on the subject. The test is the condition coefficient
+    within subject. A model that ignores the pairing, or a paired t-test on
+    counts, is wrong. QC, filter, BH, shrinkage as usual.
+  must_match: ["(subject|block|pair)", "DESeq2|edgeR|limma"]
+  must_not_match: ["paired t-test on (the )?(raw )?counts"]
+
+- id: batch-balanced-n6
+  pattern: batch_balanced_n6
+  question: "Which genes differ between treated and control? The samples were processed in two batches, each batch holding both conditions."
+  tissue: kidney
+  condition: "treatment"
+  experimental_design: "6 treated vs 6 control, two known processing batches balanced across conditions, raw counts"
+  count_source: salmon
+  concerns: []
+  reference: >-
+    A known balanced batch enters the design as a covariate before the
+    condition (~ batch + condition). The counts are not adjusted before the
+    model; ComBat-seq is only for downstream uses that need adjusted counts, and
+    then with the condition kept in the covariate model. QC colors the PCA by
+    batch and by condition. DESeq2 Wald or edgeR QL, BH, shrinkage.
+  must_match: ["batch", "DESeq2|edgeR|limma", "(design|formula|covariate|~)"]
+  must_not_match: ["ComBat[- ]?seq (the counts )?(before|prior to|then)"]
+
+- id: interaction-2x2-n4
+  pattern: interaction_2x2_n4
+  question: "Does the drug act differently in knockout than in wild type? Two genotypes by two treatments, four replicates per cell."
+  tissue: brain
+  condition: "genotype by treatment"
+  experimental_design: "2x2 factorial: genotype (WT, KO) x treatment (vehicle, drug), 4 replicates per cell, raw counts"
+  count_source: salmon
+  concerns: []
+  reference: >-
+    An interaction question. The design holds both factors and their
+    interaction (~ genotype + treatment + genotype:treatment), and the test of
+    interest is the interaction coefficient, followed by the simple effects of
+    treatment within each genotype. A one-factor model on the four combined
+    groups answers a different question. DESeq2 (Wald on the interaction term,
+    ashr for a contrast) or edgeR QL. QC, filter, BH.
+  must_match: ["interaction", "genotype", "treatment", "DESeq2|edgeR|limma"]
+  must_not_match: []
+
+- id: timecourse-2x4-n3
+  pattern: timecourse_2x4_n3
+  question: "Which genes show a treatment-specific change over the four time points, beyond the shared time trend?"
+  tissue: cell line
+  condition: "treatment over time"
+  experimental_design: "2 conditions x 4 time points (t0..t3), 3 replicates per cell, raw counts"
+  count_source: salmon
+  concerns: []
+  reference: >-
+    A time course. The question is the condition-by-time interaction, tested
+    with a likelihood ratio test of the full model (~ condition + time +
+    condition:time) against the reduced model (~ condition + time), or an
+    equivalent joint test in edgeR or limma. Per-time-point fold changes
+    describe the pattern for the significant genes. QC, filter, BH.
+  must_match: ["(likelihood ratio|LRT|reduced model|interaction|spline)", "time", "DESeq2|edgeR|limma"]
+  must_not_match: []
+
+- id: confounded-batch-n6
+  pattern: confounded_batch_n6
+  question: "Which genes differ between treated and control? All treated samples were processed in batch B2 and all controls in batch B1."
+  tissue: lung
+  condition: "treatment"
+  experimental_design: "6 treated vs 6 control; batch B1 holds all controls and batch B2 holds all treated samples (batch confounded with condition), raw counts"
+  count_source: salmon
+  concerns: ["The processing batch is perfectly confounded with the condition"]
+  reference: >-
+    The batch is perfectly confounded with the condition. No model can
+    separate the two, and a batch term makes the model matrix not full rank.
+    The right plan does not fit batch, does not repair with ComBat-seq or SVA,
+    and either stops to ask for a rebalanced design or runs the comparison with
+    the assumption of no batch effect stated and every result labeled as
+    confounded. A plan that corrects the batch and reports clean results is
+    wrong.
+  must_match: ["confound", "(label|caveat|caution|assumption|cannot (be )?separate|not (be )?separable|ask|clarif)"]
+  must_not_match: ["ComBat[- ]?seq to (remove|correct)", "sva(seq)? to (remove|correct)"]
+
+- id: no-replicates-1v1
+  pattern: no_replicates_1v1
+  question: "Which genes are differentially expressed between the treated sample and the control sample?"
+  tissue: liver
+  condition: "treatment"
+  experimental_design: "1 treated vs 1 control, no biological replication, raw counts"
+  count_source: salmon
+  concerns: ["No biological replication: one sample per condition"]
+  reference: >-
+    One sample per group. No inferential test is valid: no dispersion can be
+    estimated. The plan reports normalized counts and descriptive log2 fold
+    changes only, states that the design has no replication, names the design
+    that supports inference (at least two, preferably three or more per group),
+    and produces no p-values. A DESeq2 or edgeR run with p-values, or a fold
+    change cutoff presented as significance, is wrong.
+  must_match: ["(no|without|lack of|absence of) (biological )?replicat", "(descriptive|fold change)"]
+  must_not_match: ["adjusted p-value cutoff", "padj < 0\\.05", "FDR < 0\\.05", "Wald test"]

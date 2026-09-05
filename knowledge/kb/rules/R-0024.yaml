@@ -1,0 +1,62 @@
+id: R-0024
+title: "ComBat-seq only when a downstream use needs adjusted counts, with the condition in the covariate model"
+assertion: >-
+  With a known batch that is balanced across the conditions, the differential
+  expression test takes the batch as a term in the design and needs no
+  adjusted counts. Run ComBat-seq only when a downstream use needs adjusted
+  counts, for example a clustering, a visualization, or a tool without a batch
+  term. In that call, give the condition to the covariate model, so that the
+  adjustment keeps the condition effect. Do not give the adjusted counts to
+  the test, because a test on adjusted counts reports confidence that the data
+  does not support.
+modality: bulk_rna_seq
+conditions:
+  - field: batch
+    op: eq
+    value: known_balanced
+action:
+  step_type: normalize
+  parameters:
+    - name: batch_adjusted_counts
+      value: only_for_downstream
+      default_source: "doi:10.1093/biostatistics/kxv027"
+    - name: combat_seq_group
+      value: condition
+      default_source: "doi:10.1093/nargab/lqaa078"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: disputes
+    eco: ECO:0000033
+    cito: cito:disagreesWith
+    source: S-0014
+    paraphrase: >-
+      ComBat-seq fits a negative binomial regression to the counts, estimates
+      the batch effects, and returns adjusted integer counts for a downstream
+      count-based tool. It accepts a covariate model with the biological
+      condition, so that the adjustment keeps the condition effect, and the
+      paper presents it for the case where a downstream method needs adjusted
+      counts.
+    anchor: "Abstract; Introduction; Methods, The ComBat-seq model"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0016
+    paraphrase: >-
+      A batch adjustment that keeps the group difference, followed by a test on
+      the adjusted data, gives p-values that are too small, because the
+      adjustment uses information that the later test does not account for.
+      The bias is largest in an unbalanced design, and the paper favors a batch
+      term in the model.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [batch, normalization, combat-seq]

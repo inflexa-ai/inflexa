@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the interaction test as ~condition+time+condition:time vs ~condition+time via LRT, explicitly encodes time as a 4-level ordered factor with t0 reference, and cross-checks with limma-voom—matching the reference exactly and guarding against misspecification (parallel-trajectory genes must not appear). QC (library size, VST PCA colored by condition/time, correlation heatmap) precedes modeling with an explicit no-drop-at-this-stage policy for outliers, and filtering (10 counts in ≥3 samples) is minimal and justified against the smallest group size. Normalization is correctly left inside DESeq2/voom on raw counts, BH-FDR at stated thresholds (0.05/0.10) is used with lfcShrink reserved for individual coefficients not the LRT stat, and enrichment properly separates unsigned LRT-ranked fgsea from ORA with a stated expressed-gene universe and symbol-match reporting. Minor deductions: condition reference-level ambiguity is hedged rather than fixed, and per-timepoint Wald decomposition slightly blurs the line between the primary joint test and descriptive follow-up despite explicit caveats.'"
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies this as an interaction question, fits ~genotype+treatment+genotype:treatment, tests the interaction coefficient via Wald first, then derives the two simple effects with proper contrasts and explicit reference levels. QC (VST PCA, distance heatmap, library size outlier policy) precedes testing, filtering is minimal and justified (>=10 counts in >=4 samples matching smallest cell size), and normalization is strictly internal to DESeq2. Shrinkage is correctly split (apeglm for the single interaction coefficient, ashr for composite simple-effect contrasts), BH-FDR at alpha=0.05 with independent filtering is stated per contrast, and the power caveat for n=4 interaction tests is explicit. Enrichment is well-specified (fgsea preranked on stat, per-contrast, Hallmark+Reactome, size window 15-500, universe = tested genes) with a sensible fallback if a reference is missing, only slightly dinged for not pinning exact versions upfront. The final report ties everything together with contrasts, diagnostics, DE counts, enrichment tables, caveats, and a reproducibility record."
+}

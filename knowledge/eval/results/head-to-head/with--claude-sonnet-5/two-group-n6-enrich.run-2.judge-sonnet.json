@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan retains sample_01 with explicit inspection on PCA/distance heatmap and library-size reporting, applies a standard minimal filter, uses DESeq2 median-of-ratios normalization inside the model with an explicit control-referenced ~condition design fitting the unpaired single-batch 6v6 structure, and reports BH-FDR with apeglm shrinkage and both shrunken/unshrunken LFCs. Enrichment is done as fgsea preranked on the Wald statistic against Hallmark (versioned) with stated size window and universe, going beyond the reference with Reactome and GSVA cross-checks. The report step is comprehensive, naming versions, thresholds, gene counts, and caveats including the low-depth sample decision, matching or exceeding the reference plan's rigor."
+}

@@ -1,0 +1,73 @@
+id: R-0015
+title: "Population-scale cohorts: the count models exaggerate false positives, use limma-voom and report the caution"
+assertion: >-
+  If each group holds 50 or more samples, use limma-voom with a fixed-effects
+  linear model for the differential expression test. In a population cohort
+  the sample-to-sample variation does not obey the negative binomial model,
+  and DESeq2 and edgeR then report many false positives, even on permuted
+  labels. The linear model on the log counts with precision weights keeps the false
+  discovery rate closer to the nominal level than the count models, but it
+  also exceeds it on some data. The paper recommends the Wilcoxon rank-sum
+  test at a large sample size. State this caution in the report, and give the
+  Wilcoxon test or a permutation check as the control.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 50
+action:
+  step_type: differential_expression
+  method: M-0019
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0023
+    paraphrase: >-
+      On population-level datasets with dozens to hundreds of samples per
+      condition, DESeq2 and edgeR mark many genes as differentially expressed
+      on permuted labels, because the parametric model does not hold for the
+      variation between the samples. In the semi-synthetic benchmark the other
+      parametric methods, limma-voom among them, also fail the false discovery
+      rate control on some data, and only the Wilcoxon rank-sum test holds it.
+      The authors recommend the Wilcoxon test above about eight samples per
+      condition.
+    anchor: "Abstract; Results and discussion; Conclusions"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0006
+    paraphrase: >-
+      voom estimates the mean-variance trend of the log counts and gives each
+      observation a precision weight, and then the limma linear models apply
+      to the counts. In the comparisons the method holds the false discovery
+      rate as well as or better than the count models, and it is fast on a
+      large dataset.
+    anchor: "Abstract; voom has the lowest false discovery rate; voom and limma-trend are faster than specialist RNA-seq methods"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0011
+    paraphrase: >-
+      Above about 12 replicates per condition, the limma-based tools also
+      hold the false positive rate and find most of the true differentially
+      expressed genes, thus the choice of tool widens with the replicate
+      number.
+    anchor: "Results, Tool performance; Discussion, Recommendations"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [design, population-scale, method-selection, warn]

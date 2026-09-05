@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the paired structure and specifies a subject-blocked NB GLM (~subject + condition) with the treated-vs-control contrast, explicitly forbidding an unpaired substitute, and adds a per-subject direction-consistency count that directly addresses the 'within each subject' framing. QC is design-aware: library sizes, correlation heatmap, PCA coloured by subject and shaped by condition, within-pair distances, and a stated no-drop policy for outliers. Filtering is minimal and justified (filterByExpr on the design or a documented CPM threshold), raw counts feed the model with VST/log-CPM reserved for visualization, and re-filtering before BH is forbidden. Weaknesses are minor: LFC shrinkage is hedged as 'optionally... if present' rather than required, the reference level is asserted by direction rather than explicitly set, gene-set collection versions and size windows are left to runtime resolution, and software version reporting is implied by package probing rather than stated as a deliverable."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly diagnoses the perfect aliasing of batch with condition, refuses to fit a rank-deficient ~batch + condition model, explicitly forbids ComBat-seq/removeBatchEffect/SVA/RUV with the correct rationale, and runs the contrast only under an openly stated and unverifiable no-batch-effect assumption with every table, figure and summary carrying the confounding label — exactly the reference behaviour. QC precedes testing with blind VST, PCA on the top 500 variable genes, a distance heatmap, library sizes and detected-gene counts annotated by both factors, plus a printed condition-by-batch contingency table; the only soft spot is that outlier handling is 'flag and name' without a stated action rule. Filtering (>=10 counts in >=6 samples, justified by the smallest group size), normalization inside the model (median-of-ratios offsets, TMM for edgeR, no pre-scaling), the explicit control reference level and named contrast triple, and BH at alpha=0.05 with independent filtering plus apeglm/ashr shrinkage reported beside the MLE are all specified correctly. GSEA uses the full ranked list with the Wald statistic named as a disputed choice, the tested genes as universe, a 15-500 window applied after intersection, and collection/version reporting, though enrichment on a confounded contrast is of limited value even with the caveat. The synthesis report covers versions, design, thresholds, n tested, n DE, NA counts split by cause, cross-method intersection, and a design-level remedy."
+}

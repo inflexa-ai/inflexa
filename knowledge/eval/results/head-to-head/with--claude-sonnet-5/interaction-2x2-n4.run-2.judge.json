@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames the question as an interaction test, fits a single DESeq2 model with ~genotype+treatment+genotype:treatment, explicitly relevels both factors to WT/vehicle, extracts the interaction coefficient by name, and derives the KO simple effect as an explicit two-coefficient contrast rather than refitting or collapsing to a four-group one-factor model — exactly the reference approach. QC (blind VST, PCA on top-500, sample-distance heatmap, library sizes, outliers named not silently dropped) precedes testing; the low-count filter (>=10 counts in >=4 samples) is minimal and justified by the smallest cell size; normalization is median-of-ratios inside the model with the missing tximport length offset flagged as a caveat. FDR handling is strong: BH at alpha=0.05 with independent filtering, apeglm for single coefficients and ashr for the linear combination (a correct technical distinction), plus Cook's-distance outlier reporting and p-value histogram inspection. Enrichment is per-contrast fgsea on the full ranked list by Wald statistic with named collections, versions, and a 15-500 size window, and a conditional ORA with a tested-gene universe — the only weakness is the unverified assumption of human HGNC symbols for what is plausibly a mouse knockout brain dataset. The report step names design, references, thresholds, gene counts, diagnostics, package/gene-set versions, and correctly refuses to equate a non-significant interaction with equivalence at n=4/cell."
+}

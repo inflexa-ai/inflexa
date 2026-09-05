@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect confounding, refuses to add a batch term (citing rank deficiency), explicitly forbids ComBat-seq/SVA/removeBatchEffect, runs a ~condition model under a stated assumption, and labels every artifact and the final report as aliased with batch while recommending a rebalanced redesign — this matches the reference. QC (blind VST, PCA colored by condition and batch, distance heatmap, library sizes) is specific and notes the collinearity of the annotations, though it does not state an explicit outlier/shallow-sample policy. Filtering (>=10 counts in >=6 samples, tied to smallest group size), in-model normalization (median-of-ratios; TMM for edgeR), explicit reference level and named contrast, BH at alpha 0.05 with apeglm shrinkage and Cook's/independent-filtering NA accounting are all correct and stated. Enrichment is the weakest element: the mechanics (tested-gene universe, Hallmark, 15-500 size window, BH, caveat) are sound, but running ORA on a gene list that is fully confounded with batch adds interpretive risk, and the justification for rejecting preranked GSEA is an appeal to a 'knowledge-service check' rather than a statistical rationale."
+}

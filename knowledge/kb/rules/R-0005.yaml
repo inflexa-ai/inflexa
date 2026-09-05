@@ -1,0 +1,62 @@
+id: R-0005
+title: "Batch perfectly confounded with condition: do not fit batch, do not repair, label or stop"
+assertion: >-
+  If the batch is perfectly confounded with the condition, do not fit a batch
+  term and do not adjust the counts with ComBat-seq, removeBatchEffect, or a
+  surrogate variable method. The model matrix is not full rank, and a removal
+  method would remove the condition effect with the batch. State the assumption
+  of no batch effect and label every result as confounded, or stop and ask for
+  a design where the batches hold every condition.
+modality: bulk_rna_seq
+conditions:
+  - field: batch
+    op: eq
+    value: known_confounded
+action:
+  step_type: model_design
+  outcome: confounded_label_or_stop
+  forbids: [M-0018]
+severity: flag
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0002
+    paraphrase: >-
+      The vignette explains that a design where one factor is a linear
+      combination of another gives a model matrix that is not full rank, that
+      DESeq2 refuses to fit such a model, and that a batch confounded with the
+      condition cannot be separated from it by any model.
+    anchor: "Model matrix not full rank"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0015
+    paraphrase: >-
+      When the batch is confounded with the biological variable of interest,
+      no analysis can separate the two, and a correction that seems to remove
+      the batch effect removes the biology with it. The design must distribute
+      the conditions across the batches.
+    anchor: "Box 2; Confounding of batch with outcome"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0016
+    paraphrase: >-
+      Batch removal methods that keep the group difference, applied to an
+      unbalanced design, lead to exaggerated confidence in the downstream
+      results, because the removal borrows the group signal.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [batch, confounding, flag]

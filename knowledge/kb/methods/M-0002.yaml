@@ -1,0 +1,16 @@
+id: M-0002
+label: "DESeq2 likelihood ratio test"
+edam_operation: EDAM:operation_3223
+description: >-
+  Negative binomial generalized linear model compared against a reduced model
+  with a likelihood ratio test. For a time course, a multi-level factor, or any
+  question that asks whether a set of terms matters together.
+packages:
+  - name: DESeq2
+    track: bioconductor
+    biotools: deseq2
+    version_range: ">=1.50"
+    bioconductor: "3.23"
+templates:
+  - tpl-deseq2-multigroup
+  - tpl-deseq2-lrt-timecourse

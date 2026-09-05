@@ -1,0 +1,70 @@
+id: R-0094
+title: "Two to three replicates per group: the report states the expected power at that size"
+assertion: >-
+  If the smallest group holds two or three replicates, the report states
+  the expected power of the test at that size before the gene tables. At
+  three replicates per group the count models find a minority of the true
+  differentially expressed genes, and most of the genes that they find have
+  a fold change above two. Thus an absent gene in the significant set is not
+  evidence of no effect. State the number of replicates, the share of the
+  true effects that a test of this size finds in the benchmark, and the
+  fold change range that the test can find. Keep the significance threshold
+  as it is. A stricter threshold removes more power, and a looser threshold
+  adds false positives.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 2
+  - field: n_per_group_min
+    op: lte
+    value: 3
+  - field: question
+    op: in
+    value: [differential_expression, full_plan]
+action:
+  step_type: report
+  parameters:
+    - name: power_statement
+      value: expected_power_at_replicate_number
+      default_source: "doi:10.1261/rna.053959.115"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0011
+    paraphrase: >-
+      With three replicates per condition the tools find only a small share
+      of the genes that are differentially expressed in the full data, and
+      the genes that they find have a large fold change. The share rises
+      with the replicate number, and the authors give six replicates as the
+      minimum and twelve as the number that finds most genes of any fold
+      change.
+    anchor: "Results, Effect of replicate number on the identification of DE genes; Discussion"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0077
+    paraphrase: >-
+      The paper simulates count data from six public data sets and
+      computes the power of the differential expression test as a function
+      of the sample size and the sequencing depth. A larger sample size
+      raises the power more than a deeper sequencing does, and the paper
+      gives a power calculator for a design.
+    anchor: "Abstract"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [report, replicates, power]

@@ -1,0 +1,56 @@
+id: R-0104
+title: "Three or more groups: run the enrichment once per contrast and report each contrast on its own"
+assertion: >-
+  With three or more groups, run the enrichment once per contrast, with the
+  ranked list or the significant list of that contrast as the input. Do not
+  pool the genes of several contrasts into one list, because a set that is
+  up in one contrast and down in another cancels in the pool. Report each
+  contrast with its own table and name the contrast beside each set. When a
+  set repeats across contrasts, say so in the summary, but keep the tables
+  apart.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: n_groups
+    op: gte
+    value: 3
+action:
+  step_type: enrichment
+  parameters:
+    - name: enrichment_per_contrast
+      value: true
+      default_source: "doi:10.12688/f1000research.27893.1"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      With more than two groups, each comparison of interest is one contrast
+      of the design, and each contrast gives its own set of statistics and
+      its own list of differentially expressed genes.
+    anchor: "Design matrices for multiple groups; Contrasts"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0027
+    paraphrase: >-
+      The survey finds that many enrichment studies lack detail in the
+      methods about the tools, the gene sets, and the background that they
+      used, thus a reader cannot judge or reproduce the result.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, design, contrasts]

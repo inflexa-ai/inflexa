@@ -1,0 +1,1257 @@
+{
+  "campaign": "phase0",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "interaction-2x2-n4",
+  "run": 2,
+  "startedAt": "2026-09-04T21:34:32.793Z",
+  "elapsedMs": 226583,
+  "outcome": "plan_submitted",
+  "planId": "pln-d94a3460",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample-structure QC on the 2x2 design",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The counts are a gene-level matrix, not salmon quant directories, so tximport average-transcript-length offsets cannot be reconstructed; note this as a documented limitation",
+          "With 12000 genes the matrix is small — do not over-allocate memory"
+        ],
+        "context": "Raw integer gene-level counts from salmon, human brain, balanced 2x2 factorial. QC precedes the model so that a mislabelled or outlier sample is known before any inference. Package availability is unknown at plan time: probe DESeq2 first; if absent, use a Python path (pydeseq2 VST, or log2(CPM+1) with scikit-learn PCA) and state which transform was used.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "pheatmap",
+          "ggplot2",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Do the 16 brain samples group by genotype (WT/KO) and treatment (vehicle/drug) as the metadata claims, and is any of the four cells driven by an outlier sample before the interaction model is fit?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Raw counts before a model: blind VST, PCA on the top 500 variable genes and a sample-distance heatmap coloured by condition, per R-0033.",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Transform blind to the design (blind=TRUE) for QC only",
+          "Do not remove any sample without stating the reason and the effect on cell balance",
+          "Do not pre-normalize or scale the counts that are passed downstream — the raw integer matrix must reach the model untouched",
+          "Probe each package before use (requireNamespace / import) and record which path was taken"
+        ],
+        "description": "Load /eval-phase0-with-interaction-2x2-n4-2/data/inputs/counts/counts.csv (12000 genes x 16 samples, first column gene symbol) and /eval-phase0-with-interaction-2x2-n4-2/data/inputs/metadata/metadata.csv (16 rows: sample, genotype, treatment, condition). Verify that count column names match metadata sample IDs exactly and reorder to match; confirm all 4 cells (WT_vehicle, WT_drug, KO_vehicle, KO_drug) have n=4. Report per-sample library sizes and detected-gene counts. Apply the variance-stabilizing transformation blind to the design, run PCA on the 500 most variable genes, and colour the PCA by genotype, by treatment, and by the 4-level condition; draw a heatmap of Euclidean sample distances. Save the VST matrix and the QC figures for downstream steps.",
+        "acceptance_criteria": [
+          "Sample-ID concordance between counts.csv columns and metadata.csv rows is verified and reported; any mismatch is named, not silently dropped",
+          "Cell sizes reported: 4 per each of WT_vehicle, WT_drug, KO_vehicle, KO_drug",
+          "Library size and detected-gene table for all 16 samples produced",
+          "PCA (500 most variable genes, blind VST or stated fallback transform) coloured by genotype, treatment and condition, plus a sample-distance heatmap, are saved",
+          "Any sample that does not cluster with its cell is named explicitly, with the recommendation to keep or drop stated and justified — not acted on silently"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 interaction test: genotype x treatment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Alphabetical factor ordering would make KO and drug the references and silently invert every reported sign",
+          "No tximport length offsets are available from a gene-level matrix; a gene with differential transcript usage between cells could be mis-called and this is a stated limitation",
+          "A gene significant for the main treatment effect but not the interaction is NOT evidence of a genotype-specific drug effect"
+        ],
+        "context": "This step answers the research question directly. The interaction coefficient is a difference of differences and carries a large standard error; with 4 replicates per cell the power to detect it is modest, and the step must state this in its output rather than interpret an empty result as evidence of no genotype-dependent drug effect. The full ranked table (all tested genes, with the stat column) must be saved because T2S1 consumes it unfiltered.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ashr",
+          "apeglm",
+          "ggplot2",
+          "pandas"
+        ],
+        "question": "For which genes does the drug-vs-vehicle effect differ between KO and WT — i.e. which genes have a non-zero genotypeKO:treatmentdrug interaction coefficient?",
+        "grounding": {
+          "claims": [
+            "R-0013@2639",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@762e",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0010@91a5",
+            "R-0043@4f55",
+            "R-0009@f54e"
+          ],
+          "reason": "Interaction question at 2x2 with 4 replicates per cell: DESeq2 with genotype*treatment, Wald test on the single interaction coefficient (R-0013), minimal pre-filter plus independent filtering (R-0029/R-0002), explicit reference levels (R-0036), BH at alpha 0.05 (R-0010/R-0043), Cook's-distance NA reporting at n<7 per cell (R-0039). R-0018 is acknowledged but cannot be satisfied: the input is a gene-level matrix, not salmon quant output, so no length offsets exist.",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+          "template": "tpl-deseq2-interaction@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use relevel (or factor levels=) to set WT and vehicle as references before DESeq(); never rely on alphabetical default ordering",
+          "Pre-filter minimally at 10 counts in 4 samples — do not raise the threshold; independent filtering in results() does the rest",
+          "Pass alpha=0.05 to results() so the independent filter is optimized for the reported cutoff",
+          "Select genes by padj, never by raw p-value or by fold change alone",
+          "Do not pre-normalize the counts; size factors belong inside the model",
+          "If DESeq2 is unavailable, fall back to pydeseq2 with the same design and state the substitution; if neither is present, report the blocker rather than substituting an unmodelled test"
+        ],
+        "description": "Build a DESeqDataSet from the raw counts.csv matrix and metadata.csv. Set reference levels explicitly with relevel: genotype reference = WT, treatment reference = vehicle (do not rely on alphabetical ordering — alphabetically KO precedes WT and drug precedes vehicle, so the defaults would be wrong). Pre-filter minimally: keep genes with at least 10 counts in at least 4 samples (the smallest group size). Fit design = ~ genotype + treatment + genotype:treatment with DESeq(); size factors are estimated by median-of-ratios inside the model. Test the single interaction coefficient genotypeKO.treatmentdrug with the Wald test, results(alpha=0.05), independent filtering ON. Keep DESeq2's default count-outlier behaviour (with 4 replicates per cell it flags Cook's-distance outliers and sets p and padj to NA rather than replacing counts) and report the number of NA p-values from the outlier flag separately from those removed by the independent filter. Report the shrunken interaction LFC via lfcShrink(type=\"ashr\") beside the unshrunken estimate. Output: the full interaction results table (gene, baseMean, unshrunken LFC, shrunken LFC, lfcSE, stat, pvalue, padj), the count of genes with padj<0.05, an MA plot, a p-value histogram, the dispersion plot, and normalized-count plots for the top interaction genes split by the four cells.",
+        "acceptance_criteria": [
+          "Reference levels are set explicitly (genotype=WT, treatment=vehicle) and the resultsNames() vector is printed, showing the interaction coefficient name",
+          "Design formula ~ genotype + treatment + genotype:treatment is fit on raw counts with DESeq2-internal median-of-ratios size factors",
+          "Number of genes retained by the pre-filter (>=10 counts in >=4 samples) out of 12000 is reported",
+          "Interaction results table for every tested gene is saved with both unshrunken and ashr-shrunken LFC and the stat column intact",
+          "Genes with padj<0.05 on the interaction are counted and listed; NA p-values from Cook's-distance outlier flagging are reported separately from independent-filtering NAs",
+          "The output explicitly states the power limitation of a difference-of-differences test at n=4 per cell, and does not equate a null interaction result with proven equivalence"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Simple effects within genotype and within treatment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Simple effects at n=4 are themselves modestly powered; a null in one genotype is not an established absence of effect",
+          "Shrunken LFCs are for ranking and plotting; p-values come from the unshrunken fit"
+        ],
+        "context": "The interaction coefficient alone is hard to read biologically: a significant interaction can arise from a drug effect present in WT and absent in KO, from opposite-direction effects, or from an effect of different magnitude. The simple effects say which. This step is what turns 'the drug acts differently' into a described direction.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ashr",
+          "ggplot2",
+          "pandas"
+        ],
+        "question": "What is the drug-vs-vehicle effect within WT and within KO separately, and how do the KO-vs-WT differences at vehicle and at drug decompose the interaction?",
+        "grounding": {
+          "claims": [
+            "R-0013@2639",
+            "R-0040@8061",
+            "R-0009@f54e",
+            "R-0037@e6d8",
+            "R-0036@9786"
+          ],
+          "reason": "R-0013 requires the simple effects after the interaction test; the KO-internal treatment effect is a contrast not a single coefficient, so ashr shrinkage per R-0040/R-0009, and the 2-fold question is tested with lfcThreshold inside the model per R-0037.",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use ashr for shrinkage of the non-coefficient contrasts; do not force apeglm onto a contrast it cannot represent",
+          "Report the fold-change threshold result from lfcThreshold inside results(), never as a post-hoc filter on the estimated LFC",
+          "Reuse the T1S2 fitted object — do not refit with a different filter or design",
+          "A significant simple effect in one genotype together with a non-significant one in the other is NOT itself evidence of an interaction; state this wherever the two are compared"
+        ],
+        "description": "From the fitted model of T1S2, extract the four interpretable simple-effect contrasts, each named as factor/numerator/denominator: (1) drug vs vehicle within WT — the treatment main-effect coefficient at the reference genotype; (2) drug vs vehicle within KO — the sum of the treatment main effect and the interaction term, obtained with a list contrast; (3) KO vs WT within vehicle; (4) KO vs WT within drug. Apply ashr shrinkage to each (ashr, not apeglm, because contrasts 2 and 4 are not single model coefficients), reporting shrunken and unshrunken LFC side by side. Produce per-contrast results tables at padj<0.05, a summary table of DE counts per contrast, and a comparison plot: the LFC of drug-vs-vehicle in WT against the LFC of drug-vs-vehicle in KO, with the genes significant for the interaction highlighted. Additionally, as a sensitivity analysis, use results() with lfcThreshold=1 on the interaction coefficient (a formal test against a 2-fold difference-of-differences rather than a post-hoc filter) and report how many genes pass.",
+        "acceptance_criteria": [
+          "All four simple-effect contrasts are computed and each is labelled as factor, numerator level, denominator level, so the sign of every LFC is unambiguous",
+          "Each contrast reports shrunken (ashr) and unshrunken LFC and the count of genes at padj<0.05",
+          "A WT-effect-vs-KO-effect LFC scatter is produced with interaction-significant genes highlighted",
+          "For the top interaction genes, the direction pattern is described explicitly (effect in WT only / KO only / opposite direction / same direction different magnitude)",
+          "The lfcThreshold=1 sensitivity result on the interaction is reported as a count with the threshold stated"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "edgeR quasi-likelihood robustness check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Different low-count filters between the two tools inflate apparent disagreement; keep the filter matched and say what it was",
+          "Disagreement between the methods grows at low counts and low replication — expect some and report it rather than explaining it away"
+        ],
+        "context": "At 4 replicates per cell the two tools agree on most genes but disagree at low counts; the overlap is the honest statement of confidence for an interaction test with limited power.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "DESeq2",
+          "pandas",
+          "ggplot2"
+        ],
+        "question": "Which interaction genes are called by both the DESeq2 Wald test and the edgeR quasi-likelihood F-test on the same counts and the same 2x2 design?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0001@9a17",
+            "R-0026@762e"
+          ],
+          "reason": "R-0042 requires the DESeq2/edgeR-QL overlap as the robustness statement with the intersection as the high-confidence set; R-0001 names edgeR QL as the second method at 2-11 replicates.",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use TMM normalization factors inside the edgeR model — do not feed DESeq2-normalized counts to edgeR",
+          "Keep the same reference levels so the interaction coefficient means the same thing in both fits",
+          "If edgeR is unavailable, state that the robustness check could not run and mark the DESeq2 result as unreplicated by a second method — do not silently skip it"
+        ],
+        "description": "Refit the identical design (~ genotype + treatment + genotype:treatment, WT and vehicle as references) on the same pre-filtered raw count matrix using edgeR: the same 10-counts-in-4-samples filter for comparability, calcNormFactors (TMM), estimateDisp, glmQLFit, and glmQLFTest on the interaction coefficient. Compare against the T1S2 DESeq2 interaction result: report the number of significant genes (padj/FDR<0.05) from each method, the size of the intersection, and a rank correlation of the two test statistics across all commonly tested genes. Emit the intersection as the high-confidence interaction set and the method-specific calls as a clearly labelled secondary set. Do not present the union as the result.",
+        "acceptance_criteria": [
+          "edgeR QL fit uses the same design formula, the same reference levels and a comparable gene filter to the DESeq2 fit",
+          "Counts of significant interaction genes reported per method, plus the intersection size and an overlap table",
+          "Spearman correlation of the DESeq2 Wald stat and the edgeR QL statistic across commonly tested genes is reported",
+          "The intersection is labelled the high-confidence set; method-unique genes are labelled with the method that called them; the union is not presented as the result"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA on the interaction statistic",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are method-dependent; a set is a hypothesis for follow-up, not a proven finding",
+          "Gene length and expression level bias enrichment of count-derived lists; the tested-gene universe removes only the detection part of that bias",
+          "An interaction-ranked GSEA is harder to interpret than a treatment-ranked one — a high NES means coordinated difference-of-differences, not a directional drug response"
+        ],
+        "context": "Enrichment is interpretation layered on the interaction result, not the result itself. The ranking-statistic choice is disputed in the literature (Wald stat vs signed -log10 p vs shrunken LFC); this plan chooses the Wald statistic of the interaction coefficient, because it is signed and scaled by its own standard error and is exactly the quantity the interaction test produced. State that choice in the output.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "msigdbr",
+          "clusterProfiler",
+          "gseapy",
+          "pandas",
+          "ggplot2"
+        ],
+        "question": "Which biological processes show a coordinated genotype-dependent drug response — i.e. which gene sets are enriched at the extremes of the genes ranked by the genotype x treatment interaction statistic?",
+        "grounding": {
+          "claims": [
+            "R-0048@500d",
+            "R-0007@b99a",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a"
+          ],
+          "reason": "Human dataset: fgsea preranked on the full tested list against MSigDB Hallmark with a 15-500 size window and redundant sets collapsed. For the disputed R-0007 ranking statistic this plan chooses the DESeq2 Wald statistic of the interaction coefficient (signed, standard-error-scaled, and the quantity the interaction test produced).",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Never truncate the ranked list before the enrichment test",
+          "Use human gene sets only — the data are Homo sapiens brain",
+          "If an over-representation analysis is run as a supplement, set the universe to the tested genes, never the whole genome or annotation",
+          "Report the database, its version, the ranking metric, the universe and the size window alongside every result"
+        ],
+        "description": "Take the full, unthresholded interaction results table from T1S2 (every tested gene) and rank all genes by the DESeq2 Wald statistic of the interaction coefficient. Run preranked fgsea against human MSigDB Hallmark gene sets, restricting sets to 15-500 genes after intersection with the tested genes, with BH adjustment; collapse redundant significant sets and report one representative per group with the full table as a supplement. As a secondary pass, run the same preranked analysis on the WT drug-vs-vehicle ranking and on the KO drug-vs-vehicle ranking from T1S3, so a hallmark's interaction signal can be read as gained, lost, or reversed in KO. If Hallmark hits warrant it, follow up on Reactome, WikiPathways or GO collections. REFERENCE DATA NEEDED: human gene-set collections (MSigDB Hallmark primarily, optionally Reactome/WikiPathways/GO), keyed on gene symbols to match the counts matrix. No reference store was provisioned at plan time — the step must first resolve what gene-set resources the environment actually holds (including any msigdbr-style package that ships sets), use human sets only, and if none are available, report that plainly, emit the ranked gene list as the deliverable, and do not substitute a hand-written or invented gene set.",
+        "acceptance_criteria": [
+          "The full ranked list of all tested genes (no padj or LFC cut before ranking) is used as the fgsea input",
+          "Ranking statistic is the interaction Wald stat and the choice is stated explicitly in the output",
+          "Gene-set size window 15-500 applied after intersecting each set with the tested genes; the window, the collection and its version are reported",
+          "Significant sets at BH-adjusted p<0.05 are reported with NES and leading-edge genes, redundant sets collapsed to representatives",
+          "Secondary WT-only and KO-only rankings are run so each hallmark can be described as gained/lost/reversed in KO",
+          "If no human gene-set collection is available in the environment, the step says so explicitly, names what was needed, and delivers the ranked list instead of fabricating sets"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Reproducibility report and interaction synthesis",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The condition column of metadata.csv is a redundant 4-level encoding of genotype x treatment; report which encoding each analysis used so the two never appear as independent evidence"
+        ],
+        "context": "The synthesis must not let a modest-power interaction analysis read as a confident mechanistic claim. Everything reported here comes from the completed steps; nothing is inferred beyond them.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "ggplot2",
+          "knitr",
+          "jinja2"
+        ],
+        "question": "What is the defensible answer to 'does the drug act differently in KO than in WT', with every method, threshold and limitation stated?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0042@54e1",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0039@e17a",
+            "R-0013@2639"
+          ],
+          "reason": "Report content per R-0041 and R-0051, the two-method overlap per R-0042, the enrichment method-dependence caveat per R-0055, the outlier-NA accounting per R-0039, and the low-power statement for the interaction per R-0013.",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S3",
+          "T1S4",
+          "T2S1"
+        ],
+        "constraints": [
+          "Report only results produced by T1S1-T2S1; do not introduce a claim no step computed",
+          "Do not describe an interaction gene as biologically causal — the design supports difference-of-differences in expression, nothing more",
+          "If any step degraded (missing package, missing gene sets, dropped sample), record the degradation in the report rather than omitting it"
+        ],
+        "description": "Assemble a single report from T1S1-T1S4 and T2S1. Record: package names and versions actually used (session info / pip freeze for the path taken), the design formula ~ genotype + treatment + genotype:treatment, the explicit reference levels (WT, vehicle), every contrast written as factor/numerator/denominator, the pre-filter and independent-filtering settings, alpha and the BH adjustment, genes tested after filtering out of 12000, and the number of DE genes per contrast including the interaction. Separate the NA p-values caused by Cook's-distance outlier flagging from those caused by independent filtering. Report the DESeq2/edgeR-QL overlap as the confidence statement. Present the top interaction genes with their four-cell normalized-count profiles and the direction pattern in words. State for the enrichment: the collection and version, the ranking metric, the universe, the size window, and that enrichment results are method-dependent hypotheses. Close with an explicit power statement: 4 replicates per cell gives a difference-of-differences test with a large standard error, so a short or empty interaction list is weak evidence of a genotype-independent drug effect, not proof of one.",
+        "acceptance_criteria": [
+          "Report names method, package versions, design formula, reference levels, all contrasts, thresholds, genes tested and genes DE per contrast",
+          "Cook's-distance outlier NAs are reported separately from independent-filtering NAs",
+          "DESeq2 vs edgeR-QL overlap is stated as the robustness result, with the intersection as the high-confidence interaction set",
+          "Enrichment reporting includes database, version, ranking metric, universe, size window and the method-dependence caveat",
+          "An explicit power/limitation paragraph states that n=4 per cell underpowers the difference-of-differences test and that a null interaction is not evidence of equivalence",
+          "The absence of tximport length offsets (gene-level matrix input) is recorded as a limitation",
+          "Session info is attached"
+        ]
+      }
+    ],
+    "title": "KO x drug interaction DE in human brain RNA-seq",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question — does the drug act differently in KO than in WT — is a genotype x treatment interaction on a balanced 2x2 design (WT/KO x vehicle/drug, 4 biological replicates per cell, 16 samples). The inputs are a raw integer gene-level count matrix from salmon (12000 genes x 16 sample columns plus the gene-symbol column, counts.csv) and a 16-row sample table (metadata.csv: genotype, treatment, condition). Because the data arrive as a gene-level count matrix rather than salmon quant directories, tximport length offsets cannot be reconstructed; the plan states that limitation rather than pretending to carry offsets, and DESeq2 median-of-ratios size factors are estimated inside the model on the raw counts (no pre-scaling).\n\nT1 runs the statistical core in one track. T1S1 does sample-structure QC before any test: blind VST, PCA on the 500 most variable genes coloured by genotype, treatment and the 4-level condition, a sample-distance heatmap, and library sizes — this is where a mislabelled sample or a cell that fails to separate would show. T1S2 fits ~ genotype + treatment + genotype:treatment with WT and vehicle set explicitly as reference levels, and tests the single interaction coefficient with the Wald test; because the interaction is a difference of differences with a large standard error, 4 per cell is modest power and the step is required to say so. T1S3 reports the simple effects that make the interaction interpretable — drug vs vehicle within WT, drug vs vehicle within KO, and the two genotype contrasts — with ashr shrinkage (the KO-internal treatment effect is a contrast, not a single coefficient, so apeglm does not apply to all of them). T1S4 is the robustness check: the same design refit with the edgeR quasi-likelihood F-test, reporting the intersection of the two methods as the high-confidence interaction set rather than the union.\n\nT2 interprets. T2S1 runs preranked fgsea on the interaction Wald statistic (the disputed ranking-statistic choice is resolved in favour of the Wald stat: signed and scaled by its standard error, and it is the statistic the interaction test actually produced) against Hallmark gene sets, with a fallback to over-representation on the tested-gene universe. No reference store is provisioned at plan time, so the enrichment step must resolve human hallmark gene sets from whatever the environment holds at run time and report honestly if it holds none — enrichment is an annotation on the interaction result, not the result itself, so its absence costs a layer of interpretation, not the run. T2S2 assembles the reproducibility report: design formula, reference levels, every contrast as factor/numerator/denominator, thresholds, genes tested, genes called per contrast, count-outlier NAs separated from independent-filtering NAs, the DESeq2/edgeR overlap, and session info.\n\nThe package inventory could not be read, so every step must probe its imports (requireNamespace / import) before use and degrade gracefully; a Python fallback (pydeseq2 or a statsmodels negative-binomial path) is named where the R stack is absent."
+  },
+  "usage": {
+    "inputTokens": 151164,
+    "outputTokens": 21243,
+    "cacheCreationInputTokens": 62080,
+    "cacheReadInputTokens": 89036,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 4,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "msigdbr",
+          "pheatmap",
+          "ggplot2",
+          "pandas",
+          "pydeseq2",
+          "scanpy",
+          "numpy",
+          "sva",
+          "IHW",
+          "org.Hs.eg.db",
+          "biomaRt",
+          "matplotlib",
+          "seaborn",
+          "statsmodels",
+          "scikit-learn",
+          "gseapy",
+          "decoupler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 4,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with at least 10 counts in at least 4 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 4
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors (DESeq2 normalization)",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ genotype + treatment + genotype:treatment with explicit reference levels WT and vehicle",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "genotype=WT; treatment=vehicle"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test on the genotypeKO.treatmentdrug interaction coefficient, plus simple effects",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "interaction"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "ashr log fold change shrinkage",
+            "package": "ashr",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "ashr"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducibility report: methods, versions, design, contrasts, thresholds, n tested, n DE, edgeR QL overlap",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "robustness",
+                "value": "overlap_of_two_methods"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "KO x drug interaction DE in human brain RNA-seq",
+          "analytical_narrative": "The research question — does the drug act differently in KO than in WT — is a genotype x treatment interaction on a balanced 2x2 design (WT/KO x vehicle/drug, 4 biological replicates per cell, 16 samples). The inputs are a raw integer gene-level count matrix from salmon (12000 genes x 16 sample columns plus the gene-symbol column, counts.csv) and a 16-row sample table (metadata.csv: genotype, treatment, condition). Because the data arrive as a gene-level count matrix rather than salmon quant directories, tximport length offsets cannot be reconstructed; the plan states that limitation rather than pretending to carry offsets, and DESeq2 median-of-ratios size factors are estimated inside the model on the raw counts (no pre-scaling).\n\nT1 runs the statistical core in one track. T1S1 does sample-structure QC before any test: blind VST, PCA on the 500 most variable genes coloured by genotype, treatment and the 4-level condition, a sample-distance heatmap, and library sizes — this is where a mislabelled sample or a cell that fails to separate would show. T1S2 fits ~ genotype + treatment + genotype:treatment with WT and vehicle set explicitly as reference levels, and tests the single interaction coefficient with the Wald test; because the interaction is a difference of differences with a large standard error, 4 per cell is modest power and the step is required to say so. T1S3 reports the simple effects that make the interaction interpretable — drug vs vehicle within WT, drug vs vehicle within KO, and the two genotype contrasts — with ashr shrinkage (the KO-internal treatment effect is a contrast, not a single coefficient, so apeglm does not apply to all of them). T1S4 is the robustness check: the same design refit with the edgeR quasi-likelihood F-test, reporting the intersection of the two methods as the high-confidence interaction set rather than the union.\n\nT2 interprets. T2S1 runs preranked fgsea on the interaction Wald statistic (the disputed ranking-statistic choice is resolved in favour of the Wald stat: signed and scaled by its standard error, and it is the statistic the interaction test actually produced) against Hallmark gene sets, with a fallback to over-representation on the tested-gene universe. No reference store is provisioned at plan time, so the enrichment step must resolve human hallmark gene sets from whatever the environment holds at run time and report honestly if it holds none — enrichment is an annotation on the interaction result, not the result itself, so its absence costs a layer of interpretation, not the run. T2S2 assembles the reproducibility report: design formula, reference levels, every contrast as factor/numerator/denominator, thresholds, genes tested, genes called per contrast, count-outlier NAs separated from independent-filtering NAs, the DESeq2/edgeR overlap, and session info.\n\nThe package inventory could not be read, so every step must probe its imports (requireNamespace / import) before use and degrade gracefully; a Python fallback (pydeseq2 or a statsmodels negative-binomial / limma-voom-equivalent path) is named where the R stack is absent.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample-structure QC on the 2x2 design",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 16 brain samples group by genotype (WT/KO) and treatment (vehicle/drug) as the metadata claims, and is any of the four cells driven by an outlier sample before the interaction model is fit?",
+              "description": "Load /eval-phase0-with-interaction-2x2-n4-2/data/inputs/counts/counts.csv (12000 genes x 16 samples, first column gene symbol) and /eval-phase0-with-interaction-2x2-n4-2/data/inputs/metadata/metadata.csv (16 rows: sample, genotype, treatment, condition). Verify that count column names match metadata sample IDs exactly and reorder to match; confirm all 4 cells (WT_vehicle, WT_drug, KO_vehicle, KO_drug) have n=4. Report per-sample library sizes and detected-gene counts. Apply the variance-stabilizing transformation blind to the design, run PCA on the 500 most variable genes, and colour the PCA by genotype, by treatment, and by the 4-level condition; draw a heatmap of Euclidean sample distances. Save the VST matrix and the QC figures for downstream steps.",
+              "context": "Raw integer gene-level counts from salmon, human brain, balanced 2x2 factorial. QC precedes the model so that a mislabelled or outlier sample is known before any inference. Package availability is unknown at plan time: probe DESeq2 first; if absent, use a Python path (pydeseq2 VST, or log2(CPM+1) with scanpy/scikit-learn PCA) and state which transform was used.",
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "pheatmap",
+                "ggplot2",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "acceptance_criteria": [
+                "Sample-ID concordance between counts.csv columns and metadata.csv rows is verified and reported; any mismatch is named, not silently dropped",
+                "Cell sizes reported: 4 per each of WT_vehicle, WT_drug, KO_vehicle, KO_drug",
+                "Library size and detected-gene table for all 16 samples produced",
+                "PCA (500 most variable genes, blind VST or stated fallback transform) coloured by genotype, treatment and condition, plus a sample-distance heatmap, are saved",
+                "Any sample that does not cluster with its cell is named explicitly, with the recommendation to keep or drop stated and justified — not acted on silently"
+              ],
+              "constraints": [
+                "Transform blind to the design (blind=TRUE) for QC only",
+                "Do not remove any sample without stating the reason and the effect on cell balance",
+                "Do not pre-normalize or scale the counts that are passed downstream — the raw integer matrix must reach the model untouched",
+                "Probe each package before use (requireNamespace / import) and record which path was taken"
+              ],
+              "caveats": [
+                "The counts are a gene-level matrix, not salmon quant directories, so tximport average-transcript-length offsets cannot be reconstructed; note this as a documented limitation",
+                "With 12000 genes the matrix is small — do not over-allocate memory"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Raw counts before a model: blind VST, PCA on the top 500 variable genes and a sample-distance heatmap coloured by condition, per R-0033.",
+                "template": "tpl-qc-eda@1.0.0"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 interaction test: genotype x treatment",
+              "question": "For which genes does the drug-vs-vehicle effect differ between KO and WT — i.e. which genes have a non-zero genotypeKO:treatmentdrug interaction coefficient?",
+              "description": "Build a DESeqDataSet from the raw counts.csv matrix and metadata.csv. Set reference levels explicitly with relevel: genotype reference = WT, treatment reference = vehicle (do not rely on alphabetical ordering — alphabetically KO precedes WT and drug precedes vehicle, so the defaults would be wrong). Pre-filter minimally: keep genes with at least 10 counts in at least 4 samples (the smallest group size). Fit design = ~ genotype + treatment + genotype:treatment with DESeq(); size factors are estimated by median-of-ratios inside the model. Test the single interaction coefficient genotypeKO.treatmentdrug with the Wald test, results(alpha=0.05), independent filtering ON. Keep DESeq2's default count-outlier behaviour (with 4 replicates per cell it flags Cook's-distance outliers and sets p and padj to NA rather than replacing counts) and report the number of NA p-values from the outlier flag separately from those removed by the independent filter. Report the shrunken interaction LFC via lfcShrink(type=\"ashr\") beside the unshrunken estimate. Output: the full interaction results table (gene, baseMean, unshrunken LFC, shrunken LFC, lfcSE, stat, pvalue, padj), the count of genes with padj<0.05, an MA plot, a p-value histogram, the dispersion plot, and the normalized-count plots for the top interaction genes split by the four cells.",
+              "context": "This step answers the research question directly. The interaction coefficient is a difference of differences and carries a large standard error; with 4 replicates per cell the power to detect it is modest, and the step must state this in its output rather than interpret an empty result as evidence of no genotype-dependent drug effect. The full ranked table (all tested genes, with the stat column) must be saved because T2S1 consumes it unfiltered.",
+              "packages": [
+                "DESeq2",
+                "ashr",
+                "apeglm",
+                "ggplot2",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "acceptance_criteria": [
+                "Reference levels are set explicitly (genotype=WT, treatment=vehicle) and the resultsNames() vector is printed, showing the interaction coefficient name",
+                "Design formula ~ genotype + treatment + genotype:treatment is fit on raw counts with DESeq2-internal median-of-ratios size factors",
+                "Number of genes retained by the pre-filter (>=10 counts in >=4 samples) out of 12000 is reported",
+                "Interaction results table for every tested gene is saved with both unshrunken and ashr-shrunken LFC and the stat column intact",
+                "Genes with padj<0.05 on the interaction are counted and listed; NA p-values from Cook's-distance outlier flagging are reported separately from independent-filtering NAs",
+                "The output explicitly states the power limitation of a difference-of-differences test at n=4 per cell, and does not equate a null interaction result with proven equivalence"
+              ],
+              "constraints": [
+                "Use relevel (or factor levels=) to set WT and vehicle as references before DESeq(); never rely on alphabetical default ordering",
+                "Pre-filter minimally at 10 counts in 4 samples — do not raise the threshold; independent filtering in results() does the rest",
+                "Pass alpha=0.05 to results() so the independent filter is optimized for the reported cutoff",
+                "Select genes by padj, never by raw p-value or by fold change alone",
+                "Do not pre-normalize the counts; size factors belong inside the model",
+                "If DESeq2 is unavailable, fall back to pydeseq2 with the same design and state the substitution; if neither is present, report the blocker rather than substituting an unmodelled test"
+              ],
+              "caveats": [
+                "Alphabetical factor ordering would make KO and drug the references and silently invert every reported sign",
+                "No tximport length offsets are available from a gene-level matrix; a gene with differential transcript usage between cells could be mis-called and this is a stated limitation",
+                "A gene significant for the main treatment effect but not the interaction is NOT evidence of a genotype-specific drug effect"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0013@2639",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@762e",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0010@91a5",
+                  "R-0043@4f55",
+                  "R-0009@f54e"
+                ],
+                "reason": "Interaction question at 2x2 with 4 replicates per cell: DESeq2 with genotype*treatment, Wald test on the single interaction coefficient (R-0013), minimal pre-filter plus independent filtering (R-0029/R-0002), explicit reference levels (R-0036), BH at alpha 0.05 (R-0010/R-0043), Cook's-distance NA reporting at n<7 per cell (R-0039). R-0018 is acknowledged but cannot be satisfied: the input is a gene-level matrix, not salmon quant output, so no length offsets exist.",
+                "template": "tpl-deseq2-interaction@1.0.0"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Simple effects within genotype and within treatment",
+              "question": "What is the drug-vs-vehicle effect within WT and within KO separately, and how do the KO-vs-WT differences at vehicle and at drug decompose the interaction?",
+              "description": "From the fitted model of T1S2, extract the four interpretable simple-effect contrasts, each named as factor/numerator/denominator: (1) drug vs vehicle within WT — the treatment main-effect coefficient at the reference genotype; (2) drug vs vehicle within KO — the sum of the treatment main effect and the interaction term, obtained with a list contrast; (3) KO vs WT within vehicle; (4) KO vs WT within drug. Apply ashr shrinkage to each (ashr, not apeglm, because contrasts 2 and 4 are not single model coefficients), reporting shrunken and unshrunken LFC side by side. Produce per-contrast results tables at padj<0.05, a summary table of DE counts per contrast, and a four-panel comparison: the LFC of drug-vs-vehicle in WT plotted against the LFC of drug-vs-vehicle in KO, with the genes significant for the interaction highlighted. Additionally, as a sensitivity analysis, refit the same fitted object with results() using lfcThreshold=1 on the interaction coefficient (a formal test against a 2-fold difference-of-differences rather than a post-hoc filter) and report how many genes pass.",
+              "context": "The interaction coefficient alone is hard to read biologically: a significant interaction can arise from a drug effect present in WT and absent in KO, from opposite-direction effects, or from an effect of different magnitude. The simple effects say which. This step is what turns 'the drug acts differently' into a described direction.",
+              "packages": [
+                "DESeq2",
+                "ashr",
+                "ggplot2",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "acceptance_criteria": [
+                "All four simple-effect contrasts are computed and each is labelled as factor, numerator level, denominator level, so the sign of every LFC is unambiguous",
+                "Each contrast reports shrunken (ashr) and unshrunken LFC and the count of genes at padj<0.05",
+                "A WT-effect-vs-KO-effect LFC scatter is produced with interaction-significant genes highlighted",
+                "For the top interaction genes, the direction pattern is described explicitly (effect in WT only / KO only / opposite direction / same direction different magnitude)",
+                "The lfcThreshold=1 sensitivity result on the interaction is reported as a count with the threshold stated"
+              ],
+              "constraints": [
+                "Use ashr for shrinkage of the non-coefficient contrasts; do not force apeglm onto a contrast it cannot represent",
+                "Report the fold-change threshold result from lfcThreshold inside results(), never as a post-hoc filter on the estimated LFC",
+                "Reuse the T1S2 fitted object — do not refit with a different filter or design",
+                "A significant simple effect in one genotype together with a non-significant one in the other is NOT itself evidence of an interaction; state this wherever the two are compared"
+              ],
+              "caveats": [
+                "Simple effects at n=4 are themselves modestly powered; a null in one genotype is not an established absence of effect",
+                "Shrunken LFCs are for ranking and plotting; p-values come from the unshrunken fit"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0013@2639",
+                  "R-0040@8061",
+                  "R-0009@f54e",
+                  "R-0037@e6d8",
+                  "R-0036@9786"
+                ],
+                "reason": "R-0013 requires the simple effects after the interaction test; the KO-internal treatment effect is a contrast not a single coefficient, so ashr shrinkage per R-0040/R-0009, and the 2-fold question is tested with lfcThreshold inside the model per R-0037."
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "edgeR quasi-likelihood robustness check on the interaction",
+              "question": "Which interaction genes are called by both the DESeq2 Wald test and the edgeR quasi-likelihood F-test on the same counts and the same 2x2 design?",
+              "description": "Refit the identical design (~ genotype + treatment + genotype:treatment, WT and vehicle as references) on the same pre-filtered raw count matrix using edgeR: filterByExpr with the group structure or the same 10-counts-in-4-samples filter for comparability, calcNormFactors (TMM), estimateDisp, glmQLFit, and glmQLFTest on the interaction coefficient. Compare against the T1S2 DESeq2 interaction result: report the number of significant genes (padj/FDR<0.05) from each method, the size of the intersection, and a rank-correlation of the two test statistics across all commonly tested genes. Emit the intersection as the high-confidence interaction set and the method-specific calls as a clearly labelled secondary set. Do not present the union as the result.",
+              "context": "At 4 replicates per cell the two tools agree on most genes but disagree at low counts; the overlap is the honest statement of confidence for an interaction test with limited power.",
+              "packages": [
+                "edgeR",
+                "limma",
+                "DESeq2",
+                "pandas",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "acceptance_criteria": [
+                "edgeR QL fit uses the same design formula, the same reference levels and a comparable gene filter to the DESeq2 fit",
+                "Counts of significant interaction genes reported per method, plus the intersection size and a Venn or overlap table",
+                "Spearman correlation of the DESeq2 Wald stat and the edgeR QL F/LR statistic across commonly tested genes is reported",
+                "The intersection is labelled the high-confidence set; method-unique genes are labelled with the method that called them; the union is not presented as the result"
+              ],
+              "constraints": [
+                "Use TMM normalization factors inside the edgeR model — do not feed DESeq2-normalized counts to edgeR",
+                "Keep the same reference levels so the interaction coefficient means the same thing in both fits",
+                "If edgeR is unavailable, state that the robustness check could not run and mark the DESeq2 result as unreplicated by a second method — do not silently skip it"
+              ],
+              "caveats": [
+                "Different low-count filters between the two tools inflate apparent disagreement; keep the filter matched and say what it was",
+                "Disagreement between the methods grows at low counts and low replication — expect some and report it rather than explaining it away"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0001@9a17",
+                  "R-0026@762e"
+                ],
+                "reason": "R-0042 requires the DESeq2/edgeR-QL overlap as the robustness statement with the intersection as the high-confidence set; R-0001 names edgeR QL as the second method at 2-11 replicates."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA on the interaction statistic",
+              "question": "Which biological processes show a coordinated genotype-dependent drug response — i.e. which gene sets are enriched at the extremes of the genes ranked by the genotype x treatment interaction statistic?",
+              "description": "Take the full, unthresholded interaction results table from T1S2 (every tested gene) and rank all genes by the DESeq2 Wald statistic of the interaction coefficient. Run preranked fgsea against human MSigDB Hallmark gene sets, restricting sets to 15-500 genes after intersection with the tested genes, with BH adjustment; collapse redundant significant sets and report one representative per group with the full table as a supplement. As a secondary pass, run the same preranked analysis on the WT drug-vs-vehicle ranking and on the KO drug-vs-vehicle ranking from T1S3, so a hallmark's interaction signal can be read as gained, lost, or reversed in KO. If Hallmark hits warrant it, follow up on Reactome, WikiPathways or GO collections. REFERENCE DATA NEEDED: human gene-set collections (MSigDB Hallmark primarily, optionally Reactome/WikiPathways/GO), keyed on gene symbols to match the counts matrix. No reference store was provisioned at plan time — the step must first resolve what gene-set resources the environment actually holds (including any msigdbr-style package that ships sets), use human sets only, and if none are available, report that plainly, emit the ranked gene list as the deliverable, and do not substitute a hand-written or invented gene set.",
+              "context": "Enrichment is interpretation layered on the interaction result, not the result itself. The ranking-statistic choice is disputed in the literature (Wald stat vs signed -log10 p vs shrunken LFC); this plan chooses the Wald statistic of the interaction coefficient, because it is signed and scaled by its own standard error and is exactly the quantity the interaction test produced. State that choice in the output.",
+              "packages": [
+                "fgsea",
+                "msigdbr",
+                "clusterProfiler",
+                "gseapy",
+                "pandas",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "acceptance_criteria": [
+                "The full ranked list of all tested genes (no padj or LFC cut before ranking) is used as the fgsea input",
+                "Ranking statistic is the interaction Wald stat and the choice is stated explicitly in the output",
+                "Gene-set size window 15-500 applied after intersecting each set with the tested genes; the window, the collection and its version are reported",
+                "Significant sets at BH-adjusted p<0.05 are reported with NES and leading-edge genes, redundant sets collapsed to representatives",
+                "Secondary WT-only and KO-only rankings are run so each hallmark can be described as gained/lost/reversed in KO",
+                "If no human gene-set collection is available in the environment, the step says so explicitly, names what was needed, and delivers the ranked list instead of fabricating sets"
+              ],
+              "constraints": [
+                "Never truncate the ranked list before the enrichment test",
+                "Use human gene sets only — the data are Homo sapiens brain",
+                "If an over-representation analysis is run as a supplement, set the universe to the tested genes, never the whole genome or annotation",
+                "Report the database, its version, the ranking metric, the universe and the size window alongside every result"
+              ],
+              "caveats": [
+                "Enrichment results are method-dependent; a set is a hypothesis for follow-up, not a proven finding",
+                "Gene length and expression level bias enrichment of count-derived lists; the tested-gene universe removes only the detection part of that bias",
+                "An interaction-ranked GSEA is harder to interpret than a treatment-ranked one — a high NES means coordinated difference-of-differences, not a directional drug response"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0048@500d",
+                  "R-0007@b99a",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a"
+                ],
+                "reason": "Human dataset: fgsea preranked on the full tested list against MSigDB Hallmark with a 15-500 size window and redundant sets collapsed. For the disputed R-0007 ranking statistic this plan chooses the DESeq2 Wald statistic of the interaction coefficient (signed, standard-error-scaled, and the quantity the interaction test produced).",
+                "template": "tpl-fgsea-preranked@1.0.0"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Reproducibility report and interaction synthesis",
+              "question": "What is the defensible answer to 'does the drug act differently in KO than in WT', with every method, threshold and limitation stated?",
+              "description": "Assemble a single report from T1S1-T1S4 and T2S1. Record: package names and versions actually used (session info / pip freeze for the path taken), the design formula ~ genotype + treatment + genotype:treatment, the explicit reference levels (WT, vehicle), every contrast written as factor/numerator/denominator, the pre-filter and independent-filtering settings, alpha and the BH adjustment, genes tested after filtering out of 12000, and the number of DE genes per contrast including the interaction. Separate the NA p-values caused by Cook's-distance outlier flagging from those caused by independent filtering. Report the DESeq2/edgeR-QL overlap as the confidence statement. Present the top interaction genes with their four-cell normalized-count profiles and the direction pattern in words. State for the enrichment: the collection and version, the ranking metric, the universe, the size window, and that enrichment results are method-dependent hypotheses. Close with an explicit power statement: 4 replicates per cell gives a difference-of-differences test with a large standard error, so a short or empty interaction list is weak evidence of a genotype-independent drug effect, not proof of one.",
+              "context": "The synthesis must not let a modest-power interaction analysis read as a confident mechanistic claim. Everything reported here comes from the completed steps; nothing is inferred beyond them.",
+              "packages": [
+                "pandas",
+                "ggplot2",
+                "knitr",
+                "jinja2"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T1S4",
+                "T2S1"
+              ],
+              "acceptance_criteria": [
+                "Report names method, package versions, design formula, reference levels, all contrasts, thresholds, genes tested and genes DE per contrast",
+                "Cook's-distance outlier NAs are reported separately from independent-filtering NAs",
+                "DESeq2 vs edgeR-QL overlap is stated as the robustness result, with the intersection as the high-confidence interaction set",
+                "Enrichment reporting includes database, version, ranking metric, universe, size window and the method-dependence caveat",
+                "An explicit power/limitation paragraph states that n=4 per cell underpowers the difference-of-differences test and that a null interaction is not evidence of equivalence",
+                "The absence of tximport length offsets (gene-level matrix input) is recorded as a limitation",
+                "Session info is attached"
+              ],
+              "constraints": [
+                "Report only results produced by T1S1-T2S1; do not introduce a claim no step computed",
+                "Do not describe an interaction gene as biologically causal — the design supports difference-of-differences in expression, nothing more",
+                "If any step degraded (missing package, missing gene sets, dropped sample), record the degradation in the report rather than omitting it"
+              ],
+              "caveats": [
+                "The condition column of metadata.csv is a redundant 4-level encoding of genotype x treatment; report which encoding each analysis used so the two never appear as independent evidence"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0042@54e1",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0039@e17a",
+                  "R-0013@2639"
+                ],
+                "reason": "Report content per R-0041 and R-0051, the two-method overlap per R-0042, the enrichment method-dependence caveat per R-0055, the outlier-NA accounting per R-0039, and the low-power statement for the interaction per R-0013."
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "KO x drug interaction DE in human brain RNA-seq",
+          "analytical_narrative": "The research question — does the drug act differently in KO than in WT — is a genotype x treatment interaction on a balanced 2x2 design (WT/KO x vehicle/drug, 4 biological replicates per cell, 16 samples). The inputs are a raw integer gene-level count matrix from salmon (12000 genes x 16 sample columns plus the gene-symbol column, counts.csv) and a 16-row sample table (metadata.csv: genotype, treatment, condition). Because the data arrive as a gene-level count matrix rather than salmon quant directories, tximport length offsets cannot be reconstructed; the plan states that limitation rather than pretending to carry offsets, and DESeq2 median-of-ratios size factors are estimated inside the model on the raw counts (no pre-scaling).\n\nT1 runs the statistical core in one track. T1S1 does sample-structure QC before any test: blind VST, PCA on the 500 most variable genes coloured by genotype, treatment and the 4-level condition, a sample-distance heatmap, and library sizes — this is where a mislabelled sample or a cell that fails to separate would show. T1S2 fits ~ genotype + treatment + genotype:treatment with WT and vehicle set explicitly as reference levels, and tests the single interaction coefficient with the Wald test; because the interaction is a difference of differences with a large standard error, 4 per cell is modest power and the step is required to say so. T1S3 reports the simple effects that make the interaction interpretable — drug vs vehicle within WT, drug vs vehicle within KO, and the two genotype contrasts — with ashr shrinkage (the KO-internal treatment effect is a contrast, not a single coefficient, so apeglm does not apply to all of them). T1S4 is the robustness check: the same design refit with the edgeR quasi-likelihood F-test, reporting the intersection of the two methods as the high-confidence interaction set rather than the union.\n\nT2 interprets. T2S1 runs preranked fgsea on the interaction Wald statistic (the disputed ranking-statistic choice is resolved in favour of the Wald stat: signed and scaled by its standard error, and it is the statistic the interaction test actually produced) against Hallmark gene sets, with a fallback to over-representation on the tested-gene universe. No reference store is provisioned at plan time, so the enrichment step must resolve human hallmark gene sets from whatever the environment holds at run time and report honestly if it holds none — enrichment is an annotation on the interaction result, not the result itself, so its absence costs a layer of interpretation, not the run. T2S2 assembles the reproducibility report: design formula, reference levels, every contrast as factor/numerator/denominator, thresholds, genes tested, genes called per contrast, count-outlier NAs separated from independent-filtering NAs, the DESeq2/edgeR overlap, and session info.\n\nThe package inventory could not be read, so every step must probe its imports (requireNamespace / import) before use and degrade gracefully; a Python fallback (pydeseq2 or a statsmodels negative-binomial path) is named where the R stack is absent.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample-structure QC on the 2x2 design",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 16 brain samples group by genotype (WT/KO) and treatment (vehicle/drug) as the metadata claims, and is any of the four cells driven by an outlier sample before the interaction model is fit?",
+              "description": "Load /eval-phase0-with-interaction-2x2-n4-2/data/inputs/counts/counts.csv (12000 genes x 16 samples, first column gene symbol) and /eval-phase0-with-interaction-2x2-n4-2/data/inputs/metadata/metadata.csv (16 rows: sample, genotype, treatment, condition). Verify that count column names match metadata sample IDs exactly and reorder to match; confirm all 4 cells (WT_vehicle, WT_drug, KO_vehicle, KO_drug) have n=4. Report per-sample library sizes and detected-gene counts. Apply the variance-stabilizing transformation blind to the design, run PCA on the 500 most variable genes, and colour the PCA by genotype, by treatment, and by the 4-level condition; draw a heatmap of Euclidean sample distances. Save the VST matrix and the QC figures for downstream steps.",
+              "context": "Raw integer gene-level counts from salmon, human brain, balanced 2x2 factorial. QC precedes the model so that a mislabelled or outlier sample is known before any inference. Package availability is unknown at plan time: probe DESeq2 first; if absent, use a Python path (pydeseq2 VST, or log2(CPM+1) with scikit-learn PCA) and state which transform was used.",
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "pheatmap",
+                "ggplot2",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "acceptance_criteria": [
+                "Sample-ID concordance between counts.csv columns and metadata.csv rows is verified and reported; any mismatch is named, not silently dropped",
+                "Cell sizes reported: 4 per each of WT_vehicle, WT_drug, KO_vehicle, KO_drug",
+                "Library size and detected-gene table for all 16 samples produced",
+                "PCA (500 most variable genes, blind VST or stated fallback transform) coloured by genotype, treatment and condition, plus a sample-distance heatmap, are saved",
+                "Any sample that does not cluster with its cell is named explicitly, with the recommendation to keep or drop stated and justified — not acted on silently"
+              ],
+              "constraints": [
+                "Transform blind to the design (blind=TRUE) for QC only",
+                "Do not remove any sample without stating the reason and the effect on cell balance",
+                "Do not pre-normalize or scale the counts that are passed downstream — the raw integer matrix must reach the model untouched",
+                "Probe each package before use (requireNamespace / import) and record which path was taken"
+              ],
+              "caveats": [
+                "The counts are a gene-level matrix, not salmon quant directories, so tximport average-transcript-length offsets cannot be reconstructed; note this as a documented limitation",
+                "With 12000 genes the matrix is small — do not over-allocate memory"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Raw counts before a model: blind VST, PCA on the top 500 variable genes and a sample-distance heatmap coloured by condition, per R-0033.",
+                "template": "tpl-qc-eda@1.0.0"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 interaction test: genotype x treatment",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "For which genes does the drug-vs-vehicle effect differ between KO and WT — i.e. which genes have a non-zero genotypeKO:treatmentdrug interaction coefficient?",
+              "description": "Build a DESeqDataSet from the raw counts.csv matrix and metadata.csv. Set reference levels explicitly with relevel: genotype reference = WT, treatment reference = vehicle (do not rely on alphabetical ordering — alphabetically KO precedes WT and drug precedes vehicle, so the defaults would be wrong). Pre-filter minimally: keep genes with at least 10 counts in at least 4 samples (the smallest group size). Fit design = ~ genotype + treatment + genotype:treatment with DESeq(); size factors are estimated by median-of-ratios inside the model. Test the single interaction coefficient genotypeKO.treatmentdrug with the Wald test, results(alpha=0.05), independent filtering ON. Keep DESeq2's default count-outlier behaviour (with 4 replicates per cell it flags Cook's-distance outliers and sets p and padj to NA rather than replacing counts) and report the number of NA p-values from the outlier flag separately from those removed by the independent filter. Report the shrunken interaction LFC via lfcShrink(type=\"ashr\") beside the unshrunken estimate. Output: the full interaction results table (gene, baseMean, unshrunken LFC, shrunken LFC, lfcSE, stat, pvalue, padj), the count of genes with padj<0.05, an MA plot, a p-value histogram, the dispersion plot, and normalized-count plots for the top interaction genes split by the four cells.",
+              "context": "This step answers the research question directly. The interaction coefficient is a difference of differences and carries a large standard error; with 4 replicates per cell the power to detect it is modest, and the step must state this in its output rather than interpret an empty result as evidence of no genotype-dependent drug effect. The full ranked table (all tested genes, with the stat column) must be saved because T2S1 consumes it unfiltered.",
+              "packages": [
+                "DESeq2",
+                "ashr",
+                "apeglm",
+                "ggplot2",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "acceptance_criteria": [
+                "Reference levels are set explicitly (genotype=WT, treatment=vehicle) and the resultsNames() vector is printed, showing the interaction coefficient name",
+                "Design formula ~ genotype + treatment + genotype:treatment is fit on raw counts with DESeq2-internal median-of-ratios size factors",
+                "Number of genes retained by the pre-filter (>=10 counts in >=4 samples) out of 12000 is reported",
+                "Interaction results table for every tested gene is saved with both unshrunken and ashr-shrunken LFC and the stat column intact",
+                "Genes with padj<0.05 on the interaction are counted and listed; NA p-values from Cook's-distance outlier flagging are reported separately from independent-filtering NAs",
+                "The output explicitly states the power limitation of a difference-of-differences test at n=4 per cell, and does not equate a null interaction result with proven equivalence"
+              ],
+              "constraints": [
+                "Use relevel (or factor levels=) to set WT and vehicle as references before DESeq(); never rely on alphabetical default ordering",
+                "Pre-filter minimally at 10 counts in 4 samples — do not raise the threshold; independent filtering in results() does the rest",
+                "Pass alpha=0.05 to results() so the independent filter is optimized for the reported cutoff",
+                "Select genes by padj, never by raw p-value or by fold change alone",
+                "Do not pre-normalize the counts; size factors belong inside the model",
+                "If DESeq2 is unavailable, fall back to pydeseq2 with the same design and state the substitution; if neither is present, report the blocker rather than substituting an unmodelled test"
+              ],
+              "caveats": [
+                "Alphabetical factor ordering would make KO and drug the references and silently invert every reported sign",
+                "No tximport length offsets are available from a gene-level matrix; a gene with differential transcript usage between cells could be mis-called and this is a stated limitation",
+                "A gene significant for the main treatment effect but not the interaction is NOT evidence of a genotype-specific drug effect"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0013@2639",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@762e",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0010@91a5",
+                  "R-0043@4f55",
+                  "R-0009@f54e"
+                ],
+                "reason": "Interaction question at 2x2 with 4 replicates per cell: DESeq2 with genotype*treatment, Wald test on the single interaction coefficient (R-0013), minimal pre-filter plus independent filtering (R-0029/R-0002), explicit reference levels (R-0036), BH at alpha 0.05 (R-0010/R-0043), Cook's-distance NA reporting at n<7 per cell (R-0039). R-0018 is acknowledged but cannot be satisfied: the input is a gene-level matrix, not salmon quant output, so no length offsets exist.",
+                "template": "tpl-deseq2-interaction@1.0.0"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Simple effects within genotype and within treatment",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What is the drug-vs-vehicle effect within WT and within KO separately, and how do the KO-vs-WT differences at vehicle and at drug decompose the interaction?",
+              "description": "From the fitted model of T1S2, extract the four interpretable simple-effect contrasts, each named as factor/numerator/denominator: (1) drug vs vehicle within WT — the treatment main-effect coefficient at the reference genotype; (2) drug vs vehicle within KO — the sum of the treatment main effect and the interaction term, obtained with a list contrast; (3) KO vs WT within vehicle; (4) KO vs WT within drug. Apply ashr shrinkage to each (ashr, not apeglm, because contrasts 2 and 4 are not single model coefficients), reporting shrunken and unshrunken LFC side by side. Produce per-contrast results tables at padj<0.05, a summary table of DE counts per contrast, and a comparison plot: the LFC of drug-vs-vehicle in WT against the LFC of drug-vs-vehicle in KO, with the genes significant for the interaction highlighted. Additionally, as a sensitivity analysis, use results() with lfcThreshold=1 on the interaction coefficient (a formal test against a 2-fold difference-of-differences rather than a post-hoc filter) and report how many genes pass.",
+              "context": "The interaction coefficient alone is hard to read biologically: a significant interaction can arise from a drug effect present in WT and absent in KO, from opposite-direction effects, or from an effect of different magnitude. The simple effects say which. This step is what turns 'the drug acts differently' into a described direction.",
+              "packages": [
+                "DESeq2",
+                "ashr",
+                "ggplot2",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "acceptance_criteria": [
+                "All four simple-effect contrasts are computed and each is labelled as factor, numerator level, denominator level, so the sign of every LFC is unambiguous",
+                "Each contrast reports shrunken (ashr) and unshrunken LFC and the count of genes at padj<0.05",
+                "A WT-effect-vs-KO-effect LFC scatter is produced with interaction-significant genes highlighted",
+                "For the top interaction genes, the direction pattern is described explicitly (effect in WT only / KO only / opposite direction / same direction different magnitude)",
+                "The lfcThreshold=1 sensitivity result on the interaction is reported as a count with the threshold stated"
+              ],
+              "constraints": [
+                "Use ashr for shrinkage of the non-coefficient contrasts; do not force apeglm onto a contrast it cannot represent",
+                "Report the fold-change threshold result from lfcThreshold inside results(), never as a post-hoc filter on the estimated LFC",
+                "Reuse the T1S2 fitted object — do not refit with a different filter or design",
+                "A significant simple effect in one genotype together with a non-significant one in the other is NOT itself evidence of an interaction; state this wherever the two are compared"
+              ],
+              "caveats": [
+                "Simple effects at n=4 are themselves modestly powered; a null in one genotype is not an established absence of effect",
+                "Shrunken LFCs are for ranking and plotting; p-values come from the unshrunken fit"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0013@2639",
+                  "R-0040@8061",
+                  "R-0009@f54e",
+                  "R-0037@e6d8",
+                  "R-0036@9786"
+                ],
+                "reason": "R-0013 requires the simple effects after the interaction test; the KO-internal treatment effect is a contrast not a single coefficient, so ashr shrinkage per R-0040/R-0009, and the 2-fold question is tested with lfcThreshold inside the model per R-0037."
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "edgeR quasi-likelihood robustness check",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which interaction genes are called by both the DESeq2 Wald test and the edgeR quasi-likelihood F-test on the same counts and the same 2x2 design?",
+              "description": "Refit the identical design (~ genotype + treatment + genotype:treatment, WT and vehicle as references) on the same pre-filtered raw count matrix using edgeR: the same 10-counts-in-4-samples filter for comparability, calcNormFactors (TMM), estimateDisp, glmQLFit, and glmQLFTest on the interaction coefficient. Compare against the T1S2 DESeq2 interaction result: report the number of significant genes (padj/FDR<0.05) from each method, the size of the intersection, and a rank correlation of the two test statistics across all commonly tested genes. Emit the intersection as the high-confidence interaction set and the method-specific calls as a clearly labelled secondary set. Do not present the union as the result.",
+              "context": "At 4 replicates per cell the two tools agree on most genes but disagree at low counts; the overlap is the honest statement of confidence for an interaction test with limited power.",
+              "packages": [
+                "edgeR",
+                "limma",
+                "DESeq2",
+                "pandas",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "acceptance_criteria": [
+                "edgeR QL fit uses the same design formula, the same reference levels and a comparable gene filter to the DESeq2 fit",
+                "Counts of significant interaction genes reported per method, plus the intersection size and an overlap table",
+                "Spearman correlation of the DESeq2 Wald stat and the edgeR QL statistic across commonly tested genes is reported",
+                "The intersection is labelled the high-confidence set; method-unique genes are labelled with the method that called them; the union is not presented as the result"
+              ],
+              "constraints": [
+                "Use TMM normalization factors inside the edgeR model — do not feed DESeq2-normalized counts to edgeR",
+                "Keep the same reference levels so the interaction coefficient means the same thing in both fits",
+                "If edgeR is unavailable, state that the robustness check could not run and mark the DESeq2 result as unreplicated by a second method — do not silently skip it"
+              ],
+              "caveats": [
+                "Different low-count filters between the two tools inflate apparent disagreement; keep the filter matched and say what it was",
+                "Disagreement between the methods grows at low counts and low replication — expect some and report it rather than explaining it away"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0001@9a17",
+                  "R-0026@762e"
+                ],
+                "reason": "R-0042 requires the DESeq2/edgeR-QL overlap as the robustness statement with the intersection as the high-confidence set; R-0001 names edgeR QL as the second method at 2-11 replicates."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA on the interaction statistic",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological processes show a coordinated genotype-dependent drug response — i.e. which gene sets are enriched at the extremes of the genes ranked by the genotype x treatment interaction statistic?",
+              "description": "Take the full, unthresholded interaction results table from T1S2 (every tested gene) and rank all genes by the DESeq2 Wald statistic of the interaction coefficient. Run preranked fgsea against human MSigDB Hallmark gene sets, restricting sets to 15-500 genes after intersection with the tested genes, with BH adjustment; collapse redundant significant sets and report one representative per group with the full table as a supplement. As a secondary pass, run the same preranked analysis on the WT drug-vs-vehicle ranking and on the KO drug-vs-vehicle ranking from T1S3, so a hallmark's interaction signal can be read as gained, lost, or reversed in KO. If Hallmark hits warrant it, follow up on Reactome, WikiPathways or GO collections. REFERENCE DATA NEEDED: human gene-set collections (MSigDB Hallmark primarily, optionally Reactome/WikiPathways/GO), keyed on gene symbols to match the counts matrix. No reference store was provisioned at plan time — the step must first resolve what gene-set resources the environment actually holds (including any msigdbr-style package that ships sets), use human sets only, and if none are available, report that plainly, emit the ranked gene list as the deliverable, and do not substitute a hand-written or invented gene set.",
+              "context": "Enrichment is interpretation layered on the interaction result, not the result itself. The ranking-statistic choice is disputed in the literature (Wald stat vs signed -log10 p vs shrunken LFC); this plan chooses the Wald statistic of the interaction coefficient, because it is signed and scaled by its own standard error and is exactly the quantity the interaction test produced. State that choice in the output.",
+              "packages": [
+                "fgsea",
+                "msigdbr",
+                "clusterProfiler",
+                "gseapy",
+                "pandas",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "acceptance_criteria": [
+                "The full ranked list of all tested genes (no padj or LFC cut before ranking) is used as the fgsea input",
+                "Ranking statistic is the interaction Wald stat and the choice is stated explicitly in the output",
+                "Gene-set size window 15-500 applied after intersecting each set with the tested genes; the window, the collection and its version are reported",
+                "Significant sets at BH-adjusted p<0.05 are reported with NES and leading-edge genes, redundant sets collapsed to representatives",
+                "Secondary WT-only and KO-only rankings are run so each hallmark can be described as gained/lost/reversed in KO",
+                "If no human gene-set collection is available in the environment, the step says so explicitly, names what was needed, and delivers the ranked list instead of fabricating sets"
+              ],
+              "constraints": [
+                "Never truncate the ranked list before the enrichment test",
+                "Use human gene sets only — the data are Homo sapiens brain",
+                "If an over-representation analysis is run as a supplement, set the universe to the tested genes, never the whole genome or annotation",
+                "Report the database, its version, the ranking metric, the universe and the size window alongside every result"
+              ],
+              "caveats": [
+                "Enrichment results are method-dependent; a set is a hypothesis for follow-up, not a proven finding",
+                "Gene length and expression level bias enrichment of count-derived lists; the tested-gene universe removes only the detection part of that bias",
+                "An interaction-ranked GSEA is harder to interpret than a treatment-ranked one — a high NES means coordinated difference-of-differences, not a directional drug response"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0048@500d",
+                  "R-0007@b99a",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a"
+                ],
+                "reason": "Human dataset: fgsea preranked on the full tested list against MSigDB Hallmark with a 15-500 size window and redundant sets collapsed. For the disputed R-0007 ranking statistic this plan chooses the DESeq2 Wald statistic of the interaction coefficient (signed, standard-error-scaled, and the quantity the interaction test produced).",
+                "template": "tpl-fgsea-preranked@1.0.0"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Reproducibility report and interaction synthesis",
+              "track": "T2",
+              "step_type": "report",
+              "question": "What is the defensible answer to 'does the drug act differently in KO than in WT', with every method, threshold and limitation stated?",
+              "description": "Assemble a single report from T1S1-T1S4 and T2S1. Record: package names and versions actually used (session info / pip freeze for the path taken), the design formula ~ genotype + treatment + genotype:treatment, the explicit reference levels (WT, vehicle), every contrast written as factor/numerator/denominator, the pre-filter and independent-filtering settings, alpha and the BH adjustment, genes tested after filtering out of 12000, and the number of DE genes per contrast including the interaction. Separate the NA p-values caused by Cook's-distance outlier flagging from those caused by independent filtering. Report the DESeq2/edgeR-QL overlap as the confidence statement. Present the top interaction genes with their four-cell normalized-count profiles and the direction pattern in words. State for the enrichment: the collection and version, the ranking metric, the universe, the size window, and that enrichment results are method-dependent hypotheses. Close with an explicit power statement: 4 replicates per cell gives a difference-of-differences test with a large standard error, so a short or empty interaction list is weak evidence of a genotype-independent drug effect, not proof of one.",
+              "context": "The synthesis must not let a modest-power interaction analysis read as a confident mechanistic claim. Everything reported here comes from the completed steps; nothing is inferred beyond them.",
+              "packages": [
+                "pandas",
+                "ggplot2",
+                "knitr",
+                "jinja2"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T1S4",
+                "T2S1"
+              ],
+              "acceptance_criteria": [
+                "Report names method, package versions, design formula, reference levels, all contrasts, thresholds, genes tested and genes DE per contrast",
+                "Cook's-distance outlier NAs are reported separately from independent-filtering NAs",
+                "DESeq2 vs edgeR-QL overlap is stated as the robustness result, with the intersection as the high-confidence interaction set",
+                "Enrichment reporting includes database, version, ranking metric, universe, size window and the method-dependence caveat",
+                "An explicit power/limitation paragraph states that n=4 per cell underpowers the difference-of-differences test and that a null interaction is not evidence of equivalence",
+                "The absence of tximport length offsets (gene-level matrix input) is recorded as a limitation",
+                "Session info is attached"
+              ],
+              "constraints": [
+                "Report only results produced by T1S1-T2S1; do not introduce a claim no step computed",
+                "Do not describe an interaction gene as biologically causal — the design supports difference-of-differences in expression, nothing more",
+                "If any step degraded (missing package, missing gene sets, dropped sample), record the degradation in the report rather than omitting it"
+              ],
+              "caveats": [
+                "The condition column of metadata.csv is a redundant 4-level encoding of genotype x treatment; report which encoding each analysis used so the two never appear as independent evidence"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0042@54e1",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0039@e17a",
+                  "R-0013@2639"
+                ],
+                "reason": "Report content per R-0041 and R-0051, the two-method overlap per R-0042, the enrichment method-dependence caveat per R-0055, the outlier-NA accounting per R-0039, and the low-power statement for the interaction per R-0013."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-04",
+    "digest": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+  }
+}

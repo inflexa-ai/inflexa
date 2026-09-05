@@ -1,0 +1,61 @@
+id: R-0029
+title: "Do not over-filter: the pre-filter is minimal, and independent filtering does the rest"
+assertion: >-
+  With raw counts and three or more replicates per group, keep the pre-filter
+  minimal. A pre-filter with a high threshold removes genes that the test has
+  the power to call, and it changes the set of genes that the multiple testing
+  adjusts. The independent filter of the results step selects the threshold on
+  the mean of normalized counts that maximizes the number of discoveries at
+  the target alpha. The filter keeps the false discovery rate control, because
+  the filter statistic is independent of the test statistic under the null
+  hypothesis. Thus on the DESeq2 path the pre-filter of 10 counts in the smallest group size
+  of samples is minimal, and the independent filter does the rest.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 3
+action:
+  step_type: filter_low_counts
+  parameters:
+    - name: filter_policy
+      value: minimal_then_independent
+      default_source: "doi:10.1073/pnas.0914005107"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0018
+    paraphrase: >-
+      A filter on a statistic that is independent of the test statistic under
+      the null hypothesis, for example the overall mean, removes the genes
+      with low power before the multiple testing, increases the number of
+      discoveries at the same false discovery rate, and keeps the type I error
+      control.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette states that a minimal pre-filter is enough, because the
+      results function applies independent filtering on the mean of normalized
+      counts and selects the threshold that maximizes the number of adjusted
+      p-values below the target alpha.
+    anchor: "Pre-filtering; Independent filtering of results"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [filtering, independent-filtering]

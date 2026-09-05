@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 5,
+    "normalization": 6,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly matches the design: DESeq2 negative-binomial Wald test on raw Salmon counts with ~condition, control as reference, 3v3 unpaired single batch, and it foregrounds the low-power caveat with concrete diagnostics (dispersion shrinkage, minimum detectable log2FC, leave-one-out stability) rather than lowering alpha. QC precedes testing with library sizes, PCA, and sample correlation on VST/log-CPM colored by condition, with an explicit outlier-flagging requirement, though the remediation policy is only 'call it out'. Filtering is handled solely by DESeq2's internal independent filtering with no stated minimal pre-filter (e.g. rowSums >= 10), and normalization is only implicit in feeding raw integer counts to DESeq2 — median-of-ratios size factors are never named, so both criteria are partially credited. FDR handling is strong: BH at padj<0.05 (and 0.1) with apeglm/ashr shrunken LFCs reported alongside MLEs. Enrichment is not clearly warranted by the question and, where included, names a collection but omits an explicit ORA universe, a collection version, and a gene-set size window; the report specification covers method, design, thresholds, tested/significant counts, and caveats but not software versions."
+}

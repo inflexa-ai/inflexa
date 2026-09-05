@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan treats the balanced batch exactly as the reference requires: a fixed covariate in ~ batch + condition with the control reference level set explicitly and a stated treated-over-control contrast, with an explicit prohibition on ComBat-seq or any pre-model count adjustment, and normalization left to median-of-ratios inside DESeq2 (TMM in the edgeR cross-check). QC precedes the test with blind VST, PCA coloured separately by condition and by batch, distance heatmap, library sizes, and a flag-do-not-drop outlier policy, plus an ANOVA of PCs on batch versus condition. The filter (>=10 counts in >=6 samples, tied to the smallest group size, with before/after gene counts reported) is minimal and justified; BH at alpha 0.05 with independent filtering, apeglm shrinkage retained alongside unshrunken estimates, and lfcThreshold passed inside results() rather than a post hoc fold-change cut are all correct. Enrichment was not strictly warranted by the gene-level question but is well specified (full ranked list, Wald statistic named and defended, tested genes as universe, Hallmark with 15-500 window, mapping rate reported, graceful exit if the collection is absent) and explicitly subordinated to the DE answer. The final report covers method, versions, design, contrast direction, thresholds, tested and significant counts, Cook's NA versus independent-filtering NA, and dataset-specific limits."
+}

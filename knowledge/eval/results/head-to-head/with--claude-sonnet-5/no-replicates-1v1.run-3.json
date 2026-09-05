@@ -1,0 +1,705 @@
+{
+  "campaign": "head-to-head",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "no-replicates-1v1",
+  "run": 3,
+  "startedAt": "2026-09-05T11:23:25.743Z",
+  "elapsedMs": 64563,
+  "outcome": "plan_submitted",
+  "planId": "pln-f9d3ffda",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the treated and control liver samples show the expected count-depth and distributional structure prior to any comparison, given only one sample per condition?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "R-0033 calls for blind vst + sample-structure QC before any DE step on raw counts; PCA is degenerate with n=2 total samples so distance/library-size summaries substitute.",
+          "status": "grounded",
+          "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "description": "Load counts.csv (12000 genes x 2 samples) and metadata.csv, apply DESeq2's blind variance-stabilizing transformation, and report library sizes, gene detection counts, and the single pairwise sample distance (Euclidean, on top-500 variable genes). With only 2 samples total, a PCA plot is degenerate (1 axis) -- report the scalar distance and count/library summaries instead, and flag any gross depth or composition mismatch between the two samples.",
+        "acceptance_criteria": [
+          "Library size and number of detected genes reported for both the treated and control sample",
+          "Blind VST computed and the treated-vs-control sample distance reported",
+          "Any gross depth/composition mismatch between the two samples is explicitly flagged"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Filter low-count genes",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which of the 12000 genes have enough counts in at least one sample to be analyzable, given the smallest group size is 1?",
+        "grounding": {
+          "claims": [
+            "R-0002@087b"
+          ],
+          "reason": "R-0002: keep a gene with >=10 counts in >= smallest group size of samples (here, 1 sample).",
+          "status": "grounded",
+          "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Filter counts.csv to keep genes with at least 10 counts in at least 1 sample (the smallest group size, since each condition has exactly 1 sample). Report the number of genes retained vs the 12000 tested.",
+        "acceptance_criteria": [
+          "Filtered count matrix produced",
+          "Number of genes retained after filtering reported against the starting 12000"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Normalize with DESeq2 median-of-ratios",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "What are the size-factor-normalized expression levels for the treated and control liver samples after filtering?",
+        "grounding": {
+          "claims": [
+            "R-0026@762e",
+            "R-0036@9786"
+          ],
+          "reason": "R-0026: normalization is internal to DESeq2 (median-of-ratios), no pre-scaling. R-0036: reference level must be set explicitly and named (control), not left to alphabetical default.",
+          "status": "grounded",
+          "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "normalize",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Build a DESeqDataSet from the filtered counts and the 2-sample metadata (condition: treated vs control), with the condition factor's reference level explicitly set to 'control'. Compute DESeq2 median-of-ratios size factors and report normalized counts per gene per sample. Do not pre-scale counts before this step.",
+        "acceptance_criteria": [
+          "DESeqDataSet built with condition factor, reference level explicitly set to 'control'",
+          "Median-of-ratios size factors computed and reported for both samples",
+          "Normalized count table produced"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Descriptive log2 fold changes (no inferential test)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "What is the direction and magnitude of expression change between the single treated liver sample and the single control liver sample, reported descriptively?",
+        "grounding": {
+          "claims": [
+            "R-0003@6b3a"
+          ],
+          "reason": "R-0003 flag: with 1 sample per group, no inferential DE test is permitted (outcome=descriptive_only); report normalized counts and descriptive log2FC only, and name that a replicated design is required for inference.",
+          "status": "flagged",
+          "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S3"
+        ],
+        "description": "With exactly 1 sample per condition (no biological replication), DESeq2 dispersion cannot be estimated and no valid p-value can be produced. Per the flagged design rule, run NO inferential differential expression test. Instead compute raw (unshrunken) log2 fold changes (treated vs control, control as reference) from the normalized counts and pass to shrinkage in the next step. Output a full gene table with normalized counts in each sample and the raw log2FC, explicitly labeled as descriptive/non-inferential -- no p-values or FDR are computed at this step.",
+        "acceptance_criteria": [
+          "Full gene-level table (normalized counts x2 samples, raw log2FC) produced for all filtered genes",
+          "Table and any accompanying text explicitly state no inferential test was run and no p-values exist",
+          "Design limitation (n=1 per group, no replication) stated alongside the output"
+        ]
+      },
+      {
+        "id": "T1S5",
+        "name": "Shrink log2 fold changes with apeglm",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "What is the apeglm-shrunken, low-count-noise-corrected log2 fold change for treated vs control per gene, ranked for downstream interpretation?",
+        "grounding": {
+          "claims": [
+            "R-0009@f54e"
+          ],
+          "reason": "R-0009: shrink the reported log2FC with apeglm for a single coefficient; keep the unshrunken estimate alongside it.",
+          "status": "grounded",
+          "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "shrink_lfc",
+        "depends_on": [
+          "T1S4"
+        ],
+        "description": "Apply apeglm shrinkage to the treated-vs-control log2 fold change coefficient computed in T1S4 (single coefficient contrast, control as reference). Produce a final gene table with gene symbol, normalized counts in each sample, raw log2FC, and shrunken log2FC, sorted by absolute shrunken log2FC descending. This ranked list is descriptive (no significance calls) and is the input to the enrichment step.",
+        "acceptance_criteria": [
+          "apeglm-shrunken log2FC computed for every filtered gene using the single treated-vs-control coefficient",
+          "Final table includes gene symbol, both sample normalized counts, raw and shrunken log2FC, sorted by |shrunken log2FC|",
+          "No p-values or FDR reported in this table"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GO over-representation on top descriptive-fold-change genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "rrvgo"
+        ],
+        "question": "Which GO Biological Process terms are over-represented among the top-ranked genes by descriptive shrunken log2 fold change between treated and control liver?",
+        "grounding": {
+          "claims": [
+            "R-0095@8605",
+            "R-0046@a0ac",
+            "R-0101@06c8",
+            "R-0052@620a"
+          ],
+          "reason": "knowledge_check rejected fgsea/ranked GSEA for this flagged (no-replicate) design and permitted GO over-representation (enrichGO+rrvgo) as an alternative; universe set to tested genes per R-0046, symbol mapping per R-0101, redundancy collapse per R-0052. Reference: MSigDB human GO Biological Process gene sets staged at /mnt/refs/managed/msigdb-go-human/2026.1/.",
+          "status": "grounded",
+          "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S5"
+        ],
+        "description": "Take the top genes by |shrunken log2FC| from T1S5 (e.g. top 200, or all genes with |log2FC|>=1 if fewer) as a discrete gene list, and run GO Biological Process over-representation (clusterProfiler::enrichGO) with the full set of filtered/tested genes (from T1S2) as the statistical universe, using the human GO Biological Process gene sets and org.Hs.eg.db for symbol-to-Entrez mapping. Report the share of genes that failed to map to Entrez IDs. Reduce redundant significant GO terms to representative terms with rrvgo by semantic similarity, keeping the full term table as a supplement. State explicitly that this list derives from a non-inferential (no-replicate) fold-change ranking, not from a statistically tested DE gene set, so the enrichment result is hypothesis-generating only.",
+        "acceptance_criteria": [
+          "enrichGO run with tested-gene universe (from T1S2), BP ontology, org.Hs.eg.db mapping",
+          "Percentage of unmapped gene symbols reported",
+          "rrvgo term reduction applied to significant GO BP terms, full table kept as supplement",
+          "Report explicitly caveats that input gene list came from a non-replicated, descriptive fold-change ranking"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Final descriptive DE and enrichment report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "What is the full, reproducible summary of the treated-vs-control liver comparison, given the no-replication design?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0086@becf",
+            "R-0051@01ca",
+            "R-0055@107a"
+          ],
+          "reason": "R-0041/R-0086 require the report to name method, versions, design, thresholds, n tested/DE, and a reproducibility record; R-0051/R-0055 require enrichment database/version/universe/size-window and a caveat that enrichment method choice affects results.",
+          "status": "grounded",
+          "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S5",
+          "T2S1"
+        ],
+        "description": "Assemble the final report: design description (1 treated vs 1 control liver sample, no biological replication), DESeq2/apeglm/clusterProfiler/rrvgo package versions and session info, the filtering threshold and number of genes tested (from T1S2), the full descriptive gene table (normalized counts, raw and shrunken log2FC) from T1S5, the GO over-representation results from T2S1 with the gene-set universe and size window stated, and an explicit statement that no p-values, FDR, or significance calls exist anywhere in this analysis because the design has 1 sample per condition. State that a replicated design (>=3 biological replicates per condition) is required to support inferential differential expression testing.",
+        "acceptance_criteria": [
+          "Report states design, package versions, and session info",
+          "Report includes full descriptive gene table and top-ranked genes by |shrunken log2FC|",
+          "Report includes GO enrichment table with universe and size window stated",
+          "Report explicitly states no inferential test/p-values were computed and names the replication needed for inference"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control: descriptive DE, no replicates",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is a single treated liver sample vs a single control liver sample (12000 genes x 2 conditions, raw salmon-derived integer counts), with no biological replication in either arm. Per the sourced rule R-0003, no dispersion can be estimated from n=1 per group, so no inferential p-value has a valid basis. The plan therefore runs QC and DESeq2 median-of-ratios normalization, computes descriptive (non-inferential) apeglm-shrunken log2 fold changes between the two samples, and reports them as a ranked, effect-size-only table -- explicitly not as significance calls. A GO over-representation follow-up on the top-ranked genes (using the tested-gene universe, per R-0046/R-0054) offers a mechanistic read, appropriately hedged given the descriptive nature of the input gene list. Every report step states the lack of replication and the design that would license inference."
+  },
+  "usage": {
+    "inputTokens": 567768,
+    "outputTokens": 6662,
+    "cacheCreationInputTokens": 128824,
+    "cacheReadInputTokens": 438848,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 1,
+        "n_per_group_max": 1,
+        "paired": false,
+        "batch": "none"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene ontology GO"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "fgsea",
+          "apeglm",
+          "tximport",
+          "org.Hs.eg.db",
+          "EnhancedVolcano",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "rrvgo",
+          "goseq"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 1,
+        "n_per_group_max": 1,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA and sample distances",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >=1 sample (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "Descriptive log2 fold changes only, no inferential test (no replicates)",
+            "package": "DESeq2",
+            "outcome": "descriptive_only"
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage of log2 fold change",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on shrunken log2FC against MSigDB Hallmark and Reactome",
+            "package": "fgsea"
+          },
+          {
+            "step_type": "report",
+            "method": "Descriptive DE report with normalized counts, shrunken LFC table, and enrichment",
+            "package": "DESeq2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 1,
+        "n_per_group_max": 1,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA and sample distances",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >=1 sample (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "Descriptive log2 fold changes only, no inferential test (no replicates)",
+            "package": "DESeq2",
+            "outcome": "descriptive_only"
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage of log2 fold change",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "enrichment",
+            "method": "GO over-representation with clusterProfiler enrichGO and rrvgo term reduction on genes ranked/selected by descriptive shrunken log2FC, tested genes as universe",
+            "package": "clusterProfiler"
+          },
+          {
+            "step_type": "report",
+            "method": "Descriptive DE report with normalized counts, shrunken LFC table, and enrichment",
+            "package": "DESeq2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control: descriptive DE, no replicates",
+          "analytical_narrative": "The dataset is a single treated liver sample vs a single control liver sample (12000 genes x 2 conditions, raw salmon-derived integer counts), with no biological replication in either arm. Per the sourced rule R-0003, no dispersion can be estimated from n=1 per group, so no inferential p-value has a valid basis. The plan therefore runs QC and DESeq2 median-of-ratios normalization, computes descriptive (non-inferential) apeglm-shrunken log2 fold changes between the two samples, and reports them as a ranked, effect-size-only table -- explicitly not as significance calls. A GO over-representation follow-up on the top-ranked genes (using the tested-gene universe, per R-0046/R-0054) offers a mechanistic read, appropriately hedged given the descriptive nature of the input gene list. Every report step states the lack of replication and the design that would license inference.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the treated and control liver samples show the expected count-depth and distributional structure prior to any comparison, given only one sample per condition?",
+              "description": "Load counts.csv (12000 genes x 2 samples) and metadata.csv, apply DESeq2's blind variance-stabilizing transformation, and report library sizes, gene detection counts, and the single pairwise sample distance (Euclidean, on top-500 variable genes). With only 2 samples total, a PCA plot is degenerate (1 axis) -- report the scalar distance and count/library summaries instead, and flag any gross depth or composition mismatch between the two samples.",
+              "acceptance_criteria": [
+                "Library size and number of detected genes reported for both the treated and control sample",
+                "Blind VST computed and the treated-vs-control sample distance reported",
+                "Any gross depth/composition mismatch between the two samples is explicitly flagged"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "R-0033 calls for blind vst + sample-structure QC before any DE step on raw counts; PCA is degenerate with n=2 total samples so distance/library-size summaries substitute."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Filter low-count genes",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "Which of the 12000 genes have enough counts in at least one sample to be analyzable, given the smallest group size is 1?",
+              "description": "Filter counts.csv to keep genes with at least 10 counts in at least 1 sample (the smallest group size, since each condition has exactly 1 sample). Report the number of genes retained vs the 12000 tested.",
+              "acceptance_criteria": [
+                "Filtered count matrix produced",
+                "Number of genes retained after filtering reported against the starting 12000"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+                "claims": [
+                  "R-0002@087b"
+                ],
+                "reason": "R-0002: keep a gene with >=10 counts in >= smallest group size of samples (here, 1 sample)."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Normalize with DESeq2 median-of-ratios",
+              "track": "T1",
+              "step_type": "normalize",
+              "question": "What are the size-factor-normalized expression levels for the treated and control liver samples after filtering?",
+              "description": "Build a DESeqDataSet from the filtered counts and the 2-sample metadata (condition: treated vs control), with the condition factor's reference level explicitly set to 'control'. Compute DESeq2 median-of-ratios size factors and report normalized counts per gene per sample. Do not pre-scale counts before this step.",
+              "acceptance_criteria": [
+                "DESeqDataSet built with condition factor, reference level explicitly set to 'control'",
+                "Median-of-ratios size factors computed and reported for both samples",
+                "Normalized count table produced"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+                "claims": [
+                  "R-0026@762e",
+                  "R-0036@9786"
+                ],
+                "reason": "R-0026: normalization is internal to DESeq2 (median-of-ratios), no pre-scaling. R-0036: reference level must be set explicitly and named (control), not left to alphabetical default."
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Descriptive log2 fold changes (no inferential test)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "What is the direction and magnitude of expression change between the single treated liver sample and the single control liver sample, reported descriptively?",
+              "description": "With exactly 1 sample per condition (no biological replication), DESeq2 dispersion cannot be estimated and no valid p-value can be produced. Per the flagged design rule, run NO inferential differential expression test. Instead compute raw (unshrunken) log2 fold changes (treated vs control, control as reference) from the normalized counts and pass to shrinkage in the next step. Output a full gene table with normalized counts in each sample and the raw log2FC, explicitly labeled as descriptive/non-inferential -- no p-values or FDR are computed at this step.",
+              "acceptance_criteria": [
+                "Full gene-level table (normalized counts x2 samples, raw log2FC) produced for all filtered genes",
+                "Table and any accompanying text explicitly state no inferential test was run and no p-values exist",
+                "Design limitation (n=1 per group, no replication) stated alongside the output"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+                "claims": [
+                  "R-0003@6b3a"
+                ],
+                "reason": "R-0003 flag: with 1 sample per group, no inferential DE test is permitted (outcome=descriptive_only); report normalized counts and descriptive log2FC only, and name that a replicated design is required for inference."
+              }
+            },
+            {
+              "id": "T1S5",
+              "name": "Shrink log2 fold changes with apeglm",
+              "track": "T1",
+              "step_type": "shrink_lfc",
+              "question": "What is the apeglm-shrunken, low-count-noise-corrected log2 fold change for treated vs control per gene, ranked for downstream interpretation?",
+              "description": "Apply apeglm shrinkage to the treated-vs-control log2 fold change coefficient computed in T1S4 (single coefficient contrast, control as reference). Produce a final gene table with gene symbol, normalized counts in each sample, raw log2FC, and shrunken log2FC, sorted by absolute shrunken log2FC descending. This ranked list is descriptive (no significance calls) and is the input to the enrichment step.",
+              "acceptance_criteria": [
+                "apeglm-shrunken log2FC computed for every filtered gene using the single treated-vs-control coefficient",
+                "Final table includes gene symbol, both sample normalized counts, raw and shrunken log2FC, sorted by |shrunken log2FC|",
+                "No p-values or FDR reported in this table"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+                "claims": [
+                  "R-0009@f54e"
+                ],
+                "reason": "R-0009: shrink the reported log2FC with apeglm for a single coefficient; keep the unshrunken estimate alongside it."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "GO over-representation on top descriptive-fold-change genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which GO Biological Process terms are over-represented among the top-ranked genes by descriptive shrunken log2 fold change between treated and control liver?",
+              "description": "Take the top genes by |shrunken log2FC| from T1S5 (e.g. top 200, or all genes with |log2FC|>=1 if fewer) as a discrete gene list, and run GO Biological Process over-representation (clusterProfiler::enrichGO) with the full set of filtered/tested genes (from T1S2) as the statistical universe, using the human GO Biological Process gene sets and org.Hs.eg.db for symbol-to-Entrez mapping. Report the share of genes that failed to map to Entrez IDs. Reduce redundant significant GO terms to representative terms with rrvgo by semantic similarity, keeping the full term table as a supplement. State explicitly that this list derives from a non-inferential (no-replicate) fold-change ranking, not from a statistically tested DE gene set, so the enrichment result is hypothesis-generating only.",
+              "acceptance_criteria": [
+                "enrichGO run with tested-gene universe (from T1S2), BP ontology, org.Hs.eg.db mapping",
+                "Percentage of unmapped gene symbols reported",
+                "rrvgo term reduction applied to significant GO BP terms, full table kept as supplement",
+                "Report explicitly caveats that input gene list came from a non-replicated, descriptive fold-change ranking"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "rrvgo"
+              ],
+              "depends_on": [
+                "T1S5"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+                "claims": [
+                  "R-0095@8605",
+                  "R-0046@a0ac",
+                  "R-0101@06c8",
+                  "R-0052@620a"
+                ],
+                "reason": "knowledge_check rejected fgsea/ranked GSEA for this flagged (no-replicate) design and permitted GO over-representation (enrichGO+rrvgo) as an alternative; universe set to tested genes per R-0046, symbol mapping per R-0101, redundancy collapse per R-0052. Reference: MSigDB human GO Biological Process gene sets staged at /mnt/refs/managed/msigdb-go-human/2026.1/."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Final descriptive DE and enrichment report",
+              "track": "T3",
+              "step_type": "report",
+              "question": "What is the full, reproducible summary of the treated-vs-control liver comparison, given the no-replication design?",
+              "description": "Assemble the final report: design description (1 treated vs 1 control liver sample, no biological replication), DESeq2/apeglm/clusterProfiler/rrvgo package versions and session info, the filtering threshold and number of genes tested (from T1S2), the full descriptive gene table (normalized counts, raw and shrunken log2FC) from T1S5, the GO over-representation results from T2S1 with the gene-set universe and size window stated, and an explicit statement that no p-values, FDR, or significance calls exist anywhere in this analysis because the design has 1 sample per condition. State that a replicated design (>=3 biological replicates per condition) is required to support inferential differential expression testing.",
+              "acceptance_criteria": [
+                "Report states design, package versions, and session info",
+                "Report includes full descriptive gene table and top-ranked genes by |shrunken log2FC|",
+                "Report includes GO enrichment table with universe and size window stated",
+                "Report explicitly states no inferential test/p-values were computed and names the replication needed for inference"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S5",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0086@becf",
+                  "R-0051@01ca",
+                  "R-0055@107a"
+                ],
+                "reason": "R-0041/R-0086 require the report to name method, versions, design, thresholds, n tested/DE, and a reproducibility record; R-0051/R-0055 require enrichment database/version/universe/size-window and a caveat that enrichment method choice affects results."
+              }
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+  }
+}

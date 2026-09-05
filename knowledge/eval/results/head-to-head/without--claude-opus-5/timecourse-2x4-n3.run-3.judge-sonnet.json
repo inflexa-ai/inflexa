@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the interaction as full ~condition+time+condition:time vs reduced ~condition+time LRT in DESeq2, with time as a 4-level factor, t0 reference, and explicitly contrasts this against the main time and condition effects to quantify 'beyond the shared trend.' QC (library size, VST-PCA colored by condition/time, correlation heatmap) precedes testing with an explicit outlier policy implied via PCA checks, though no explicit shallow-sample removal rule is stated. Filtering (>=10 counts in >=3 samples) is standard and justified; normalization is correctly left inside DESeq2's model (size factors), not pre-normalized. FDR (padj<0.05) is stated with no post-hoc relaxation, and effect sizes are shrunk via lfcShrink/apeglm for the per-timepoint contrasts; thresholds are set in the test rather than after the fact. Enrichment is well-justified with GSEA/ORA, explicit universe (T1S1-filtered genes), named collections (Hallmark, GO-BP), and redundancy collapsing, comparing interaction vs shared-time gene sets as warranted; the report step names methods, thresholds, gene counts, and caveats (df, duplicates, power) thoroughly, though a small extra rigor gap remains around explicit alpha/version pinning for tools."
+}

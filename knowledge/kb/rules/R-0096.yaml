@@ -1,0 +1,74 @@
+id: R-0096
+title: "Gene length bias in an over-representation analysis of counts: goseq with a probability weighting function when the lengths are known"
+assertion: >-
+  With a quantifier that gives an effective length per gene, an
+  over-representation analysis of a discrete list from a count-based test
+  corrects the gene length bias with goseq. A long gene collects more reads,
+  thus it reaches significance more easily, and the significant list is
+  enriched for long genes. goseq fits a probability weighting function of the
+  chance of a call against the gene length, and it weights the null of each
+  category with that function. Take the lengths from the effective lengths of
+  the quantifier through tximport. A 3' tag library has no length bias, thus
+  do not apply the correction there.
+modality: bulk_rna_seq
+conditions:
+  - field: count_source
+    op: in
+    value: [salmon, kallisto, rsem]
+action:
+  step_type: enrichment
+  method: M-0033
+  parameters:
+    - name: ora_bias_correction
+      value: goseq_pwf
+      default_source: "doi:10.1186/gb-2010-11-2-r14"
+    - name: gene_length
+      value: effective_length_from_quantifier
+      default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0010
+    when: "The full ranked list is available: a ranked test on every tested gene needs no list cutoff and carries less of the selection bias."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0048
+    paraphrase: >-
+      In RNA-seq, the power to call a gene differentially expressed rises with
+      its length, thus a GO analysis of the significant list reports the
+      categories of long genes. goseq estimates a probability weighting
+      function of the call against the length and uses it in the category
+      test, which removes the bias.
+    anchor: "Abstract; Results, Length bias; Methods, Probability weighting function"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0028
+    paraphrase: >-
+      The paper warns that serious sources of bias confound a functional
+      enrichment analysis of a global RNA or protein expression study, and
+      it asks for caution when such an analysis validates a finding.
+    anchor: "Abstract"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0033
+    paraphrase: >-
+      Salmon reports an effective length per transcript that accounts for the
+      fragment length distribution and for the bias models, beside the
+      estimated counts and the TPM.
+    anchor: "Methods; Online Methods, Effective length"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, gene-length, bias]

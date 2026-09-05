@@ -1,0 +1,57 @@
+id: R-0051
+title: "Report the gene set database, its version, the ranking metric, the universe, and the size window"
+assertion: >-
+  In the report of an enrichment analysis, state the gene set database and its
+  version. State the ranking metric or the list cutoff, the universe, and the
+  gene set size window. Add the tool with its version and the multiple testing
+  method. Each of these choices changes the result, and a reader cannot
+  reproduce or judge the result without them.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: question
+    op: in
+    value: [enrichment, full_plan]
+action:
+  step_type: report
+  parameters:
+    - name: enrichment_report
+      value: [database, version, rank_metric, universe, size_window]
+      default_source: "doi:10.1371/journal.pcbi.1009935"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0027
+    paraphrase: >-
+      The survey finds that most publications do not report the version of the
+      gene set database, the background list, or the software version. It
+      gives a checklist for the report: the database and its version, the
+      background, the statistical test, the multiple testing correction, and
+      the tool with its version.
+    anchor: "Results; Discussion, Checklist for the report of an enrichment analysis"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0039
+    paraphrase: >-
+      The survey of RNA-seq publications finds that a large share omits the
+      tool versions and the parameters of the analysis steps, thus the analysis
+      cannot be reproduced. It calls for a full report of the tools, their
+      versions, and their parameters.
+    anchor: "Abstract; Results; Recommendations"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [enrichment, report, reproducibility]

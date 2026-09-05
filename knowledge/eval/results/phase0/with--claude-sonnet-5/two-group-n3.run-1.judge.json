@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan uses DESeq2 Wald with an edgeR quasi-likelihood cross-check on raw Salmon counts, exactly matching the two-group, unpaired, single-batch, n=3 design, and it explicitly states the low-power caveat without loosening alpha. QC (blind VST PCA, sample-distance heatmap, library sizes, outlier flagging) precedes the model; the filter (>=10 counts in >=3 samples, tied to the smallest group size, with before/after counts reported) is minimal and justified; normalization is median-of-ratios inside the model and TMM inside edgeR, with no pre-normalized input. The contrast is named explicitly with control as reference level, though the design formula ~condition is only stated in the report step rather than at model construction, a minor gap. BH at alpha=0.05 with independent filtering, apeglm shrinkage alongside unshrunken LFC, and NA-padj accounting are all specified; the GSEA is preranked on the full tested list with the ranking metric, size window, and collection stated, but the collection version is only promised rather than named and organism is assumed human without confirming it for a liver dataset. The report step names method, versions, design, thresholds, gene counts, and design caveats."
+}

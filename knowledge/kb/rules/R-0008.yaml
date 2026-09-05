@@ -1,0 +1,53 @@
+id: R-0008
+title: "A sample with a library size far below the median: keep it, inspect it, and report it"
+assertion: >-
+  If one sample has a library size several times below the median of the
+  study, do not delete it in silence. Keep it through the sample structure QC,
+  look at it on the PCA and on the sample distance heatmap, report its library
+  size and its detected genes beside the others, and remove it only with a
+  stated reason. The count models down-weight a low-depth sample through its
+  size factor, thus removal is a judgment, not a default.
+modality: bulk_rna_seq
+conditions:
+  - field: quality_flags
+    op: contains
+    value: [low_depth_sample]
+action:
+  step_type: qc_sample_structure
+  parameters:
+    - name: low_depth_policy
+      value: keep_inspect_report
+      default_source: "doi:10.1186/s13059-016-0881-8"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0012
+    paraphrase: >-
+      The survey lists sample-level quality checks, library size among them,
+      and advises that outlier samples are examined with clustering and PCA
+      before a decision, and that the decision and its reason are reported.
+    anchor: "Quality control of the count data; Sample outliers"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0040
+    paraphrase: >-
+      The workflow inspects the sample distances and the PCA after the
+      variance stabilizing transformation to find a sample that does not
+      cluster with its group, and it notes that the size factors account for
+      differences in sequencing depth.
+    anchor: "Exploratory analysis and visualization; Sample distances; PCA plot"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [qc, library-size]

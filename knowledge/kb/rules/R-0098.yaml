@@ -1,0 +1,68 @@
+id: R-0098
+title: "Human: Reactome is the second collection after Hallmark"
+assertion: >-
+  For a human dataset, after the Hallmark pass, run the second enrichment
+  against the Reactome pathway sets. Reactome is curated by hand, reviewed by
+  experts, arranged in a hierarchy from a pathway to its reactions, and
+  released under an open license with a version number. Thus a hallmark hit
+  resolves to a specific pathway with a citation. Use the Reactome subset of
+  the C2 curated collection as served, and state the Reactome release.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: organism
+    op: eq
+    value: human
+  - field: question
+    op: in
+    value: [enrichment, full_plan]
+action:
+  step_type: enrichment
+  parameters:
+    - name: second_collection
+      value: reactome_c2_cp
+      default_source: "doi:10.1093/nar/gkz1031"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:citesAsAuthority
+    source: S-0070
+    paraphrase: >-
+      Reactome holds cellular processes as an ordered network of molecular
+      transformations in one data model, with an event hierarchy, and external
+      domain experts review its new content.
+    anchor: "Abstract"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0031
+    paraphrase: >-
+      The hallmark sets condense the founder sets into 50 coherent signatures
+      for a first pass, and the founder sets of the curated collection keep
+      the detail behind a hallmark.
+    anchor: "Abstract; Results, Hallmark gene sets"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0026
+    paraphrase: >-
+      The protocol names Reactome among the pathway databases that it uses
+      for a pathway enrichment analysis and recommends a curated pathway
+      database with a stated version.
+    anchor: "Introduction; Procedure, Pathway gene set databases"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, gene-set-collection, reactome]

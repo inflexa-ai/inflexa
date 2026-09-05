@@ -1,0 +1,177 @@
+id: tpl-deseq2-lrt-timecourse
+version: 1.0.0
+label: "DESeq2 likelihood ratio test for a condition-by-time course"
+language: R
+method: M-0002
+step_types: [filter_low_counts, normalize, model_design, differential_expression, multiple_testing]
+edam_operations: [EDAM:operation_3223]
+citations: [S-0001, S-0002, S-0040, S-0042]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [time_course_with_condition]
+  min_replicates: 2
+  conditions:
+    - field: n_timepoints
+      op: gte
+      value: 3
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample.
+    The condition column is renamed to `condition` and the time column to
+    `time` inside the script. Time is a factor whose levels come in the order
+    of first appearance, or in the order of `time_order`. The likelihood ratio
+    test compares the full design against the reduced design, thus the genes
+    that it finds are the genes whose condition effect changes across time
+    under the default designs. One test, no contrast.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the denominator of the per-timepoint fold changes, for example control."
+    adaptable: true
+  - name: time_column
+    type: string
+    description: "The column of the sample table that holds the time point of each sample. The script treats it as a factor."
+    adaptable: true
+  - name: time_order
+    type: string_list
+    description: "The time levels in their order, first level first. Absent, the levels come in the order of first appearance in the sample table."
+    adaptable: true
+    required: false
+  - name: full_design
+    type: formula
+    description: "The full design. It must name condition and time, and it holds the terms that the test removes. Put a balanced batch or a covariate first, for example ~ batch + condition + time + condition:time."
+    adaptable: true
+    default: "~ condition + time + condition:time"
+    default_source: "vignette:DESeq2/1.52.0#time-series-experiments"
+    pattern: "^(?=.*\\bcondition\\b)(?=.*\\btime\\b)"
+  - name: reduced_design
+    type: formula
+    description: "The reduced design. Each of its terms must be in the full design. The test asks whether the terms that only the full design holds matter together."
+    adaptable: true
+    default: "~ condition + time"
+    default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
+  - name: min_count
+    type: integer
+    description: "A gene stays when it has at least this many counts in at least min_samples samples."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 0
+  - name: min_samples
+    type: integer
+    description: "The minimum number of samples for the count filter. Absent, the script uses the smallest condition-by-time cell size."
+    adaptable: true
+    required: false
+    minimum: 1
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff, passed to results() so the independent filter is optimized for it."
+    adaptable: false
+    default: 0.05
+    default_source: "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+  - name: n_top_genes_pca
+    type: integer
+    description: "The number of most variable genes for the PCA."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 50
+  - name: n_top_genes_heatmap
+    type: integer
+    description: "The number of top likelihood ratio test genes, by p-value, in the heatmap of the variance stabilized values."
+    adaptable: true
+    default: 50
+    minimum: 2
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example de or treated_time_course."
+    adaptable: true
+    default: de
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+outputs:
+  - name: lrt_results
+    path: "output/{prefix}_lrt_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested gene: gene, base_mean, stat (the likelihood ratio statistic), pvalue, adjusted_pvalue."
+  - name: timepoint_lfc
+    path: "output/{prefix}_timepoint_lfc.csv"
+    format: EDAM:format_3752
+    description: "One row per significant gene: gene, adjusted_pvalue, then one log2 fold change of each non-reference condition level against the reference within each time level, from the coefficients of the full model."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The two designs, the terms that the test removes, the counts of tested and significant genes, the thresholds, the package versions."
+  - name: pca
+    path: "figures/{prefix}_pca.png"
+    description: "PCA of the samples on the top variable genes, colored by condition and shaped by time (and PDF)."
+  - name: heatmap
+    path: "figures/{prefix}_top_genes_heatmap.png"
+    description: "Heatmap of the top likelihood ratio test genes on the variance stabilized values, scaled by row, columns ordered by condition then time (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: DESeq2
+    version: "1.52.0"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: pheatmap
+    version: "1.0.13"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: timecourse-2x4-n3
+    dataset: timecourse_2x4_n3/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      time_column: time
+    expect:
+      - "exists output/de_lrt_results.csv"
+      - "exists output/de_timepoint_lfc.csv"
+      - "exists output/de_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/de_pca.png"
+      - "exists figures/de_pca.pdf"
+      - "exists figures/de_top_genes_heatmap.png"
+      - "exists figures/de_top_genes_heatmap.pdf"
+      - "csv_rows output/de_lrt_results.csv >= 5000"
+      - "json output/de_summary.json df_tested == 3"
+      - "truth_recall output/de_lrt_results.csv >= 0.3"
+      - "truth_fdr output/de_lrt_results.csv <= 0.15"

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly diagnoses the perfect confounding, refuses to fit a batch term, and explicitly forbids ComBat-seq/SVA/RUV as a repair (the RUVg step is labelled descriptive and non-rescuing), running only the estimable treated-vs-control contrast with the confounding caveat carried into every table and figure, plus concrete remediation via a rebalanced or bridged design. QC is dataset-specific and thorough (cross-tab, model-matrix rank check, library sizes, detection rates, PCA/clustering with the caveat that PC1 is uninterpretable), the filter is minimal and justified by the smallest group size, normalization stays inside the count model on raw integers, and the formula, reference level, BH alpha, apeglm/ashr shrinkage and the documented rank-deficiency error are all explicit. Reporting requirements name the tool, version, design, thresholds, tested and significant gene counts, and the design caveats. The weakest point is enrichment: it is arguably not warranted for a fully confounded list, and while the plan restricts the universe to tested genes, separates directions, runs GSEA on the full ranked list and names collections, it omits collection versions and a gene-set size window."
+}

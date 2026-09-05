@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 3,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies that n=1 per group precludes valid inference and commits to a descriptive, shrunken log2FC ranking with explicit caveats throughout, which matches the reference's core stance; normalization (size factors/CPM computed properly, not pre-adjusted) and low-count filtering are well justified and reported. However, it deviates from the reference by still running edgeR exactTest with fixed BCVs and a pooled DESeq2 fit and reporting nominal/FDR p-values, even though clearly labelled as assumption-driven sensitivity analysis; the reference says a correct plan produces no p-values at all, so this is a partial violation despite the careful framing. There is no explicit sample-structure QC step (PCA/sample distances/library-size plot colored by condition) beyond library size reporting, and no real design formula/contrast/reference-level statement is given since there's no model to fit (acceptable given the design, but the criterion still scores low for lack of an explicit 'no formula, single unreplicated group' statement and blocking/batch discussion). Enrichment is handled thoughtfully with named collection, version, size window, mapping rate, and explicit inheritance of the n=1 caveat, closely matching a correct treatment of enrichment under this design."
+}

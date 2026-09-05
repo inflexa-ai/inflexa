@@ -1,0 +1,653 @@
+id: https://inflexa.ai/schema/knowledge
+name: inflexa-knowledge
+title: The Inflexa knowledge model
+version: 0.1.0
+description: >-
+  The classes of the knowledge plane. A rule is a situation-to-method claim with
+  conditions, a strength, and cited evidence. A method is a statistical
+  procedure with its packages. A template is a tested script with a typed
+  parameter contract and a pinned environment. A snapshot is one dated, content
+  addressed release of the whole set. The categorical slots bind to external
+  terms through meaning annotations, and each local term has an INFLEXA
+  identifier with an SSSOM mapping when an official term exists.
+license: CC-BY-4.0
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  ik: https://inflexa.ai/knowledge/
+  INFLEXA: https://inflexa.ai/knowledge/term/
+  STATO: http://purl.obolibrary.org/obo/STATO_
+  OBI: http://purl.obolibrary.org/obo/OBI_
+  ECO: http://purl.obolibrary.org/obo/ECO_
+  EDAM: http://edamontology.org/
+  cito: http://purl.org/spar/cito/
+  skos: http://www.w3.org/2004/02/skos/core#
+  doi: https://doi.org/
+  pmid: https://pubmed.ncbi.nlm.nih.gov/
+
+default_prefix: ik
+default_range: string
+
+imports:
+  - linkml:types
+
+# ── Enumerations ────────────────────────────────────────────────────────
+
+enums:
+  QuestionEnum:
+    description: What the caller asks the service for.
+    permissible_values:
+      differential_expression: {}
+      enrichment: {}
+      qc: {}
+      full_plan: {}
+
+  ModalityEnum:
+    permissible_values:
+      bulk_rna_seq:
+        meaning: OBI:0001271
+
+  DataStateEnum:
+    description: The state of the expression data that the analysis starts from.
+    permissible_values:
+      fastq: {}
+      counts: {}
+      tpm_or_fpkm: {}
+      log_normalized: {}
+
+  CountSourceEnum:
+    permissible_values:
+      salmon: {}
+      kallisto: {}
+      star_featurecounts: {}
+      rsem: {}
+      unknown: {}
+
+  OrganismEnum:
+    permissible_values:
+      human: {}
+      mouse: {}
+      other: {}
+
+  BatchEnum:
+    description: How a batch factor relates to the condition of interest.
+    permissible_values:
+      none: {}
+      known_balanced: {}
+      known_confounded: {}
+      suspected: {}
+
+  LibraryTypeEnum:
+    permissible_values:
+      polyA: {}
+      total: {}
+      three_prime: {}
+      unknown: {}
+
+  StrandednessEnum:
+    permissible_values:
+      verified: {}
+      declared_unverified: {}
+      unknown: {}
+
+  QualityFlagEnum:
+    description: A quality concern of the data profile, as a typed flag.
+    permissible_values:
+      low_depth_sample: {}
+      outlier_sample: {}
+      sample_identity_doubt: {}
+      high_duplication: {}
+
+  StepTypeEnum:
+    description: The ordered step types of a bulk RNA-seq procedure.
+    permissible_values:
+      qc_sample_structure: {}
+      filter_low_counts: {}
+      normalize: {}
+      model_design: {}
+      differential_expression: {}
+      shrink_lfc: {}
+      multiple_testing: {}
+      enrichment: {}
+      report: {}
+
+  StrengthEnum:
+    permissible_values:
+      consensus: {}
+      common_practice: {}
+      disputed: {}
+
+  EvidenceQualityEnum:
+    description: The evidence axis of GRADE.
+    permissible_values:
+      high: {}
+      moderate: {}
+      low: {}
+
+  RecommendationStrengthEnum:
+    description: The recommendation axis of GRADE.
+    permissible_values:
+      strong: {}
+      conditional: {}
+
+  SeverityEnum:
+    description: What an applicable rule does to the answer.
+    permissible_values:
+      info:
+        description: The rule selects a method or a parameter.
+      warn:
+        description: The rule attaches a warning to a step.
+      flag:
+        description: The rule forbids the requested analysis or changes its outcome.
+
+  RuleStatusEnum:
+    permissible_values:
+      active: {}
+      scheduled_for_deprecation: {}
+      deprecated: {}
+
+  DirectionEnum:
+    permissible_values:
+      supports: {}
+      disputes: {}
+      neutral: {}
+
+  ConditionOpEnum:
+    permissible_values:
+      eq: {}
+      ne: {}
+      in: {}
+      not_in: {}
+      contains:
+        description: For a list-valued field, true when the field holds any of the given values.
+      lt: {}
+      lte: {}
+      gt: {}
+      gte: {}
+      is_null: {}
+      not_null: {}
+
+  PackageTrackEnum:
+    permissible_values:
+      bioconductor: {}
+      cran: {}
+      python: {}
+
+  SlotTypeEnum:
+    description: The value types a template slot accepts.
+    permissible_values:
+      string: {}
+      number: {}
+      integer: {}
+      boolean: {}
+      string_list: {}
+      formula: {}
+
+# ── Classes ─────────────────────────────────────────────────────────────
+
+classes:
+  Situation:
+    description: >-
+      The typed description of one analysis situation. The fields are flat and
+      enumerated where possible. They never carry a sample row or an identifier.
+    attributes:
+      question:
+        range: QuestionEnum
+        required: true
+      modality:
+        range: ModalityEnum
+        required: true
+      data_state:
+        range: DataStateEnum
+        required: true
+      count_source:
+        range: CountSourceEnum
+      organism:
+        range: OrganismEnum
+        required: true
+      n_groups:
+        range: integer
+        required: true
+        minimum_value: 1
+      n_per_group_min:
+        range: integer
+        required: true
+        minimum_value: 1
+      n_per_group_max:
+        range: integer
+        required: true
+        minimum_value: 1
+      paired:
+        range: boolean
+        required: true
+      blocking_factor:
+        description: The name of a blocking factor, or absent.
+      batch:
+        range: BatchEnum
+        required: true
+      covariates:
+        multivalued: true
+      n_timepoints:
+        range: integer
+        minimum_value: 1
+      library_type:
+        range: LibraryTypeEnum
+      strandedness:
+        range: StrandednessEnum
+      interaction:
+        description: True when the question is an interaction between two factors.
+        range: boolean
+      quality_flags:
+        range: QualityFlagEnum
+        multivalued: true
+
+  Condition:
+    description: One predicate over a Situation slot.
+    attributes:
+      field:
+        required: true
+      op:
+        range: ConditionOpEnum
+        required: true
+      value:
+        description: The comparison value, or a list for `in` and `not_in`. Absent for the null tests.
+        range: Any
+
+  ParameterValue:
+    description: A parameter that a rule sets, with the source of its default.
+    attributes:
+      name:
+        required: true
+      value:
+        range: Any
+        required: true
+      default_source:
+        description: A DOI, a vignette locator, or a rule id that gives the default.
+
+  Action:
+    description: What an applicable rule contributes to the procedure.
+    attributes:
+      step_type:
+        range: StepTypeEnum
+        required: true
+      method:
+        description: The Method identifier the rule selects, when it selects one.
+        range: Method
+      parameters:
+        range: ParameterValue
+        multivalued: true
+        inlined_as_list: true
+      forbids:
+        description: The Method identifiers that the rule forbids in this situation.
+        range: Method
+        multivalued: true
+      outcome:
+        description: For a flag rule, the permitted outcome, for example descriptive_only or stop.
+
+  Alternative:
+    attributes:
+      method:
+        range: Method
+        required: true
+      when:
+        required: true
+
+  DisputedSide:
+    attributes:
+      label:
+        required: true
+      method:
+        range: Method
+
+  EvidenceLine:
+    description: One source with its direction, its evidence type, and the supporting text.
+    attributes:
+      direction:
+        range: DirectionEnum
+        required: true
+      eco:
+        description: The ECO evidence type, as a CURIE.
+        required: true
+        pattern: '^ECO:\d{7}$'
+      cito:
+        description: The CiTO citation intent, as a CURIE.
+        pattern: '^cito:[a-zA-Z]+$'
+      source:
+        range: Source
+        required: true
+      paraphrase:
+        description: The claim in the words of the curator, with a section anchor.
+      span:
+        description: A verbatim span of at most 25 words, used only when the exact wording carries the threshold.
+      anchor:
+        description: The section, figure, or page that holds the evidence.
+      retrieved:
+        range: date
+        required: true
+
+  Source:
+    description: A resolvable locator with its metadata. Never the full text.
+    attributes:
+      id:
+        identifier: true
+        pattern: '^S-\d{4}$'
+      doi:
+        pattern: '^10\.\d{4,9}/\S+$'
+      pmid:
+        pattern: '^\d+$'
+      url:
+        range: uri
+      title:
+        required: true
+      year:
+        range: integer
+        required: true
+      venue: {}
+      license: {}
+      version:
+        description: The version or the date of a vignette, a user guide, or a pipeline page.
+
+  Package:
+    attributes:
+      name:
+        required: true
+      track:
+        range: PackageTrackEnum
+        required: true
+      biotools:
+        description: The bio.tools identifier.
+      version_range:
+        description: A version constraint, for example ">=1.50".
+      bioconductor:
+        description: The Bioconductor release the constraint was verified on.
+
+  Method:
+    description: A statistical procedure with its packages and the templates that realize it.
+    attributes:
+      id:
+        identifier: true
+        pattern: '^M-\d{4}$'
+      label:
+        required: true
+      stato:
+        pattern: '^STATO:\d{7}$'
+      edam_operation:
+        description: An EDAM operation IRI, as a cross reference only.
+        pattern: '^EDAM:operation_\d+$'
+      packages:
+        range: Package
+        multivalued: true
+        inlined_as_list: true
+      templates:
+        range: Template
+        multivalued: true
+      description: {}
+
+  Rule:
+    description: >-
+      A situation-to-method claim. The conditions are predicates over the
+      Situation. The content hash of the canonical JSON gives the claim identifier.
+    attributes:
+      id:
+        identifier: true
+        pattern: '^R-\d{4}$'
+      title:
+        required: true
+      assertion:
+        required: true
+      modality:
+        range: ModalityEnum
+        required: true
+      conditions:
+        range: Condition
+        multivalued: true
+        inlined_as_list: true
+      action:
+        range: Action
+        required: true
+        inlined: true
+      severity:
+        range: SeverityEnum
+        required: true
+      strength:
+        range: StrengthEnum
+        required: true
+      evidence_quality:
+        range: EvidenceQualityEnum
+        required: true
+      recommendation_strength:
+        range: RecommendationStrengthEnum
+        required: true
+      alternatives:
+        range: Alternative
+        multivalued: true
+        inlined_as_list: true
+      disputed_sides:
+        range: DisputedSide
+        multivalued: true
+        inlined_as_list: true
+      evidence:
+        range: EvidenceLine
+        multivalued: true
+        inlined_as_list: true
+        required: true
+      status:
+        range: RuleStatusEnum
+        required: true
+      supersedes:
+        range: Rule
+      replaced_by:
+        range: Rule
+      license:
+        required: true
+      curator:
+        required: true
+      llm_drafted:
+        range: boolean
+        required: true
+      drafting_model: {}
+      curated:
+        range: date
+        required: true
+      tags:
+        multivalued: true
+
+  TemplateParameter:
+    description: One slot of the parameter contract.
+    attributes:
+      name:
+        required: true
+        pattern: '^[a-z][a-z0-9_]*$'
+      type:
+        range: SlotTypeEnum
+        required: true
+      description:
+        required: true
+      adaptable:
+        description: True when the model fills the slot. False when the curator pinned it.
+        range: boolean
+        required: true
+      required:
+        range: boolean
+      default:
+        range: Any
+      default_source: {}
+      enum:
+        multivalued: true
+      pattern: {}
+      minimum:
+        range: float
+      maximum:
+        range: float
+
+  TemplateFile:
+    attributes:
+      name:
+        required: true
+      path:
+        required: true
+      format:
+        description: An EDAM format IRI, as a cross reference only.
+        pattern: '^EDAM:format_\d+$'
+      description: {}
+
+  EnvironmentPin:
+    attributes:
+      name:
+        required: true
+      version:
+        required: true
+      track:
+        range: PackageTrackEnum
+        required: true
+
+  TemplateTest:
+    attributes:
+      name:
+        required: true
+      dataset:
+        description: The evaluation dataset the test renders against.
+        required: true
+      slots:
+        range: Any
+        required: true
+      expect:
+        description: The output files and the assertions the run must satisfy.
+        multivalued: true
+
+  Template:
+    description: A tested script with a typed parameter contract and a pinned environment.
+    attributes:
+      id:
+        identifier: true
+        pattern: '^tpl-[a-z0-9-]+$'
+      version:
+        required: true
+        pattern: '^\d+\.\d+\.\d+$'
+      label:
+        required: true
+      language:
+        required: true
+      method:
+        range: Method
+        required: true
+      step_types:
+        range: StepTypeEnum
+        multivalued: true
+        required: true
+      edam_operations:
+        multivalued: true
+      citations:
+        range: Source
+        multivalued: true
+      license:
+        required: true
+      applicability:
+        range: Any
+        required: true
+      parameters:
+        range: TemplateParameter
+        multivalued: true
+        inlined_as_list: true
+        required: true
+      inputs:
+        range: TemplateFile
+        multivalued: true
+        inlined_as_list: true
+      outputs:
+        range: TemplateFile
+        multivalued: true
+        inlined_as_list: true
+        required: true
+      environment:
+        range: EnvironmentPin
+        multivalued: true
+        inlined_as_list: true
+        required: true
+      bioconductor:
+        required: true
+      body_file:
+        required: true
+      tests:
+        range: TemplateTest
+        multivalued: true
+        inlined_as_list: true
+
+  Modality:
+    description: The ordered step types of one modality.
+    attributes:
+      id:
+        identifier: true
+      label:
+        required: true
+      step_order:
+        range: StepTypeEnum
+        multivalued: true
+        required: true
+      question_steps:
+        description: Which step types each question assembles, as a map from question to step list.
+        range: Any
+        required: true
+
+  VocabularyTerm:
+    description: A minted INFLEXA term with a SKOS label and an optional mapping.
+    attributes:
+      id:
+        identifier: true
+        pattern: '^INFLEXA:[A-Za-z0-9_]+$'
+      label:
+        required: true
+        slot_uri: skos:prefLabel
+      definition:
+        required: true
+        slot_uri: skos:definition
+      mapped_to:
+        description: The official term, when one exists.
+      mapping_predicate:
+        description: The SSSOM predicate, for example skos:exactMatch.
+
+  Snapshot:
+    attributes:
+      date:
+        range: date
+        required: true
+      digest:
+        required: true
+        pattern: '^sha256:[a-f0-9]{64}$'
+      schema_version:
+        required: true
+      vocabularies:
+        multivalued: true
+      tool_definition_hash:
+        required: true
+      changelog: {}
+      counts:
+        range: Any
+
+  KnowledgeBase:
+    tree_root: true
+    attributes:
+      sources:
+        range: Source
+        multivalued: true
+        inlined_as_list: true
+      methods:
+        range: Method
+        multivalued: true
+        inlined_as_list: true
+      rules:
+        range: Rule
+        multivalued: true
+        inlined_as_list: true
+      templates:
+        range: Template
+        multivalued: true
+        inlined_as_list: true
+      modalities:
+        range: Modality
+        multivalued: true
+        inlined_as_list: true
+      terms:
+        range: VocabularyTerm
+        multivalued: true
+        inlined_as_list: true

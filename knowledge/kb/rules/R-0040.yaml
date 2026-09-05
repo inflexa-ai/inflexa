@@ -1,0 +1,62 @@
+id: R-0040
+title: "Three or more groups: shrink the log2 fold change with ashr, report the shrunken and the unshrunken estimate, rank on the shrunken"
+assertion: >-
+  With three or more groups, a contrast between two non-reference levels is
+  not a single coefficient, thus shrink the log2 fold change with ashr,
+  which accepts a contrast, where apeglm accepts a coefficient only. Report
+  the unshrunken estimate from results and the shrunken estimate from
+  lfcShrink for each gene, and use the shrunken value for the ranking and
+  for the plots. The unshrunken estimate of a low count gene is noisy and
+  large, and the shrinkage moves it toward zero while it preserves a large
+  effect with strong support. The test statistic and the p-values come from
+  the unshrunken fit and do not change.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_groups
+    op: gte
+    value: 3
+action:
+  step_type: shrink_lfc
+  method: M-0014
+  parameters:
+    - name: lfc_shrink
+      value: ashr
+      default_source: "doi:10.1093/biostatistics/kxw041"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette states that lfcShrink gives a shrunken log2 fold change
+      for the visualization and the ranking of genes, that apeglm is the
+      default and takes a coefficient only, and that ashr takes a contrast.
+      Thus ashr is the estimator for a comparison that is not a single
+      coefficient.
+    anchor: "Log fold change shrinkage for visualization and ranking; Extended section on shrinkage estimators"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0021
+    paraphrase: >-
+      The paper gives the adaptive shrinkage method, which takes an effect
+      estimate and its standard error for each unit, fits a unimodal prior
+      to the effects as a mixture, and returns a posterior estimate of each
+      effect with a local false sign rate.
+    anchor: "Abstract; Methods, The adaptive shrinkage method"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [shrinkage, fold-change, multi-group]

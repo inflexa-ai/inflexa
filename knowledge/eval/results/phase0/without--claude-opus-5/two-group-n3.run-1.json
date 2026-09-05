@@ -1,0 +1,423 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "two-group-n3",
+  "run": 1,
+  "startedAt": "2026-09-04T21:13:00.298Z",
+  "elapsedMs": 90177,
+  "outcome": "plan_submitted",
+  "planId": "pln-d34a3e9c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, filter and QC the 3v3 liver count matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "Duplicate gene symbols are common in symbol-keyed Salmon output and must be resolved before modelling",
+          "A clean PCA separation with n=3 is not by itself evidence of a strong effect — it can be driven by one sample",
+          "Library-size differences of >3x between samples should be flagged as they weaken the NB fit"
+        ],
+        "context": "Single-batch, unpaired human liver bulk RNA-seq under drug treatment. 3 replicates per group is the minimum for dispersion estimation; QC is therefore load-bearing, not decorative.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the 6 liver samples in counts.csv and metadata.csv match up, which of the 12,000 genes carry enough counts to test, and is the treated-vs-control split the dominant source of variance rather than an outlier replicate?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Probe every library before use (R: requireNamespace; Python: import in a try block) and record which engine was used in the output",
+          "Do not drop or impute samples — with n=3 per group, removing a sample makes the group untestable; report anomalies instead",
+          "Use the condition labels exactly as they appear in metadata.csv; do not rename them",
+          "Write the filtered raw integer count matrix to CSV for downstream steps rather than passing an in-memory object",
+          "Report the number of genes before and after filtering explicitly"
+        ],
+        "description": "Read /eval-phase0-without-two-group-n3-1/data/inputs/counts/counts.csv (12000 x 7; first column gene symbol, 6 sample count columns) and /eval-phase0-without-two-group-n3-1/data/inputs/metadata/metadata.csv (6 x 2, one row per sample with a condition column). Reconcile sample identifiers between the two files, report the exact condition labels found and the count per group (expected 3 treated vs 3 control), and fail loudly rather than silently reordering if identifiers do not match. Handle duplicate gene symbols explicitly (sum or keep max-expressed, and say which). Verify counts are non-negative integers as Salmon-derived gene-level counts should be after rounding. Compute per-sample library size, number of detected genes, and the fraction of counts taken by the top 10 genes. Apply low-count filtering (e.g. edgeR filterByExpr-style, or a documented equivalent: at least ~10 counts in at least 3 samples) and report how many of the 12,000 genes survive. Produce a variance-stabilised or log-CPM matrix and from it: PCA (PC1/PC2 with percent variance, coloured by condition), a sample-sample Spearman and Pearson correlation heatmap, and a per-sample boxplot of normalised expression. State explicitly whether any single sample separates from its own group, since at n=3 that one sample would dominate the DE result. Write the filtered raw count matrix, the normalised matrix, and a QC summary table to CSV.",
+        "acceptance_criteria": [
+          "Sample identifiers in counts.csv and metadata.csv are confirmed matched, with group sizes reported (expected 3 vs 3)",
+          "Number of genes retained after low-count filtering is reported against the starting 12,000",
+          "PCA and correlation heatmap are produced and the position of each of the 6 samples relative to its group is stated in text",
+          "Filtered raw count matrix and normalised matrix are written as CSV",
+          "Any sample behaving as an outlier is named, with the evidence, and retained"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "At n=3 dispersion estimates are noisy and shrinkage toward the trend does much of the work — the fit is only as good as the trend",
+          "Genes significant on the strength of one extreme replicate are the dominant false-positive mode here",
+          "Independent filtering changes the number of tested genes and hence the FDR; report the filtering threshold DESeq2/edgeR chose"
+        ],
+        "context": "12,000 starting genes, 3 treated vs 3 control, unpaired, single batch. Multiple testing across ~10k tested genes with n=3 is the central statistical challenge.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which genes are differentially expressed between the drug-treated and control liver samples, at what fold change and FDR?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Model raw integer counts — never log-transformed or CPM values — with the NB GLM",
+          "Set the control group as the reference level so positive log2FC means up in treated",
+          "Use BH FDR across all tested genes; do not report nominal p-values as significant",
+          "Report shrunken log2FC for ranking but the unshrunken estimate alongside it",
+          "The p-value histogram must be produced and its shape commented on (uniform-with-spike vs conservative vs anti-conservative)",
+          "Do not filter to a hand-picked gene list at any point",
+          "State the engine actually used and its version in the output"
+        ],
+        "description": "Run negative-binomial differential expression on the filtered raw counts from T1S1, contrasting treated vs control using the condition column of metadata.csv, with control as the reference level. Preferred engine: DESeq2 (design ~ condition, Wald test, independent filtering on, BH adjustment, plus lfcShrink with apeglm or ashr for ranking). If DESeq2 is not importable, fall back in this order and say which was used: edgeR quasi-likelihood F-test (glmQLFit/glmQLFTest, TMM normalisation), limma-voom with eBayes, or pyDESeq2 in Python. Report the full result table for every tested gene — gene symbol, baseMean, raw log2FC, shrunken log2FC, lfcSE, stat, pvalue, padj — sorted by padj, written to CSV. Summarise: number of genes with padj < 0.05, padj < 0.1, and the subset of those with |log2FC| > 1; split into up- and down-regulated. Produce the required diagnostics: dispersion-vs-mean plot with the fitted trend, MA plot before and after shrinkage, raw p-value histogram, and a volcano plot labelling the top genes by padj. Also emit a normalised-count heatmap of the top significant genes across all 6 samples so the reader can see whether each gene's signal is consistent across all three replicates or driven by one. If no gene reaches padj < 0.05, say so directly and report the top genes by raw p-value clearly marked as not significant after multiple-testing correction.",
+        "acceptance_criteria": [
+          "A full per-gene result table with padj is written to CSV for all tested genes",
+          "Counts of genes at padj<0.05 and padj<0.1, split up/down, are reported",
+          "Dispersion plot, MA plot, p-value histogram and volcano plot are produced",
+          "Per-replicate expression of the top hits is shown so single-sample-driven hits are visible",
+          "An empty significant set, if that is the outcome, is reported as such without loosening the threshold"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Power, stability and permutation audit of the 3v3 design",
+        "agent": "statistical-modeling-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "Post-hoc power computed from the observed dispersions is descriptive, not a substitute for a prospective power calculation",
+          "Leave-one-out with n=3 produces 2v3 comparisons whose dispersion estimates are even weaker — interpret overlap as a stability probe, not a validation",
+          "With only 10 possible label assignments the permutation null is coarse; treat it as an order-of-magnitude check on the false-positive load"
+        ],
+        "context": "This step is the direct answer to the second half of the research question. It uses the same filtered counts (T1S1) and the same model and result table (T1S2) so the comparison is like-for-like.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels",
+          "matplotlib"
+        ],
+        "question": "How much confidence do three replicates per group support — what effect size is detectable, how stable is the top gene ranking to dropping one replicate, and how many hits survive a label permutation null?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "statistical_assessment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Reuse the exact filtering, normalisation and test used in T1S2 for every leave-one-out and permuted run — no re-tuning",
+          "Enumerate permutations exhaustively; do not sample randomly from only 10 possible splits",
+          "Report power as a function of both fold change and mean expression, not a single number",
+          "Do not present the leave-one-out stable core as an independently validated gene set — it is the same data reused",
+          "Fix and record the random seed for any simulation"
+        ],
+        "description": "Quantify the statistical confidence of the T1S2 result using this dataset's own dispersions rather than generic rules of thumb. (a) Summarise the fitted per-gene dispersion distribution from T1S2 across expression deciles, and report the typical biological coefficient of variation. (b) Post-hoc power: for a grid of log2 fold changes (0.5, 1, 1.5, 2) and mean expression levels spanning the observed range, compute the power of the 3v3 NB test at the achieved FDR, either analytically or by simulating counts from the fitted mean-dispersion relationship; report the minimum detectable log2FC at 80% power for a typically expressed gene. (c) Replicate stability: repeat the differential expression six times, each time leaving out one of the six samples (2v3 or 3v2), and report the overlap of the top 100 genes and of the padj<0.05 set with the full-data result — a Jaccard summary plus the count of hits that survive all six leave-one-out runs. Label the latter as the stable core. (d) Permutation null: enumerate the distinct treated/control label assignments for 6 samples (10 distinct 3v3 splits, 3 non-trivial beyond the true one and its complement), rerun the same test under each, and report the number of genes reaching padj<0.05 under permuted labels versus true labels. State explicitly that with 3v3 the exact permutation p-value has a floor of ~0.1, so no gene can be individually significant by a non-parametric test — this bounds what the parametric result is really claiming. Write a single confidence assessment table and a plain-language verdict on which findings are robust and which are provisional.",
+        "acceptance_criteria": [
+          "Minimum detectable log2FC at 80% power is reported for at least one representative expression level, with the dispersion assumption stated",
+          "Leave-one-out overlap statistics for all six runs are reported, and the stable-core gene set is written to CSV",
+          "Number of padj<0.05 genes under each permuted labelling is reported alongside the true labelling",
+          "The exact-permutation p-value floor for a 3v3 design is stated explicitly",
+          "A written confidence verdict distinguishes robust from provisional findings"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Pathway-level interpretation of the treatment signature",
+        "agent": "enrichment-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment inherits every weakness of the underlying DE result — a pathway called from an unstable gene set is itself unstable",
+          "ORA on a small significant set is badly underpowered and its p-values should be treated as descriptive",
+          "Symbol-based mapping loses genes with outdated or ambiguous symbols; report the mapping rate"
+        ],
+        "context": "Human liver, drug treatment. Pathway-level aggregation borrows strength across genes and is the appropriate resolution when only 3 replicates per group are available.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which biological processes and pathways are coordinately shifted in the drug-treated liver samples, given that per-gene power at n=3 is limited?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use human gene sets only — the data is Homo sapiens, taxon 9606",
+          "Use the filtered gene universe from T1S1 as the ORA background",
+          "Run the rank-based test on all tested genes, not only the significant ones",
+          "Report negative results for the pre-specified liver/xenobiotic pathway families explicitly",
+          "If no gene set resource is present, report that and stop the step cleanly with the ranked list as output — do not substitute an improvised gene set"
+        ],
+        "description": "Interpret the T1S2 differential expression result at pathway resolution, which is where a weak per-gene signal can still be read. Run two complementary analyses on the human gene symbols in the result table: (1) over-representation analysis on the padj<0.05 set (and, if that set is small, on the padj<0.1 set, clearly labelled), tested against the background of all genes that passed filtering in T1S1 — not against the whole genome; (2) a rank-based gene set test (GSEA-style or a competitive test such as CAMERA/fgsea) using every tested gene ranked by shrunken log2FC or the signed test statistic, which does not require a significance cutoff and is therefore the more informative of the two at this sample size. Report normalised enrichment scores, set sizes, leading-edge genes and FDR. Given the liver tissue and drug-treatment context, explicitly check the direction and significance of xenobiotic/drug-metabolism, nuclear-receptor (e.g. AhR, CAR, PXR, PPAR), oxidative-stress/NRF2, bile-acid, lipid-metabolism and inflammatory/acute-phase gene sets, and report them whether or not they reach FDR significance rather than reporting only what is positive. This step needs reference data: a human pathway/gene-set collection (GO biological process, Hallmark, Reactome or KEGG) and, if identifier mapping is required, a human gene annotation resource. The reference store reports as unprovisioned at planning time, so first resolve what the environment actually holds. If no gene set collection and no annotation package is available, do not fabricate or hand-write gene sets — report the absence plainly, emit the ranked gene list as CSV ready for external enrichment, and mark this step's biological interpretation as not performed.",
+        "acceptance_criteria": [
+          "Both ORA and a rank-based gene set test are attempted, or their absence is explained by a named missing resource",
+          "Enrichment results with FDR, set size and leading-edge genes are written to CSV",
+          "The pre-specified liver drug-response pathway families are reported with their statistics regardless of significance",
+          "The gene set collection actually used, including its version if recorded, is named in the output"
+        ]
+      }
+    ],
+    "title": "Liver drug-treated vs control DE (n=3) + power audit",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment in human liver: a 12,000 gene x 7 column Salmon count matrix (counts.csv, first column gene symbol, 6 sample columns) and a 6 x 2 sample table (metadata.csv, one row per sample with a condition column) encoding 3 drug-treated vs 3 control samples, unpaired. The research question has two halves and the plan mirrors them.\n\nTrack 1 answers 'which genes are differentially expressed'. T1S1 loads and reconciles the two CSVs, checks that sample identifiers match between counts and metadata, filters low-count genes, applies a variance-stabilising transform and runs unsupervised QC (library sizes, per-sample detected genes, PCA, sample-sample correlation) to establish that the treated/control split is the dominant structure and that no sample is an outlier — with n=3 a single aberrant replicate can drive the entire result, so this must be established before, not after, the contrast. T1S2 runs the actual differential expression with a negative-binomial GLM on raw counts (DESeq2 if importable, edgeR quasi-likelihood or limma-voom as fallbacks, pyDESeq2 if only Python is present), contrasting treated vs control, with independent filtering, BH FDR and shrunken log fold changes for ranking. The estimated dispersion trend and the raw p-value histogram are required outputs because they are the honest diagnostic for whether the NB fit is trustworthy at three replicates.\n\nTrack 2 answers 'how confident can we be with three replicates'. This is the part most analyses skip, and with n=3 it is not optional. T2S1 quantifies the confidence directly from this dataset rather than from a textbook: per-gene dispersion distribution, the resulting detectable-effect-size floor across the expression range, a post-hoc power curve over log2 fold change and mean expression, leave-one-out replicate stability of the top gene ranking, and a permutation/label-reshuffle null showing how many 'significant' genes arise under all three possible non-trivial relabellings — with 3v3 there are only 10 distinct label assignments, so the exact permutation p-value floor is 0.1 per gene, which is itself the key statement about what a 3v3 design can and cannot support. T2S2 takes the DE result forward to pathway-level interpretation, which is the appropriate resolution when per-gene power is low: over-representation on the FDR-significant set plus a rank-based gene set test using the full shrunken-LFC ranking, so that a weak per-gene signal can still be read at the pathway level. Gene sets are reference data (a human pathway/GO collection); the reference store currently reports as unprovisioned, so T2S2 must confirm what it holds at run time and, if no gene set collection and no annotation package is available, report that plainly and return only the ranked list rather than substituting a hand-written set. That loss costs an annotation layer, not the answer to the research question, so the plan proceeds rather than blocking.\n\nThe package inventory could not be read, so no step may assume a library. Every step probes its imports first and degrades along a named fallback chain, and each step writes its DE/statistical results as plain CSV so downstream steps are not coupled to whichever engine succeeded."
+  },
+  "usage": {
+    "inputTokens": 36864,
+    "outputTokens": 6424,
+    "cacheCreationInputTokens": 9720,
+    "cacheReadInputTokens": 27120,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "ashr",
+          "pheatmap",
+          "ggplot2",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "msigdbr",
+          "pydeseq2",
+          "scanpy",
+          "pandas",
+          "numpy",
+          "statsmodels",
+          "matplotlib",
+          "seaborn",
+          "sva",
+          "RUVSeq",
+          "fgsea",
+          "gseapy",
+          "EnhancedVolcano",
+          "biomaRt",
+          "tximport",
+          "PROPER",
+          "RnaSeqSampleSize",
+          "ssizeRNA"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treated vs control DE (n=3) + power audit",
+          "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment in human liver: a 12,000 gene x 7 column Salmon count matrix (counts.csv, first column gene symbol, 6 sample columns) and a 6 x 2 sample table (metadata.csv, one row per sample with a condition column) encoding 3 drug-treated vs 3 control samples, unpaired. The research question has two halves and the plan mirrors them.\n\nTrack 1 answers 'which genes are differentially expressed'. T1S1 loads and reconciles the two CSVs, checks that sample identifiers match between counts and metadata, filters low-count genes, applies a variance-stabilising transform and runs unsupervised QC (library sizes, per-sample detected genes, PCA, sample-sample correlation) to establish that the treated/control split is the dominant structure and that no sample is an outlier — with n=3 a single aberrant replicate can drive the entire result, so this must be established before, not after, the contrast. T1S2 runs the actual differential expression with a negative-binomial GLM on raw counts (DESeq2 if importable, edgeR quasi-likelihood or limma-voom as fallbacks, pyDESeq2 if only Python is present), contrasting treated vs control, with independent filtering, BH FDR and shrunken log fold changes for ranking. The estimated dispersion trend and the raw p-value histogram are required outputs because they are the honest diagnostic for whether the NB fit is trustworthy at three replicates.\n\nTrack 2 answers 'how confident can we be with three replicates'. This is the part most analyses skip, and with n=3 it is not optional. T2S1 quantifies the confidence directly from this dataset rather than from a textbook: per-gene dispersion distribution, the resulting detectable-effect-size floor across the expression range, a post-hoc power curve over log2 fold change and mean expression, leave-one-out replicate stability of the top gene ranking, and a permutation/label-reshuffle null showing how many 'significant' genes arise under all three possible non-trivial relabellings — with 3v3 there are only 10 distinct label assignments, so the exact permutation p-value floor is 0.1 per gene, which is itself the key statement about what a 3v3 design can and cannot support. T2S2 takes the DE result forward to pathway-level interpretation, which is the appropriate resolution when per-gene power is low: over-representation on the FDR-significant set plus a rank-based gene set test using the full shrunken-LFC ranking, so that a weak per-gene signal can still be read at the pathway level. Gene sets are reference data (a human pathway/GO collection); the reference store currently reports as unprovisioned, so T2S2 must confirm what it holds at run time and, if no gene set collection and no annotation package is available, report that plainly and return only the ranked list rather than substituting a hand-written set. That loss costs an annotation layer, not the answer to the research question, so the plan proceeds rather than blocking.\n\nThe package inventory could not be read, so no step may assume a library. Every step probes its imports first and degrades along a named fallback chain, and each step writes its DE/statistical results as plain CSV so downstream steps are not coupled to whichever engine succeeded.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, filter and QC the 3v3 liver count matrix",
+              "track": "1",
+              "step_type": "quality_control",
+              "question": "Do the 6 liver samples in counts.csv and metadata.csv match up, which of the 12,000 genes carry enough counts to test, and is the treated-vs-control split the dominant source of variance rather than an outlier replicate?",
+              "description": "Read /eval-phase0-without-two-group-n3-1/data/inputs/counts/counts.csv (12000 x 7; first column gene symbol, 6 sample count columns) and /eval-phase0-without-two-group-n3-1/data/inputs/metadata/metadata.csv (6 x 2, one row per sample with a condition column). Reconcile sample identifiers between the two files, report the exact condition labels found and the count per group (expected 3 treated vs 3 control), and fail loudly rather than silently reordering if identifiers do not match. Handle duplicate gene symbols explicitly (sum or keep max-expressed, and say which). Verify counts are non-negative integers as Salmon-derived gene-level counts should be after rounding. Compute per-sample library size, number of detected genes, and the fraction of counts taken by the top 10 genes. Apply low-count filtering (e.g. edgeR filterByExpr-style, or a documented equivalent: at least ~10 counts in at least 3 samples) and report how many of the 12,000 genes survive. Produce a variance-stabilised or log-CPM matrix and from it: PCA (PC1/PC2 with percent variance, coloured by condition), a sample-sample Spearman and Pearson correlation heatmap, and a per-sample boxplot of normalised expression. State explicitly whether any single sample separates from its own group, since at n=3 that one sample would dominate the DE result. Write the filtered raw count matrix, the normalised matrix, and a QC summary table to CSV.",
+              "context": "Single-batch, unpaired human liver bulk RNA-seq under drug treatment. 3 replicates per group is the minimum for dispersion estimation; QC is therefore load-bearing, not decorative.",
+              "constraints": [
+                "Probe every library before use (R: requireNamespace; Python: import in a try block) and record which engine was used in the output",
+                "Do not drop or impute samples — with n=3 per group, removing a sample makes the group untestable; report anomalies instead",
+                "Use the condition labels exactly as they appear in metadata.csv; do not rename them",
+                "Write the filtered raw integer count matrix to CSV for downstream steps rather than passing an in-memory object",
+                "Report the number of genes before and after filtering explicitly"
+              ],
+              "acceptance_criteria": [
+                "Sample identifiers in counts.csv and metadata.csv are confirmed matched, with group sizes reported (expected 3 vs 3)",
+                "Number of genes retained after low-count filtering is reported against the starting 12,000",
+                "PCA and correlation heatmap are produced and the position of each of the 6 samples relative to its group is stated in text",
+                "Filtered raw count matrix and normalised matrix are written as CSV",
+                "Any sample behaving as an outlier is named, with the evidence, and retained"
+              ],
+              "caveats": [
+                "Duplicate gene symbols are common in symbol-keyed Salmon output and must be resolved before modelling",
+                "A clean PCA separation with n=3 is not by itself evidence of a strong effect — it can be driven by one sample",
+                "Library-size differences of >3x between samples should be flagged as they weaken the NB fit"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control",
+              "track": "1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between the drug-treated and control liver samples, at what fold change and FDR?",
+              "description": "Run negative-binomial differential expression on the filtered raw counts from T1S1, contrasting treated vs control using the condition column of metadata.csv, with control as the reference level. Preferred engine: DESeq2 (design ~ condition, Wald test, independent filtering on, BH adjustment, plus lfcShrink with apeglm or ashr for ranking). If DESeq2 is not importable, fall back in this order and say which was used: edgeR quasi-likelihood F-test (glmQLFit/glmQLFTest, TMM normalisation), limma-voom with eBayes, or pyDESeq2 in Python. Report the full result table for every tested gene — gene symbol, baseMean, raw log2FC, shrunken log2FC, lfcSE, stat, pvalue, padj — sorted by padj, written to CSV. Summarise: number of genes with padj < 0.05, padj < 0.1, and the subset of those with |log2FC| > 1; split into up- and down-regulated. Produce the required diagnostics: dispersion-vs-mean plot with the fitted trend, MA plot before and after shrinkage, raw p-value histogram, and a volcano plot labelling the top genes by padj. Also emit a normalised-count heatmap of the top significant genes across all 6 samples so the reader can see whether each gene's signal is consistent across all three replicates or driven by one. If no gene reaches padj < 0.05, say so directly and report the top genes by raw p-value clearly marked as not significant after multiple-testing correction.",
+              "context": "12,000 starting genes, 3 treated vs 3 control, unpaired, single batch. Multiple testing across ~10k tested genes with n=3 is the central statistical challenge.",
+              "constraints": [
+                "Model raw integer counts — never log-transformed or CPM values — with the NB GLM",
+                "Set the control group as the reference level so positive log2FC means up in treated",
+                "Use BH FDR across all tested genes; do not report nominal p-values as significant",
+                "Report shrunken log2FC for ranking but the unshrunken estimate alongside it",
+                "The p-value histogram must be produced and its shape commented on (uniform-with-spike vs conservative vs anti-conservative)",
+                "Do not filter to a hand-picked gene list at any point",
+                "State the engine actually used and its version in the output"
+              ],
+              "acceptance_criteria": [
+                "A full per-gene result table with padj is written to CSV for all tested genes",
+                "Counts of genes at padj<0.05 and padj<0.1, split up/down, are reported",
+                "Dispersion plot, MA plot, p-value histogram and volcano plot are produced",
+                "Per-replicate expression of the top hits is shown so single-sample-driven hits are visible",
+                "An empty significant set, if that is the outcome, is reported as such without loosening the threshold"
+              ],
+              "caveats": [
+                "At n=3 dispersion estimates are noisy and shrinkage toward the trend does much of the work — the fit is only as good as the trend",
+                "Genes significant on the strength of one extreme replicate are the dominant false-positive mode here",
+                "Independent filtering changes the number of tested genes and hence the FDR; report the filtering threshold DESeq2/edgeR chose"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Power, stability and permutation audit of the 3v3 design",
+              "track": "2",
+              "step_type": "statistical_assessment",
+              "question": "How much confidence do three replicates per group support — what effect size is detectable, how stable is the top gene ranking to dropping one replicate, and how many hits survive a label permutation null?",
+              "description": "Quantify the statistical confidence of the T1S2 result using this dataset's own dispersions rather than generic rules of thumb. (a) Summarise the fitted per-gene dispersion distribution from T1S2 across expression deciles, and report the typical biological coefficient of variation. (b) Post-hoc power: for a grid of log2 fold changes (0.5, 1, 1.5, 2) and mean expression levels spanning the observed range, compute the power of the 3v3 NB test at the achieved FDR, either analytically or by simulating counts from the fitted mean-dispersion relationship; report the minimum detectable log2FC at 80% power for a typically expressed gene. (c) Replicate stability: repeat the differential expression six times, each time leaving out one of the six samples (2v3 or 3v2), and report the overlap of the top 100 genes and of the padj<0.05 set with the full-data result — a Jaccard summary plus the count of hits that survive all six leave-one-out runs. Label the latter as the stable core. (d) Permutation null: enumerate the distinct treated/control label assignments for 6 samples (10 distinct 3v3 splits, 3 non-trivial beyond the true one and its complement), rerun the same test under each, and report the number of genes reaching padj<0.05 under permuted labels versus true labels. State explicitly that with 3v3 the exact permutation p-value has a floor of ~0.1, so no gene can be individually significant by a non-parametric test — this bounds what the parametric result is really claiming. Write a single confidence assessment table and a plain-language verdict on which findings are robust and which are provisional.",
+              "context": "This step is the direct answer to the second half of the research question. It uses the same filtered counts (T1S1) and the same model and result table (T1S2) so the comparison is like-for-like.",
+              "constraints": [
+                "Reuse the exact filtering, normalisation and test used in T1S2 for every leave-one-out and permuted run — no re-tuning",
+                "Enumerate permutations exhaustively; do not sample randomly from only 10 possible splits",
+                "Report power as a function of both fold change and mean expression, not a single number",
+                "Do not present the leave-one-out stable core as an independently validated gene set — it is the same data reused",
+                "Fix and record the random seed for any simulation"
+              ],
+              "acceptance_criteria": [
+                "Minimum detectable log2FC at 80% power is reported for at least one representative expression level, with the dispersion assumption stated",
+                "Leave-one-out overlap statistics for all six runs are reported, and the stable-core gene set is written to CSV",
+                "Number of padj<0.05 genes under each permuted labelling is reported alongside the true labelling",
+                "The exact-permutation p-value floor for a 3v3 design is stated explicitly",
+                "A written confidence verdict distinguishes robust from provisional findings"
+              ],
+              "caveats": [
+                "Post-hoc power computed from the observed dispersions is descriptive, not a substitute for a prospective power calculation",
+                "Leave-one-out with n=3 produces 2v3 comparisons whose dispersion estimates are even weaker — interpret overlap as a stability probe, not a validation",
+                "With only 10 possible label assignments the permutation null is coarse; treat it as an order-of-magnitude check on the false-positive load"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "statsmodels",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Pathway-level interpretation of the treatment signature",
+              "track": "2",
+              "step_type": "enrichment",
+              "question": "Which biological processes and pathways are coordinately shifted in the drug-treated liver samples, given that per-gene power at n=3 is limited?",
+              "description": "Interpret the T1S2 differential expression result at pathway resolution, which is where a weak per-gene signal can still be read. Run two complementary analyses on the human gene symbols in the result table: (1) over-representation analysis on the padj<0.05 set (and, if that set is small, on the padj<0.1 set, clearly labelled), tested against the background of all genes that passed filtering in T1S1 — not against the whole genome; (2) a rank-based gene set test (GSEA-style or a competitive test such as CAMERA/fgsea) using every tested gene ranked by shrunken log2FC or the signed test statistic, which does not require a significance cutoff and is therefore the more informative of the two at this sample size. Report normalised enrichment scores, set sizes, leading-edge genes and FDR. Given the liver tissue and drug-treatment context, explicitly check the direction and significance of xenobiotic/drug-metabolism, nuclear-receptor (e.g. AhR, CAR, PXR, PPAR), oxidative-stress/NRF2, bile-acid, lipid-metabolism and inflammatory/acute-phase gene sets, and report them whether or not they reach FDR significance rather than reporting only what is positive. This step needs reference data: a human pathway/gene-set collection (GO biological process, Hallmark, Reactome or KEGG) and, if identifier mapping is required, a human gene annotation resource. The reference store reports as unprovisioned at planning time, so first resolve what the environment actually holds. If no gene set collection and no annotation package is available, do not fabricate or hand-write gene sets — report the absence plainly, emit the ranked gene list as CSV ready for external enrichment, and mark this step's biological interpretation as not performed.",
+              "context": "Human liver, drug treatment. Pathway-level aggregation borrows strength across genes and is the appropriate resolution when only 3 replicates per group are available.",
+              "constraints": [
+                "Use human gene sets only — the data is Homo sapiens, taxon 9606",
+                "Use the filtered gene universe from T1S1 as the ORA background",
+                "Run the rank-based test on all tested genes, not only the significant ones",
+                "Report negative results for the pre-specified liver/xenobiotic pathway families explicitly",
+                "If no gene set resource is present, report that and stop the step cleanly with the ranked list as output — do not substitute an improvised gene set"
+              ],
+              "acceptance_criteria": [
+                "Both ORA and a rank-based gene set test are attempted, or their absence is explained by a named missing resource",
+                "Enrichment results with FDR, set size and leading-edge genes are written to CSV",
+                "The pre-specified liver drug-response pathway families are reported with their statistics regardless of significance",
+                "The gene set collection actually used, including its version if recorded, is named in the output"
+              ],
+              "caveats": [
+                "Enrichment inherits every weakness of the underlying DE result — a pathway called from an unstable gene set is itself unstable",
+                "ORA on a small significant set is badly underpowered and its p-values should be treated as descriptive",
+                "Symbol-based mapping loses genes with outdated or ambiguous symbols; report the mapping rate"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

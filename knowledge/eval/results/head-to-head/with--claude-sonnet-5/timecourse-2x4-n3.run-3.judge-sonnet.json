@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly uses DESeq2 LRT of full (~condition+time+condition:time) vs reduced (~condition+time) as the omnibus interaction test, matching the reference exactly, and adds simple effects and trajectory clustering as a thoughtful elaboration. QC (blind VST, PCA, distance heatmap, library size, outlier policy) precedes the model and is well specified. The low-count filter (>=10 counts in >=3 samples, smallest cell size) is minimal and justified with retained-gene reporting. Normalization is correctly left to DESeq2 size factors with no pre-normalization. Reference levels, factor ordering, and reduced model are explicit. BH at padj<0.05 with independent filtering and ashr shrinkage for simple effects are stated, though the interaction LRT fold-change/log2FC reporting for the last coefficient is a minor ambiguity for genes with 3 interaction df. GSEA is well justified with explicit ranking metric, universe, size window, and version, though enrichment on endpoint-only ranking is a reasonable but debatable proxy for the omnibus interaction, slightly diverging from a pure interaction-based ranking. The final report is comprehensive, stating design, thresholds, versions, gene counts, and power caveats prominently."
+}

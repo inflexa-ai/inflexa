@@ -1,0 +1,60 @@
+id: R-0038
+title: "Seven or more replicates per group: DESeq2 replaces a count outlier by default, report the replacement"
+assertion: >-
+  When DESeq2 is the method and each group holds seven or more replicates, DESeq2 finds a count outlier
+  with the Cook's distance, replaces the outlier count with the trimmed mean
+  over the samples scaled by the size factor, and refits the model for that
+  gene. Leave this replacement on, because one extreme count in a large
+  group would otherwise dominate the fit of that gene. Report the number of
+  genes with a replaced count and list them, because a replaced count is not
+  an observed count. Inspect the counts of a replaced gene that matters to
+  the question.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 7
+action:
+  step_type: differential_expression
+  parameters:
+    - name: outlier_replacement
+      value: default_on
+      default_source: "vignette:DESeq2/1.52.0#approach-to-count-outliers"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette explains that DESeq2 uses the Cook's distance to find an
+      isolated large count, that with seven or more replicates for the
+      condition of a sample the DESeq function replaces the outlier count by
+      the trimmed mean over all samples scaled by the size factor and refits
+      the gene, and that the replaced counts are kept in a separate assay.
+    anchor: "Approach to count outliers"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0001
+    paraphrase: >-
+      The paper describes the Cook's distance as the diagnostic for a count
+      with an outsize influence on the fit of a gene, and it gives the
+      replacement of such a count by a trimmed mean, scaled by the size
+      factor, when the condition holds enough replicates.
+    anchor: "Methods, Detecting count outliers"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [outliers, replicates]

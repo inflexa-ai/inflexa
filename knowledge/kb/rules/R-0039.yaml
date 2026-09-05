@@ -1,0 +1,65 @@
+id: R-0039
+title: "Three to six replicates per group: DESeq2 flags a count outlier and sets the p-value to NA, report the flagged genes"
+assertion: >-
+  DESeq2 decides the outlier handling per condition cell. In a cell with
+  fewer than seven replicates it flags a gene with a count outlier by the
+  Cook's distance and sets the p-value and the adjusted p-value of that gene
+  to NA, because a trimmed mean over few replicates is not reliable. In a
+  cell with seven or more replicates it replaces the count instead, thus an
+  unbalanced design gets both behaviors. Keep this behavior on. Report the number of genes with an NA p-value from the
+  outlier flag apart from the genes that the independent filter removed, so
+  the reader knows the cause of each NA. Inspect the counts of a flagged
+  gene that matters to the question.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 3
+  - field: n_per_group_min
+    op: lte
+    value: 6
+action:
+  step_type: differential_expression
+  parameters:
+    - name: count_outlier_policy
+      value: flag_and_report_na
+      default_source: "vignette:DESeq2/1.52.0#approach-to-count-outliers"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette states that the results function flags a gene with a
+      Cook's distance above the cutoff when the sample has three or more
+      replicates, that the p-value and the adjusted p-value of the flagged
+      gene are set to NA, and that the replacement of the count happens only
+      with seven or more replicates. It lists the outlier flag beside the low
+      mean count as a reason for an NA p-value.
+    anchor: "Approach to count outliers; Why are some p values set to NA?"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0001
+    paraphrase: >-
+      The paper introduces the Cook's distance as the measure of the
+      influence of one count on the fit of a gene, and it states that a gene
+      with an influential count is flagged and excluded from the inference
+      when the replicates are too few for a replacement.
+    anchor: "Methods, Detecting count outliers"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [outliers, replicates]

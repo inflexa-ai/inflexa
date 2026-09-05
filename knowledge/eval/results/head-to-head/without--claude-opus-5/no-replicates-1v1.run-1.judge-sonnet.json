@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 3,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies that n=1 per group precludes dispersion estimation and delivers a proper descriptive fold-change screen with explicit size factors, a justified low-count filter, and shrinkage-adjusted log2FC — strong on normalization and filtering. However, it then runs DESeq2/edgeR under fixed assumed dispersions and reports gene counts passing FDR<0.05, which is exactly the 'p-value from unreplicated data' behavior the reference calls wrong, even though it is labeled hypothetical; this undermines method_fits_design and fdr_shrinkage. No explicit PCA/sample-distance/library-size QC step or outlier policy precedes the analysis, and no formal design formula/contrast (e.g., ~condition, contrast statement) is stated for whatever model is invoked. The optional enrichment step is unusually rigorous (explicit universe, named resource, GSEA ranking metric, leading-edge overlap) though enrichment itself is not clearly warranted by the core question. Report completeness is good on thresholds, caveats, and gene counts but lacks explicit software version numbers."
+}

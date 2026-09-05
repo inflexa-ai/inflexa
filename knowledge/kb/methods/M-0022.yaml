@@ -1,0 +1,15 @@
+id: M-0022
+label: "filterByExpr low count filter (edgeR)"
+description: >-
+  The edgeR filter that keeps a gene with worthwhile counts in at least the
+  smallest group size of samples, with the count floor scaled by the median
+  library size. The filter of the edgeR and the limma-voom paths.
+packages:
+  - name: edgeR
+    track: bioconductor
+    biotools: edger
+    version_range: ">=4.4"
+    bioconductor: "3.23"
+templates:
+  - tpl-edger-ql
+  - tpl-limma-voom-dupcor

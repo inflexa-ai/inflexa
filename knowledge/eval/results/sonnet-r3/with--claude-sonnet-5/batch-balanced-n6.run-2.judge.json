@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the balanced batch as a blocking covariate in the design (~ batch + condition) rather than adjusting counts beforehand, and pairs DESeq2 Wald with an edgeR QL cross-check on the same design, which matches the reference. QC precedes modeling with blind VST, PCA colored by both condition and batch, a distance heatmap, and library sizes, though it only commits to flagging aberrant samples rather than stating a decision rule for what happens next. The filter (>=10 counts in >=6 samples, the smallest group size) is minimal and justified, normalization is kept inside each model (median-of-ratios; TMM for edgeR), and multiple testing is BH at a stated alpha=0.05 set in results() with apeglm shrinkage of the condition coefficient. Enrichment is not strictly demanded by the question but is specified rigorously: full ranked list on the Wald statistic, named collections with recorded versions, 15-500 size window, BH within collection, leading-edge reporting. The final report names method, versions, design, reference level, contrast, thresholds, tested and significant gene counts, diagnostics, and reproducibility records."
+}

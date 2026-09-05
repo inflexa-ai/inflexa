@@ -1,0 +1,59 @@
+id: R-0055
+title: "Enrichment methods disagree: report the method and do not treat one result as the truth"
+assertion: >-
+  In the report, state that the enrichment result depends on the method. A
+  benchmark of ten methods on 75 datasets finds that the methods differ
+  widely in the number of significant sets and in their ranking. A ranked
+  test and an over-representation analysis of the same data give different
+  lists of sets. Name the method, and present a set as a hypothesis for a
+  follow-up, not as a proven finding. If a second method runs, report the
+  overlap and the disagreement.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: question
+    op: in
+    value: [enrichment, full_plan]
+action:
+  step_type: report
+  parameters:
+    - name: enrichment_caveat
+      value: method_dependence
+      default_source: "doi:10.1093/bib/bbz158"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0029
+    paraphrase: >-
+      The benchmark of ten enrichment methods on 75 expression datasets finds
+      that the methods differ widely in the fraction of gene sets that they
+      call significant, in their type I error under sample permutation, and in
+      the relevance of the ranked sets to the phenotype. No method is a gold
+      standard.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0027
+    paraphrase: >-
+      The survey finds that the choice of the method, the background, and the
+      database version each change the result, and that these choices are
+      seldom reported, thus a published result is often not reproducible. It
+      calls for a report of each choice.
+    anchor: "Results; Discussion, Recommendations"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [enrichment, report, method-dependence]

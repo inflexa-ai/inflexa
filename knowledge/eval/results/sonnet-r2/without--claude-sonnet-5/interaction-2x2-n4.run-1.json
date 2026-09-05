@@ -1,0 +1,1369 @@
+{
+  "campaign": "sonnet-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-2x2-n4",
+  "run": 1,
+  "startedAt": "2026-09-05T08:11:31.440Z",
+  "elapsedMs": 596334,
+  "outcome": "plan_submitted",
+  "planId": "pln-c5a22656",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization and design sanity check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The metadata's 'condition' column may already be a combined genotype_treatment label — do not use it as the model factor; use genotype and treatment as separate factors so the interaction term is testable",
+          "A 12000-gene panel is small for genome-wide RNA-seq; note this in the QC report as it affects dispersion estimation and multiple-testing power downstream"
+        ],
+        "context": "Input files: /eval-sonnet-r2-without-interaction-2x2-n4-1/data/inputs/counts/counts.csv (raw integer gene-symbol-indexed counts from salmon, 12000 x 17) and /eval-sonnet-r2-without-interaction-2x2-n4-1/data/inputs/metadata/metadata.csv (16 x 4: genotype, treatment, condition, plus sample id). This step establishes that the factorial design is genuinely balanced and clean before the interaction test in T1S2 is trusted.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Are the raw salmon gene counts (12000 genes x 16 samples) and the 2x2 metadata (genotype WT/KO x treatment vehicle/drug, 4 replicates per cell) balanced and free of confounding or outlier structure before fitting an interaction model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Do not drop or impute any sample without flagging it explicitly in the output for the next step to decide on",
+          "Use DESeq2's median-of-ratios size factors, not raw CPM, before variance-stabilizing transform"
+        ],
+        "acceptance_criteria": [
+          "Confirms the counts matrix parses to 12000 genes x 16 sample columns after removing the gene-symbol column, and that all 16 sample IDs match the 16 rows of metadata.csv exactly (order-checked, not just set-checked)",
+          "Reports the cross-tabulation of genotype x treatment confirming 4 replicates in each of the 4 cells",
+          "Produces a VST-transformed PCA plot and sample-distance heatmap colored by genotype and treatment, and explicitly reports whether any sample is an outlier or whether an unmodeled batch/confound axis is visible",
+          "Reports per-sample library size (total counts) and flags any sample with a library size skewed >3x from the median"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "DESeq2 interaction and simple-effects modeling",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With n=4 per cell (16 total), power to detect a small interaction effect is limited — state this explicitly rather than treating a null interaction result as evidence of 'no difference'",
+          "A significant interaction does not by itself say which direction (KO shows a stronger, weaker, or opposite drug response) — always report the simple-effect LFCs alongside the interaction LFC to make direction interpretable"
+        ],
+        "context": "Builds on the QC-checked DESeqDataSet from T1S1. This is the primary analysis answering the stated research question: a formal statistical test of whether the drug's transcriptional effect depends on genotype, not merely two separate pairwise comparisons.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "ggplot2",
+          "ComplexUpset"
+        ],
+        "question": "Which genes show a significant genotype x treatment interaction (i.e., the drug-vs-vehicle effect differs between KO and WT), and how do the simple drug-vs-vehicle effects compare within WT alone versus within KO alone?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "The interaction term, not two separate WT-drug-vs-vehicle and KO-drug-vs-vehicle contrasts run independently, is the primary test of 'does the drug act differently in KO vs WT' — report it as the headline result",
+          "Use apeglm shrinkage only on coefficients that apeglm supports directly (single model coefficients); use ashr for any contrast requiring linear combinations apeglm cannot shrink directly",
+          "Apply independent filtering / BH correction as DESeq2 defaults; do not report raw p-values as significance"
+        ],
+        "acceptance_criteria": [
+          "Sets genotype factor levels with WT as reference and treatment factor levels with vehicle as reference, fits DESeq2 with design ~ genotype + treatment + genotype:treatment on the full 16-sample raw count matrix after filtering genes with low counts (e.g. require count >= 10 in at least 4 samples, the smallest group size)",
+          "Extracts the interaction coefficient (genotypeKO.treatmentdrug or equivalent per DESeq2's resultsNames) with apeglm or ashr shrinkage and reports the number of genes significant at BH-adjusted p < 0.05",
+          "Additionally reports the simple effect of drug vs vehicle within WT and within KO separately (via contrast or coefficient combination), each with shrunken LFCs and adjusted p-values",
+          "Produces volcano plots for the interaction term and for each simple effect, plus a summary table/plot (e.g. Venn/UpSet) comparing the WT-only and KO-only drug-DEG sets to genes flagged by the interaction test",
+          "States explicitly, in plain language, whether the interaction test found genotype-dependent drug response, is directly answering the research question rather than only reporting simple-effect counts separately"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment on interaction and simple-effect gene sets",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "The gene panel here is a curated 12000-gene count matrix, not full transcriptome-wide coverage — background gene set for enrichment must be restricted to genes actually tested (post-filtering) rather than the full pathway database universe, or enrichment p-values will be biased"
+        ],
+        "context": "Uses human-matched pathway references (WikiPathways human GMT, MSigDB Hallmark human GMT, MSigDB GO BP human GMT) confirmed present in the reference collection. Moves the interaction result from a gene list to an interpretable biological process-level answer about genotype-dependent drug mechanism.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Do genes with genotype-dependent drug response (interaction term) and the WT-only vs KO-only drug-response gene sets converge on distinct or shared biological pathways?",
+        "grounding": {
+          "claims": [],
+          "reason": "fgsea preranked enrichment (Korotkevich et al., fast gene set enrichment analysis) applied to a DESeq2 interaction/simple-effect test statistic ranking is the standard approach for pathway-level interpretation of a factorial DE contrast.",
+          "status": "grounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Use only the human gene set collections (organism must match Homo sapiens); do not substitute mouse or rat WikiPathways/MSigDB files",
+          "GO Biological Process is a nested hierarchy — collapse or note redundant parent/child hits rather than reporting them as independent findings"
+        ],
+        "acceptance_criteria": [
+          "Confirms availability of human pathway gene sets (WikiPathways human, MSigDB Hallmark human, MSigDB GO Biological Process human) in the environment before running; if a resource is missing, reports which one and proceeds with what is available rather than failing silently",
+          "Runs preranked fgsea (ranking genes by the DESeq2 interaction test statistic) plus separate preranked runs on the WT-only and KO-only simple-effect statistics from T2S1",
+          "Reports pathways significant (BH-adjusted p < 0.05) for the interaction ranking, and separately contrasts which pathways are enriched in the KO drug response but not the WT drug response (or vice versa)",
+          "States the species and gene symbol convention used (HGNC, matching the human WikiPathways/Hallmark/GO gene sets) and confirms no mouse/rat gene sets were used against this human dataset"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "TF activity inference for genotype-dependent drug response",
+        "agent": "network-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "TF activity inference from a curated regulon is a computational prior, not a direct measurement — report inferred TF activity shifts as hypotheses for follow-up, not as confirmed regulatory mechanism"
+        ],
+        "context": "Uses the CollecTRI human regulatory network (source/target/weight CSV) or the DoRothEA human regulons (rda, confidence-filtered) confirmed present in the reference collection, applied to the interaction-term statistics from T2S1 to add a regulator-level mechanistic layer to the interaction finding.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupleR",
+          "dplyr",
+          "readr",
+          "pheatmap"
+        ],
+        "question": "Which transcription factors show inferred activity changes that track the genotype-dependent component of the drug response (interaction term)?",
+        "grounding": {
+          "claims": [],
+          "reason": "decoupler/decoupleR-based TF activity inference from a signed TF-target regulon (CollecTRI or confidence-filtered DoRothEA) applied to a DE test statistic is the standard method for regulator-level interpretation of a differential expression contrast.",
+          "status": "grounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "network_analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Use only the human regulon resource against this human dataset",
+          "If using DoRothEA, filter to confidence levels A-C before use as instructed by the reference documentation; do not use unfiltered E-level interactions"
+        ],
+        "acceptance_criteria": [
+          "Confirms availability of a human TF-target regulon reference (CollecTRI human regulon, or DoRothEA human regulons filtered to confidence levels A-C) before running; reports if absent and skips gracefully rather than failing the whole step",
+          "Runs a decoupler-style TF activity inference (e.g. univariate linear model or weighted mean) using the DESeq2 interaction test statistic as the input signature, ranking TFs by inferred differential activity between the KO and WT drug responses",
+          "Cross-references the top TFs against the pathway hits from T3S1 and reports whether any TF's target set overlaps the pathways flagged as genotype-dependent",
+          "Reports this as a hypothesis-generating mechanistic layer, not a validated regulatory claim, since the regulon is a literature-curated prior, not evidence from this dataset's own binding or perturbation data"
+        ]
+      }
+    ],
+    "title": "2x2 factorial RNA-seq: genotype x drug interaction",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The data is bulk RNA-seq (salmon-derived raw integer counts, 12000 genes x 16 samples after excluding the gene-symbol column, matching the 16-row metadata) from human brain tissue in a balanced 2x2 factorial design: genotype (WT, KO) x treatment (vehicle, drug), n=4 per cell. The research question — does the drug act differently in KO than in WT — is precisely a genotype-by-treatment interaction question, not a simple two-group comparison. The correct model is a single DESeq2 negative-binomial GLM with design ~ genotype + treatment + genotype:treatment, testing the interaction coefficient directly, supplemented with the two simple effects (drug vs vehicle within WT; drug vs vehicle within KO) for interpretability. QC precedes modeling to confirm the design is balanced as expected and free of confounding structure before trusting the interaction test. Genes flagged by the interaction term (and genes whose simple-effect DEG sets diverge between genotypes) are then interrogated for pathway-level and transcription-factor-level convergence using human-matched reference gene sets (WikiPathways human, MSigDB Hallmark/GO human, CollecTRI human regulon) confirmed present in the environment, closing the loop from single-gene interaction hits to a mechanistic explanation of genotype-dependent drug response."
+  },
+  "usage": {
+    "inputTokens": 20806567,
+    "outputTokens": 19626,
+    "cacheCreationInputTokens": 465155,
+    "cacheReadInputTokens": 20338998,
+    "reasoningTokens": 5345
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways mouse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "pydeseq2",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap",
+          "org.Mm.eg.db",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gseapy",
+          "decoupleR"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 interaction term genotype treatment factorial design RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 2x2 factorial design interaction term differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq analysis factorial design interaction effect knockout drug treatment",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 differential expression analysis design formula",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Love Huber Anders moderated estimation fold change dispersion RNA-seq DESeq2",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "brain gene identifiers mouse or rat idmapping"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "mouse KO phenotype target safety"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea regulon collectri"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "open targets liability secondary pharmacology"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "apeglm shrinkage estimator log fold change RNA-seq",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Zhu Ibrahim Love heavy-tailed prior log fold change shrinkage",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "apeglm approximate posterior estimation GLM shrinkage",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "wikipathways gene set enrichment analysis",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "fgsea fast gene set enrichment analysis preranked",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "interaction term genotype drug treatment differential gene expression knockout brain",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 factorial design interaction term gene by treatment RNA-seq",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 factorial design interaction term gene by treatment RNA-seq",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "sva",
+          "limma",
+          "edgeR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "scipy",
+          "statsmodels"
+        ]
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 factorial design interaction RNA-seq",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "interaction effect RNA-seq negative binomial factorial design",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "marsilea",
+          "UpSetR",
+          "ComplexUpset"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "HTSFilter RNA-seq DESeq2 interaction contrast tissue-specific gene expression knockout",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "factorial design RNA-seq genotype treatment interaction analysis",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "factorial design RNA-seq genotype treatment interaction analysis",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "reactome2py",
+          "GSVA"
+        ]
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 interaction term 2x2 factorial genotype treatment",
+        "limit": 5
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "interaction term design formula results contrast list"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeq2 design formula interaction term genotype treatment results function name contrast"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "dorothea"
+        ]
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "enrichment analysis fgsea hallmark preranked log fold change method Korotkevich",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "fast gene set enrichment analysis fgsea",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 2x2 factorial design LRT interaction",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "deseq2 wald interaction genotype treatment tutorial",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 tutorial vignette",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2",
+        "language": "r",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ggvolc",
+          "tidybulk"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "network-agent-placeholder"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "ashr",
+          "apeglm",
+          "IHW"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph",
+          "network"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "GSVA",
+          "clusterProfiler",
+          "enrichplot"
+        ]
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "gene co-expression network module differential connectivity genotype treatment",
+        "limit": 3
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "WGCNA"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "WGCNA"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "2x2 factorial RNA-seq: genotype x drug interaction",
+          "analytical_narrative": "The data is bulk RNA-seq (salmon-derived raw integer counts, 12000 genes x 16 samples after excluding the gene-symbol column, matching the 16-row metadata) from human brain tissue in a balanced 2x2 factorial design: genotype (WT, KO) x treatment (vehicle, drug), n=4 per cell. The research question — does the drug act differently in KO than in WT — is precisely a genotype-by-treatment interaction question, not a simple two-group comparison. The correct model is a single DESeq2 negative-binomial GLM with design ~ genotype + treatment + genotype:treatment, testing the interaction coefficient directly, supplemented with the two simple effects (drug vs vehicle within WT; drug vs vehicle within KO) for interpretability. QC precedes modeling to confirm the design is balanced as expected and free of confounding structure before trusting the interaction test. Genes flagged by the interaction term (and genes whose simple-effect DEG sets diverge between genotypes) are then interrogated for pathway-level and transcription-factor-level convergence using human-matched reference gene sets (WikiPathways human, MSigDB Hallmark/GO human, CollecTRI human regulon) confirmed present in the environment, closing the loop from single-gene interaction hits to a mechanistic explanation of genotype-dependent drug response.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization and design sanity check",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Are the raw salmon gene counts (12000 genes x 16 samples) and the 2x2 metadata (genotype WT/KO x treatment vehicle/drug, 4 replicates per cell) balanced and free of confounding or outlier structure before fitting an interaction model?",
+              "acceptance_criteria": [
+                "Confirms the counts matrix parses to 12000 genes x 16 sample columns after removing the gene-symbol column, and that all 16 sample IDs match the 16 rows of metadata.csv exactly (order-checked, not just set-checked)",
+                "Reports the cross-tabulation of genotype x treatment confirming 4 replicates in each of the 4 cells",
+                "Produces a VST-transformed PCA plot and sample-distance heatmap colored by genotype and treatment, and explicitly reports whether any sample is an outlier or whether an unmodeled batch/confound axis is visible",
+                "Reports per-sample library size (total counts) and flags any sample with a library size skewed >3x from the median"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input files: /eval-sonnet-r2-without-interaction-2x2-n4-1/data/inputs/counts/counts.csv (raw integer gene-symbol-indexed counts from salmon, 12000 x 17) and /eval-sonnet-r2-without-interaction-2x2-n4-1/data/inputs/metadata/metadata.csv (16 x 4: genotype, treatment, condition, plus sample id). This step establishes that the factorial design is genuinely balanced and clean before the interaction test in T1S2 is trusted.",
+              "constraints": [
+                "Do not drop or impute any sample without flagging it explicitly in the output for the next step to decide on",
+                "Use DESeq2's median-of-ratios size factors, not raw CPM, before variance-stabilizing transform"
+              ],
+              "caveats": [
+                "The metadata's 'condition' column may already be a combined genotype_treatment label — do not use it as the model factor; use genotype and treatment as separate factors so the interaction term is testable",
+                "A 12000-gene panel is small for genome-wide RNA-seq; note this in the QC report as it affects dispersion estimation and multiple-testing power downstream"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "DESeq2 interaction and simple-effects modeling",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Which genes show a significant genotype x treatment interaction (i.e., the drug-vs-vehicle effect differs between KO and WT), and how do the simple drug-vs-vehicle effects compare within WT alone versus within KO alone?",
+              "acceptance_criteria": [
+                "Sets genotype factor levels with WT as reference and treatment factor levels with vehicle as reference, fits DESeq2 with design ~ genotype + treatment + genotype:treatment on the full 16-sample raw count matrix after filtering genes with low counts (e.g. require count >= 10 in at least 4 samples, the smallest group size)",
+                "Extracts the interaction coefficient (genotypeKO.treatmentdrug or equivalent per DESeq2's resultsNames) with apeglm or ashr shrinkage and reports the number of genes significant at BH-adjusted p < 0.05",
+                "Additionally reports the simple effect of drug vs vehicle within WT and within KO separately (via contrast or coefficient combination), each with shrunken LFCs and adjusted p-values",
+                "Produces volcano plots for the interaction term and for each simple effect, plus a summary table/plot (e.g. Venn/UpSet) comparing the WT-only and KO-only drug-DEG sets to genes flagged by the interaction test",
+                "States explicitly, in plain language, whether the interaction test found genotype-dependent drug response, is directly answering the research question rather than only reporting simple-effect counts separately"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano",
+                "ggplot2",
+                "ComplexUpset"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Builds on the QC-checked DESeqDataSet from T1S1. This is the primary analysis answering the stated research question: a formal statistical test of whether the drug's transcriptional effect depends on genotype, not merely two separate pairwise comparisons.",
+              "constraints": [
+                "The interaction term, not two separate WT-drug-vs-vehicle and KO-drug-vs-vehicle contrasts run independently, is the primary test of 'does the drug act differently in KO vs WT' — report it as the headline result",
+                "Use apeglm shrinkage only on coefficients that apeglm supports directly (single model coefficients); use ashr for any contrast requiring linear combinations apeglm cannot shrink directly",
+                "Apply independent filtering / BH correction as DESeq2 defaults; do not report raw p-values as significance"
+              ],
+              "caveats": [
+                "With n=4 per cell (16 total), power to detect a small interaction effect is limited — state this explicitly rather than treating a null interaction result as evidence of 'no difference'",
+                "A significant interaction does not by itself say which direction (KO shows a stronger, weaker, or opposite drug response) — always report the simple-effect LFCs alongside the interaction LFC to make direction interpretable"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment on interaction and simple-effect gene sets",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Do genes with genotype-dependent drug response (interaction term) and the WT-only vs KO-only drug-response gene sets converge on distinct or shared biological pathways?",
+              "acceptance_criteria": [
+                "Confirms availability of human pathway gene sets (WikiPathways human, MSigDB Hallmark human, MSigDB GO Biological Process human) in the environment before running; if a resource is missing, reports which one and proceeds with what is available rather than failing silently",
+                "Runs preranked fgsea (ranking genes by the DESeq2 interaction test statistic) plus separate preranked runs on the WT-only and KO-only simple-effect statistics from T2S1",
+                "Reports pathways significant (BH-adjusted p < 0.05) for the interaction ranking, and separately contrasts which pathways are enriched in the KO drug response but not the WT drug response (or vice versa)",
+                "States the species and gene symbol convention used (HGNC, matching the human WikiPathways/Hallmark/GO gene sets) and confirms no mouse/rat gene sets were used against this human dataset"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Uses human-matched pathway references (WikiPathways human GMT, MSigDB Hallmark human GMT, MSigDB GO BP human GMT) confirmed present in the reference collection. Moves the interaction result from a gene list to an interpretable biological process-level answer about genotype-dependent drug mechanism.",
+              "constraints": [
+                "Use only the human gene set collections (organism must match Homo sapiens); do not substitute mouse or rat WikiPathways/MSigDB files",
+                "GO Biological Process is a nested hierarchy — collapse or note redundant parent/child hits rather than reporting them as independent findings"
+              ],
+              "caveats": [
+                "The gene panel here is a curated 12000-gene count matrix, not full transcriptome-wide coverage — background gene set for enrichment must be restricted to genes actually tested (post-filtering) rather than the full pathway database universe, or enrichment p-values will be biased"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "fgsea preranked enrichment (Korotkevich et al., fast gene set enrichment analysis) applied to a DESeq2 interaction/simple-effect test statistic ranking is the standard approach for pathway-level interpretation of a factorial DE contrast."
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "TF activity inference for genotype-dependent drug response",
+              "track": "T4",
+              "step_type": "network_analysis",
+              "question": "Which transcription factors show inferred activity changes that track the genotype-dependent component of the drug response (interaction term)?",
+              "acceptance_criteria": [
+                "Confirms availability of a human TF-target regulon reference (CollecTRI human regulon, or DoRothEA human regulons filtered to confidence levels A-C) before running; reports if absent and skips gracefully rather than failing the whole step",
+                "Runs a decoupler-style TF activity inference (e.g. univariate linear model or weighted mean) using the DESeq2 interaction test statistic as the input signature, ranking TFs by inferred differential activity between the KO and WT drug responses",
+                "Cross-references the top TFs against the pathway hits from T3S1 and reports whether any TF's target set overlaps the pathways flagged as genotype-dependent",
+                "Reports this as a hypothesis-generating mechanistic layer, not a validated regulatory claim, since the regulon is a literature-curated prior, not evidence from this dataset's own binding or perturbation data"
+              ],
+              "packages": [
+                "decoupleR",
+                "dplyr",
+                "readr",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "context": "Uses the CollecTRI human regulatory network (source/target/weight CSV) or the DoRothEA human regulons (rda, confidence-filtered) confirmed present in the reference collection, applied to the interaction-term statistics from T2S1 to add a regulator-level mechanistic layer to the interaction finding.",
+              "constraints": [
+                "Use only the human regulon resource against this human dataset",
+                "If using DoRothEA, filter to confidence levels A-C before use as instructed by the reference documentation; do not use unfiltered E-level interactions"
+              ],
+              "caveats": [
+                "TF activity inference from a curated regulon is a computational prior, not a direct measurement — report inferred TF activity shifts as hypotheses for follow-up, not as confirmed regulatory mechanism"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "decoupler/decoupleR-based TF activity inference from a signed TF-target regulon (CollecTRI or confidence-filtered DoRothEA) applied to a DE test statistic is the standard method for regulator-level interpretation of a differential expression contrast."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

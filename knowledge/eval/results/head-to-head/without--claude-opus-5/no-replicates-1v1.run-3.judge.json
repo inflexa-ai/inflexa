@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses the zero-residual-degrees-of-freedom problem, states that no dispersion or honest p-value is estimable, and makes a ranked shrunken-log2FC table the primary deliverable — all of which matches the reference. However, it then explicitly runs edgeR exactTest at fixed BCV 0.1/0.2/0.4 and a DESeq2 pooled fit, and reports counts of genes at nominal p<0.05 and FDR<0.05; labelling these 'assumption-driven sensitivity' does not make them appropriate, and the reference calls exactly this out as wrong, so method_fits_design and fdr_shrinkage are capped even though apeglm/ashr shrinkage for ranking is a genuine strength. QC is partial and design-aware (library sizes, size factors, detected genes, MA and scatter plots; PCA is legitimately impossible at n=2) but no outlier or shallow-sample policy is stated, and the plan never names the replication level (≥3 per group) that would support inference. The low-count filter (≥10 in at least one sample, with pre/post counts) and normalization (median-of-ratios size factors reported, no pre-normalized input) are sound and justified. Enrichment is well specified (named human WikiPathways version, symbol join, mapping rate, 10–500 size window, leading edge) but is not warranted on a 1v1 difference and should have been omitted rather than run with caveated p-values; reporting is otherwise thorough on design, thresholds and caveats."
+}

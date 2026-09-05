@@ -1,0 +1,414 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "no-replicates-1v1",
+  "run": 1,
+  "startedAt": "2026-09-04T21:34:03.154Z",
+  "elapsedMs": 87281,
+  "outcome": "plan_submitted",
+  "planId": "pln-f5792ab3",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, filter, normalize the 2-sample count matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Duplicate gene symbols are possible in a symbol-keyed salmon matrix — collapse explicitly and report how many were collapsed.",
+          "If library sizes differ by more than ~2-fold, say so plainly: depth-driven detection differences will masquerade as biology in a 1v1 comparison.",
+          "A single sample per condition means no way to distinguish technical from biological variation — do not describe library correlation as a replicate-quality metric."
+        ],
+        "context": "Design is 1 treated vs 1 control liver sample, raw salmon gene-level counts, no biological replication. This step establishes whether the two libraries are even technically comparable (grossly different depths or detection rates would make any fold change untrustworthy) and fixes the gene universe used downstream.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "scipy"
+        ],
+        "question": "After library-size normalization, how comparable are the single treated and single control liver libraries, and which of the 12,000 genes are expressed at a level where a fold change is interpretable?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Probe every package before use (python3 -c 'import X' or R requireNamespace) — the package inventory could not be read at planning time; fall back to a pure pandas/numpy or base-R implementation of CPM normalization if DESeq2/edgeR are absent.",
+          "Use the exact condition labels found in metadata.csv throughout; do not invent names like 'A'/'B'.",
+          "Do not run any differential-expression test in this step.",
+          "Write outputs (filtered normalized matrix, QC table, plots) to the step's output directory as CSV and PNG."
+        ],
+        "description": "Read /eval-phase0-without-no-replicates-1v1-1/data/inputs/counts/counts.csv (12,000 genes x 3 columns: gene symbol + 2 sample columns) and /eval-phase0-without-no-replicates-1v1-1/data/inputs/metadata/metadata.csv (2 rows, sample + condition). Verify count column names match metadata sample IDs exactly and record the actual treated and control condition labels for use downstream. Confirm counts are raw non-negative integers. Report per-sample library size, number of detected genes (count > 0), zero fraction, and the count distribution. Collapse duplicate gene symbols by summing. Define an expression filter (e.g. require at least ~10 raw counts in at least one of the two samples, and report how many genes pass at several thresholds). Compute CPM and log2-CPM, and library-size-normalized values using both a simple total-count/CPM scaling and a median-of-ratios or TMM-style factor if the corresponding package is importable; report the normalization factors and whether the two approaches agree. Produce an MA-style plot (mean log expression vs log ratio) and a scatter of log2-CPM treated vs control, and report the Spearman and Pearson correlation between the two libraries. Write the filtered, normalized matrix plus the per-sample QC table to disk for downstream steps.",
+        "acceptance_criteria": [
+          "Per-sample library size, detected-gene count, and zero fraction reported for both samples",
+          "Number of genes retained by the expression filter reported, with sensitivity to at least two thresholds",
+          "Normalized (CPM and, if available, TMM/median-of-ratios) matrix written to disk with the gene symbols preserved",
+          "Treated-vs-control log2-CPM scatter and MA plot produced, with correlation coefficients reported",
+          "Actual condition labels from metadata.csv recorded in the output"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Descriptive shrunken log2 fold-change ranking",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Genes with zero counts in one sample will dominate any naive fold-change ranking — handle them explicitly and report how many flagged candidates are of this type.",
+          "Fold changes of low-expression genes are dominated by counting noise even before biological variability is considered.",
+          "Any apparent treatment effect here is fully confounded with per-sample technical and individual biological variation; there is no design-level way to separate them."
+        ],
+        "context": "n=1 per condition. DESeq2, edgeR (with estimated dispersion), and limma-voom are all inapplicable because dispersion cannot be estimated from a single sample per group. The defensible output is an effect-size ranking with the expression floor and pseudocount choices made explicit.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib"
+        ],
+        "question": "Which genes show the largest treated-vs-control expression differences in this liver pair, and how confident can we be in each given that no replicate-based error estimate exists?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do NOT report any statistic as evidence of statistical significance of the treatment effect; label the Poisson p-value as a technical-noise reference only.",
+          "Apply a minimum expression floor before flagging candidates and state the floor used.",
+          "Report how many of the flagged candidates change if the pseudocount or the expression floor is varied — ranking instability is a result, not a footnote.",
+          "Probe packages before import and degrade to pandas/numpy/scipy if specialised DE packages are absent.",
+          "Write the full ranked table (all retained genes) as CSV, not just the top hits."
+        ],
+        "description": "Primary deliverable. Using the filtered normalized matrix from T1S1, compute a per-gene descriptive effect size: log2((normalized_treated + p) / (normalized_control + p)) with an explicit pseudocount p, and report sensitivity of the ranking to p (e.g. p in {1, 4, 8} on the CPM scale, or use a count-dependent shrinkage such as adding a prior proportional to the mean). Because low-count genes give wildly unstable ratios, additionally compute a Poisson-based stability measure per gene — e.g. the exact Poisson/binomial test of the treated count against the control count conditioned on the total (a purely technical-noise reference, NOT a biological test) — and report its p-value explicitly labelled as 'technical (Poisson) noise only; ignores biological variability and is anti-conservative'. Produce a ranked table of all retained genes with: gene symbol, raw counts in each sample, normalized values, log2FC, absolute log2FC rank, mean expression, and the Poisson-technical p-value with BH-adjusted value. Flag the top ~50 up and top ~50 down candidates that also clear a minimum expression floor (e.g. >= 20 normalized counts in the higher sample) as the hypothesis list. Generate a volcano-style plot of log2FC vs mean expression with the flagged genes labelled, and a heatmap of the top candidates. State in the written summary, unambiguously, that these are ranked candidates from an unreplicated comparison and that no false-discovery statement about the treatment effect is possible from these data.",
+        "acceptance_criteria": [
+          "Ranked table of all retained genes with raw counts, normalized values, log2FC, and technical Poisson p-value written to CSV",
+          "Top up- and down-regulated candidate lists (with expression floor applied) written to disk",
+          "Sensitivity of the candidate list to pseudocount and expression floor quantified and reported",
+          "Volcano/MA plot and top-candidate heatmap produced",
+          "Written summary explicitly states that no valid FDR-controlled DE call is possible with 1 vs 1 and that the output is a hypothesis-generating ranking"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Fixed-BCV edgeR sensitivity analysis",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A low assumed BCV manufactures thousands of 'significant' genes from a single pair of libraries — this must be presented as the point of the analysis, not buried.",
+          "BH FDR control here is conditional on the dispersion assumption being correct; it says nothing about the real false discovery rate of the experiment."
+        ],
+        "context": "The edgeR user guide's no-replicate workaround is widely used and equally widely misread as a real test. Including it as a labelled sensitivity sweep pre-empts the user running it themselves and over-interpreting a single arbitrary BCV choice.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib"
+        ],
+        "question": "If a biological coefficient of variation is assumed rather than estimated, how many genes would be called differentially expressed between the treated and control liver sample, and how strongly does that count depend on the assumed BCV?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Every result from this step must be labelled a sensitivity analysis conditional on an assumed dispersion, never a differential-expression result.",
+          "Sweep at least four BCV values including one >= 0.4 representative of human tissue.",
+          "Report the DE-gene count at each BCV and the overlap with the T1S2 ranking.",
+          "Probe for edgeR (R requireNamespace('edgeR')) before use; if absent, implement the fixed-dispersion NB test directly and disclose that."
+        ],
+        "description": "Explicitly labelled sensitivity analysis, not a primary result. If edgeR is importable in the sandbox, run the standard no-replicate workaround: exactTest / glmFit with a fixed dispersion set from an assumed BCV, sweeping BCV over a grid spanning typical scenarios (e.g. 0.1 technical replicates, 0.2 genetically identical model organisms, 0.4 human subjects, and 0.6 as a conservative human-tissue value). For each BCV report the number of genes with FDR < 0.05 and FDR < 0.1, and the overlap of each resulting gene set with the T1S2 effect-size candidate list (Jaccard index and rank correlation). Produce a plot of number-of-DE-genes versus assumed BCV. If edgeR is not importable, implement the equivalent negative-binomial two-sample test manually with fixed per-gene dispersion phi = BCV^2 and offsets from the library-size normalization factors, using scipy — and say clearly in the output that a hand-rolled implementation was used. The written summary must state that at human-tissue BCV (~0.4) essentially no gene is expected to survive FDR correction with n=1 per group, and that any long DE list produced at low assumed BCV is an artefact of the assumption, not a finding.",
+        "acceptance_criteria": [
+          "DE-gene counts at FDR < 0.05 and < 0.1 reported for each BCV in the sweep, including BCV >= 0.4",
+          "Plot of DE-gene count versus assumed BCV produced",
+          "Overlap (Jaccard and rank correlation) between each BCV's gene set and the T1S2 candidate list quantified",
+          "Per-BCV result tables written to CSV with filenames that name the assumed BCV",
+          "Summary explicitly frames all output as conditional on an assumption, not as an inferential result"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Exploratory pathway-level signal on the ranked list",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Enrichment p-values inherit the unreplicated design: they test the gene ranking, not the reproducibility of the treatment effect.",
+          "With 12,000 symbol-keyed genes, symbol-to-gene-set mapping loss should be reported (fraction of ranked genes matched to the collection).",
+          "Do not interpret a single enriched set as mechanistic evidence of treatment action."
+        ],
+        "context": "Gene-level calls are unusable at n=1; pathway-level aggregation is the least fragile downstream readout. Tissue is liver under a treatment condition, so xenobiotic metabolism, lipid metabolism, and stress/inflammatory programs are the a priori relevant axes — but no prior hypothesis should be imposed on the enrichment run.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy"
+        ],
+        "question": "Do the treated-vs-control ranked genes show coherent pathway-level shifts (e.g. liver metabolic, xenobiotic, or stress-response programs) that are more robust to single-sample noise than individual gene calls?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use human (Homo sapiens) gene sets to match the dataset organism.",
+          "Rank genes by the T1S2 log2FC (or a shrunken variant of it); do not rank by the technical Poisson p-value.",
+          "If no human gene set collection is resolvable in the environment, report that gap plainly and exit — do not substitute a hand-written gene list or invent enrichment output.",
+          "Report leading-edge genes for every significant set so the result can be traced back to the ranked table."
+        ],
+        "description": "Optional, exploratory. Take the full log2FC-ranked gene list from T1S2 (human gene symbols, ~12,000 genes before filtering) and run rank-based gene set enrichment (GSEA-preranked style, or a competitive rank test such as a Wilcoxon/CAMERA-style test if a GSEA package is unavailable) against broad human gene set collections — hallmark and/or GO biological process and/or KEGG-style pathway sets — plus, if present, liver-relevant metabolic sets. Report normalized enrichment scores, nominal and FDR-adjusted p-values, and leading-edge genes. Aggregating over gene sets partially averages out single-sample counting noise, so pathway-level coherence is somewhat more interpretable than any single gene, but it does not repair the absence of replication: the enrichment p-values still describe the ranking of this one pair of libraries, not a reproducible treatment effect. State that limitation in the output. IMPORTANT: no reference store was visible at planning time. This step must first check what gene set collections the environment actually provides for Homo sapiens; if none are available and no packaged gene sets ship with an installed enrichment library, the step must report the absence explicitly, write a short note naming what is needed (human hallmark / GO-BP / pathway gene set collections), and exit without fabricating enrichment results.",
+        "acceptance_criteria": [
+          "Either a preranked enrichment result table (set name, size, NES/statistic, nominal p, FDR, leading-edge genes) written to CSV, or an explicit report that no human gene set collection was available in the environment",
+          "Fraction of ranked gene symbols successfully mapped to the gene set collection reported",
+          "Summary states that enrichment results are exploratory and constrained by the 1 vs 1 design"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control 1v1: descriptive DE ranking",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a 12,000-gene x 2-sample raw salmon count matrix (counts.csv, gene symbols in column 1) with a 2-row metadata table giving one treated and one control liver sample. With n=1 per condition there is no within-group variance, so no valid inferential differential-expression test exists: DESeq2/edgeR/limma-voom all require replication to estimate dispersion, and any p-value produced by imputing a dispersion (edgeR's fixed-BCV trick) is a statement about an assumed dispersion, not about this experiment. The honest analysis is therefore (a) rigorous normalization and QC of the two libraries, (b) a descriptive, effect-size-based ranking of genes with explicit uncertainty, and (c) a clearly labelled sensitivity analysis using edgeR with a fixed, user-specified biological coefficient of variation, reported as an exploratory hypothesis-generating list rather than a set of significant findings. Step T1S1 normalizes and QC-checks the two libraries. T1S2 produces the primary deliverable: normalized-expression-based log2 fold changes with count-dependent shrinkage and a ranked candidate table. T1S3 runs the fixed-BCV edgeR sensitivity analysis across several BCV values to show how completely the 'significance' call depends on the assumed dispersion. T1S4 does optional exploratory pathway-level enrichment on the ranked list, which is more robust to single-sample noise than gene-level calls; it is contingent on gene sets being available in the environment, and reports that absence rather than failing the run. Neither the package inventory nor the reference store could be read at planning time, so every step must probe its dependencies first and degrade gracefully."
+  },
+  "usage": {
+    "inputTokens": 75236,
+    "outputTokens": 6052,
+    "cacheCreationInputTokens": 20358,
+    "cacheReadInputTokens": 54830,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels",
+          "matplotlib",
+          "seaborn",
+          "gseapy",
+          "clusterProfiler",
+          "sva",
+          "apeglm"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "differential expression without replicates RNA-seq single sample per condition fold change",
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq no biological replicates differential expression",
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control 1v1: descriptive DE ranking",
+          "analytical_narrative": "The input is a 12,000-gene x 2-sample raw salmon count matrix (counts.csv, gene symbols in column 1) with a 2-row metadata table giving one treated and one control liver sample. With n=1 per condition there is no within-group variance, so no valid inferential differential-expression test exists: DESeq2/edgeR/limma-voom all require replication to estimate dispersion, and any p-value produced by imputing a dispersion (edgeR's fixed-BCV trick) is a statement about an assumed dispersion, not about this experiment. The honest analysis is therefore (a) rigorous normalization and QC of the two libraries, (b) a descriptive, effect-size-based ranking of genes with explicit uncertainty, and (c) a clearly labelled sensitivity analysis using edgeR with a fixed, user-specified biological coefficient of variation, reported as an exploratory hypothesis-generating list rather than a set of significant findings. Step T1S1 normalizes and QC-checks the two libraries. T1S2 produces the primary deliverable: normalized-expression-based log2 fold changes with count-dependent shrinkage and a ranked candidate table. T1S3 runs the fixed-BCV edgeR sensitivity analysis across several BCV values to show how completely the 'significance' call depends on the assumed dispersion. T1S4 does optional exploratory pathway-level enrichment on the ranked list, which is more robust to single-sample noise than gene-level calls; it is contingent on gene sets being available in the environment, and reports that absence rather than failing the run. Neither the package inventory nor the reference store could be read at planning time, so every step must probe its dependencies first and degrade gracefully.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, filter, normalize the 2-sample count matrix",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "After library-size normalization, how comparable are the single treated and single control liver libraries, and which of the 12,000 genes are expressed at a level where a fold change is interpretable?",
+              "description": "Read /eval-phase0-without-no-replicates-1v1-1/data/inputs/counts/counts.csv (12,000 genes x 3 columns: gene symbol + 2 sample columns) and /eval-phase0-without-no-replicates-1v1-1/data/inputs/metadata/metadata.csv (2 rows, sample + condition). Verify count column names match metadata sample IDs exactly and record the actual treated and control condition labels for use downstream. Confirm counts are raw non-negative integers. Report per-sample library size, number of detected genes (count > 0), zero fraction, and the count distribution. Collapse duplicate gene symbols by summing. Define an expression filter (e.g. require at least ~10 raw counts in at least one of the two samples, and report how many genes pass at several thresholds). Compute CPM and log2-CPM, and library-size-normalized values using both a simple total-count/CPM scaling and a median-of-ratios or TMM-style factor if the corresponding package is importable; report the normalization factors and whether the two approaches agree. Produce an MA-style plot (mean log expression vs log ratio) and a scatter of log2-CPM treated vs control, and report the Spearman and Pearson correlation between the two libraries. Write the filtered, normalized matrix plus the per-sample QC table to disk for downstream steps.",
+              "context": "Design is 1 treated vs 1 control liver sample, raw salmon gene-level counts, no biological replication. This step establishes whether the two libraries are even technically comparable (grossly different depths or detection rates would make any fold change untrustworthy) and fixes the gene universe used downstream.",
+              "constraints": [
+                "Probe every package before use (python3 -c 'import X' or R requireNamespace) — the package inventory could not be read at planning time; fall back to a pure pandas/numpy or base-R implementation of CPM normalization if DESeq2/edgeR are absent.",
+                "Use the exact condition labels found in metadata.csv throughout; do not invent names like 'A'/'B'.",
+                "Do not run any differential-expression test in this step.",
+                "Write outputs (filtered normalized matrix, QC table, plots) to the step's output directory as CSV and PNG."
+              ],
+              "caveats": [
+                "Duplicate gene symbols are possible in a symbol-keyed salmon matrix — collapse explicitly and report how many were collapsed.",
+                "If library sizes differ by more than ~2-fold, say so plainly: depth-driven detection differences will masquerade as biology in a 1v1 comparison.",
+                "A single sample per condition means no way to distinguish technical from biological variation — do not describe library correlation as a replicate-quality metric."
+              ],
+              "acceptance_criteria": [
+                "Per-sample library size, detected-gene count, and zero fraction reported for both samples",
+                "Number of genes retained by the expression filter reported, with sensitivity to at least two thresholds",
+                "Normalized (CPM and, if available, TMM/median-of-ratios) matrix written to disk with the gene symbols preserved",
+                "Treated-vs-control log2-CPM scatter and MA plot produced, with correlation coefficients reported",
+                "Actual condition labels from metadata.csv recorded in the output"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "scipy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Descriptive shrunken log2 fold-change ranking",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes show the largest treated-vs-control expression differences in this liver pair, and how confident can we be in each given that no replicate-based error estimate exists?",
+              "description": "Primary deliverable. Using the filtered normalized matrix from T1S1, compute a per-gene descriptive effect size: log2((normalized_treated + p) / (normalized_control + p)) with an explicit pseudocount p, and report sensitivity of the ranking to p (e.g. p in {1, 4, 8} on the CPM scale, or use a count-dependent shrinkage such as adding a prior proportional to the mean). Because low-count genes give wildly unstable ratios, additionally compute a Poisson-based stability measure per gene — e.g. the exact Poisson/binomial test of the treated count against the control count conditioned on the total (a purely technical-noise reference, NOT a biological test) — and report its p-value explicitly labelled as 'technical (Poisson) noise only; ignores biological variability and is anti-conservative'. Produce a ranked table of all retained genes with: gene symbol, raw counts in each sample, normalized values, log2FC, absolute log2FC rank, mean expression, and the Poisson-technical p-value with BH-adjusted value. Flag the top ~50 up and top ~50 down candidates that also clear a minimum expression floor (e.g. >= 20 normalized counts in the higher sample) as the hypothesis list. Generate a volcano-style plot of log2FC vs mean expression with the flagged genes labelled, and a heatmap of the top candidates. State in the written summary, unambiguously, that these are ranked candidates from an unreplicated comparison and that no false-discovery statement about the treatment effect is possible from these data.",
+              "context": "n=1 per condition. DESeq2, edgeR (with estimated dispersion), and limma-voom are all inapplicable because dispersion cannot be estimated from a single sample per group. The defensible output is an effect-size ranking with the expression floor and pseudocount choices made explicit.",
+              "constraints": [
+                "Do NOT report any statistic as evidence of statistical significance of the treatment effect; label the Poisson p-value as a technical-noise reference only.",
+                "Apply a minimum expression floor before flagging candidates and state the floor used.",
+                "Report how many of the flagged candidates change if the pseudocount or the expression floor is varied — ranking instability is a result, not a footnote.",
+                "Probe packages before import and degrade to pandas/numpy/scipy if specialised DE packages are absent.",
+                "Write the full ranked table (all retained genes) as CSV, not just the top hits."
+              ],
+              "caveats": [
+                "Genes with zero counts in one sample will dominate any naive fold-change ranking — handle them explicitly and report how many flagged candidates are of this type.",
+                "Fold changes of low-expression genes are dominated by counting noise even before biological variability is considered.",
+                "Any apparent treatment effect here is fully confounded with per-sample technical and individual biological variation; there is no design-level way to separate them."
+              ],
+              "acceptance_criteria": [
+                "Ranked table of all retained genes with raw counts, normalized values, log2FC, and technical Poisson p-value written to CSV",
+                "Top up- and down-regulated candidate lists (with expression floor applied) written to disk",
+                "Sensitivity of the candidate list to pseudocount and expression floor quantified and reported",
+                "Volcano/MA plot and top-candidate heatmap produced",
+                "Written summary explicitly states that no valid FDR-controlled DE call is possible with 1 vs 1 and that the output is a hypothesis-generating ranking"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Fixed-BCV edgeR sensitivity analysis",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "If a biological coefficient of variation is assumed rather than estimated, how many genes would be called differentially expressed between the treated and control liver sample, and how strongly does that count depend on the assumed BCV?",
+              "description": "Explicitly labelled sensitivity analysis, not a primary result. If edgeR is importable in the sandbox, run the standard no-replicate workaround: exactTest / glmFit with a fixed dispersion set from an assumed BCV, sweeping BCV over a grid spanning typical scenarios (e.g. 0.1 technical replicates, 0.2 genetically identical model organisms, 0.4 human subjects, and 0.6 as a conservative human-tissue value). For each BCV report the number of genes with FDR < 0.05 and FDR < 0.1, and the overlap of each resulting gene set with the T1S2 effect-size candidate list (Jaccard index and rank correlation). Produce a plot of number-of-DE-genes versus assumed BCV. If edgeR is not importable, implement the equivalent negative-binomial two-sample test manually with fixed per-gene dispersion phi = BCV^2 and offsets from the library-size normalization factors, using scipy — and say clearly in the output that a hand-rolled implementation was used. The written summary must state that at human-tissue BCV (~0.4) essentially no gene is expected to survive FDR correction with n=1 per group, and that any long DE list produced at low assumed BCV is an artefact of the assumption, not a finding.",
+              "context": "The edgeR user guide's no-replicate workaround is widely used and equally widely misread as a real test. Including it as a labelled sensitivity sweep pre-empts the user running it themselves and over-interpreting a single arbitrary BCV choice.",
+              "constraints": [
+                "Every result from this step must be labelled a sensitivity analysis conditional on an assumed dispersion, never a differential-expression result.",
+                "Sweep at least four BCV values including one >= 0.4 representative of human tissue.",
+                "Report the DE-gene count at each BCV and the overlap with the T1S2 ranking.",
+                "Probe for edgeR (R requireNamespace('edgeR')) before use; if absent, implement the fixed-dispersion NB test directly and disclose that."
+              ],
+              "caveats": [
+                "A low assumed BCV manufactures thousands of 'significant' genes from a single pair of libraries — this must be presented as the point of the analysis, not buried.",
+                "BH FDR control here is conditional on the dispersion assumption being correct; it says nothing about the real false discovery rate of the experiment."
+              ],
+              "acceptance_criteria": [
+                "DE-gene counts at FDR < 0.05 and < 0.1 reported for each BCV in the sweep, including BCV >= 0.4",
+                "Plot of DE-gene count versus assumed BCV produced",
+                "Overlap (Jaccard and rank correlation) between each BCV's gene set and the T1S2 candidate list quantified",
+                "Per-BCV result tables written to CSV with filenames that name the assumed BCV",
+                "Summary explicitly frames all output as conditional on an assumption, not as an inferential result"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Exploratory pathway-level signal on the ranked list",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Do the treated-vs-control ranked genes show coherent pathway-level shifts (e.g. liver metabolic, xenobiotic, or stress-response programs) that are more robust to single-sample noise than individual gene calls?",
+              "description": "Optional, exploratory. Take the full log2FC-ranked gene list from T1S2 (human gene symbols, ~12,000 genes before filtering) and run rank-based gene set enrichment (GSEA-preranked style, or a competitive rank test such as a Wilcoxon/CAMERA-style test if a GSEA package is unavailable) against broad human gene set collections — hallmark and/or GO biological process and/or KEGG-style pathway sets — plus, if present, liver-relevant metabolic sets. Report normalized enrichment scores, nominal and FDR-adjusted p-values, and leading-edge genes. Aggregating over gene sets partially averages out single-sample counting noise, so pathway-level coherence is somewhat more interpretable than any single gene, but it does not repair the absence of replication: the enrichment p-values still describe the ranking of this one pair of libraries, not a reproducible treatment effect. State that limitation in the output. IMPORTANT: no reference store was visible at planning time. This step must first check what gene set collections the environment actually provides for Homo sapiens; if none are available and no packaged gene sets ship with an installed enrichment library, the step must report the absence explicitly, write a short note naming what is needed (human hallmark / GO-BP / pathway gene set collections), and exit without fabricating enrichment results.",
+              "context": "Gene-level calls are unusable at n=1; pathway-level aggregation is the least fragile downstream readout. Tissue is liver under a treatment condition, so xenobiotic metabolism, lipid metabolism, and stress/inflammatory programs are the a priori relevant axes — but no prior hypothesis should be imposed on the enrichment run.",
+              "constraints": [
+                "Use human (Homo sapiens) gene sets to match the dataset organism.",
+                "Rank genes by the T1S2 log2FC (or a shrunken variant of it); do not rank by the technical Poisson p-value.",
+                "If no human gene set collection is resolvable in the environment, report that gap plainly and exit — do not substitute a hand-written gene list or invent enrichment output.",
+                "Report leading-edge genes for every significant set so the result can be traced back to the ranked table."
+              ],
+              "caveats": [
+                "Enrichment p-values inherit the unreplicated design: they test the gene ranking, not the reproducibility of the treatment effect.",
+                "With 12,000 symbol-keyed genes, symbol-to-gene-set mapping loss should be reported (fraction of ranked genes matched to the collection).",
+                "Do not interpret a single enriched set as mechanistic evidence of treatment action."
+              ],
+              "acceptance_criteria": [
+                "Either a preranked enrichment result table (set name, size, NES/statistic, nominal p, FDR, leading-edge genes) written to CSV, or an explicit report that no human gene set collection was available in the environment",
+                "Fraction of ranked gene symbols successfully mapped to the gene set collection reported",
+                "Summary states that enrichment results are exploratory and constrained by the 1 vs 1 design"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

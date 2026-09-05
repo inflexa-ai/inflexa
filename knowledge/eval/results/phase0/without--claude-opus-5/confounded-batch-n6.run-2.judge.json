@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect aliasing of batch and condition, demonstrates it numerically via model matrix rank deficiency, fits only ~condition with control as reference, and explicitly forbids ComBat-seq/removeBatchEffect/RUV/SVA and any ~condition+batch model, labeling every result as a treatment+batch estimand — this is exactly the reference behavior. QC is thorough and design-specific (library sizes, detection, VST/log-CPM PCA annotated by both condition and batch with the note that the labels are identical, correlation heatmap, clustering, outlier policy without silent dropping), filtering uses filterByExpr or a justified >=10-in->=6 rule with sensitivity checks, and raw integer counts are fed to the NB GLM with normalized values explicitly excluded. FDR is BH at stated alphas with apeglm/ashr shrinkage and both 0.05 and 0.10 counts. Enrichment is appropriately framed as hypothesis-generating with the filtered expressed-gene universe and named human collections and a stated ranking metric, but it omits a gene-set size window and version pinning, and normalization is only implicit via DESeq2 size factors rather than named. The final report leads with the confound, itemizes what was deliberately not done, and gives concrete remediation (shared batch, bridge samples, independent validation)."
+}

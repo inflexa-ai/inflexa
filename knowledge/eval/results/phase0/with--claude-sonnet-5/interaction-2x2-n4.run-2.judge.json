@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the question as a difference-of-differences and fits ~genotype*treatment in DESeq2, testing the genotypeKO.treatmentdrug Wald coefficient as primary and adding both simple effects via explicit contrasts or relevel+refit, with reference levels stated and the n=4/cell power caveat made explicit. QC is design-aware (blind VST PCA colored by both factors, sample-distance heatmap, library sizes, flag-not-auto-remove policy), the filter (>=10 counts in >=4 samples, justified as the smallest cell size) is minimal and reasoned, and median-of-ratios normalization is left inside the model on raw counts. BH at alpha=0.05 is passed into results(), independent filtering and Cook's NAs are reported separately, and ashr shrinkage is used with contrast-appropriate handling. Enrichment is well specified (full ranked list by Wald stat, tested-gene universe, 15-500 size window, BH, collapsing, no-fabrication fallback) but is docked slightly for naming a human Hallmark collection for what is likely a mouse knockout brain study and for leaving the collection version to be filled in later."
+}

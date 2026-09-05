@@ -1,0 +1,352 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "timecourse-2x4-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T04:55:09.846Z",
+  "elapsedMs": 60058,
+  "outcome": "plan_submitted",
+  "planId": "pln-71bba240",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization and metadata reconciliation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not assume DESeq2 is installed — probe with requireNamespace and fall back to edgeR or a manual normalization (e.g., median-of-ratios via statsmodels) if absent, documenting the substitution",
+          "The reported file shape lists 25 sample columns in counts.csv against 24 metadata rows (2x4x3 design) — resolve this explicitly rather than silently truncating or padding"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Are the counts.csv columns and metadata.csv rows consistent (25 count columns vs 24 metadata rows), and what are the library-size and dispersion characteristics of the 12000 x 25 gene-level count matrix across the 2 conditions x 4 time points x 3 replicates design?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports exact sample overlap/mismatch between counts.csv column names and metadata.csv sample IDs, and documents how any discrepancy (25 count columns vs 24 metadata rows) was resolved (e.g., duplicate/extra column dropped, or a metadata row is missing and that sample is excluded) before proceeding",
+          "Produces a reconciled count matrix and metadata table with matching, ordered sample sets, condition, time, and time_hours columns confirmed as factors/numerics",
+          "Reports library size distribution and flags any sample as a low-count or outlier candidate using PCA/hierarchical clustering on variance-stabilized counts",
+          "Filters low-count genes with a stated, reproducible threshold (e.g., minimum count sum or CPM across samples) and reports genes retained out of the initial 12000"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Full-vs-reduced negative binomial LRT for condition:time interaction",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not use per-time-point pairwise treatment-vs-control tests summed across time points as a substitute for the interaction LRT — that conflates main effect with interaction and answers a different question",
+          "With n=3 per condition-time cell (24 cells total, one cell for each of 2x4 combinations), power for a 3-df interaction term (4 time levels - 1 = 3 interaction coefficients) is limited; state this explicitly in the results rather than overinterpreting a small hit list",
+          "Confirm which package is actually available in the sandbox before committing to DESeq2 vs edgeR syntax; both implement an equivalent full-vs-reduced LRT for a factorial design"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes have a statistically significant condition-by-time interaction — i.e., a treatment-specific trajectory across t0, t1, t2, t3 beyond the trend shared by both conditions?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Fits a full negative-binomial GLM with design ~ condition + time + condition:time (time treated as a categorical factor with 4 levels, matching the discrete t0..t3 sampling) on the reconciled, filtered count matrix",
+          "Fits a reduced model ~ condition + time (dropping the interaction term) and performs a likelihood ratio test (DESeq2 LRT or edgeR glmLRT/glmQLFTest equivalent) comparing full vs reduced",
+          "Reports, per gene, LRT statistic, raw p-value, and Benjamini-Hochberg FDR-adjusted q-value for the interaction term",
+          "Defines and applies a pre-specified significance threshold (e.g., FDR < 0.05) to call genes with a treatment-specific time trend, and reports the resulting gene count separately from the count of genes significant for the time main effect alone (the shared trend)",
+          "Outputs a full results table (gene, LRT stat, p-value, FDR, and per-condition-per-timepoint log2 normalized mean expression) for downstream use"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Cluster and visualize treatment-specific temporal trajectories",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Among genes with a significant condition:time interaction, what distinct temporal shapes distinguish the two treatment arms (e.g., early divergence, late divergence, opposite-direction trends)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "clustering",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Takes the interaction-significant gene set (FDR < 0.05) from T1S2 and computes per-condition, per-time-point mean normalized expression (variance-stabilized or log2 CPM) for each gene",
+          "Applies a clustering method (e.g., hierarchical clustering or k-means on standardized trajectories) to group genes by the shape of their treatment-specific divergence over t0-t3, choosing cluster number by a stated criterion (e.g., silhouette score or dendrogram inspection)",
+          "Produces trajectory plots (mean +/- SE per condition at each time point) for each cluster, clearly showing where the two conditions' trends diverge",
+          "Reports cluster sizes and flags if the interaction gene set is too small (e.g., <10 genes) for meaningful sub-clustering, in which case reports individual gene trajectories instead"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway enrichment of treatment-specific interaction genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "No gene-set/pathway reference is currently provisioned in this environment (checked at planning time) — this step must verify availability at run time and degrade to reporting the gene list only if none is found, rather than failing silently or inventing enrichment results"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Are the genes with a significant treatment-specific time-course trajectory enriched for particular biological pathways or gene sets, beyond what shared time-trend genes show?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Runs over-representation or gene set enrichment analysis on the interaction-significant gene list from T1S2 (using human gene symbols already present in counts.csv) against a curated pathway/gene-set collection appropriate for Homo sapiens (e.g., Hallmark, GO, Reactome), if such a reference is available in this environment",
+          "Uses the full filtered gene list from T1S1 as the background/universe for over-representation testing, not the whole genome",
+          "Reports enriched terms with adjusted p-values (BH-FDR < 0.05) and the leading-edge/overlapping genes per term",
+          "If no pathway gene-set reference is available in the environment for Homo sapiens, explicitly reports that enrichment could not be run and returns the ranked interaction gene list as the deliverable instead of fabricating pathway results"
+        ]
+      }
+    ],
+    "title": "Treatment-specific time-course DE beyond shared trend",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "Design is 2 conditions x 4 time points (t0-t3), n=3, raw salmon gene counts (12000 genes x 25 samples; metadata has an extra row/column mismatch to reconcile — 24 expected samples vs 25 columns, checked at load). The research question — genes whose change over time differs by treatment, beyond the shared time trend — is a condition:time interaction question in a time-course design, not a simple two-group DE test. The standard rigorous approach is a negative-binomial GLM (DESeq2) with a full model including condition, time (as a categorical factor, since only 4 discrete points are sampled per replicate design) and their interaction, tested against a reduced model dropping the interaction term via a likelihood ratio test (LRT). This isolates genes whose temporal trajectory is treatment-specific from genes that merely respond to time in both arms (the shared trend, captured by the reduced model). Interaction-significant genes are then clustered by their treatment-specific temporal shape and passed to pathway enrichment to characterize what processes diverge over time between conditions. All steps run on the bulk RNA-seq count matrix and its metadata already provided; no external reference beyond generic pathway gene sets is required, and enrichment is planned as an optional enrichment layer that degrades gracefully if no gene-set reference is available in this environment (none is currently provisioned)."
+  },
+  "usage": {
+    "inputTokens": 133871,
+    "outputTokens": 3962,
+    "cacheCreationInputTokens": 21455,
+    "cacheReadInputTokens": 112332,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "splines",
+          "maSigPro",
+          "tradeSeq",
+          "clusterProfiler",
+          "fgsea",
+          "apeglm"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark gene sets human"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "likelihood ratio test time course RNA-seq treatment interaction DESeq2 spline",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 likelihood ratio test full reduced model time course design interaction",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "maSigPro time series differential expression treatment RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 likelihood ratio test time course RNA-seq condition-specific trend interaction",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treatment-specific time-course DE beyond shared trend",
+          "analytical_narrative": "Design is 2 conditions x 4 time points (t0-t3), n=3, raw salmon gene counts (12000 genes x 25 samples; metadata has an extra row/column mismatch to reconcile — 24 expected samples vs 25 columns, checked at load). The research question — genes whose change over time differs by treatment, beyond the shared time trend — is a condition:time interaction question in a time-course design, not a simple two-group DE test. The standard rigorous approach is a negative-binomial GLM (DESeq2) with a full model including condition, time (as a categorical factor, since only 4 discrete points are sampled per replicate design) and their interaction, tested against a reduced model dropping the interaction term via a likelihood ratio test (LRT). This isolates genes whose temporal trajectory is treatment-specific from genes that merely respond to time in both arms (the shared trend, captured by the reduced model). Interaction-significant genes are then clustered by their treatment-specific temporal shape and passed to pathway enrichment to characterize what processes diverge over time between conditions. All steps run on the bulk RNA-seq count matrix and its metadata already provided; no external reference beyond generic pathway gene sets is required, and enrichment is planned as an optional enrichment layer that degrades gracefully if no gene-set reference is available in this environment (none is currently provisioned).",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization and metadata reconciliation",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Are the counts.csv columns and metadata.csv rows consistent (25 count columns vs 24 metadata rows), and what are the library-size and dispersion characteristics of the 12000 x 25 gene-level count matrix across the 2 conditions x 4 time points x 3 replicates design?",
+              "acceptance_criteria": [
+                "Reports exact sample overlap/mismatch between counts.csv column names and metadata.csv sample IDs, and documents how any discrepancy (25 count columns vs 24 metadata rows) was resolved (e.g., duplicate/extra column dropped, or a metadata row is missing and that sample is excluded) before proceeding",
+                "Produces a reconciled count matrix and metadata table with matching, ordered sample sets, condition, time, and time_hours columns confirmed as factors/numerics",
+                "Reports library size distribution and flags any sample as a low-count or outlier candidate using PCA/hierarchical clustering on variance-stabilized counts",
+                "Filters low-count genes with a stated, reproducible threshold (e.g., minimum count sum or CPM across samples) and reports genes retained out of the initial 12000"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do not assume DESeq2 is installed — probe with requireNamespace and fall back to edgeR or a manual normalization (e.g., median-of-ratios via statsmodels) if absent, documenting the substitution",
+                "The reported file shape lists 25 sample columns in counts.csv against 24 metadata rows (2x4x3 design) — resolve this explicitly rather than silently truncating or padding"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Full-vs-reduced negative binomial LRT for condition:time interaction",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes have a statistically significant condition-by-time interaction — i.e., a treatment-specific trajectory across t0, t1, t2, t3 beyond the trend shared by both conditions?",
+              "acceptance_criteria": [
+                "Fits a full negative-binomial GLM with design ~ condition + time + condition:time (time treated as a categorical factor with 4 levels, matching the discrete t0..t3 sampling) on the reconciled, filtered count matrix",
+                "Fits a reduced model ~ condition + time (dropping the interaction term) and performs a likelihood ratio test (DESeq2 LRT or edgeR glmLRT/glmQLFTest equivalent) comparing full vs reduced",
+                "Reports, per gene, LRT statistic, raw p-value, and Benjamini-Hochberg FDR-adjusted q-value for the interaction term",
+                "Defines and applies a pre-specified significance threshold (e.g., FDR < 0.05) to call genes with a treatment-specific time trend, and reports the resulting gene count separately from the count of genes significant for the time main effect alone (the shared trend)",
+                "Outputs a full results table (gene, LRT stat, p-value, FDR, and per-condition-per-timepoint log2 normalized mean expression) for downstream use"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do not use per-time-point pairwise treatment-vs-control tests summed across time points as a substitute for the interaction LRT — that conflates main effect with interaction and answers a different question",
+                "With n=3 per condition-time cell (24 cells total, one cell for each of 2x4 combinations), power for a 3-df interaction term (4 time levels - 1 = 3 interaction coefficients) is limited; state this explicitly in the results rather than overinterpreting a small hit list",
+                "Confirm which package is actually available in the sandbox before committing to DESeq2 vs edgeR syntax; both implement an equivalent full-vs-reduced LRT for a factorial design"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Cluster and visualize treatment-specific temporal trajectories",
+              "track": "T1",
+              "step_type": "clustering",
+              "question": "Among genes with a significant condition:time interaction, what distinct temporal shapes distinguish the two treatment arms (e.g., early divergence, late divergence, opposite-direction trends)?",
+              "acceptance_criteria": [
+                "Takes the interaction-significant gene set (FDR < 0.05) from T1S2 and computes per-condition, per-time-point mean normalized expression (variance-stabilized or log2 CPM) for each gene",
+                "Applies a clustering method (e.g., hierarchical clustering or k-means on standardized trajectories) to group genes by the shape of their treatment-specific divergence over t0-t3, choosing cluster number by a stated criterion (e.g., silhouette score or dendrogram inspection)",
+                "Produces trajectory plots (mean +/- SE per condition at each time point) for each cluster, clearly showing where the two conditions' trends diverge",
+                "Reports cluster sizes and flags if the interaction gene set is too small (e.g., <10 genes) for meaningful sub-clustering, in which case reports individual gene trajectories instead"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Pathway enrichment of treatment-specific interaction genes",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Are the genes with a significant treatment-specific time-course trajectory enriched for particular biological pathways or gene sets, beyond what shared time-trend genes show?",
+              "acceptance_criteria": [
+                "Runs over-representation or gene set enrichment analysis on the interaction-significant gene list from T1S2 (using human gene symbols already present in counts.csv) against a curated pathway/gene-set collection appropriate for Homo sapiens (e.g., Hallmark, GO, Reactome), if such a reference is available in this environment",
+                "Uses the full filtered gene list from T1S1 as the background/universe for over-representation testing, not the whole genome",
+                "Reports enriched terms with adjusted p-values (BH-FDR < 0.05) and the leading-edge/overlapping genes per term",
+                "If no pathway gene-set reference is available in the environment for Homo sapiens, explicitly reports that enrichment could not be run and returns the ranked interaction gene list as the deliverable instead of fabricating pathway results"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "No gene-set/pathway reference is currently provisioned in this environment (checked at planning time) — this step must verify availability at run time and degrade to reporting the gene list only if none is found, rather than failing silently or inventing enrichment results"
+              ]
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

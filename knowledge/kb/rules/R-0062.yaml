@@ -1,0 +1,100 @@
+id: R-0062
+title: "Two time points, unpaired: a two-factor design with the interaction term, not a time course LRT"
+assertion: >-
+  With two time points and samples that are not paired, treat the time as a
+  factor with two levels and fit the design ~ condition + time +
+  condition:time. Test the interaction coefficient with the DESeq2 Wald test,
+  which finds each gene whose condition effect differs between the two time
+  points. Then report the simple effects: the condition effect at the
+  reference time from the main effect, and the condition effect at the other
+  time from the sum of the main effect and the interaction term. A time
+  course likelihood ratio test needs three or more time points to describe a
+  profile, and with two conditions and two time points the interaction is
+  one coefficient. With three or more conditions the interaction spans more
+  than one coefficient, thus the likelihood ratio test against the design
+  without the interaction term is the test.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_timepoints
+    op: eq
+    value: 2
+  - field: paired
+    op: eq
+    value: false
+  - field: n_groups
+    op: gte
+    value: 2
+  - field: n_per_group_min
+    op: gte
+    value: 2
+  - field: n_per_group_min
+    op: lte
+    value: 49
+  - field: interaction
+    op: is_null
+action:
+  step_type: differential_expression
+  method: M-0001
+  parameters:
+    - name: design_terms
+      value: [condition, time, "condition:time"]
+      default_source: "vignette:DESeq2/1.52.0#interactions"
+    - name: test
+      value: interaction
+      default_source: "vignette:DESeq2/1.52.0#interactions"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+alternatives:
+  - method: M-0002
+    when: "The condition has three or more levels, thus the interaction spans more than one coefficient: the likelihood ratio test against the design without the interaction term."
+  - method: M-0003
+    when: "Robustness matters: the quasi-likelihood F-test on the interaction coefficient of the same design."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette models a condition effect that differs between the levels
+      of a second factor with an interaction term, tests the interaction
+      coefficient, and gives the condition effect in each level from the
+      main effect and the sum with the interaction term. It reserves the
+      likelihood ratio test for a time course with several time points.
+    anchor: "Interactions; Time-course experiments"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      The guide builds a two-factor design with the treatment, the time
+      point, and their interaction for two time points, and it states that
+      with replication at the time points, the time can enter the model as a
+      factor rather than as a covariate, which gives the difference between
+      distinct time points.
+    anchor: "Interactions using a two-factor model; Combination with factor variable; Smooth curves"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0075
+    paraphrase: >-
+      The study compares the time course tools against the classical
+      pairwise comparison on simulated series, and it finds that on a short
+      series of fewer than eight time points the pairwise approach
+      outperforms the time course tools, mostly because those tools give
+      many false positives.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [design, time-course, interaction, method-selection]

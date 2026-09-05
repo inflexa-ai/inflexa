@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan selects the correct family of methods for the design: an NB GLM on raw counts (DESeq2 Wald, ~condition, control as reference, with named edgeR-QL/limma-voom/pyDESeq2 fallbacks), a minimal and justified low-count filter (~10 counts in >=3 samples or filterByExpr) with before/after gene counts, and it explicitly forbids feeding log/CPM values into the count model, keeping normalization inside the engine (size factors/TMM). QC is genuinely load-bearing and stated in advance: library sizes, detected genes, PCA with percent variance colored by condition, correlation heatmaps, and an explicit no-drop policy for outliers at n=3, which is the right call. Multiple testing is BH with alpha stated at 0.05 (0.1 reported separately and labeled), apeglm/ashr shrinkage is used for ranking with unshrunken estimates retained, and the plan refuses to loosen thresholds if the significant set is empty; the leave-one-out, permutation-floor and post-hoc power audit is an unusually honest treatment of the three-replicate confidence question without lowering alpha. Enrichment is the weakest element: the universe is correctly the filtered gene set and the ranking metric is stated, but no single collection or version is committed to and no gene-set size window is specified. Reporting is complete on engine, version, design, thresholds, gene counts and design caveats."
+}

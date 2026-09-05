@@ -1,0 +1,21 @@
+id: M-0004
+label: "limma-voom with duplicateCorrelation for a blocking factor"
+edam_operation: EDAM:operation_3223
+description: >-
+  voom precision weights on log-CPM, a linear model with a random effect for the
+  blocking factor through duplicateCorrelation, and empirical Bayes moderated
+  t-statistics. For repeated measures where the block cannot enter the fixed
+  effects, and for large designs.
+packages:
+  - name: limma
+    track: bioconductor
+    biotools: limma
+    version_range: ">=3.60"
+    bioconductor: "3.23"
+  - name: edgeR
+    track: bioconductor
+    biotools: edger
+    version_range: ">=4.4"
+    bioconductor: "3.23"
+templates:
+  - tpl-limma-voom-dupcor

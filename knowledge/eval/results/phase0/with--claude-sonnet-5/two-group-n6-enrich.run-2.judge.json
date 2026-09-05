@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the design: unpaired two-group, single batch, 6 vs 6, DESeq2 Wald with an explicit control reference level and a named contrast, plus an edgeR QL cross-check reported as an intersection rather than a union. QC is strong and dataset-specific: per-sample library sizes and detected genes, blind VST PCA and distance heatmap colored by condition, and a stated keep/flag/exclude decision on sample_01 that is carried forward rather than re-litigated. The filter (>=10 counts in at least 6 samples, tied to the smallest group size) is minimal and justified; FDR handling is exemplary with BH at alpha=0.05 passed into results(), apeglm shrinkage, and explicit separation of Cook's-distance NAs from independent-filtering NAs. Normalization is correct in principle (median-of-ratios inside DESeq2, TMM for edgeR) but the plan never explicitly states that no pre-normalized or depth-adjusted values enter the count model, which matters given the shallow sample. Enrichment is preranked fgsea on the full tested list with the Wald statistic named, a 15-500 size window, BH on pathways and a no-fabrication rule for the Hallmark reference, though the collection version is deferred to run time rather than pinned; the report section covers versions, design, thresholds, gene counts and caveats."
+}

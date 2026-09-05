@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 9
+  },
+  "rationale": "The DE core is well matched to the design: unpaired two-group, single batch, raw counts, DESeq2 Wald with ~condition and control explicitly releveled as reference, a named contrast, median-of-ratios size factors inside the model, apeglm shrinkage, and BH at 0.05 with independent filtering and explicit handling of NA padj; the edgeR QL cross-check is redundant but is reported transparently rather than as a cherry-picked union. QC is exemplary and dataset-specific: blind VST, PCA, distance heatmap, per-sample library sizes and detected genes, sample_01 annotated and retained by default with an evidence-based, stated exclusion rule. The pre-filter (>=10 counts in >=6 samples, the smallest group size) is minimal and justified, and no pre-normalized or depth-adjusted values enter the count model. The main deficiency is enrichment: the plan discards preranked fgsea on the full ranked list in favor of GSVA+limma on the basis of an invented 'knowledge-service' rule, so no ranking statistic is ever stated and the primary hallmark test is a per-sample-score method that is sensitive to the very depth artifact flagged for sample_01; the ORA arm is better, with the tested-gene universe, named collections, versions, and a small-list caveat, though no set-size window is given. Reporting is otherwise thorough on versions, thresholds, gene counts, diagnostics, and the low-depth caveat."
+}

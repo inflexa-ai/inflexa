@@ -1,0 +1,55 @@
+id: R-0097
+title: "KEGG sets on the user side: state the KEGG release and the license, and use a local copy"
+assertion: >-
+  The knowledge plane serves no KEGG collection. If you add the KEGG pathway
+  sets on the user side, state the KEGG release and the license under which
+  you obtained the sets. Use a local copy of the sets with the release named,
+  because a live download changes between two runs of the same plan, and a
+  reader cannot reproduce the result. Report the release beside the result
+  with the other collection versions.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: question
+    op: in
+    value: [enrichment, full_plan]
+action:
+  step_type: enrichment
+  parameters:
+    - name: kegg_policy
+      value: local_copy_with_release_and_license
+      default_source: "doi:10.1371/journal.pcbi.1009935"
+severity: info
+strength: common_practice
+evidence_quality: low
+recommendation_strength: conditional
+evidence:
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0064
+    paraphrase: >-
+      KEGG is a database of pathway maps, genes, and molecules with periodic
+      releases, and the pathway maps are curated by its maintainers from the
+      literature.
+    anchor: "Abstract; Introduction"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0027
+    paraphrase: >-
+      The survey of 186 articles finds that many enrichment studies lack
+      detail in the methods about the tools and the gene sets that they used,
+      and it asks for stronger reporting standards.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, gene-set-collection, kegg, needs-source]

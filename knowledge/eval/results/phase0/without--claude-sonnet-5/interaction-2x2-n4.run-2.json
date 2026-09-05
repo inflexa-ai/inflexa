@@ -1,0 +1,406 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-2x2-n4",
+  "run": 2,
+  "startedAt": "2026-09-05T04:53:10.028Z",
+  "elapsedMs": 71080,
+  "outcome": "plan_submitted",
+  "planId": "pln-5272c0dd",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering, and normalization of counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "Confirm DESeq2 (R) is actually importable in the sandbox before use; if absent, fall back to edgeR's glmQLFit with the same design formula and report the substitution",
+          "Verify sample column order in counts.csv matches metadata row order exactly before building the design matrix — a silent mismatch invalidates every downstream contrast"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Are the 16 RNA-seq samples (genotype WT/KO x treatment vehicle/drug, n=4 each) of adequate quality and library depth for count-based modeling, and which genes pass a minimum-expression filter?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Use raw integer counts as input; do not pre-normalize before DESeq2/edgeR sees them",
+          "Do not collapse genotype and treatment into a single 4-level factor — keep them as separate factors so the interaction term is estimable"
+        ],
+        "acceptance_criteria": [
+          "Metadata (16 rows x 4 cols) is loaded and genotype/treatment/condition columns are confirmed to define a balanced 2x2x4 design matching counts.csv sample columns",
+          "Library size, gene detection rate per sample, and a PCA/sample-correlation plot are produced to flag outliers or batch structure",
+          "Low-count genes are filtered (e.g. rowSums or edgeR filterByExpr-style rule) and the retained gene count from the 12000 starting genes is reported",
+          "A DESeqDataSet (or equivalent) object with design ~genotype + treatment + genotype:treatment is constructed and size-factor normalized"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Fit 2x2 interaction model and extract interaction, and within-genotype drug-effect contrasts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "n=4 per cell gives limited power to detect interaction effects, which are typically smaller than main effects — state this explicitly if few or no genes reach FDR<0.05, rather than concluding 'no interaction exists'",
+          "Do not interpret simple-effect contrasts (WT drug vs vehicle, KO drug vs vehicle) as answering the interaction question by themselves — a gene significant in one simple contrast and not the other does not by itself prove a statistically different effect; the interaction p-value is the correct test",
+          "Check apeglm/ashr availability before requesting shrinkage; degrade to unshrunken LFC with a stated caveat if neither is importable"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr"
+        ],
+        "question": "Does the treatment (drug vs vehicle) effect differ significantly by genotype (WT vs KO) — i.e., is the genotype:treatment interaction term non-zero — and what are the drug-vs-vehicle effects within each genotype separately?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Report the interaction coefficient using results(dds, name=<interaction_coef>) or an explicit contrast — do not derive it by manually subtracting two independently-run DESeq2 fits"
+        ],
+        "acceptance_criteria": [
+          "DESeq() is run on the design ~genotype + treatment + genotype:treatment (or edgeR glmQLFTest equivalent) built in T1S1",
+          "The interaction term result table (genes whose drug response depends on genotype) is extracted with log2FoldChange, p-value, and BH-adjusted p-value, and the count of significant genes at FDR<0.05 is reported explicitly",
+          "Simple-effect contrasts (drug vs vehicle within WT; drug vs vehicle within KO) are extracted for interpretation of genes flagged by the interaction test",
+          "A shrunken LFC (apeglm/ashr if available, else unshrunken with a stated caveat) is reported for the interaction coefficient",
+          "MA-plot and p-value histogram for the interaction test are produced as diagnostics of model fit",
+          "Final answer to the research question is stated plainly: interaction-significant gene count, direction of effect for top hits, and whether the answer is 'yes, genotype-dependent', 'no evidence of interaction', or 'underpowered given n=4/cell'"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of genotype-dependent drug-response genes",
+        "agent": "enrichment-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "Do not assume Hallmark/GO/Reactome gene sets are staged in this environment — none were found at plan time; confirm at run time and degrade gracefully if still absent",
+          "Gene symbols in counts.csv must match the identifier space of whatever gene-set collection is used; check and remap if needed (e.g. case, aliasing) before testing"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "What biological pathways or processes are over-represented among genes whose drug response depends on genotype (interaction-significant gene set from T1S2)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Run enrichment on the interaction-term gene list (genotype-dependent drug response), not on the main-effect drug or genotype gene lists, to keep the enrichment answer aligned with the research question"
+        ],
+        "acceptance_criteria": [
+          "The step first checks for a provisioned organism-matched (Homo sapiens) pathway/gene-set collection (e.g. Hallmark, GO, Reactome) and reports explicitly whether one was found",
+          "If a gene-set collection is found, over-representation (or GSEA on the ranked interaction statistic) is run and a table of enriched terms with adjusted p-values is produced",
+          "If no gene-set collection is found, the step stops short of enrichment and reports the interaction-significant gene list alone as the deliverable, with the gap stated explicitly rather than fabricating enrichment results"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Co-expression/network context for genotype-dependent drug-response genes",
+        "agent": "network-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "16 samples is a small basis for correlation-based network inference; frame results as descriptive/exploratory, not a validated regulatory network",
+          "If T1S2 returns zero or very few interaction-significant genes, report that the module-coherence question is not assessable rather than forcing an analysis on an empty/tiny gene list"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "numpy",
+          "pandas",
+          "scipy"
+        ],
+        "question": "Do the genes showing a significant genotype x treatment interaction form a coherent co-expression module in this dataset, or are they a scattered, low-confidence set?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "network_analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [],
+        "acceptance_criteria": [
+          "Pairwise correlation (or a simple module-detection method appropriate for n=16 samples) is computed among interaction-significant genes using normalized expression from T1S1/T1S2",
+          "A summary statistic (e.g. mean pairwise correlation vs a background gene set of matched size) is reported to indicate whether the interaction gene set is more co-regulated than expected by chance",
+          "Explicitly notes the sample-size limitation (16 samples) for network/correlation inference and avoids over-interpreting any single edge"
+        ]
+      }
+    ],
+    "title": "2x2 factorial genotype x drug interaction DE analysis",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The core question — does the drug act differently in KO than in WT — is a statistical interaction question, not a simple two-group comparison. The dataset is a 2x2 factorial (genotype: WT/KO; treatment: vehicle/drug; n=4/cell, 16 samples total per metadata, 17 columns in counts implying a gene-symbol column plus 16 samples) bulk RNA-seq count matrix (12000 genes x 16 samples). The correct design uses a single DESeq2 model with formula ~genotype + treatment + genotype:treatment, testing the interaction coefficient directly, rather than running four separate pairwise comparisons and eyeballing whether fold-changes differ. Track 1 does QC/normalization and fits this model, extracting three results tables: the interaction term (genotype-dependent drug effect — the primary answer), the drug effect within WT, and the drug effect within KO (simple effects for interpretation only if interaction is significant, with the usual caveat about testing simple effects after a non-significant interaction). Track 2 takes the interaction-significant gene list forward to pathway enrichment (to characterize what kind of biology is genotype-dependently drug-responsive) and to a network/co-expression check for a coherent module, since 'brain, genotype x treatment' generically suggests a KO model of a gene relevant to a pathway the drug targets and a coherent transcriptional module is a stronger claim than a scattered gene list. No organism-matched pathway gene set collection was found provisioned in this environment as of plan time; the enrichment step is written to check for one at run time and fall back to reporting only the DE result if none is available, rather than presupposing MSigDb/GO is staged. All DESeq2 usage follows the interaction-term contrast approach (design formula and results(name=...) or results(contrast=...) for the interaction coefficient) rather than manual log-fold-change subtraction, which does not propagate uncertainty correctly."
+  },
+  "usage": {
+    "inputTokens": 278454,
+    "outputTokens": 4723,
+    "cacheCreationInputTokens": 44236,
+    "cacheReadInputTokens": 234074,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "ashr",
+          "pheatmap",
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db",
+          "tidyverse",
+          "ggplot2"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark pathway gene sets human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO Biological Process human"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 factorial design interaction genotype treatment RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression interaction term genotype drug treatment design",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 interaction term two factor design",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 RNA-seq 2x2 factorial design interaction term genotype treatment differential expression",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": ""
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "language": "r"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "interaction term design formula ~genotype*treatment"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeq2 interaction term design formula genotype treatment 2x2 factorial results contrast"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene set"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "2x2 factorial genotype x drug interaction DE analysis",
+          "analytical_narrative": "The core question — does the drug act differently in KO than in WT — is a statistical interaction question, not a simple two-group comparison. The dataset is a 2x2 factorial (genotype: WT/KO; treatment: vehicle/drug; n=4/cell, 16 samples total per metadata, 17 columns in counts implying a gene-symbol column plus 16 samples) bulk RNA-seq count matrix (12000 genes x 16 samples). The correct design uses a single DESeq2 model with formula ~genotype + treatment + genotype:treatment, testing the interaction coefficient directly, rather than running four separate pairwise comparisons and eyeballing whether fold-changes differ. Track 1 does QC/normalization and fits this model, extracting three results tables: the interaction term (genotype-dependent drug effect — the primary answer), the drug effect within WT, and the drug effect within KO (simple effects for interpretation only if interaction is significant, with the usual caveat about testing simple effects after a non-significant interaction). Track 2 takes the interaction-significant gene list forward to pathway enrichment (to characterize what kind of biology is genotype-dependently drug-responsive) and to a network/co-expression check for a coherent module, since 'brain, genotype x treatment' generically suggests a KO model of a gene relevant to a pathway the drug targets and a coherent transcriptional module is a stronger claim than a scattered gene list. No organism-matched pathway gene set collection was found provisioned in this environment as of plan time; the enrichment step is written to check for one at run time and fall back to reporting only the DE result if none is available, rather than presupposing MSigDb/GO is staged. All DESeq2 usage follows the interaction-term contrast approach (design formula and results(name=...) or results(contrast=...) for the interaction coefficient) rather than manual log-fold-change subtraction, which does not propagate uncertainty correctly.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, filtering, and normalization of counts",
+              "track": "1",
+              "step_type": "qc_preprocessing",
+              "question": "Are the 16 RNA-seq samples (genotype WT/KO x treatment vehicle/drug, n=4 each) of adequate quality and library depth for count-based modeling, and which genes pass a minimum-expression filter?",
+              "acceptance_criteria": [
+                "Metadata (16 rows x 4 cols) is loaded and genotype/treatment/condition columns are confirmed to define a balanced 2x2x4 design matching counts.csv sample columns",
+                "Library size, gene detection rate per sample, and a PCA/sample-correlation plot are produced to flag outliers or batch structure",
+                "Low-count genes are filtered (e.g. rowSums or edgeR filterByExpr-style rule) and the retained gene count from the 12000 starting genes is reported",
+                "A DESeqDataSet (or equivalent) object with design ~genotype + treatment + genotype:treatment is constructed and size-factor normalized"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Confirm DESeq2 (R) is actually importable in the sandbox before use; if absent, fall back to edgeR's glmQLFit with the same design formula and report the substitution",
+                "Verify sample column order in counts.csv matches metadata row order exactly before building the design matrix — a silent mismatch invalidates every downstream contrast"
+              ],
+              "constraints": [
+                "Use raw integer counts as input; do not pre-normalize before DESeq2/edgeR sees them",
+                "Do not collapse genotype and treatment into a single 4-level factor — keep them as separate factors so the interaction term is estimable"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Fit 2x2 interaction model and extract interaction, and within-genotype drug-effect contrasts",
+              "track": "1",
+              "step_type": "differential_expression",
+              "question": "Does the treatment (drug vs vehicle) effect differ significantly by genotype (WT vs KO) — i.e., is the genotype:treatment interaction term non-zero — and what are the drug-vs-vehicle effects within each genotype separately?",
+              "acceptance_criteria": [
+                "DESeq() is run on the design ~genotype + treatment + genotype:treatment (or edgeR glmQLFTest equivalent) built in T1S1",
+                "The interaction term result table (genes whose drug response depends on genotype) is extracted with log2FoldChange, p-value, and BH-adjusted p-value, and the count of significant genes at FDR<0.05 is reported explicitly",
+                "Simple-effect contrasts (drug vs vehicle within WT; drug vs vehicle within KO) are extracted for interpretation of genes flagged by the interaction test",
+                "A shrunken LFC (apeglm/ashr if available, else unshrunken with a stated caveat) is reported for the interaction coefficient",
+                "MA-plot and p-value histogram for the interaction test are produced as diagnostics of model fit",
+                "Final answer to the research question is stated plainly: interaction-significant gene count, direction of effect for top hits, and whether the answer is 'yes, genotype-dependent', 'no evidence of interaction', or 'underpowered given n=4/cell'"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=4 per cell gives limited power to detect interaction effects, which are typically smaller than main effects — state this explicitly if few or no genes reach FDR<0.05, rather than concluding 'no interaction exists'",
+                "Do not interpret simple-effect contrasts (WT drug vs vehicle, KO drug vs vehicle) as answering the interaction question by themselves — a gene significant in one simple contrast and not the other does not by itself prove a statistically different effect; the interaction p-value is the correct test",
+                "Check apeglm/ashr availability before requesting shrinkage; degrade to unshrunken LFC with a stated caveat if neither is importable"
+              ],
+              "constraints": [
+                "Report the interaction coefficient using results(dds, name=<interaction_coef>) or an explicit contrast — do not derive it by manually subtracting two independently-run DESeq2 fits"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of genotype-dependent drug-response genes",
+              "track": "2",
+              "step_type": "enrichment",
+              "question": "What biological pathways or processes are over-represented among genes whose drug response depends on genotype (interaction-significant gene set from T1S2)?",
+              "acceptance_criteria": [
+                "The step first checks for a provisioned organism-matched (Homo sapiens) pathway/gene-set collection (e.g. Hallmark, GO, Reactome) and reports explicitly whether one was found",
+                "If a gene-set collection is found, over-representation (or GSEA on the ranked interaction statistic) is run and a table of enriched terms with adjusted p-values is produced",
+                "If no gene-set collection is found, the step stops short of enrichment and reports the interaction-significant gene list alone as the deliverable, with the gap stated explicitly rather than fabricating enrichment results"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Do not assume Hallmark/GO/Reactome gene sets are staged in this environment — none were found at plan time; confirm at run time and degrade gracefully if still absent",
+                "Gene symbols in counts.csv must match the identifier space of whatever gene-set collection is used; check and remap if needed (e.g. case, aliasing) before testing"
+              ],
+              "constraints": [
+                "Run enrichment on the interaction-term gene list (genotype-dependent drug response), not on the main-effect drug or genotype gene lists, to keep the enrichment answer aligned with the research question"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "Co-expression/network context for genotype-dependent drug-response genes",
+              "track": "2",
+              "step_type": "network_analysis",
+              "question": "Do the genes showing a significant genotype x treatment interaction form a coherent co-expression module in this dataset, or are they a scattered, low-confidence set?",
+              "acceptance_criteria": [
+                "Pairwise correlation (or a simple module-detection method appropriate for n=16 samples) is computed among interaction-significant genes using normalized expression from T1S1/T1S2",
+                "A summary statistic (e.g. mean pairwise correlation vs a background gene set of matched size) is reported to indicate whether the interaction gene set is more co-regulated than expected by chance",
+                "Explicitly notes the sample-size limitation (16 samples) for network/correlation inference and avoids over-interpreting any single edge"
+              ],
+              "packages": [
+                "numpy",
+                "pandas",
+                "scipy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "16 samples is a small basis for correlation-based network inference; frame results as descriptive/exploratory, not a validated regulatory network",
+                "If T1S2 returns zero or very few interaction-significant genes, report that the module-coherence question is not assessable rather than forcing an analysis on an empty/tiny gene list"
+              ],
+              "constraints": []
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

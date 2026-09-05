@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 0,
+    "qc_present": 0,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 0,
+    "report_completeness": 0
+  },
+  "rationale": "No plan was submitted; the planner timed out with an error before producing any content. There is nothing to evaluate against any criterion, and a plan that states nothing cannot earn credit for correct handling of the unreplicated design. All criteria score 0, including enrichment, since the omission here is due to absence of a plan rather than a deliberate and justified decision."
+}

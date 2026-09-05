@@ -1,0 +1,58 @@
+id: R-0078
+title: "High duplication: do not remove duplicates without UMIs, and report the duplication rate beside the library size"
+assertion: >-
+  If a sample has a high duplication rate, do not remove the duplicate reads
+  unless the library carries unique molecular identifiers. In RNA-seq the
+  duplication rate follows the expression level, because a highly expressed
+  gene gives many identical fragments. Thus removal without UMIs deletes true
+  signal, and it does not improve the differential expression result. Report
+  the duplication rate of each sample beside its library size and its
+  detected genes. A duplication rate far above the others in a low-depth
+  library is a sign of low complexity, and then the sample is a candidate
+  outlier with a stated reason.
+modality: bulk_rna_seq
+conditions:
+  - field: quality_flags
+    op: contains
+    value: [high_duplication]
+action:
+  step_type: qc_sample_structure
+  parameters:
+    - name: duplicate_policy
+      value: keep_without_umi_report_rate
+      default_source: "doi:10.1038/srep25533"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0052
+    paraphrase: >-
+      The study finds that a large share of the computationally identified
+      duplicates are not PCR duplicates but come from sampling and
+      fragmentation bias. Their removal improves neither the accuracy nor the
+      precision, and it can make the power and the false discovery rate of
+      the differential expression analysis worse. Even a removal with unique
+      molecular identifiers improves them only mildly.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0012
+    paraphrase: >-
+      The survey lists the duplication rate among the QC metrics of the raw
+      reads, and it notes that in RNA-seq the duplicates come both from PCR
+      and from the highly expressed genes.
+    anchor: "Quality control; Raw reads"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [qc, duplication, quality-flag]

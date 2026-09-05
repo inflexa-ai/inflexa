@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 2,
+    "normalization": 5,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the perfect confound, refuses ComBat-seq/SVA/batch terms as aliased, and labels every result as treatment-or-batch, which matches the reference; it loses a little for not offering the option to pause and request a rebalanced design. QC is strong and specific: library sizes, detected genes, PCA colored by condition and separately by batch with the explicit point that the colorings are identical, though no outlier policy is stated. There is no low-count filter beyond implicit DESeq2 independent filtering, and normalization is only implied by DESeq2/VST rather than stated as median-of-ratios size factors inside the model. The contrast and reference level direction (treated vs control, ~condition, Wald) are explicit and the omission of the batch term is justified; BH padj<0.05 with |log2FC|>1 and apeglm shrinkage are named, but shrinkage is 'recommended' rather than committed and the LFC cutoff is applied post hoc rather than in the test. Enrichment is arguably not warranted on a fully confounded gene list, and the plan hedges between ORA and GSEA without specifying a universe, ranking metric, collection version, or gene-set size window."
+}

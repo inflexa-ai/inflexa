@@ -1,0 +1,57 @@
+id: R-0035
+title: "Sample identity doubt: check the metadata against the expression of the sex genes before the model"
+assertion: >-
+  If there is a doubt about the identity of a sample, compare the sample
+  metadata with the expression before the model. Compare the recorded sex
+  with the expression of XIST and of the Y chromosome genes, for example
+  RPS4Y1, KDM5D, and UTY, and compare the recorded tissue and condition with
+  the known marker genes. Misannotation is common in public datasets, and a
+  mislabeled sample enters the wrong group, where it inflates the dispersion
+  and hides the true effect. Report each mismatch and its resolution. If no
+  resolution is possible, remove the sample with a stated reason.
+modality: bulk_rna_seq
+conditions:
+  - field: quality_flags
+    op: contains
+    value: [sample_identity_doubt]
+action:
+  step_type: qc_sample_structure
+  parameters:
+    - name: identity_check
+      value: sex_genes_and_metadata
+      default_source: "doi:10.12688/f1000research.9471.2"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0038
+    paraphrase: >-
+      The study compares the recorded sex of the samples in public expression
+      datasets with the expression of XIST and of Y chromosome genes, and it
+      finds that a large share of the datasets hold at least one sample whose
+      expression contradicts its annotation. Thus a check of the sample
+      identity against the expression is necessary before the analysis.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-03"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0012
+    paraphrase: >-
+      The survey describes the checks of reproducibility after
+      quantification: the correlation between the replicates, a principal
+      component analysis, and a clustering of the samples. These checks
+      reveal a sample that does not group with its replicates.
+    anchor: "Quality control; Reproducibility"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [qc, sample-identity]

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly uses NB GLMs (DESeq2 Wald, edgeR QL, limma-voom as cross-checks) fit to the exact 3-vs-3 unpaired single-batch design, with explicit reference level and contrast direction, normalization performed inside each model, and BH-adjusted padj with apeglm/ashr shrinkage stated upfront rather than post hoc. QC (library size, PCA, sample distances, p-value histogram calibration) precedes the test with an explicit outlier policy, and the power/permutation audit (T2S1) is a rigorous, non-adjective answer to the n=3 confidence question that goes beyond the reference. Minor deductions: the low-count filter relies on DESeq2 independent filtering/edgeR filterByExpr without a single stated numeric justification comparable across methods, the dual-threshold (0.05/0.1) reporting slightly blurs a single stated alpha, and the report section never specifies software/package version numbers despite naming all tools and design/threshold/caveat elements thoroughly."
+}

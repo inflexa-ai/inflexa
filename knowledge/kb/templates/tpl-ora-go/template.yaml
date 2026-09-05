@@ -1,0 +1,176 @@
+id: tpl-ora-go
+version: 1.0.0
+label: "GO over-representation with clusterProfiler enrichGO and rrvgo term reduction"
+language: R
+method: M-0032
+step_types: [enrichment]
+edam_operations: [EDAM:operation_3501]
+citations: [S-0026, S-0027, S-0053, S-0054, S-0055, S-0065]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  conditions:
+    - field: organism
+      op: in
+      value: [human, mouse]
+  notes: >-
+    A differential expression results table with the columns `gene`,
+    `log2_fold_change`, and `adjusted_pvalue`, with the genes as gene symbols
+    of the organism annotation package (HGNC for human, MGI for mouse). The
+    universe is the set of tested genes: every row with a non-missing adjusted
+    p-value. The gene list is the rows under the adjusted p-value cutoff and
+    over the fold change cutoff, both signs. The test is the hypergeometric
+    test of clusterProfiler::enrichGO on one named ontology with
+    Benjamini-Hochberg adjustment, and every term is reported. The significant
+    terms are reduced to representative terms by semantic similarity with
+    rrvgo. A gene symbol that the annotation package does not know is dropped
+    by enrichGO, and the script reports the unmapped share of the gene list
+    and of the universe.
+parameters:
+  - name: results_path
+    type: string
+    description: "Path of the differential expression results CSV with the columns gene, log2_fold_change, and adjusted_pvalue, genes as symbols."
+    adaptable: true
+  - name: org_package
+    type: string
+    description: "The organism annotation package that maps the gene symbols to the GO terms: org.Hs.eg.db for human, org.Mm.eg.db for mouse."
+    adaptable: true
+    default: org.Hs.eg.db
+    default_source: "doi:10.1016/j.xinn.2021.100141"
+    enum: [org.Hs.eg.db, org.Mm.eg.db]
+  - name: ontology
+    type: string
+    description: "The GO ontology under test: BP biological process, MF molecular function, or CC cellular component."
+    adaptable: true
+    default: BP
+    default_source: "doi:10.1016/j.xinn.2021.100141"
+    enum: [BP, MF, CC]
+  - name: alpha
+    type: number
+    description: "A gene enters the gene list when its adjusted p-value is under this cutoff."
+    adaptable: true
+    default: 0.05
+    default_source: "doi:10.1038/s41596-018-0103-9"
+    minimum: 0
+    maximum: 1
+  - name: lfc_cutoff
+    type: number
+    description: "A gene enters the gene list when its absolute log2 fold change is at least this value. 0 applies no fold change filter."
+    adaptable: true
+    default: 0
+    default_source: "doi:10.1038/s41596-018-0103-9"
+    minimum: 0
+  - name: min_size
+    type: integer
+    description: "A GO term is tested when at least this many of its genes are in the universe."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.1016/j.xinn.2021.100141"
+    minimum: 1
+  - name: max_size
+    type: integer
+    description: "A GO term is tested when at most this many of its genes are in the universe."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.1016/j.xinn.2021.100141"
+    minimum: 1
+  - name: term_padj_cutoff
+    type: number
+    description: "A term is significant, and enters the rrvgo reduction, when its adjusted p-value is under this cutoff."
+    adaptable: false
+    default: 0.05
+    default_source: "doi:10.1038/s41596-018-0103-9"
+  - name: similarity_method
+    type: string
+    description: "The semantic similarity measure of rrvgo between two GO terms."
+    adaptable: true
+    default: Rel
+    default_source: "doi:10.17912/micropub.biology.000811"
+    enum: [Resnik, Lin, Rel, Jiang, Wang]
+  - name: similarity_threshold
+    type: number
+    description: "The rrvgo similarity threshold that joins two terms into one cluster. A higher value keeps more distinct terms."
+    adaptable: true
+    default: 0.7
+    default_source: "doi:10.17912/micropub.biology.000811"
+    minimum: 0
+    maximum: 1
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example go_ora or go_ora_bp."
+    adaptable: true
+    default: go_ora
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: results
+    path: "{{results_path}}"
+    format: EDAM:format_3752
+    description: "Differential expression results, one row per gene, gene symbols, CSV."
+outputs:
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested GO term: pathway (the GO id), term (the term name), gene_ratio, bg_ratio, fold_enrichment, pvalue, padj, count, genes (semicolon-joined)."
+  - name: reduced
+    path: "output/{prefix}_reduced.csv"
+    format: EDAM:format_3752
+    description: "One row per significant GO term with its rrvgo cluster: pathway, term, padj, cluster, parent (the representative GO id), parent_term, representative (TRUE for the representative of the cluster), score, size, term_uniqueness, term_dispensability."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The inputs, the organism package, the ontology, the size of the gene list and of the universe with their unmapped share, the counts of tested, significant, and representative terms, the thresholds, the package versions."
+  - name: dot_plot
+    path: "figures/{prefix}_dotplot.png"
+    description: "Dot plot of the top 20 terms by adjusted p-value: fold enrichment against term, sized by count, colored by padj (and PDF)."
+  - name: reduced_plot
+    path: "figures/{prefix}_reduced_barplot.png"
+    description: "Bar plot of the representative terms after the rrvgo reduction: -log10 padj of the representative, filled by the number of terms in the cluster (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: clusterProfiler
+    version: "4.20.0"
+    track: bioconductor
+  - name: rrvgo
+    version: "1.24.0"
+    track: bioconductor
+  - name: org.Hs.eg.db
+    version: "3.23.1"
+    track: bioconductor
+  - name: org.Mm.eg.db
+    version: "3.23.0"
+    track: bioconductor
+  - name: AnnotationDbi
+    version: "1.74.0"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n6-go-bp
+    dataset: two_group_n6/seed-1
+    slots:
+      results_path: /work/data/de_results.csv
+    expect:
+      - "exists output/go_ora_results.csv"
+      - "exists output/go_ora_reduced.csv"
+      - "exists output/go_ora_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/go_ora_dotplot.png"
+      - "exists figures/go_ora_dotplot.pdf"
+      - "exists figures/go_ora_reduced_barplot.png"
+      - "exists figures/go_ora_reduced_barplot.pdf"
+      - "csv_rows output/go_ora_results.csv >= 1"
+      - "csv_rows output/go_ora_results.csv >= 1000"
+      - "csv_rows output/go_ora_reduced.csv >= 10"
+      - "json output/go_ora_summary.json n_universe >= 5000"
+      - "json output/go_ora_summary.json n_terms_tested >= 1000"
+      - "json output/go_ora_summary.json n_significant >= 10"
+      - "json output/go_ora_summary.json n_representative >= 5"
+      - "json output/go_ora_summary.json unmapped_share_gene_list > 0.5"

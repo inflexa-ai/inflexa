@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the design precisely: negative-binomial Wald test with ~condition on an unpaired single-batch 6v6 layout, control as reference with the contrast direction stated, no spurious batch term, and named fallbacks (edgeR-QL, voom, PyDESeq2). QC is exemplary and dataset-specific — library sizes, detected genes, size factors, PCA labelled by condition, correlation heatmap, RLE, plus a depth-matched downsampling check to distinguish shallowness from true outlier status, with an explicit no-drop-at-QC policy and a separate leave-one-out sensitivity fit. Filtering (counts >= 10 in >= 6 samples, with surviving-gene count reported), size-factor normalization inside the model on raw integer counts, apeglm/ashr shrinkage for reporting with unshrunken statistics for inference, and BH at 0.05 are all correct and explicit. Enrichment is preranked GSEA on the full list with the ranking metric named, hallmark collection named with provenance to be reported and a stated no-substitution rule, and ORA correctly restricted to the tested-gene universe, but the set-size window (15-500) and the MSigDB version are never specified. The final synthesis enumerates thresholds, tested and significant gene counts, direction convention and limitations, though software versions are not explicitly required to be recorded."
+}

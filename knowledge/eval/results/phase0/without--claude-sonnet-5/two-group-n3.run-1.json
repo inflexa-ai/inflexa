@@ -1,0 +1,377 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n3",
+  "run": 1,
+  "startedAt": "2026-09-05T04:39:19.014Z",
+  "elapsedMs": 56693,
+  "outcome": "plan_submitted",
+  "planId": "pln-fe8a587b",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, sample matching, and count filtering",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Raw Salmon gene-level counts (12000 genes x 7 sample columns) and a 6-row sample metadata table for liver, treated vs control, single batch, unpaired. The 7-vs-6 mismatch between counts and metadata must be resolved by ID matching, not assumption.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the 7 count-matrix columns and 6 metadata rows correspond to a clean, matchable set of 3 treated vs 3 control liver samples, and are library sizes/detected-gene counts consistent enough to proceed with DE modeling?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not assume which counts.csv column is excess; match by sample ID present in metadata.csv and report the excluded column explicitly if one cannot be matched",
+          "Do not perform DE testing in this step — QC and filtering only"
+        ],
+        "acceptance_criteria": [
+          "Reports how many of the 7 counts.csv sample columns match the 6 metadata.csv rows by exact sample ID, and explicitly flags/excludes any unmatched column with a stated reason",
+          "Confirms final analysis set is exactly 3 treated and 3 control samples with condition labels taken from metadata.csv",
+          "Reports per-sample library size (total counts), number of genes with count>0, and a sample-sample correlation or PCA plot on log-normalized counts to flag outliers",
+          "Applies and reports a low-count filtering rule (e.g., minimum count/CPM threshold across a minimum number of samples) before DE testing, stating how many of the 12000 genes remain",
+          "All steps and exclusions are logged in plain text, not silently applied"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Primary differential expression: DESeq2 (or best-available count DE tool)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Filtered raw counts for 3 treated vs 3 control liver samples, unpaired, single batch. This is the primary DE analysis answering the research question directly.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "limma"
+        ],
+        "question": "Which genes are differentially expressed between treated (n=3) and control (n=3) liver samples, using a negative-binomial count model with dispersion shrinkage and multiple-testing correction?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Probe for DESeq2 availability first; if absent, fall back to edgeR with the same reporting requirements; if neither is importable, report that explicitly rather than substituting an unshrunken t-test as the primary result",
+          "Do not drop the small-n power caveat from the output"
+        ],
+        "acceptance_criteria": [
+          "Confirms which negative-binomial DE package (DESeq2 preferred; edgeR as fallback) is actually importable in the sandbox before proceeding, and reports which was used",
+          "Fits a ~condition design on the filtered count matrix from T1S1 using the confirmed 3 vs 3 treated/control grouping",
+          "Applies log fold-change shrinkage (e.g., apeglm/ashr for DESeq2, or empirical Bayes equivalent for edgeR) rather than reporting raw MLE fold changes",
+          "Reports results as a full gene-level table with baseMean/logCPM, log2FoldChange, shrunken LFC, p-value, and BH-adjusted p-value (FDR)",
+          "States the number of genes significant at FDR < 0.05 and at FDR < 0.1, and separately lists the top 20-30 genes by adjusted p-value with their fold changes",
+          "Explicitly reports estimated dispersion values and flags whether dispersion estimation was unstable (a known risk at n=3)",
+          "States in plain language that with n=3 per group, statistical power to detect anything but large-effect genes is limited, and that the produced FDR list should be treated as a candidate list, not a confirmed one"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Concordance check with a second DE method",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Same filtered count matrix and 3 vs 3 grouping as T1S2. Purpose is to directly answer the 'how confident can we be with three replicates' half of the research question via a method-concordance and/or leave-one-out sensitivity analysis.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma"
+        ],
+        "question": "Do the genes called differentially expressed by the primary method (T1S2) agree with an independently-implemented count-based DE method (edgeR if DESeq2 was primary, or vice versa), and how much does the significant gene list change depending on method choice?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Must use the same filtered gene set and sample grouping as T1S2 for a fair comparison",
+          "Must not silently skip if a second package is unavailable — substitute the leave-one-out sensitivity analysis and say so"
+        ],
+        "acceptance_criteria": [
+          "Runs the second, independent negative-binomial/quasi-likelihood DE tool (whichever of DESeq2/edgeR was not used as primary in T1S2) on the same filtered count matrix and same 3 vs 3 grouping",
+          "Reports the overlap (e.g., Jaccard index or simple intersection/union counts) between the FDR<0.05 gene sets from the two methods",
+          "Reports the Spearman or Pearson correlation of log fold-change estimates between the two methods across all tested genes",
+          "Explicitly states whether the primary method's significant list is robust (high overlap) or method-sensitive (low overlap) given n=3, and flags this as a direct measure of confidence for the research question",
+          "If only one DE package is importable in the sandbox, this step reports that limitation explicitly and instead performs a sensitivity check (e.g., leave-one-sample-out re-analysis) as the confidence measure, rather than being skipped silently"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Functional enrichment of differentially expressed genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "context": "Full DE gene table (log2FoldChange, FDR) for treated vs control liver samples from T1S2. No reference gene-set store was found provisioned in the environment at planning time, so this step must re-check availability at execution time rather than assume either presence or absence.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ],
+        "question": "What biological pathways or processes are over-represented among the genes differentially expressed between treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Do not fabricate or hardcode a gene set list if no reference pathway collection is found in the environment; report the gap explicitly instead",
+          "Use human (Homo sapiens) gene sets only, matching the organism of this dataset"
+        ],
+        "acceptance_criteria": [
+          "Confirms availability of a gene-set enrichment package (e.g., fgsea, clusterProfiler) and of a human gene-set collection (e.g., MSigDB Hallmark, GO, KEGG) actually present in the environment's reference store before running; if none is found, reports this as a hard gap and skips enrichment rather than fabricating gene sets",
+          "If a gene-set resource is available, runs over-representation or pre-ranked GSEA (ranked by shrunken log fold-change or test statistic from T1S2) restricted to human liver-relevant pathway collections",
+          "Reports enriched terms with adjusted p-values and the leading-edge/contributing DE genes for each significant term",
+          "States explicitly that pathway-level enrichment on an n=3-per-group DE list inherits the same power limitations as the underlying gene list, and should be read as hypothesis-generating"
+        ]
+      }
+    ],
+    "title": "Liver bulk RNA-seq: treated vs control DE with n=3",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is a raw Salmon gene-level count matrix (12000 genes x 7 samples/columns, with a gene-symbol column) with a metadata table defining 3 treated vs 3 control liver samples in an unpaired single-batch design (note: counts.csv reports 7 sample columns but metadata.csv reports 6 rows — this discrepancy must be resolved by exact ID matching before any modeling, and any unmatched sample must be dropped and reported, not silently assumed). With only 3 replicates per arm, standard count-based DE tools (DESeq2/edgeR) that borrow information across genes via empirical Bayes shrinkage of dispersion and fold-change are required rather than naive per-gene t-tests, because per-gene variance estimates from n=3 are themselves highly unstable. The plan therefore: (1) confirms sample identity/matching and QC's the raw counts (library size, gene detection, PCA/sample correlation) to catch outliers or mislabeling that would be fatal at this sample size; (2) runs a single primary DE model with library-size normalization, dispersion shrinkage, and multiple-testing correction, explicitly reporting statistical power limitations of n=3; (3) cross-checks the primary result with a second, independent count-based method to assess concordance, since with n=3 a result that is method-dependent should not be treated as robust; (4) contextualizes the significant gene list with functional enrichment to give a biological, not just statistical, read of the treatment effect. No causal or mechanistic claims beyond what the DE+enrichment support are made, and the small-n caveat is carried through every downstream step and into the final gene list rather than resolved away."
+  },
+  "usage": {
+    "inputTokens": 136598,
+    "outputTokens": 4241,
+    "cacheCreationInputTokens": 41710,
+    "cacheReadInputTokens": 94804,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "IHW",
+          "biomaRt",
+          "clusterProfiler",
+          "fgsea",
+          "pheatmap",
+          "ggplot2",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark gene sets human"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 small sample size n=3 differential expression power",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression small sample size three replicates DESeq2 edgeR",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "31992223"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver bulk RNA-seq: treated vs control DE with n=3",
+          "analytical_narrative": "The dataset is a raw Salmon gene-level count matrix (12000 genes x 7 samples/columns, with a gene-symbol column) with a metadata table defining 3 treated vs 3 control liver samples in an unpaired single-batch design (note: counts.csv reports 7 sample columns but metadata.csv reports 6 rows — this discrepancy must be resolved by exact ID matching before any modeling, and any unmatched sample must be dropped and reported, not silently assumed). With only 3 replicates per arm, standard count-based DE tools (DESeq2/edgeR) that borrow information across genes via empirical Bayes shrinkage of dispersion and fold-change are required rather than naive per-gene t-tests, because per-gene variance estimates from n=3 are themselves highly unstable. The plan therefore: (1) confirms sample identity/matching and QC's the raw counts (library size, gene detection, PCA/sample correlation) to catch outliers or mislabeling that would be fatal at this sample size; (2) runs a single primary DE model with library-size normalization, dispersion shrinkage, and multiple-testing correction, explicitly reporting statistical power limitations of n=3; (3) cross-checks the primary result with a second, independent count-based method to assess concordance, since with n=3 a result that is method-dependent should not be treated as robust; (4) contextualizes the significant gene list with functional enrichment to give a biological, not just statistical, read of the treatment effect. No causal or mechanistic claims beyond what the DE+enrichment support are made, and the small-n caveat is carried through every downstream step and into the final gene list rather than resolved away.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, sample matching, and count filtering",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 7 count-matrix columns and 6 metadata rows correspond to a clean, matchable set of 3 treated vs 3 control liver samples, and are library sizes/detected-gene counts consistent enough to proceed with DE modeling?",
+              "acceptance_criteria": [
+                "Reports how many of the 7 counts.csv sample columns match the 6 metadata.csv rows by exact sample ID, and explicitly flags/excludes any unmatched column with a stated reason",
+                "Confirms final analysis set is exactly 3 treated and 3 control samples with condition labels taken from metadata.csv",
+                "Reports per-sample library size (total counts), number of genes with count>0, and a sample-sample correlation or PCA plot on log-normalized counts to flag outliers",
+                "Applies and reports a low-count filtering rule (e.g., minimum count/CPM threshold across a minimum number of samples) before DE testing, stating how many of the 12000 genes remain",
+                "All steps and exclusions are logged in plain text, not silently applied"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw Salmon gene-level counts (12000 genes x 7 sample columns) and a 6-row sample metadata table for liver, treated vs control, single batch, unpaired. The 7-vs-6 mismatch between counts and metadata must be resolved by ID matching, not assumption.",
+              "constraints": [
+                "Do not assume which counts.csv column is excess; match by sample ID present in metadata.csv and report the excluded column explicitly if one cannot be matched",
+                "Do not perform DE testing in this step — QC and filtering only"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Primary differential expression: DESeq2 (or best-available count DE tool)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between treated (n=3) and control (n=3) liver samples, using a negative-binomial count model with dispersion shrinkage and multiple-testing correction?",
+              "acceptance_criteria": [
+                "Confirms which negative-binomial DE package (DESeq2 preferred; edgeR as fallback) is actually importable in the sandbox before proceeding, and reports which was used",
+                "Fits a ~condition design on the filtered count matrix from T1S1 using the confirmed 3 vs 3 treated/control grouping",
+                "Applies log fold-change shrinkage (e.g., apeglm/ashr for DESeq2, or empirical Bayes equivalent for edgeR) rather than reporting raw MLE fold changes",
+                "Reports results as a full gene-level table with baseMean/logCPM, log2FoldChange, shrunken LFC, p-value, and BH-adjusted p-value (FDR)",
+                "States the number of genes significant at FDR < 0.05 and at FDR < 0.1, and separately lists the top 20-30 genes by adjusted p-value with their fold changes",
+                "Explicitly reports estimated dispersion values and flags whether dispersion estimation was unstable (a known risk at n=3)",
+                "States in plain language that with n=3 per group, statistical power to detect anything but large-effect genes is limited, and that the produced FDR list should be treated as a candidate list, not a confirmed one"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "edgeR",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Filtered raw counts for 3 treated vs 3 control liver samples, unpaired, single batch. This is the primary DE analysis answering the research question directly.",
+              "constraints": [
+                "Probe for DESeq2 availability first; if absent, fall back to edgeR with the same reporting requirements; if neither is importable, report that explicitly rather than substituting an unshrunken t-test as the primary result",
+                "Do not drop the small-n power caveat from the output"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Concordance check with a second DE method",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Do the genes called differentially expressed by the primary method (T1S2) agree with an independently-implemented count-based DE method (edgeR if DESeq2 was primary, or vice versa), and how much does the significant gene list change depending on method choice?",
+              "acceptance_criteria": [
+                "Runs the second, independent negative-binomial/quasi-likelihood DE tool (whichever of DESeq2/edgeR was not used as primary in T1S2) on the same filtered count matrix and same 3 vs 3 grouping",
+                "Reports the overlap (e.g., Jaccard index or simple intersection/union counts) between the FDR<0.05 gene sets from the two methods",
+                "Reports the Spearman or Pearson correlation of log fold-change estimates between the two methods across all tested genes",
+                "Explicitly states whether the primary method's significant list is robust (high overlap) or method-sensitive (low overlap) given n=3, and flags this as a direct measure of confidence for the research question",
+                "If only one DE package is importable in the sandbox, this step reports that limitation explicitly and instead performs a sensitivity check (e.g., leave-one-sample-out re-analysis) as the confidence measure, rather than being skipped silently"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same filtered count matrix and 3 vs 3 grouping as T1S2. Purpose is to directly answer the 'how confident can we be with three replicates' half of the research question via a method-concordance and/or leave-one-out sensitivity analysis.",
+              "constraints": [
+                "Must use the same filtered gene set and sample grouping as T1S2 for a fair comparison",
+                "Must not silently skip if a second package is unavailable — substitute the leave-one-out sensitivity analysis and say so"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Functional enrichment of differentially expressed genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "What biological pathways or processes are over-represented among the genes differentially expressed between treated and control liver samples?",
+              "acceptance_criteria": [
+                "Confirms availability of a gene-set enrichment package (e.g., fgsea, clusterProfiler) and of a human gene-set collection (e.g., MSigDB Hallmark, GO, KEGG) actually present in the environment's reference store before running; if none is found, reports this as a hard gap and skips enrichment rather than fabricating gene sets",
+                "If a gene-set resource is available, runs over-representation or pre-ranked GSEA (ranked by shrunken log fold-change or test statistic from T1S2) restricted to human liver-relevant pathway collections",
+                "Reports enriched terms with adjusted p-values and the leading-edge/contributing DE genes for each significant term",
+                "States explicitly that pathway-level enrichment on an n=3-per-group DE list inherits the same power limitations as the underlying gene list, and should be read as hypothesis-generating"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Full DE gene table (log2FoldChange, FDR) for treated vs control liver samples from T1S2. No reference gene-set store was found provisioned in the environment at planning time, so this step must re-check availability at execution time rather than assume either presence or absence.",
+              "constraints": [
+                "Do not fabricate or hardcode a gene set list if no reference pathway collection is found in the environment; report the gap explicitly instead",
+                "Use human (Homo sapiens) gene sets only, matching the organism of this dataset"
+              ]
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

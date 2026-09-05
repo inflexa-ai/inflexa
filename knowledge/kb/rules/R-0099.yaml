@@ -1,0 +1,67 @@
+id: R-0099
+title: "Ranking metric for a preranked enrichment on counts: the Wald or moderated t statistic, not the unshrunken fold change alone and not a signed p-value with ties"
+assertion: >-
+  With count data, rank the genes for the preranked enrichment by a statistic
+  that scales the effect by its uncertainty. This is the Wald statistic of
+  DESeq2 or the moderated t statistic of limma-voom. Do not rank by the
+  unshrunken log2 fold change alone, because a gene with few counts gets a
+  large and noisy fold change. Do not rank by a signed p-value when the
+  p-values saturate at zero, because many genes then share one rank and the
+  order at the top of the list is arbitrary. State the metric in the report.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+action:
+  step_type: enrichment
+  parameters:
+    - name: rank_metric
+      value: stat
+      default_source: "doi:10.1186/s12859-017-1674-0"
+    - name: rank_metric_not
+      value: [unshrunken_log2_fold_change_alone, signed_p_value_with_ties]
+      default_source: "doi:10.1186/s12859-017-1674-0"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0068
+    paraphrase: >-
+      The study evaluates 16 ranking metrics for GSEA on 28 benchmark
+      datasets and finds that the choice of the metric has a critical impact
+      on the result, and that the absolute moderated Welch t statistic, a
+      difference scaled by its variability, has the best overall sensitivity.
+    anchor: "Abstract; Results; Conclusions"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0026
+    paraphrase: >-
+      The protocol ranks the genes for GSEA by a score that carries both the
+      direction and the significance of the change, for example a signed
+      p-value score or a test statistic.
+    anchor: "Procedure, Step 2: Rank the gene list"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0025
+    paraphrase: >-
+      fgsea takes a vector of gene-level statistics as its input and computes
+      the enrichment statistic on the order that the vector gives, thus the
+      ranking is an input to the method, not a part of it.
+    anchor: "Methods"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, rank-metric]

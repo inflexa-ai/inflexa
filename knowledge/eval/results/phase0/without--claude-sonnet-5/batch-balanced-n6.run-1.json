@@ -1,0 +1,310 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "batch-balanced-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T04:43:28.969Z",
+  "elapsedMs": 37867,
+  "outcome": "plan_submitted",
+  "planId": "pln-592eb2c4",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC counts and metadata, confirm batch/condition design",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the raw counts (12000 genes x 12 samples) and metadata (condition, batch) match sample-for-sample, and is the batch x condition design actually balanced (e.g. 3 treated + 3 control in each of 2 batches)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv columns match metadata.csv rows exactly, with no missing or extra samples",
+          "A contingency table of batch x condition is reported and confirms 6 treated vs 6 control split evenly across the 2 batches",
+          "Library size (total counts per sample) and count sparsity are reported per sample and per batch",
+          "Any sample flagged as a low-library-size or outlier is reported explicitly, not silently dropped"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control adjusting for batch",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not drop the batch term to 'simplify' the model — with n=6 per group, adjusting for a balanced batch factor typically increases power by removing batch-driven variance, not decreasing it",
+          "With only 12 samples, dispersion/variance estimates are noisy; rely on the method's built-in moderation (e.g. DESeq2 shrinkage or limma-voom's empirical Bayes) rather than raw per-gene estimates",
+          "12000 genes is a smaller-than-genome-wide feature set — confirm whether this is already a filtered/pre-selected gene panel, which affects how independent filtering and FDR should be interpreted"
+        ],
+        "context": "Batch is balanced across condition per the data context (6 treated vs 6 control, two batches each holding both conditions), so batch can be safely included as an additive covariate without confounding the condition effect.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between treated and control kidney samples when the model adjusts for the two known processing batches (design ~ batch + condition)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DE model design explicitly includes batch as a covariate alongside condition (e.g. ~ batch + condition in DESeq2, or an equivalent block term in edgeR/limma-voom)",
+          "Output table reports gene symbol, log2 fold change, raw p-value, and BH-adjusted p-value (FDR) for all tested genes",
+          "Independent filtering or equivalent low-count filtering is applied and documented before multiple-testing correction",
+          "If the preferred package (DESeq2) is unavailable, the step falls back to edgeR or limma-voom and states which tool was actually used",
+          "A results file listing significant genes at FDR < 0.05 (and the full ranked table) is produced"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Diagnostic plots: PCA, MA plot, volcano plot",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "matplotlib"
+        ],
+        "question": "Does sample clustering (PCA) show condition separating from batch after normalization, and what do the MA and volcano plots reveal about the treated-vs-control effect size and significance distribution?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "visualization",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "PCA plot of normalized/variance-stabilized counts is generated, with points colored by condition and shaped (or labeled) by batch",
+          "MA plot of the DE results (mean expression vs log2 fold change) is generated with significant genes highlighted",
+          "Volcano plot (log2 fold change vs -log10 FDR) is generated with significant genes highlighted",
+          "Plots are saved as image files and the PCA is explicitly described in terms of whether batch or condition dominates the variance structure"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Functional enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Do not proceed with an uncontrolled or fabricated gene set list if no reference collection is found in the environment"
+        ],
+        "context": "Input is the ranked/significant gene list from the batch-adjusted DE analysis (human gene symbols). Needs a curated pathway/GO gene set collection for Homo sapiens.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "What biological pathways or gene ontology terms are enriched among genes differentially expressed between treated and control kidney samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Step first confirms availability of a human GO/pathway gene set collection (e.g. GO Biological Process, Hallmark, Reactome, KEGG) in the environment before running",
+          "If a suitable gene set collection is found, enrichment is run on the FDR<0.05 significant gene list (and/or a pre-ranked GSEA on the full ranked list) with multiple-testing correction on the enrichment results themselves",
+          "If no gene set collection is available, the step reports this explicitly instead of fabricating enrichment results",
+          "Output includes enriched terms with adjusted p-values and the overlapping/leading-edge genes for each term"
+        ]
+      }
+    ],
+    "title": "Kidney treated vs control DE with batch adjustment",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq of human kidney tissue (12000 genes x 12 samples) comparing 6 treated vs 6 control samples, with two known processing batches balanced across conditions (metadata.csv carries condition and batch columns). Because batch is balanced across condition, batch is not confounded with treatment, so it can be included as a covariate in a standard count-based differential expression model without losing power to estimate the treatment effect. The plan: (1) load and QC the raw counts and metadata, verifying sample matching, library size distribution, and confirming the batch x condition balance is exactly as described (2x2 with n=3 per cell, or 6/6 split evenly across 2 batches); (2) fit a negative-binomial GLM (DESeq2, or edgeR/limma-voom as a fallback if DESeq2 is unavailable) with design ~ batch + condition to test treated vs control while adjusting for batch, applying standard independent filtering and FDR control; (3) generate diagnostic and summary outputs (PCA/sample clustering colored by batch and condition, MA plot, volcano plot, and a ranked DE gene table) to let the batch adjustment be checked visually rather than assumed to have worked; (4) run functional enrichment (GO/pathway) on the significant DE gene set to interpret biological themes, using whatever curated gene set collection is available for human in this environment, and reporting explicitly if none is available rather than fabricating an enrichment result."
+  },
+  "usage": {
+    "inputTokens": 74759,
+    "outputTokens": 3043,
+    "cacheCreationInputTokens": 19913,
+    "cacheReadInputTokens": 54798,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "sva",
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark gene sets human"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 batch effect covariate design differential expression RNA-seq",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 moderated fold change RNA-seq",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with batch adjustment",
+          "analytical_narrative": "The dataset is bulk RNA-seq of human kidney tissue (12000 genes x 12 samples) comparing 6 treated vs 6 control samples, with two known processing batches balanced across conditions (metadata.csv carries condition and batch columns). Because batch is balanced across condition, batch is not confounded with treatment, so it can be included as a covariate in a standard count-based differential expression model without losing power to estimate the treatment effect. The plan: (1) load and QC the raw counts and metadata, verifying sample matching, library size distribution, and confirming the batch x condition balance is exactly as described (2x2 with n=3 per cell, or 6/6 split evenly across 2 batches); (2) fit a negative-binomial GLM (DESeq2, or edgeR/limma-voom as a fallback if DESeq2 is unavailable) with design ~ batch + condition to test treated vs control while adjusting for batch, applying standard independent filtering and FDR control; (3) generate diagnostic and summary outputs (PCA/sample clustering colored by batch and condition, MA plot, volcano plot, and a ranked DE gene table) to let the batch adjustment be checked visually rather than assumed to have worked; (4) run functional enrichment (GO/pathway) on the significant DE gene set to interpret biological themes, using whatever curated gene set collection is available for human in this environment, and reporting explicitly if none is available rather than fabricating an enrichment result.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC counts and metadata, confirm batch/condition design",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the raw counts (12000 genes x 12 samples) and metadata (condition, batch) match sample-for-sample, and is the batch x condition design actually balanced (e.g. 3 treated + 3 control in each of 2 batches)?",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv columns match metadata.csv rows exactly, with no missing or extra samples",
+                "A contingency table of batch x condition is reported and confirms 6 treated vs 6 control split evenly across the 2 batches",
+                "Library size (total counts per sample) and count sparsity are reported per sample and per batch",
+                "Any sample flagged as a low-library-size or outlier is reported explicitly, not silently dropped"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control adjusting for batch",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are differentially expressed between treated and control kidney samples when the model adjusts for the two known processing batches (design ~ batch + condition)?",
+              "context": "Batch is balanced across condition per the data context (6 treated vs 6 control, two batches each holding both conditions), so batch can be safely included as an additive covariate without confounding the condition effect.",
+              "acceptance_criteria": [
+                "DE model design explicitly includes batch as a covariate alongside condition (e.g. ~ batch + condition in DESeq2, or an equivalent block term in edgeR/limma-voom)",
+                "Output table reports gene symbol, log2 fold change, raw p-value, and BH-adjusted p-value (FDR) for all tested genes",
+                "Independent filtering or equivalent low-count filtering is applied and documented before multiple-testing correction",
+                "If the preferred package (DESeq2) is unavailable, the step falls back to edgeR or limma-voom and states which tool was actually used",
+                "A results file listing significant genes at FDR < 0.05 (and the full ranked table) is produced"
+              ],
+              "caveats": [
+                "Do not drop the batch term to 'simplify' the model — with n=6 per group, adjusting for a balanced batch factor typically increases power by removing batch-driven variance, not decreasing it",
+                "With only 12 samples, dispersion/variance estimates are noisy; rely on the method's built-in moderation (e.g. DESeq2 shrinkage or limma-voom's empirical Bayes) rather than raw per-gene estimates",
+                "12000 genes is a smaller-than-genome-wide feature set — confirm whether this is already a filtered/pre-selected gene panel, which affects how independent filtering and FDR should be interpreted"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Diagnostic plots: PCA, MA plot, volcano plot",
+              "track": "T1",
+              "step_type": "visualization",
+              "question": "Does sample clustering (PCA) show condition separating from batch after normalization, and what do the MA and volcano plots reveal about the treated-vs-control effect size and significance distribution?",
+              "acceptance_criteria": [
+                "PCA plot of normalized/variance-stabilized counts is generated, with points colored by condition and shaped (or labeled) by batch",
+                "MA plot of the DE results (mean expression vs log2 fold change) is generated with significant genes highlighted",
+                "Volcano plot (log2 fold change vs -log10 FDR) is generated with significant genes highlighted",
+                "Plots are saved as image files and the PCA is explicitly described in terms of whether batch or condition dominates the variance structure"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Functional enrichment of DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "What biological pathways or gene ontology terms are enriched among genes differentially expressed between treated and control kidney samples?",
+              "context": "Input is the ranked/significant gene list from the batch-adjusted DE analysis (human gene symbols). Needs a curated pathway/GO gene set collection for Homo sapiens.",
+              "acceptance_criteria": [
+                "Step first confirms availability of a human GO/pathway gene set collection (e.g. GO Biological Process, Hallmark, Reactome, KEGG) in the environment before running",
+                "If a suitable gene set collection is found, enrichment is run on the FDR<0.05 significant gene list (and/or a pre-ranked GSEA on the full ranked list) with multiple-testing correction on the enrichment results themselves",
+                "If no gene set collection is available, the step reports this explicitly instead of fabricating enrichment results",
+                "Output includes enriched terms with adjusted p-values and the overlapping/leading-edge genes for each term"
+              ],
+              "caveats": [
+                "Do not proceed with an uncontrolled or fabricated gene set list if no reference collection is found in the environment"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

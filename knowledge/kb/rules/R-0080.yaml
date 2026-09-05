@@ -1,0 +1,62 @@
+id: R-0080
+title: "Three prime tag counting: a lower count floor for the low count filter"
+assertion: >-
+  With counts from a 3' tag library, lower the count floor of the pre-filter,
+  and report the floor and the number of genes kept. A 3' library gives one
+  read per transcript molecule at the 3' end, with no gain from the
+  transcript length. Thus a long gene collects fewer reads than in a
+  full-length library at the same depth, and a floor of 10 counts made for a
+  full-length library removes a larger share of the expressed long genes.
+  Keep the rule of the smallest group size for the number of samples. The
+  floor is a judgment with no measured optimum, and a floor of 5 counts is a
+  common start.
+modality: bulk_rna_seq
+conditions:
+  - field: library_type
+    op: eq
+    value: three_prime
+  - field: data_state
+    op: eq
+    value: counts
+action:
+  step_type: filter_low_counts
+  parameters:
+    - name: min_count
+      value: 5
+      default_source: "rule:R-0080"
+severity: info
+strength: common_practice
+evidence_quality: low
+recommendation_strength: conditional
+evidence:
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0073
+    paraphrase: >-
+      The comparison of a whole-transcript and a 3' library method finds that
+      the whole-transcript method assigns more reads to a long transcript,
+      while the 3' method assigns about the same number of reads to a
+      transcript regardless of its length. The 3' method detects more short
+      transcripts, and the whole-transcript method finds more differentially
+      expressed genes at each depth. The article gives no filter threshold.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0005
+    paraphrase: >-
+      The guide states the filter floor as a minimum count in at least the
+      smallest group size of samples, with the count converted to a CPM
+      cutoff from the median library size, and it presents the value as a
+      default, not a fixed rule.
+    anchor: "Filtering"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [filter, library-type, three-prime, needs-source]

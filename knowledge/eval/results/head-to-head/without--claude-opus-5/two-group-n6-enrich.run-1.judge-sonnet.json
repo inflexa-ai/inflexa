@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan explicitly matches DESeq2 Wald (~condition, control as reference) to the unpaired 6v6 single-batch design, correctly omits a batch term for lack of one, and adds a well-justified sensitivity axis (leave-one-out and voom) rather than folding it into the primary model. QC is thorough: library sizes, detected-gene counts, PCA and correlation heatmaps, a pre-specified keep/flag rule, with sample_01 retained in the primary fit and excluded only in a labelled sensitivity analysis. The 10-counts-in-6-samples filter is minimal and justified, normalization uses DESeq2 median-of-ratios/TMM inside the model with no pre-normalization, apeglm shrinkage is used for ranking with BH at 0.05 stated in advance, and GSEA uses the full ranked list on Hallmark with organism/version verification, size filtering, and a stated ranking statistic. Minor deductions: gene set/DESeq2/fgsea version numbers are not pinned in the plan text itself, and the report step's exact content (final counts, caveats synthesis) is somewhat distributed across steps rather than consolidated."
+}

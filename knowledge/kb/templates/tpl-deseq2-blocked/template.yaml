@@ -1,0 +1,202 @@
+id: tpl-deseq2-blocked
+version: 1.0.0
+label: "DESeq2 blocked two-group differential expression with apeglm shrinkage"
+language: R
+method: M-0001
+step_types: [filter_low_counts, normalize, model_design, differential_expression, shrink_lfc, multiple_testing]
+edam_operations: [EDAM:operation_3223]
+citations: [S-0001, S-0002, S-0020, S-0040, S-0042]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_paired, two_group_with_blocking_factor]
+  min_replicates: 2
+  conditions:
+    - field: paired
+      op: eq
+      value: true
+    - field: n_timepoints
+      op: is_null
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample.
+    The sample table holds a blocking column, for example the subject, the
+    donor, or the litter, and a condition column. The script renames the
+    blocking column to `block` and the condition column to `condition`, thus
+    the design formula names `block` and `condition`. The block enters the
+    design as a fixed effect before the condition, and the test compares the
+    two levels within each block. One contrast: test level against reference
+    level. Each block must hold at least two samples, and at least one block
+    must hold both levels.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: blocking_column
+    type: string
+    description: "The column of the sample table that holds the blocking factor, for example subject, donor, or litter. The script renames it to block."
+    adaptable: true
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the denominator of the fold change, for example Control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The level of the condition that is the numerator of the fold change, for example Treated."
+    adaptable: true
+  - name: design
+    type: formula
+    description: "The design formula. It must name block and end with condition. Put a further covariate between them, for example ~ block + sex + condition."
+    adaptable: true
+    default: "~ block + condition"
+    default_source: "doi:10.12688/f1000research.27893.1"
+    pattern: "condition\\s*$"
+  - name: min_count
+    type: integer
+    description: "A gene stays when it has at least this many counts in at least min_samples samples."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 0
+  - name: min_samples
+    type: integer
+    description: "The minimum number of samples for the count filter. Absent, the script uses the smallest condition group size."
+    adaptable: true
+    required: false
+    minimum: 1
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff, passed to results() so the independent filter is optimized for it."
+    adaptable: false
+    default: 0.05
+    default_source: "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+  - name: lfc_shrink
+    type: string
+    description: "The shrinkage estimator of the reported log2 fold change."
+    adaptable: true
+    default: apeglm
+    default_source: "doi:10.1093/bioinformatics/bty895"
+    enum: [apeglm, ashr, none]
+  - name: lfc_threshold
+    type: number
+    description: "A log2 fold change threshold tested with the Wald test (TREAT-style). 0 tests against no change."
+    adaptable: true
+    default: 0
+    default_source: "vignette:DESeq2/1.52.0#tests-of-log2-fold-change-above-or-below-a-threshold"
+    minimum: 0
+  - name: n_top_genes_pca
+    type: integer
+    description: "The number of most variable genes for the PCA."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 50
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example de or treated_vs_control."
+    adaptable: true
+    default: de
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table with a blocking column and a condition column, CSV."
+outputs:
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested gene: gene, base_mean, log2_fold_change (shrunken), log2_fold_change_unshrunken, lfc_se, stat, pvalue, adjusted_pvalue."
+  - name: normalized_counts
+    path: "output/{prefix}_normalized_counts.csv"
+    format: EDAM:format_3752
+    description: "Median-of-ratios normalized counts, genes by samples."
+  - name: vst
+    path: "output/{prefix}_vst.csv"
+    format: EDAM:format_3752
+    description: "Variance stabilized values, genes by samples, for downstream visualization."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The contrast, the blocking factor, the counts of tested and significant genes, the thresholds, the package versions."
+  - name: pca
+    path: "figures/{prefix}_pca.png"
+    description: "PCA of the samples on the top variable genes, colored by condition, with a line that joins the samples of one block (and PDF)."
+  - name: sample_distances
+    path: "figures/{prefix}_sample_distances.png"
+    description: "Euclidean sample distance heatmap on the VST values, annotated by condition and block (and PDF)."
+  - name: ma
+    path: "figures/{prefix}_ma.png"
+    description: "MA plot of the shrunken fold changes (and PDF)."
+  - name: volcano
+    path: "figures/{prefix}_volcano.png"
+    description: "Volcano plot, log2 fold change against -log10 adjusted p-value (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: DESeq2
+    version: "1.52.0"
+    track: bioconductor
+  - name: apeglm
+    version: "1.34.0"
+    track: bioconductor
+  - name: ashr
+    version: "2.2-63"
+    track: cran
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: pheatmap
+    version: "1.0.13"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: paired-n5
+    dataset: paired_n5/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      blocking_column: subject
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+    expect:
+      - "exists output/de_results.csv"
+      - "exists output/de_summary.json"
+      - "exists output/de_normalized_counts.csv"
+      - "exists output/de_vst.csv"
+      - "exists output/session_info.txt"
+      - "exists figures/de_pca.png"
+      - "exists figures/de_pca.pdf"
+      - "exists figures/de_sample_distances.png"
+      - "exists figures/de_ma.png"
+      - "exists figures/de_volcano.pdf"
+      - "csv_rows output/de_results.csv >= 5000"
+      - "json output/de_summary.json blocking.n_blocks == 5"
+      - "json output/de_summary.json n_samples == 10"
+      - "truth_recall output/de_results.csv >= 0.45"
+      - "truth_fdr output/de_results.csv <= 0.1"

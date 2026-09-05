@@ -1,0 +1,22 @@
+id: M-0023
+label: "limma-voom with sample quality weights (voomWithQualityWeights)"
+edam_operation: EDAM:operation_3223
+description: >-
+  voom precision weights on log-CPM combined with an empirical weight per
+  sample, so that a sample of poor quality gets a lower weight instead of
+  removal. A fixed-effects linear model and empirical Bayes moderated
+  t-statistics on the weighted fit. For a design with a flagged outlier sample
+  and enough replicates to estimate the sample weights.
+packages:
+  - name: limma
+    track: bioconductor
+    biotools: limma
+    version_range: ">=3.60"
+    bioconductor: "3.23"
+  - name: edgeR
+    track: bioconductor
+    biotools: edger
+    version_range: ">=4.4"
+    bioconductor: "3.23"
+templates:
+  - tpl-limma-voom-qw

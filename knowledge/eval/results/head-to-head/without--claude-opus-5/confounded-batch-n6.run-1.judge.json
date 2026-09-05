@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 7,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the perfect confounding, proves rank deficiency of ~condition + batch numerically, explicitly forbids ComBat-seq/SVA/removeBatchEffect and sample dropping, fits the only estimable model (~condition with control as reference), and labels every result as a condition+batch composite while naming the design fix — exactly what the reference requires. QC is strong (VST PCA with variance explained, sample-distance and correlation clustering, library size and detection rate compared across batches, all annotated by condition and batch), though no explicit outlier or shallow-sample policy is stated. Filtering (>=10 counts in >=6 samples, condition-agnostic and justified) is fine; normalization is implicitly DESeq2's internal size factors and pre-correction is explicitly banned, but median-of-ratios/size factors are never named. BH at alpha 0.05 with apeglm shrinkage is stated, though the |LFC|>1 cut is applied post hoc rather than via lfcThreshold. Enrichment states a ranking metric, human HGNC hallmark and GO-BP collections, an explicit tested-gene universe for ORA and a mapping-rate check, but omits collection versions and a min/max set-size window; the report section names design, thresholds, gene counts and caveats but not software versions."
+}

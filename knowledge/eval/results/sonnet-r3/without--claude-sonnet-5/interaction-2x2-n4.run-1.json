@@ -1,0 +1,316 @@
+{
+  "campaign": "sonnet-r3",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-2x2-n4",
+  "run": 1,
+  "startedAt": "2026-09-05T09:00:44.714Z",
+  "elapsedMs": 49721,
+  "outcome": "plan_submitted",
+  "planId": "pln-772b7d36",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, and factorial DESeq2 model fit",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "12000 x 16 is small; do not over-allocate memory or parallel workers",
+          "Confirm metadata column names/values (genotype: WT/KO; treatment: vehicle/drug) exactly as profiled before setting factor levels — do not assume additional levels exist"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "After confirming the 16-sample metadata (genotype: WT/KO, treatment: vehicle/drug, 4 replicates per cell) matches the count matrix (12000 genes x 17 columns, first column gene symbol), does raw-count QC (library size, gene detection, PCA) support fitting a factorial DESeq2 model with genotype, treatment, and their interaction on the human brain counts?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Count matrix parsed to 12000 genes x 16 samples after separating the gene symbol column; sample IDs matched 1:1 to metadata rows",
+          "Library size and detected-gene-count QC reported per sample; any outlier sample flagged with reasoning, not silently dropped",
+          "PCA or hierarchical clustering colored by genotype and treatment reported to visually assess separation and batch structure",
+          "DESeq2 dataset object built with design = ~genotype + treatment + genotype:treatment, factors releveled so WT and vehicle are reference levels, and the fitted DESeqDataSet object (or equivalent serialized result) saved for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Interaction test and genotype-stratified drug-effect contrasts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "An interaction test with n=4/cell (16 samples total) is modestly powered — state this explicitly when reporting how many genes reach significance; do not overclaim a null interaction as 'no genotype-dependent effect' when power is limited",
+          "Do not conflate 'significant in KO only, not WT only' with 'significant interaction' — report both the formal interaction test and the qualitative stratified comparison, and note when they disagree"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "In the fitted ~genotype + treatment + genotype:treatment DESeq2 model, which genes show a significant genotype:treatment interaction (drug effect differs between KO and WT), and how do the drug-vs-vehicle log2 fold changes compare when computed separately within WT and within KO?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Wald test result for the genotypeKO.treatmentdrug interaction coefficient (or equivalent likelihood-ratio test comparing full model to ~genotype+treatment) reported as a full results table with log2FoldChange, padj, ranked by padj",
+          "Genes with BH-adjusted p < 0.05 on the interaction term listed explicitly, with count reported (including zero as a valid, reportable outcome)",
+          "Drug-vs-vehicle contrast computed separately within WT samples and within KO samples (either via separate subset models or via combined coefficients), producing two LFC/padj tables",
+          "A comparison table/scatterplot of WT drug-effect LFC vs KO drug-effect LFC for the union of top interaction and stratified-significant genes, explicitly flagging genes where effect direction or significance diverges between genotypes",
+          "Results and gene lists (interaction-significant, WT-only-significant, KO-only-significant) saved to CSV for downstream enrichment"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of genotype-dependent drug-responsive genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Use human (HGNC symbol) gene sets only — WikiPathways human, MSigDB hallmark human, Reactome (filtered to Homo sapiens via ReactomePathways.txt) — since the dataset is Homo sapiens; do not use the mouse or rat WikiPathways files present in the reference store",
+          "GO/ImmuneSigDB collections are large enough that whole-collection FDR is severe — restrict to Hallmark + WikiPathways + Reactome as the primary tests, and treat GO as supplementary only if time permits"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which biological pathways or processes are over-represented among the genes showing a significant genotype:treatment interaction (or divergent WT vs KO drug response), using human pathway gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Enrichment performed on the interaction-significant gene list (and, if too few genes, on the union of stratified-significant genes) against human WikiPathways, MSigDB Hallmark, and Reactome gene sets (all confirmed present in the reference store for Homo sapiens)",
+          "If the interaction gene list has fewer than ~10 genes, report this explicitly and fall back to a ranked GSEA-style test (fgsea) on the full interaction-test statistic ranking rather than an underpowered over-representation test on a tiny list",
+          "Enriched terms reported with BH-adjusted p-values and the specific member genes driving each term",
+          "Explicit statement of whether the resulting pathways are ones plausible for the drug's mechanism, without asserting causality beyond what the enrichment supports"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "PPI network context for interaction-significant genes",
+        "agent": "network-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "The full STRING links file is ~83MB compressed / 13.7M edges and is undirected with every edge listed twice — filter to combined_score>=700 and to the gene list of interest before building the graph, do not load the entire graph into memory for a null permutation test",
+          "If the interaction-significant gene list from T1S2 is empty or very small (<5 genes), report that a meaningful network analysis cannot be performed rather than force a result on a handful of nodes"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "igraph"
+        ],
+        "question": "Do the genes with a significant genotype:treatment interaction (drug response differs by genotype) form a more connected module in the human STRING protein-protein interaction network than expected by chance, and what hub genes emerge?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "network-analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Interaction-significant gene list (from T1S2) mapped to STRING protein IDs via the STRING human protein-info file (join on preferred_name)",
+          "Subnetwork extracted from the STRING human links file at the conventional high-confidence threshold (combined_score >= 700), with edge count and node count reported",
+          "Network connectivity (e.g., number of edges, largest connected component size) compared against a null expectation from random gene sets of the same size, reported explicitly if the interaction gene list has enough genes to test (>=10); if fewer, report this as a limitation and skip formal permutation testing",
+          "Hub genes (highest degree within the subnetwork) listed as candidate genotype-dependent drug-response mediators, with the caveat that STRING connections are correlational/functional-association, not causal"
+        ]
+      }
+    ],
+    "title": "2x2 genotype x drug interaction DE analysis (brain)",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is a 2x2 factorial bulk RNA-seq design (WT vs KO genotype; vehicle vs drug treatment; n=4/cell, 16 samples, 12000 genes) in human brain tissue. The research question — does the drug act differently in KO than WT — is a classic genotype x treatment interaction question. DESeq2 with a full factorial design (~genotype + treatment + genotype:treatment) is the correct tool: it lets us test (1) the interaction term itself (is the drug effect different in magnitude/direction between genotypes), (2) the drug effect within WT only, and (3) the drug effect within KO only, via contrasts. We first QC/normalize the count matrix and confirm sample-metadata concordance, then fit the full model and extract the interaction Wald test, then extract genotype-stratified simple effects of treatment. Genes with a significant interaction term (or divergent stratified effects) are then run through pathway enrichment against a human pathway reference (WikiPathways/Reactome/MSigDB hallmark, all confirmed present for human) to characterize what biological processes are drug-responsive in a genotype-dependent manner. A network-agent step maps the interaction-significant genes onto the human STRING PPI network to check whether they form a connected functional module, adding a layer of mechanistic support beyond gene-level significance."
+  },
+  "usage": {
+    "inputTokens": 255413,
+    "outputTokens": 3556,
+    "cacheCreationInputTokens": 105369,
+    "cacheReadInputTokens": 149984,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways mouse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathways"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "pydeseq2",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano",
+          "apeglm"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "2x2 genotype x drug interaction DE analysis (brain)",
+          "analytical_narrative": "The dataset is a 2x2 factorial bulk RNA-seq design (WT vs KO genotype; vehicle vs drug treatment; n=4/cell, 16 samples, 12000 genes) in human brain tissue. The research question — does the drug act differently in KO than WT — is a classic genotype x treatment interaction question. DESeq2 with a full factorial design (~genotype + treatment + genotype:treatment) is the correct tool: it lets us test (1) the interaction term itself (is the drug effect different in magnitude/direction between genotypes), (2) the drug effect within WT only, and (3) the drug effect within KO only, via contrasts. We first QC/normalize the count matrix and confirm sample-metadata concordance, then fit the full model and extract the interaction Wald test, then extract genotype-stratified simple effects of treatment. Genes with a significant interaction term (or divergent stratified effects) are then run through pathway enrichment against a human pathway reference (WikiPathways/Reactome/MSigDB hallmark, all confirmed present for human) to characterize what biological processes are drug-responsive in a genotype-dependent manner. A network-agent step maps the interaction-significant genes onto the human STRING PPI network to check whether they form a connected functional module, adding a layer of mechanistic support beyond gene-level significance.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization, and factorial DESeq2 model fit",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "After confirming the 16-sample metadata (genotype: WT/KO, treatment: vehicle/drug, 4 replicates per cell) matches the count matrix (12000 genes x 17 columns, first column gene symbol), does raw-count QC (library size, gene detection, PCA) support fitting a factorial DESeq2 model with genotype, treatment, and their interaction on the human brain counts?",
+              "acceptance_criteria": [
+                "Count matrix parsed to 12000 genes x 16 samples after separating the gene symbol column; sample IDs matched 1:1 to metadata rows",
+                "Library size and detected-gene-count QC reported per sample; any outlier sample flagged with reasoning, not silently dropped",
+                "PCA or hierarchical clustering colored by genotype and treatment reported to visually assess separation and batch structure",
+                "DESeq2 dataset object built with design = ~genotype + treatment + genotype:treatment, factors releveled so WT and vehicle are reference levels, and the fitted DESeqDataSet object (or equivalent serialized result) saved for downstream steps"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "12000 x 16 is small; do not over-allocate memory or parallel workers",
+                "Confirm metadata column names/values (genotype: WT/KO; treatment: vehicle/drug) exactly as profiled before setting factor levels — do not assume additional levels exist"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Interaction test and genotype-stratified drug-effect contrasts",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "In the fitted ~genotype + treatment + genotype:treatment DESeq2 model, which genes show a significant genotype:treatment interaction (drug effect differs between KO and WT), and how do the drug-vs-vehicle log2 fold changes compare when computed separately within WT and within KO?",
+              "acceptance_criteria": [
+                "Wald test result for the genotypeKO.treatmentdrug interaction coefficient (or equivalent likelihood-ratio test comparing full model to ~genotype+treatment) reported as a full results table with log2FoldChange, padj, ranked by padj",
+                "Genes with BH-adjusted p < 0.05 on the interaction term listed explicitly, with count reported (including zero as a valid, reportable outcome)",
+                "Drug-vs-vehicle contrast computed separately within WT samples and within KO samples (either via separate subset models or via combined coefficients), producing two LFC/padj tables",
+                "A comparison table/scatterplot of WT drug-effect LFC vs KO drug-effect LFC for the union of top interaction and stratified-significant genes, explicitly flagging genes where effect direction or significance diverges between genotypes",
+                "Results and gene lists (interaction-significant, WT-only-significant, KO-only-significant) saved to CSV for downstream enrichment"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "An interaction test with n=4/cell (16 samples total) is modestly powered — state this explicitly when reporting how many genes reach significance; do not overclaim a null interaction as 'no genotype-dependent effect' when power is limited",
+                "Do not conflate 'significant in KO only, not WT only' with 'significant interaction' — report both the formal interaction test and the qualitative stratified comparison, and note when they disagree"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of genotype-dependent drug-responsive genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways or processes are over-represented among the genes showing a significant genotype:treatment interaction (or divergent WT vs KO drug response), using human pathway gene sets?",
+              "acceptance_criteria": [
+                "Enrichment performed on the interaction-significant gene list (and, if too few genes, on the union of stratified-significant genes) against human WikiPathways, MSigDB Hallmark, and Reactome gene sets (all confirmed present in the reference store for Homo sapiens)",
+                "If the interaction gene list has fewer than ~10 genes, report this explicitly and fall back to a ranked GSEA-style test (fgsea) on the full interaction-test statistic ranking rather than an underpowered over-representation test on a tiny list",
+                "Enriched terms reported with BH-adjusted p-values and the specific member genes driving each term",
+                "Explicit statement of whether the resulting pathways are ones plausible for the drug's mechanism, without asserting causality beyond what the enrichment supports"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Use human (HGNC symbol) gene sets only — WikiPathways human, MSigDB hallmark human, Reactome (filtered to Homo sapiens via ReactomePathways.txt) — since the dataset is Homo sapiens; do not use the mouse or rat WikiPathways files present in the reference store",
+                "GO/ImmuneSigDB collections are large enough that whole-collection FDR is severe — restrict to Hallmark + WikiPathways + Reactome as the primary tests, and treat GO as supplementary only if time permits"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "PPI network context for interaction-significant genes",
+              "track": "T3",
+              "step_type": "network-analysis",
+              "question": "Do the genes with a significant genotype:treatment interaction (drug response differs by genotype) form a more connected module in the human STRING protein-protein interaction network than expected by chance, and what hub genes emerge?",
+              "acceptance_criteria": [
+                "Interaction-significant gene list (from T1S2) mapped to STRING protein IDs via the STRING human protein-info file (join on preferred_name)",
+                "Subnetwork extracted from the STRING human links file at the conventional high-confidence threshold (combined_score >= 700), with edge count and node count reported",
+                "Network connectivity (e.g., number of edges, largest connected component size) compared against a null expectation from random gene sets of the same size, reported explicitly if the interaction gene list has enough genes to test (>=10); if fewer, report this as a limitation and skip formal permutation testing",
+                "Hub genes (highest degree within the subnetwork) listed as candidate genotype-dependent drug-response mediators, with the caveat that STRING connections are correlational/functional-association, not causal"
+              ],
+              "packages": [
+                "igraph"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "The full STRING links file is ~83MB compressed / 13.7M edges and is undirected with every edge listed twice — filter to combined_score>=700 and to the gene list of interest before building the graph, do not load the entire graph into memory for a null permutation test",
+                "If the interaction-significant gene list from T1S2 is empty or very small (<5 genes), report that a meaningful network analysis cannot be performed rather than force a result on a handful of nodes"
+              ]
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ]
+}
