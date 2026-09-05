@@ -263,6 +263,30 @@ library path and form one dependency chain.
 - **WHEN** the workflow completes
 - **THEN** the amd64 artifact publishes, and the arm64 failure reports
 
+### Requirement: A build starts with the headroom it needs
+
+Each build job on a self-hosted builder MUST run the disk guard before it
+builds an image or a store. Docker writes to a persistent volume there, and no
+process outside the workflows reclaims it. The guard MUST remove the containers
+that no run owns, the store volumes of other runs, and every image that
+nothing uses. It MUST prune the build cache to a cap, with the least recently
+used entries first. Then it MUST measure the free space of the filesystem of
+the Docker data root, not the tally of Docker. If the free space is below the
+headroom of the job, the job MUST fail at once, and the message MUST give the
+numbers.
+
+#### Scenario: A stale volume of a canceled run
+
+- **GIVEN** a builder that holds the store volume of a canceled run
+- **WHEN** the guard runs
+- **THEN** the volume is gone before the build starts
+
+#### Scenario: A box without headroom fails fast
+
+- **GIVEN** a builder with less free space than the job needs after the reclaim
+- **WHEN** the guard runs
+- **THEN** the job fails in seconds, and the message names the free space and the need
+
 ### Requirement: The github track installs through pak, with the token present
 
 A build whose manifest names a `github` entry MUST refuse to start when

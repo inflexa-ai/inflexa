@@ -111,6 +111,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
+      - name: Disk guard
+        # The two image builds need the base image, their layers, and the
+        # build cache that keeps the next build fast. 30 GB covers that.
+        env:
+          NEED_GB: "30"
+        run: scripts/package-store-disk-guard.sh
+
       - name: Set up Docker Buildx
         # Use the docker daemon's built-in builder (not a docker-container builder):
         # its BuildKit cache lives in /var/lib/docker — the persistent EBS volume —

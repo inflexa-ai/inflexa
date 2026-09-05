@@ -243,6 +243,13 @@ packages: six workers against a 300-second timeout for 3.5 hours.
     built. The base and recommended packages of R count as loaded when the
     sandbox image loads them, and an R name compares across the three
     subtrees.
+40. The disk guard runs before each build on a self-hosted builder. It
+    removes the containers and the store volumes that no run owns, and every
+    unused image. It prunes the build cache to a cap, and then it measures
+    the free space of the Docker data root. A box below the headroom fails
+    the job in seconds. On 2026-09-05 the amd64 box held 155 GB of retired
+    images, stale cache, and one leaked volume, and the build died on
+    ENOSPC.
 
 ### The image-hygiene decisions (round 12, 2026-08-20)
 

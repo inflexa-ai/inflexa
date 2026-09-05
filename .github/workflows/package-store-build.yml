@@ -5,6 +5,10 @@ name: Build the package store
 # one artifact per architecture, through an ORAS push.
 #
 # The sequence per arch, from the package-store-build spec:
+#   0. disk guard — before any build on a self-hosted builder,
+#      scripts/package-store-disk-guard.sh reclaims what no run owns (stale
+#      store volumes, unused images, the build cache above a cap) and fails
+#      the job in seconds when the Docker data root lacks the headroom.
 #   1. resolve — `provision build` resolves the manifest, with the committed
 #      per-arch lock second (the `npm install` model), and builds the catalog
 #      farm. The updated lock files commit back with a signed-off commit.
@@ -145,6 +149,16 @@ jobs:
         # The store streams out of the volume and compresses with zstd. The
         # runner user has no sudo on the self-hosted builders, so fail loudly.
         run: command -v zstd >/dev/null || { echo "::error::zstd not found on the builder"; exit 1; }
+
+      - name: Disk guard
+        # Docker's data root is a persistent volume, and nothing else on the
+        # box reclaims it. The guard removes what no run owns, prunes the
+        # build cache to a cap, and measures the filesystem. A store build
+        # needs about 40 GB at its peak: the store volume, the two images,
+        # and the provisioner's caches and source builds. 60 keeps a margin.
+        env:
+          NEED_GB: "60"
+        run: scripts/package-store-disk-guard.sh
 
       - name: Prove the python of the coverage gate
         # The coverage step imports yaml AFTER the multi-hour build. A missing
@@ -637,6 +651,9 @@ jobs:
         run: |
           docker rmi "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" 2>/dev/null || true
           docker rmi "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" 2>/dev/null || true
+          # A canceled check leaves its container on the volume, and the
+          # volume cannot go before the container does.
+          docker ps -aq --filter "volume=${STORE_VOLUME}" | xargs -r docker rm -f 2>/dev/null || true
           docker volume rm "$STORE_VOLUME" 2>/dev/null || true
           rm -rf dist lockout load-check.json r-base-loaded.txt current-lock.json
           docker image prune -f 2>/dev/null || true
