@@ -9,14 +9,23 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 
+import { captureMetrics } from "../__tests__/setup/metrics.js";
 // Imported before any provider exists — the order the production barrel has.
-import { __resetReconcileMetricsForTest, recordArtifactReconcileDropped, recordLineageInputDropped } from "./metrics.js";
+import {
+    __resetMetricsForTest,
+    elapsedSinceIso,
+    recordArtifactReconcileDropped,
+    recordLineageInputDropped,
+    recordRunCompleted,
+    recordStepCompleted,
+    stepOutcomeOf,
+} from "./metrics.js";
 
 let exporter: InMemoryMetricExporter;
 let provider: MeterProvider;
 
 beforeEach(() => {
-    __resetReconcileMetricsForTest();
+    __resetMetricsForTest();
     exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
     provider = new MeterProvider({
         readers: [new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 3_600_000 })],
@@ -26,7 +35,7 @@ beforeEach(() => {
 afterEach(async () => {
     await provider.shutdown();
     metrics.disable();
-    __resetReconcileMetricsForTest();
+    __resetMetricsForTest();
 });
 
 async function collect(): Promise<MetricData[]> {
@@ -64,5 +73,41 @@ describe("reconcile metrics", () => {
             { agent_id: "agent-x", reason: "missing" },
             { agent_id: "agent-y", reason: "missing" },
         ]);
+    });
+});
+
+describe("run and step outcome metrics", () => {
+    it("a run and a step outcome each give one count and one duration sample under the bounded labels only", async () => {
+        await provider.shutdown();
+        const capture = captureMetrics();
+        try {
+            recordRunCompleted({ workflow: "analysis", status: "partial", durationMs: 900_000 });
+            // A blocked step is a failure to deliver; a step without a durable duration is counted, not timed.
+            recordStepCompleted({ agentId: "enrichment", status: stepOutcomeOf("blocked")!, durationMs: 3_000 });
+            recordStepCompleted({ agentId: "enrichment", status: "canceled" });
+
+            expect(await capture.sums("cortex.run.completed")).toEqual([[{ status: "partial", workflow: "analysis" }, 1]]);
+            expect(await capture.histograms("cortex.run.duration_ms")).toEqual([
+                [
+                    { status: "partial", workflow: "analysis" },
+                    { count: 1, sum: 900_000 },
+                ],
+            ]);
+            expect(await capture.sums("cortex.step.completed")).toEqual([
+                [{ status: "failed", agent_id: "enrichment" }, 1],
+                [{ status: "canceled", agent_id: "enrichment" }, 1],
+            ]);
+            expect(await capture.histograms("cortex.step.duration_ms")).toEqual([
+                [
+                    { status: "failed", agent_id: "enrichment" },
+                    { count: 1, sum: 3_000 },
+                ],
+            ]);
+            // A ledger with no start gives no duration; a skipped step gives no outcome.
+            expect(elapsedSinceIso(null)).toBeUndefined();
+            expect(stepOutcomeOf("skipped")).toBeUndefined();
+        } finally {
+            await capture.dispose();
+        }
     });
 });

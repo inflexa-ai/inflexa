@@ -52,6 +52,8 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import { setupDbosForTests, type DbosTestRig } from "../../../__tests__/setup/dbos.js";
 import { silentLogger } from "../../../__tests__/setup/logger.js";
+import { captureMetrics } from "../../../__tests__/setup/metrics.js";
+import { recordRunCompleted, recordStepCompleted } from "../../../lib/metrics.js";
 
 // Reopen the registration window if an earlier test file already launched
 // the shared DBOS engine (see "Registration window" above).
@@ -165,6 +167,33 @@ const threeStepMirror = DBOS.registerWorkflow(
         return { a, b, c };
     },
     { name: "three-step-mirror" },
+);
+
+// ── Outcome metrics recorded inside the terminal step ───────────────────
+
+let terminalStepCalls = 0;
+
+/**
+ * Mirror of the placement rule of `lib/metrics.ts`: an outcome metric is
+ * recorded INSIDE the DBOS step that persists the terminal status. The
+ * unconditional self-cancel after it forces a replay through `resumeWorkflow`;
+ * the cached step returns without running its closure, so each counter reads one.
+ */
+const terminalMetricMirror = DBOS.registerWorkflow(
+    async (): Promise<{ terminalCalls: number }> => {
+        await DBOS.runStep(
+            async () => {
+                terminalStepCalls += 1;
+                recordStepCompleted({ agentId: "mirror-agent", status: "completed", durationMs: 1_500 });
+                recordRunCompleted({ workflow: "analysis", status: "completed", durationMs: 30_000 });
+            },
+            { name: "persist-final-status" },
+        );
+        await DBOS.cancelWorkflow(DBOS.workflowID!);
+        await DBOS.runStep(async () => undefined, { name: "post-terminal.tail" });
+        return { terminalCalls: terminalStepCalls };
+    },
+    { name: "terminal-metric-mirror" },
 );
 
 // ── 10.13 — sync attempted after a registration rejection ───────────────
@@ -461,5 +490,39 @@ describe("Integration test 10.13 — per-step sync (registration rejection + ide
 
         const status2 = await DBOS.getWorkflowStatus(wfId);
         expect(status2?.status).toBe("SUCCESS");
+    });
+});
+
+describe("run and step outcome metrics across a DBOS replay", () => {
+    it("a recovered workflow records each outcome once: the terminal step is cached, its closure never re-runs", async () => {
+        const capture = captureMetrics();
+        try {
+            terminalStepCalls = 0;
+            const wfId = rig.nextWorkflowId("metric-replay-");
+            const handle1 = await DBOS.startWorkflow(terminalMetricMirror, { workflowID: wfId })();
+            handle1.getResult().catch(() => {});
+            expect((await waitForTerminal(wfId))?.status).toBe("CANCELLED");
+
+            const result = await (await DBOS.resumeWorkflow<{ terminalCalls: number }>(wfId)).getResult();
+
+            // The body ran twice; the terminal step's closure ran once, and so did each record in it.
+            expect(result.terminalCalls).toBe(1);
+            expect(await capture.sums("cortex.run.completed")).toEqual([[{ status: "completed", workflow: "analysis" }, 1]]);
+            expect(await capture.histograms("cortex.run.duration_ms")).toEqual([
+                [
+                    { status: "completed", workflow: "analysis" },
+                    { count: 1, sum: 30_000 },
+                ],
+            ]);
+            expect(await capture.sums("cortex.step.completed")).toEqual([[{ status: "completed", agent_id: "mirror-agent" }, 1]]);
+            expect(await capture.histograms("cortex.step.duration_ms")).toEqual([
+                [
+                    { status: "completed", agent_id: "mirror-agent" },
+                    { count: 1, sum: 1_500 },
+                ],
+            ]);
+        } finally {
+            await capture.dispose();
+        }
     });
 });

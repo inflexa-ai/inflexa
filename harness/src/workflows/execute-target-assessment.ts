@@ -84,6 +84,7 @@ import { readBudgetExceededMarker } from "./target-assessment/lib/llm-step.js";
 import { assembleSafetyCorroboration } from "./target-assessment/lib/safety-corroboration.js";
 import { investigateClaims, isClaimInvestigationBudgetExceeded, type ClaimInvestigationConfig } from "./target-assessment/investigation/index.js";
 import { recordTerminalReason } from "./target-assessment/metrics.js";
+import { elapsedSinceIso, recordRunCompleted } from "../lib/metrics.js";
 import { phase4Assemble } from "./target-assessment/phase4-assemble.js";
 import { DossierDerivedInvariantError, DossierSchemaViolationError, phase5Persist } from "./target-assessment/phase5-persist.js";
 import { emitProgress, type ProgressPhase } from "./target-assessment/progress.js";
@@ -638,9 +639,23 @@ export async function runExecuteTargetAssessmentBody(
 
     // (§6.1, §6.8) Terminal block. Read the row first; if soft-deleted,
     // no-op (the user's delete during the run wins).
-    const row = await DBOS.runStep(async () => unwrapOrThrow(await getAssessment(deps.pool, input.assessmentId, input.organizationId)), {
-        name: "ta-terminal-read-row",
-    });
+    //
+    // Each terminal path records its `cortex.run.completed` outcome INSIDE the
+    // DBOS step that persists it, so a recovery replay reads the cached step
+    // and records nothing again. The duration runs from the row's `created_at`.
+    // The deleted path writes no row, so its record rides the read step itself.
+    const row = await DBOS.runStep(
+        async () => {
+            const read = unwrapOrThrow(await getAssessment(deps.pool, input.assessmentId, input.organizationId));
+            if (read?.status === "deleted") {
+                recordRunCompleted({ workflow: "target_assessment", status: "canceled", durationMs: elapsedSinceIso(read.createdAt) });
+            }
+            return read;
+        },
+        { name: "ta-terminal-read-row" },
+    );
+    const recordTerminal = (status: "completed" | "failed" | "canceled"): void =>
+        recordRunCompleted({ workflow: "target_assessment", status, durationMs: elapsedSinceIso(row?.createdAt) });
     if (row?.status === "deleted") {
         recordTerminalReason("deleted");
         return {
@@ -653,9 +668,13 @@ export async function runExecuteTargetAssessmentBody(
     // (§6.2) Normal completion — happy path wrote `dossierForPersist`.
     if (!phase0Error && !schemaViolation && !derivedViolation && !unexpectedError && !budgetExceeded && dossierForPersist) {
         try {
-            await DBOS.runStep(async () => unwrapOrThrow(await setDossier(deps.pool, input.assessmentId, dossierForPersist!)), {
-                name: "ta-terminal-completed",
-            });
+            await DBOS.runStep(
+                async () => {
+                    unwrapOrThrow(await setDossier(deps.pool, input.assessmentId, dossierForPersist!));
+                    recordTerminal("completed");
+                },
+                { name: "ta-terminal-completed" },
+            );
             await emitProgress(deps.pool, logger, input.assessmentId, "completed");
         } catch (err) {
             logger.named("ta-terminal").error("setDossier failed", logger.errorFields(err));
@@ -672,13 +691,15 @@ export async function runExecuteTargetAssessmentBody(
     // (§6.3) Phase 0 throw — target unresolved.
     if (phase0Error) {
         await DBOS.runStep(
-            async () =>
+            async () => {
                 unwrapOrThrow(
                     await markFailed(deps.pool, input.assessmentId, {
                         kind: "target-unresolved",
                         message: phase0Error instanceof Error ? phase0Error.message : String(phase0Error),
                     }),
-                ),
+                );
+                recordTerminal("failed");
+            },
             { name: "ta-terminal-failed-resolve" },
         );
         await emitProgress(deps.pool, logger, input.assessmentId, "failed");
@@ -694,14 +715,16 @@ export async function runExecuteTargetAssessmentBody(
     // (§6.4) Schema violation.
     if (schemaViolation) {
         await DBOS.runStep(
-            async () =>
+            async () => {
                 unwrapOrThrow(
                     await markFailed(deps.pool, input.assessmentId, {
                         kind: "schema-invariant-violation",
                         message: schemaViolation!.message,
                         details: schemaViolation!.issues,
                     }),
-                ),
+                );
+                recordTerminal("failed");
+            },
             { name: "ta-terminal-failed-schema" },
         );
         await emitProgress(deps.pool, logger, input.assessmentId, "failed");
@@ -717,13 +740,15 @@ export async function runExecuteTargetAssessmentBody(
     // (§6.4 — derived invariant variant — same terminal class, different kind.)
     if (derivedViolation) {
         await DBOS.runStep(
-            async () =>
+            async () => {
                 unwrapOrThrow(
                     await markFailed(deps.pool, input.assessmentId, {
                         kind: "derived-invariant-violation",
                         message: derivedViolation!.message,
                     }),
-                ),
+                );
+                recordTerminal("failed");
+            },
             { name: "ta-terminal-failed-derived" },
         );
         await emitProgress(deps.pool, logger, input.assessmentId, "failed");
@@ -745,7 +770,14 @@ export async function runExecuteTargetAssessmentBody(
         await DBOS.runStep(() => readBudgetExceededMarker(), {
             name: "ta-terminal-drain-marker",
         }).catch(() => null);
-        await DBOS.runStep(async () => unwrapOrThrow(await markAssessmentSuspended(deps.pool, input.assessmentId)), { name: "ta-terminal-suspended" });
+        await DBOS.runStep(
+            async () => {
+                unwrapOrThrow(await markAssessmentSuspended(deps.pool, input.assessmentId));
+                // A budget pause records as `canceled`, the same status the analysis run ledger gives it.
+                recordTerminal("canceled");
+            },
+            { name: "ta-terminal-suspended" },
+        );
         await emitProgress(deps.pool, logger, input.assessmentId, "suspended");
         await revokeRunAuthorizationSafe(deps, authorization, "target-assessment-canceled");
         const workflowId = DBOS.workflowID;
@@ -770,13 +802,15 @@ export async function runExecuteTargetAssessmentBody(
     // (§6.5) Unexpected throw — bug somewhere, coverage envelope failed.
     if (unexpectedError) {
         await DBOS.runStep(
-            async () =>
+            async () => {
                 unwrapOrThrow(
                     await markFailed(deps.pool, input.assessmentId, {
                         kind: "unexpected-throw",
                         message: unexpectedError instanceof Error ? unexpectedError.message : String(unexpectedError),
                     }),
-                ),
+                );
+                recordTerminal("failed");
+            },
             { name: "ta-terminal-failed-unexpected" },
         );
         await emitProgress(deps.pool, logger, input.assessmentId, "failed");
@@ -793,13 +827,15 @@ export async function runExecuteTargetAssessmentBody(
     // categories above must have fired). Fall through to a generic failed
     // status so a buggy refactor surfaces visibly.
     await DBOS.runStep(
-        async () =>
+        async () => {
             unwrapOrThrow(
                 await markFailed(deps.pool, input.assessmentId, {
                     kind: "unexpected-throw",
                     message: "terminal block reached without classified outcome",
                 }),
-            ),
+            );
+            recordTerminal("failed");
+        },
         { name: "ta-terminal-failed-uncategorized" },
     );
     recordTerminalReason("unexpected-throw");

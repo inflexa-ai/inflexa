@@ -69,6 +69,7 @@ export {
 } from "./data-profile.js";
 export type {
     DataProfileStatus,
+    DataProfileTerminalWrite,
     DataProfileResult,
     DataProfileChecked,
     DataProfileCompanionCompleteness,

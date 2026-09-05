@@ -14,8 +14,12 @@
  *
  * Metrics: MeterProvider exports to OTLP when OTEL_EXPORTER_OTLP_ENDPOINT is
  *          set and OTEL_METRICS_EXPORTER is not `none`. The export interval is
- *          OTEL_METRIC_EXPORT_INTERVAL (ms), default 60 s. Custom Cortex
- *          metrics are defined in metrics.ts.
+ *          OTEL_METRIC_EXPORT_INTERVAL (ms), default 60 s. The run and step
+ *          outcome instruments (`cortex.run.*`, `cortex.step.*`) and the
+ *          reconcile counters are defined in metrics.ts; the agent loop, the
+ *          thread memory, and the workflows hold their own instruments next
+ *          to their record sites. Every instrument binds lazily to the
+ *          provider registered here.
  *
  * Resource: the host's `serviceName` / `serviceVersion` merged with the SDK
  *           env detector (`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`);

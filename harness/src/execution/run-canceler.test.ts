@@ -9,6 +9,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
+import { captureMetrics } from "../__tests__/setup/metrics.js";
 import type { AgentSession } from "../auth/types.js";
 import type { RunCharge } from "../billing/run-charge.js";
 import type { RunAuthorizer } from "./run-authorizer.js";
@@ -297,5 +298,35 @@ describe("createRunCanceler", () => {
         expect(db.state.run?.status).toBe("running");
         expect(db.state.swept).toBe(0);
         expect(closes).toEqual([]);
+    });
+});
+
+describe("createRunCanceler outcome metrics", () => {
+    it("a cancel that wins the row records the run canceled from its ledger start, and each cut child as a canceled step", async () => {
+        const capture = captureMetrics();
+        try {
+            // s1 was cut mid-flight; s2 wrote its own terminal row before the cancel; s3 never started.
+            const steps = [stepRow("s1", "wf-child-1"), stepRow("s2", "wf-child-2", "2026-08-12T00:30:00.000Z"), stepRow("s3", null)];
+            const db = fakeDb(runRow(), [steps]);
+            const { charge } = recordingCharge();
+            const { authorizer } = recordingAuthorizer();
+            const { cancelWorkflows } = recordingCancel();
+            const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows });
+
+            const result = await canceler.cancel("run-1", session);
+
+            expect(result.outcome).toBe("canceled");
+            expect(await capture.sums("cortex.run.completed")).toEqual([[{ status: "canceled", workflow: "analysis" }, 1]]);
+            const [duration] = await capture.histograms("cortex.run.duration_ms");
+            expect(duration?.[0]).toEqual({ status: "canceled", workflow: "analysis" });
+            expect(duration?.[1].count).toBe(1);
+            // Measured from the row's `started_at` (2026-08-12), so it is at least that far in the past.
+            expect(duration?.[1].sum).toBeGreaterThan(Date.now() - Date.parse("2026-08-13T00:00:00.000Z"));
+            // The cut child is counted without a duration; the child with a terminal row is left to itself.
+            expect(await capture.sums("cortex.step.completed")).toEqual([[{ status: "canceled", agent_id: "test-agent" }, 1]]);
+            expect(await capture.histograms("cortex.step.duration_ms")).toEqual([]);
+        } finally {
+            await capture.dispose();
+        }
     });
 });

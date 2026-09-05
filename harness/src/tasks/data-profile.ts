@@ -74,7 +74,9 @@ import {
     tryStartDataProfile,
     upsertArtifacts,
     type DataProfileResult,
+    type DataProfileTerminalWrite,
 } from "../state/index.js";
+import { elapsedSinceIso, recordRunCompleted } from "../lib/metrics.js";
 import { createProfileActivityEmitter, type ProfileActivityEmitter } from "./data-profile-activity.js";
 import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
 // The run literal is declared in `contracts/` — a consumer reads it back off recorded usage, and this
@@ -487,7 +489,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             // catalogue's fit is measured, and a completion that emitted none would make the
             // empty-manifest path invisible to the same monitoring that watches every other.
             logProfileMonitoring(logger, { dimensions: [], probes: [], repairRounds: 0, absorb: "none" });
-            if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId))) logTerminalNoop(logger, analysisId, "completion");
+            settleTerminalWrite(logger, analysisId, unwrapOrThrow(await completeDataProfile(deps.pool, analysisId)), "completed");
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
             // This is a terminal completion like any other, so it reports one — a consumer watching
             // an empty-manifest profile sees it settle rather than seeing the stream simply stop.
@@ -547,7 +549,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             await activity.indexing();
             await indexProfile({ deps, analysisId, session: runSession, record, scan, logger });
             logProfileMonitoring(logger, { resolution, dimensions: [], probes: [], repairRounds: 0, absorb: "none" });
-            if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, record))) logTerminalNoop(logger, analysisId, "completion");
+            settleTerminalWrite(logger, analysisId, unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, record)), "completed");
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
             await activity.complete();
             return;
@@ -574,7 +576,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 repairRounds: 0,
                 absorb: absorb.kind,
             });
-            if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, absorbed))) logTerminalNoop(logger, analysisId, "completion");
+            settleTerminalWrite(logger, analysisId, unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, absorbed)), "completed");
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
             await activity.complete();
             return;
@@ -785,9 +787,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
 
             // 6. Complete — store the FULL profiler finding plus the input signature for
             // staleness detection. The scratch tree is gone; this row is all that survives.
-            if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, profileRecord))) {
-                logTerminalNoop(logger, analysisId, "completion");
-            }
+            settleTerminalWrite(logger, analysisId, unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, profileRecord)), "completed");
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
             // LAST statement of the success path, and that placement is the guarantee that exactly
             // one terminal activity is ever emitted. Everything that could still throw — the ledger
@@ -806,7 +806,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
     } catch (err) {
         logger.error("profile failed", logger.errorFields(err));
         const reason = profileFailureReason(err);
-        if (!unwrapOrThrow(await failDataProfile(deps.pool, analysisId, reason))) logTerminalNoop(logger, analysisId, "failure");
+        settleTerminalWrite(logger, analysisId, unwrapOrThrow(await failDataProfile(deps.pool, analysisId, reason)), "failed");
         await deps.runAuthorizer.revoke(authorization, "data-profile-failed");
         // The same bounded, user-safe line the ledger receives — never the raw error, whose paths and
         // stack frames stay in the log record above. This is the only other terminal emission, so
@@ -823,6 +823,22 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
  */
 function logTerminalNoop(logger: Logger, analysisId: string, write: string): void {
     logger.warn("terminal write skipped: ledger row not running (cleared or expired concurrently)", { analysisId, write });
+}
+
+/**
+ * Settle one terminal write of the profile ledger. A refused stamp is logged
+ * (see `logTerminalNoop`). An accepted stamp records the profile's run outcome:
+ * the CAS admits one write per `running` claim, so this is the exactly-once
+ * point of the transition — a recovery replay of the body finds the row no
+ * longer `running`, and records nothing again. The duration runs from the
+ * `data_profile_started_at` the claim stamped, never from a body-local clock.
+ */
+function settleTerminalWrite(logger: Logger, analysisId: string, write: DataProfileTerminalWrite, status: "completed" | "failed"): void {
+    if (!write.stamped) {
+        logTerminalNoop(logger, analysisId, status === "completed" ? "completion" : "failure");
+        return;
+    }
+    recordRunCompleted({ workflow: "data_profile", status, durationMs: elapsedSinceIso(write.startedAt) });
 }
 
 /**
@@ -1010,12 +1026,15 @@ async function compensateStartFailure(deps: DataProfileTriggerDeps, analysisId: 
     const failed = await failDataProfile(deps.pool, analysisId, profileFailureReason(err));
     if (failed.isErr()) {
         logger.error("failed to mark failed after a start error", { phase, err: failed.error });
-    } else if (!failed.value) {
+    } else if (!failed.value.stamped) {
         // The row this compensation was written to fail is no longer `running` — a
         // concurrent clear/expire already moved it on, so the running-CAS refused the
         // stamp. Nothing wedged at `running`, which is the outcome compensation exists
         // to guarantee; just record the no-op.
         logTerminalNoop(logger, analysisId, "compensation");
+    } else {
+        // A profile that failed at start is a failed profile: its claim opened a run the ledger now closes.
+        recordRunCompleted({ workflow: "data_profile", status: "failed", durationMs: elapsedSinceIso(failed.value.startedAt) });
     }
 }
 

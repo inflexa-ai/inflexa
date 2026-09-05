@@ -33,6 +33,7 @@ import type { TokenUsageRollup } from "@inflexa-ai/harness/contracts/usage.js";
 import type { Pool } from "pg";
 
 import { insertStepExecution, updateStepExecution } from "../state/index.js";
+import { recordStepCompleted } from "../lib/metrics.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -582,6 +583,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                         lastErrorClass: errorClass,
                     }),
                 );
+                recordStepCompleted({ agentId: input.agentId, status: "failed", durationMs });
             },
             {
                 name: errorClass === "lineage_attestation" ? "mark-failed-attestation" : "mark-failed",
@@ -790,6 +792,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                         hitMaxSteps,
                     }),
                 );
+                recordStepCompleted({ agentId: input.agentId, status: "failed", durationMs });
             },
             { name: "mark-blocked" },
         );
@@ -919,7 +922,9 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // (9) teardown — destroy sandbox + clear sandbox_ref.
     await DBOS.runStep(() => deps.sandboxClient.teardown(sandbox), { name: "sandbox.teardown" });
 
-    // (10) mark-terminal + emit.
+    // (10) mark-terminal + emit. The outcome metric is recorded inside the same
+    // step as the ledger row: a replayed body reads the cached step and records
+    // nothing again.
     const durationMs = (await DBOS.now()) - startedAt;
     await DBOS.runStep(
         async () => {
@@ -933,6 +938,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                     hitMaxSteps,
                 }),
             );
+            recordStepCompleted({ agentId: input.agentId, status: "completed", durationMs });
         },
         { name: "mark-complete" },
     );

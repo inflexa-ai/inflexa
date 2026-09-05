@@ -419,8 +419,8 @@ describe("terminal writes CAS on running — a cleared row is never resurrected"
     it("completeDataProfile no-ops after a clear and leaves the row cleared", async () => {
         await runningThenExpiredThenCleared("a-complete-after-clear");
 
-        const stamped = (await completeDataProfile(pool, "a-complete-after-clear", SAMPLE_RESULT))._unsafeUnwrap();
-        expect(stamped).toBe(false);
+        const write = (await completeDataProfile(pool, "a-complete-after-clear", SAMPLE_RESULT))._unsafeUnwrap();
+        expect(write).toEqual({ stamped: false });
 
         // Reads back as "no profile"; nothing resurrected — status, result, and seed all NULL.
         expect((await loadDataProfileStatus(pool, "a-complete-after-clear"))._unsafeUnwrap()).toBeNull();
@@ -436,8 +436,8 @@ describe("terminal writes CAS on running — a cleared row is never resurrected"
     it("failDataProfile no-ops after a clear and leaves the row cleared", async () => {
         await runningThenExpiredThenCleared("a-fail-after-clear");
 
-        const stamped = (await failDataProfile(pool, "a-fail-after-clear", "sandbox crashed"))._unsafeUnwrap();
-        expect(stamped).toBe(false);
+        const write = (await failDataProfile(pool, "a-fail-after-clear", "sandbox crashed"))._unsafeUnwrap();
+        expect(write).toEqual({ stamped: false });
 
         expect((await loadDataProfileStatus(pool, "a-fail-after-clear"))._unsafeUnwrap()).toBeNull();
         expect(await rawStatus(pool, "a-fail-after-clear")).toBeNull();
@@ -447,8 +447,10 @@ describe("terminal writes CAS on running — a cleared row is never resurrected"
         await seedAnalysis(pool, "a-complete-running", "pending");
         (await tryStartDataProfile(pool, "a-complete-running"))._unsafeUnwrap();
 
-        const stamped = (await completeDataProfile(pool, "a-complete-running", SAMPLE_RESULT))._unsafeUnwrap();
-        expect(stamped).toBe(true);
+        const write = (await completeDataProfile(pool, "a-complete-running", SAMPLE_RESULT))._unsafeUnwrap();
+        expect(write.stamped).toBe(true);
+        // The accepted stamp carries the start of the claim it closed.
+        expect(write.stamped && write.startedAt).toBe((await loadDataProfileStatus(pool, "a-complete-running"))._unsafeUnwrap()?.startedAt ?? null);
 
         const status = (await loadDataProfileStatus(pool, "a-complete-running"))._unsafeUnwrap();
         expect(status?.status).toBe("completed");
@@ -459,8 +461,9 @@ describe("terminal writes CAS on running — a cleared row is never resurrected"
         await seedAnalysis(pool, "a-fail-running", "pending");
         (await tryStartDataProfile(pool, "a-fail-running"))._unsafeUnwrap();
 
-        const stamped = (await failDataProfile(pool, "a-fail-running", "boom"))._unsafeUnwrap();
-        expect(stamped).toBe(true);
+        const write = (await failDataProfile(pool, "a-fail-running", "boom"))._unsafeUnwrap();
+        expect(write.stamped).toBe(true);
+        expect(write.stamped && write.startedAt).toBe((await loadDataProfileStatus(pool, "a-fail-running"))._unsafeUnwrap()?.startedAt ?? null);
 
         const status = (await loadDataProfileStatus(pool, "a-fail-running"))._unsafeUnwrap();
         expect(status?.status).toBe("failed");
@@ -547,7 +550,7 @@ describe("the persisted profile record", () => {
     it("a rich profile round-trips every field through the jsonb column", async () => {
         await seedAnalysis(pool, "a-rich", "pending");
         (await tryStartDataProfile(pool, "a-rich"))._unsafeUnwrap();
-        expect((await completeDataProfile(pool, "a-rich", RICH_RESULT))._unsafeUnwrap()).toBe(true);
+        expect((await completeDataProfile(pool, "a-rich", RICH_RESULT))._unsafeUnwrap().stamped).toBe(true);
 
         const status = (await loadDataProfileStatus(pool, "a-rich"))._unsafeUnwrap();
         expect(status?.status).toBe("completed");

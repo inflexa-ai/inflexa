@@ -51,7 +51,10 @@
  *  5. `synthesizeFindings` (single sequential block, no sandbox)
  *  6. `collectAndComplete` (terminal — runs on ALL paths)
  *     - determine final status from completed/cancelled/failed counts
- *     - update `cortex_runs.status` + `error`
+ *     - update `cortex_runs.status` + `error`, and inside that same step record
+ *       the run outcome metric plus the outcome of every settled step whose
+ *       child never wrote its own terminal row (a cancelled child, or one that
+ *       died before `failStep`)
  *     - close running charge with matching reason
  *     - revoke run authorization via the injected `runAuthorizer` seam
  *     - emit terminal stream part
@@ -71,6 +74,7 @@ import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorize
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { ATTR_INFLEXA_STEP_ID, stableSpan } from "../lib/otel-spans.js";
+import { recordRunCompleted, recordStepCompleted, stepOutcomeOf } from "../lib/metrics.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -81,6 +85,7 @@ import {
     loadDataProfileStatus,
     queryActiveRun,
     queryStepArtifactPaths,
+    queryStepsByRun,
     seedStepExecutions,
     setRunSynthesisOutcome,
     suspendAnalysis as suspendAnalysisQuery,
@@ -88,7 +93,7 @@ import {
     updateRunStatus,
     updateStepExecution,
 } from "../state/index.js";
-import type { SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
+import type { StepExecutionRow, SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
 import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
@@ -837,11 +842,14 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         const rowOutcome = synthesisOutcome;
         try {
             const synthEndedAtMs = await DBOS.now();
+            const rowUpdate = synthesisRowUpdate(rowOutcome, synthEndedAtMs - synthStartedAtMs);
             await DBOS.runStep(
                 async () => {
-                    unwrapOrThrow(
-                        await updateStepExecution(deps.pool, runId, SYNTHESIS_STEP_ID, synthesisRowUpdate(rowOutcome, synthEndedAtMs - synthStartedAtMs)),
-                    );
+                    unwrapOrThrow(await updateStepExecution(deps.pool, runId, SYNTHESIS_STEP_ID, rowUpdate));
+                    // Recorded inside the step that writes the row, so a replayed body records nothing again.
+                    const outcome = stepOutcomeOf(rowUpdate.status);
+                    if (outcome !== undefined)
+                        recordStepCompleted({ agentId: SYNTHESIS_AGENT_ID, status: outcome, durationMs: synthEndedAtMs - synthStartedAtMs });
                 },
                 { name: "persist-synthesis-step" },
             );
@@ -1447,6 +1455,24 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                 unwrapOrThrow(
                     await updateRunStatus(deps.pool, runId, status, failureReason ?? (status === "canceled" && !budgetExceeded ? "external_cancel" : null)),
                 );
+                // The outcome metrics ride inside the step that persists the terminal status: DBOS
+                // caches the step, so a recovered body records nothing again. A step's own terminal
+                // row already carried its metric; the residue counted here is every settled step
+                // without one — a child the cancel cut before `mark-canceled` (the cancel check runs
+                // before a step body), or one that died before `failStep`. The ledger read is kept
+                // apart from the status write: a failed read costs the metrics, never the write.
+                let stepRows: readonly StepExecutionRow[] = [];
+                try {
+                    stepRows = unwrapOrThrow(await queryStepsByRun(deps.pool, runId));
+                } catch (err) {
+                    logger.warn("run metrics: step ledger read failed, residual step outcomes skipped", logger.errorFields(err));
+                }
+                for (const row of stepRows) {
+                    if (row.completedAt !== null) continue;
+                    if (canceled.has(row.stepId)) recordStepCompleted({ agentId: row.agentId, status: "canceled" });
+                    else if (failed.has(row.stepId)) recordStepCompleted({ agentId: row.agentId, status: "failed" });
+                }
+                recordRunCompleted({ workflow: "analysis", status, durationMs: terminalAtMs - startedAtMs });
             },
             { name: "persist-final-status" },
         );

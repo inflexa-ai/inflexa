@@ -41,6 +41,7 @@ import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
 import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
+import { captureMetrics } from "../__tests__/setup/metrics.js";
 
 // ── Fake DBOS surface ────────────────────────────────────────────────
 
@@ -1729,5 +1730,55 @@ describe("executeAnalysis run observation", () => {
         const once = fold(seen);
         const twice = fold([...seen, ...seen]);
         expect(twice).toEqual(once!);
+    });
+});
+
+// ── Run and step outcome metrics at the terminal step ────────────────
+
+describe("run and step outcome metrics", () => {
+    /** One `cortex_step_executions` row, cut down to the columns `queryStepsByRun` maps and the residue rule reads. */
+    const ledgerRow = (stepId: string, completedAt: string | null, status = completedAt === null ? "running" : "completed"): Record<string, unknown> => ({
+        run_id: "run-test",
+        step_id: stepId,
+        analysis_id: "a1",
+        wave: 0,
+        agent_id: "agent-x",
+        status,
+        completed_at: completedAt,
+        child_workflow_id: status === "pending" ? null : `run-test-${stepId}`,
+    });
+
+    // The one branch of `persist-final-status` a replay test cannot reach: which settled steps the
+    // parent counts. A child that wrote its terminal row (completed_at set) already recorded itself.
+    it("persist-final-status counts the run once, and only the settled steps whose child wrote no terminal row", async () => {
+        const capture = captureMetrics();
+        try {
+            // A completed and wrote its row. B failed and C was cancelled before either child reached its
+            // terminal step, so their rows carry no completed_at. D never dispatched.
+            const pool = makeFakePool({
+                SELECT: [ledgerRow("A", "2026-09-05T10:05:00.000Z"), ledgerRow("B", null), ledgerRow("C", null), ledgerRow("D", null, "pending")],
+            });
+            const { deps } = makeDeps({
+                pool,
+                childResults: new Map<string, SandboxStepResult | Error>([
+                    ["A", { status: "complete", durationMs: 5, finishReason: "stop", error: null }],
+                    ["B", new Error("sandbox create failed")],
+                    ["C", { status: "canceled", durationMs: 3, finishReason: null, error: null }],
+                ]),
+            });
+
+            const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }, { id: "C" }, { id: "D", depends_on: ["B"] }]), deps);
+
+            expect(result.status).toBe("partial");
+            expect(await capture.sums("cortex.run.completed")).toEqual([[{ status: "partial", workflow: "analysis" }, 1]]);
+            expect(await capture.sums("cortex.step.completed")).toEqual([
+                [{ status: "failed", agent_id: "agent-x" }, 1],
+                [{ status: "canceled", agent_id: "agent-x" }, 1],
+            ]);
+            // A residual step settled without a durable duration: counted, not timed.
+            expect(await capture.histograms("cortex.step.duration_ms")).toEqual([]);
+        } finally {
+            await capture.dispose();
+        }
     });
 });

@@ -24,9 +24,10 @@ import type { AgentSession } from "../auth/types.js";
 import type { RunCharge } from "../billing/run-charge.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { elapsedSinceIso, recordRunCompleted, recordStepCompleted } from "../lib/metrics.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { markRunCanceledIfActive, queryRun } from "../state/runs.js";
-import type { RunStatus } from "../state/schema.js";
+import type { RunStatus, StepExecutionRow } from "../state/schema.js";
 import { queryStepsByRun, sweepPendingStepExecutions } from "../state/step-executions.js";
 import { createDbosWorkflowPurger } from "./dbos-workflow-purger.js";
 import type { RunAuthorizer } from "./run-authorizer.js";
@@ -101,11 +102,10 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
         await engineCancel(workflowIds);
     };
 
-    /** Persisted child workflow ids of steps not yet completed. */
-    const incompleteChildIds = async (runId: string): Promise<string[]> =>
-        unwrapOrThrow(await queryStepsByRun(pool, runId)).flatMap((step) =>
-            step.childWorkflowId !== null && step.completedAt === null ? [step.childWorkflowId] : [],
-        );
+    /** Steps whose child started (a persisted child workflow id) and has not written its terminal row. */
+    const incompleteSteps = async (runId: string): Promise<StepExecutionRow[]> =>
+        unwrapOrThrow(await queryStepsByRun(pool, runId)).filter((step) => step.childWorkflowId !== null && step.completedAt === null);
+    const childIds = (steps: readonly StepExecutionRow[]): string[] => steps.flatMap((step) => (step.childWorkflowId !== null ? [step.childWorkflowId] : []));
 
     return {
         async cancel(runId, session) {
@@ -128,10 +128,14 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
             // mark-running step has not yet committed its child_workflow_id. The
             // persisted ids and the post-cancel re-query are belt-and-braces over
             // both ledgers' lag.
-            const knownChildren = await incompleteChildIds(runId);
+            const knownChildren = childIds(await incompleteSteps(runId));
             await cancelWorkflows([workflowId, ...knownChildren]);
+            // The steps the cancel cut: read after the cancel landed, so a child that
+            // wrote its terminal row in the meantime is not among them.
+            let cutSteps: StepExecutionRow[] | undefined;
             try {
-                const late = (await incompleteChildIds(runId)).filter((id) => !knownChildren.includes(id));
+                cutSteps = await incompleteSteps(runId);
+                const late = childIds(cutSteps).filter((id) => !knownChildren.includes(id));
                 if (late.length > 0) await cancelWorkflows(late);
             } catch (err) {
                 logger.error("late-child cancel sweep failed", { runId, ...logger.errorFields(err) });
@@ -143,6 +147,15 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
                 transitioned = unwrapOrThrow(await markRunCanceledIfActive(pool, runId, EXTERNAL_CANCEL_REASON));
             } catch (err) {
                 logger.error("markRunCanceledIfActive failed", { runId, ...logger.errorFields(err) });
+            }
+            // The workflow's own terminal step never runs after a cancel, so this
+            // conditional write is the one terminal write of an external cancel, and
+            // the outcome metrics ride behind it: a refused write means the run
+            // settled on its own and its own terminal step recorded them. A cut
+            // child never reached its terminal row, so its step records here too.
+            if (transitioned) {
+                recordRunCompleted({ workflow: "analysis", status: "canceled", durationMs: elapsedSinceIso(row.startedAt) });
+                for (const step of cutSteps ?? []) recordStepCompleted({ agentId: step.agentId, status: "canceled" });
             }
 
             let steps = false;

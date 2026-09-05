@@ -14,7 +14,7 @@ import { metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
-import { __resetReconcileMetricsForTest } from "../lib/metrics.js";
+import { __resetMetricsForTest } from "../lib/metrics.js";
 import { ProvenanceCollector } from "../provenance/collector.js";
 import { feedExecFrame } from "../provenance/exec-frame.js";
 import { reconcileManifestWithDisk } from "./reconcile-manifest.js";
@@ -621,7 +621,7 @@ describe("reconcileManifestWithDisk — metric labels", () => {
             readers: [new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 3_600_000 })],
         });
         metrics.setGlobalMeterProvider(provider);
-        __resetReconcileMetricsForTest();
+        __resetMetricsForTest();
 
         // A phantom manifest entry (never written) drops one manifest entry, and
         // the absent upstream input drops one lineage input with reason `missing`.
@@ -652,7 +652,7 @@ describe("reconcileManifestWithDisk — metric labels", () => {
             await rm(sessionPath, { recursive: true, force: true });
             await provider.shutdown();
             metrics.disable();
-            __resetReconcileMetricsForTest();
+            __resetMetricsForTest();
         }
     });
 });
