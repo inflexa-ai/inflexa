@@ -57,6 +57,7 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
+import { ATTR_INFLEXA_ATTEMPT, ATTR_INFLEXA_EXEC_ID, stableSpan } from "../lib/otel-spans.js";
 import { digestBody } from "./digest.js";
 import { signCallback, verifyCallback } from "./hmac.js";
 import { createEscalationPolicy, probeLiveness, syntheticFailureReason, syntheticFailureResult } from "./liveness.js";
@@ -269,9 +270,14 @@ export async function awaitExecCallback(
     /** Ask the sandbox directly. Returns null when the exec has not finished. */
     const pull = async (): Promise<ExecResult | null> => {
         pullAttempt += 1;
-        const pulled = await runStep(() => pullExecResult(fetchImpl, ref, execId), {
-            name: `sandbox.pull-exec-result.${execId}.${pullAttempt}`,
-        });
+        const pullStepName = `sandbox.pull-exec-result.${execId}.${pullAttempt}`;
+        const pulled = await runStep(
+            () => {
+                stableSpan(pullStepName, "sandbox.pull-exec-result", { [ATTR_INFLEXA_EXEC_ID]: execId, [ATTR_INFLEXA_ATTEMPT]: pullAttempt });
+                return pullExecResult(fetchImpl, ref, execId);
+            },
+            { name: pullStepName },
+        );
         if (pulled.kind !== "completed") return null;
 
         // Identical treatment to a pushed completion: the bytes were signed by
@@ -447,9 +453,14 @@ export async function awaitExecPoll(ref: SandboxRef, execId: string, emit: ExecE
 
     while (true) {
         pollAttempt += 1;
-        const polled = await runStep(() => pollExecOnce(fetchImpl, ref, execId, cursor), {
-            name: `sandbox.poll-exec-result.${execId}.${pollAttempt}`,
-        });
+        const pollStepName = `sandbox.poll-exec-result.${execId}.${pollAttempt}`;
+        const polled = await runStep(
+            () => {
+                stableSpan(pollStepName, "sandbox.poll-exec-result", { [ATTR_INFLEXA_EXEC_ID]: execId, [ATTR_INFLEXA_ATTEMPT]: pollAttempt });
+                return pollExecOnce(fetchImpl, ref, execId, cursor);
+            },
+            { name: pollStepName },
+        );
 
         if (polled.kind === "ok") {
             // Identical treatment to a pushed completion: the bytes were signed by
@@ -494,9 +505,14 @@ export async function awaitExecPoll(ref: SandboxRef, execId: string, emit: ExecE
 
         if (isAlive && escalation.onPoll(polled.kind === "ok" ? "ok" : "unavailable")) {
             probeAttempt += 1;
-            const verdict = await runStep(() => probeLiveness(isAlive, ref), {
-                name: `sandbox.probe-liveness.${execId}.${probeAttempt}`,
-            });
+            const probeStepName = `sandbox.probe-liveness.${execId}.${probeAttempt}`;
+            const verdict = await runStep(
+                () => {
+                    stableSpan(probeStepName, "sandbox.probe-liveness", { [ATTR_INFLEXA_EXEC_ID]: execId, [ATTR_INFLEXA_ATTEMPT]: probeAttempt });
+                    return probeLiveness(isAlive, ref);
+                },
+                { name: probeStepName },
+            );
             // Only an observably dead machine fails the exec — the result lives
             // in that machine and nowhere else, so it is unrecoverable and the
             // synthetic failure races nothing. `alive` (live-but-slow exec,

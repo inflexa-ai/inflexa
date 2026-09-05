@@ -25,12 +25,14 @@ import type { Pool } from "pg";
 
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { untracedWorkflow } from "../lib/otel-spans.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { reconcileReapedSandbox } from "../state/active-sandboxes.js";
 import type { SandboxClient } from "./client.js";
 import type { ManagedSandbox } from "./types.js";
 
 const REAPER_CRON = "0 */5 * * * *";
+const REAPER_WORKFLOW = "sandbox-reaper";
 const DEFAULT_GRACE_MS = 10 * 60_000;
 
 /**
@@ -207,11 +209,12 @@ export function registerSandboxReaper(deps: RegisterReaperDeps): void {
                 { name: "sandbox-reaper-sweep" },
             );
         },
-        { name: "sandbox-reaper" },
+        { name: REAPER_WORKFLOW },
     );
+    untracedWorkflow(REAPER_WORKFLOW);
 
     DBOS.registerScheduled(reaper, {
-        name: "sandbox-reaper",
+        name: REAPER_WORKFLOW,
         crontab: REAPER_CRON,
     });
 }

@@ -70,6 +70,7 @@ import type { RunSession } from "../auth/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { ATTR_INFLEXA_STEP_ID, stableSpan } from "../lib/otel-spans.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -1148,7 +1149,14 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             // `completed`, so this is the first (and only) moment their results
             // can be named. Checkpointed so a replay re-dispatches the child
             // with a byte-identical prompt instead of re-reading the DB/disk.
-            const prompt = await DBOS.runStep(() => composeStepSeed({ input, stepId, runId, deps }), { name: `compose-step-seed:${stepId}` });
+            const seedStepName = `compose-step-seed:${stepId}`;
+            const prompt = await DBOS.runStep(
+                () => {
+                    stableSpan(seedStepName, "compose-step-seed", { [ATTR_INFLEXA_STEP_ID]: stepId });
+                    return composeStepSeed({ input, stepId, runId, deps });
+                },
+                { name: seedStepName },
+            );
             const baseChildInput = buildChildInput({
                 input,
                 stepId,

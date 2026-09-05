@@ -22,8 +22,10 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { untracedWorkflow } from "../lib/otel-spans.js";
 
 const SWEEP_CRON = "0 */5 * * * *";
+const SWEEP_WORKFLOW = "dbos-notifications-sweep";
 const DELETE_BATCH_LIMIT = 10_000;
 
 export interface SweepDeps {
@@ -93,10 +95,11 @@ export function registerNotificationSweep(deps: RegisterNotificationSweepDeps): 
         async () => {
             await sweepStaleNotifications({ deleteStale, logger: deps.logger });
         },
-        { name: "dbos-notifications-sweep" },
+        { name: SWEEP_WORKFLOW },
     );
+    untracedWorkflow(SWEEP_WORKFLOW);
     DBOS.registerScheduled(sweep, {
-        name: "dbos-notifications-sweep",
+        name: SWEEP_WORKFLOW,
         crontab: SWEEP_CRON,
     });
 }

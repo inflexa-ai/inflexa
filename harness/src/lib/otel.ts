@@ -5,7 +5,12 @@
  * so the bundler cannot tree-shake it (side-effect-only imports get dropped).
  *
  * Traces: NodeTracerProvider exports to OTLP when OTEL_EXPORTER_OTLP_ENDPOINT
- *         is set.
+ *         is set. The provider carries the span policy of otel-spans.ts: the
+ *         root span of a workflow declared with `untracedWorkflow` is not
+ *         recorded (and its children with it), a replayed `cached=true` span
+ *         is dropped before export, and a step body that calls `stableSpan`
+ *         is exported under a stable name with its id in an `inflexa.*`
+ *         attribute.
  *
  * Metrics: MeterProvider exports to OTLP when OTEL_EXPORTER_OTLP_ENDPOINT is
  *          set and OTEL_METRICS_EXPORTER is not `none`. The export interval is
@@ -28,6 +33,7 @@ import { context, propagation, metrics, trace } from "@opentelemetry/api";
 
 import { createNoopLogger } from "./console-logger.js";
 import type { Logger } from "./logger.js";
+import { createHarnessSampler, DbosSpanProcessor } from "./otel-spans.js";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
@@ -110,11 +116,12 @@ export function initOtel(options: InitOtelOptions = {}): void {
 
         if (endpoint) {
             const base = endpoint.replace(/\/+$/, "");
-            spanProcessors.push(new BatchSpanProcessor(new OTLPTraceExporter({ url: `${base}/v1/traces` })));
+            spanProcessors.push(new DbosSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter({ url: `${base}/v1/traces` }))));
         }
 
         const tracerProvider = new NodeTracerProvider({
             resource,
+            sampler: createHarnessSampler(),
             spanProcessors,
         });
         tracerProvider.register();

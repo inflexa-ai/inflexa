@@ -59,13 +59,14 @@ export interface DbosConfig {
      * Attribute names follow the `dbos.*` semantic-convention layout
      * (`otelAttributeFormat: "semconv"`).
      *
-     * Known SDK behavior a host must plan for:
-     * - a recovered workflow starts a new root trace, with no link to the trace
-     *   of the original execution
-     * - every already-completed step re-emits a `cached=true` span on replay,
-     *   so a restart with many in-flight steps bursts spans; size
-     *   `OTEL_BSP_MAX_QUEUE_SIZE` for it
-     * - step span names embed the step, tool-use, or exec id
+     * The harness TracerProvider shapes what the SDK emits (`lib/otel-spans.ts`):
+     * a workflow declared with `untracedWorkflow` is not recorded, a replayed
+     * `cached=true` span is dropped before export, and a step body that calls
+     * `stableSpan` is exported under a stable name with its id in an
+     * `inflexa.*` attribute. The step name DBOS records is unchanged.
+     *
+     * Known SDK behavior a host must plan for: a recovered workflow starts a
+     * new root trace, with no link to the trace of the original execution.
      */
     readonly tracingEnabled?: boolean;
 }

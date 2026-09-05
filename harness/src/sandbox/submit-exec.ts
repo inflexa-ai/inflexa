@@ -19,6 +19,7 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
+import { ATTR_INFLEXA_EXEC_ID, stableSpan } from "../lib/otel-spans.js";
 import { EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
 import { signCallback } from "./hmac.js";
 import type { SandboxRef, SubmitExecBody } from "./types.js";
@@ -91,7 +92,12 @@ export async function submitExec(ref: SandboxRef, body: SubmitExecBody, deps: Su
         stderrByteCap: body.stderrByteCap ?? deps.execStreamByteCap ?? EXEC_STREAM_BYTE_CAP,
     };
 
-    await runStep(() => postExec(fetchImpl, ref, capped), {
-        name: `sandbox.submit-exec.${body.execId}`,
-    });
+    const stepName = `sandbox.submit-exec.${body.execId}`;
+    await runStep(
+        () => {
+            stableSpan(stepName, "sandbox.submit-exec", { [ATTR_INFLEXA_EXEC_ID]: body.execId });
+            return postExec(fetchImpl, ref, capped);
+        },
+        { name: stepName },
+    );
 }

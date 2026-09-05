@@ -22,6 +22,7 @@ import {
     metricExportIntervalMs,
     metricsExportDisabled,
 } from "./otel.js";
+import { untracedWorkflow } from "./otel-spans.js";
 
 let collector: Server;
 let endpoint: string;
@@ -148,5 +149,17 @@ describe("initOtel", () => {
         initOtel();
         expect(registeredResourceAttributes()).toMatchObject({ "service.name": "cortex" });
         expect(registeredResourceAttributes()).not.toHaveProperty("service.version");
+    });
+
+    it("installs the span policy: an untraced workflow root is not recorded, every other root is", () => {
+        untracedWorkflow("otel-test-untraced");
+        initOtel();
+        const tracer = trace.getTracer("otel-test");
+        const cleanup = tracer.startSpan("otel-test-untraced");
+        const run = tracer.startSpan("executeAnalysis");
+        expect(cleanup.isRecording()).toBe(false);
+        expect(run.isRecording()).toBe(true);
+        cleanup.end();
+        run.end();
     });
 });

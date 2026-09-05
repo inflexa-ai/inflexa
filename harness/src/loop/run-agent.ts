@@ -19,6 +19,7 @@ import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { ATTR_INFLEXA_TOOL_USE_ID, stableSpan } from "../lib/otel-spans.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
@@ -218,7 +219,13 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         session,
         signal,
         emit,
-        runStep: (name, fn) => runStep(`${formatStepName.tool(tu.toolName, tu.toolCallId)}:${name}`, fn),
+        runStep: (name, fn) => {
+            const stepName = `${formatStepName.tool(tu.toolName, tu.toolCallId)}:${name}`;
+            return runStep(stepName, () => {
+                stableSpan(stepName, `tool:${tu.toolName}:${name}`, { [ATTR_INFLEXA_TOOL_USE_ID]: tu.toolCallId });
+                return fn();
+            });
+        },
         ask,
         turnUsage,
     });
@@ -770,14 +777,16 @@ async function dispatchTools(
     await Promise.all(
         stepTools.map(({ tu, idx }) => {
             const startedAt = performance.now();
-            return runStep(toolStepName(tu.toolName, tu.toolCallId), () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding)).then(
-                (settled: DispatchedCall | ToolResultPart) => {
-                    durations[idx] = elapsedMs(startedAt);
-                    const dispatched = readDispatchedStep(settled);
-                    results[idx] = dispatched.result;
-                    if (dispatched.detail !== undefined) resultDetails[idx] = dispatched.detail;
-                },
-            );
+            const stepName = toolStepName(tu.toolName, tu.toolCallId);
+            return runStep(stepName, () => {
+                stableSpan(stepName, `tool:${tu.toolName}`, { [ATTR_INFLEXA_TOOL_USE_ID]: tu.toolCallId });
+                return dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding);
+            }).then((settled: DispatchedCall | ToolResultPart) => {
+                durations[idx] = elapsedMs(startedAt);
+                const dispatched = readDispatchedStep(settled);
+                results[idx] = dispatched.result;
+                if (dispatched.detail !== undefined) resultDetails[idx] = dispatched.detail;
+            });
         }),
     );
 

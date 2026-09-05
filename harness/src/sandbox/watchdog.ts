@@ -25,6 +25,7 @@ import type { ResultAsync } from "neverthrow";
 
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { untracedWorkflow } from "../lib/otel-spans.js";
 import type { DbError } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { ActiveSandboxRow } from "../state/index.js";
@@ -35,6 +36,8 @@ import type { ExecEventMessage, ExecResult, SandboxLiveness, SandboxRef } from "
 
 export const SHARD_COUNT = 8;
 const WATCHDOG_CRON = "*/60 * * * * *";
+const WATCHDOG_PARENT_WORKFLOW = "sandbox-watchdog-parent";
+const WATCHDOG_SHARD_WORKFLOW = "sandbox-watchdog-shard";
 
 /** Stable hash → shard mapping, exported for tests. */
 export function shardIndex(sandboxId: string, shardCount = SHARD_COUNT): number {
@@ -178,8 +181,9 @@ export function registerWatchdog(deps: WatchdogDeps): void {
                 logger: deps.logger,
             });
         },
-        { name: "sandbox-watchdog-shard" },
+        { name: WATCHDOG_SHARD_WORKFLOW },
     );
+    untracedWorkflow(WATCHDOG_SHARD_WORKFLOW);
 
     // The scheduled target must itself be a registered workflow — DBOS's
     // scheduler loop skips (and errors on) any `@scheduled` function that lacks
@@ -197,11 +201,12 @@ export function registerWatchdog(deps: WatchdogDeps): void {
                 await DBOS.startWorkflow(childCheckShard)(shard);
             }
         },
-        { name: "sandbox-watchdog-parent" },
+        { name: WATCHDOG_PARENT_WORKFLOW },
     );
+    untracedWorkflow(WATCHDOG_PARENT_WORKFLOW);
 
     DBOS.registerScheduled(watchdogParent, {
-        name: "sandbox-watchdog-parent",
+        name: WATCHDOG_PARENT_WORKFLOW,
         crontab: WATCHDOG_CRON,
     });
 }
