@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 5,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly matches an unpaired, single-batch, 6v6 raw-count design to DESeq2/edgeR negative binomial modeling, and its handling of sample_01 is the strongest part: library sizes ranked, PCA/clustering position, detection rate, and an explicit criterion-based retain/flag/exclude decision with a Cook's distance or leave-one-out sensitivity check. Normalization is properly inside the model with median-of-ratios or TMM explicitly preferred over naive total-count scaling. Weaknesses: the low-count filter is only gestured at as 'standard independent filtering' with no stated criterion; the design formula and reference level are never written out (only 'single covariate = condition'); and BH at FDR 0.05 is stated but no lfcShrink/apeglm shrinkage is requested for the reported effect sizes. Enrichment correctly uses fgsea-style preranked GSEA on the full list with the ranking metric named and Hallmark specified, but omits the set-size window, the collection version, and an explicit tested-gene universe for the ORA; the report likewise omits package and MSigDB versions and the count of tested genes."
+}

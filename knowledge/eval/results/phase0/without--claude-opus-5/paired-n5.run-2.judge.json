@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the complete 5x2 paired design and blocks on subject with ~ subject + condition, with the control level set as reference and the treated-vs-control Wald contrast made explicit; it also handles the 'within each subject' phrasing honestly by stating that a single pair carries no replication and offering per-subject deltas plus leave-one-subject-out stability as a diagnostic rather than an inferential test. QC precedes modelling (library sizes, detected genes, PCA/MDS annotated by both condition and subject, correlation heatmap) with a stated no-silent-drop policy, and the low-count filter (filterByExpr or >=10 counts in >=5 samples, with retained-gene reporting) is minimal and justified. Normalization is handled through raw counts into DESeq2/edgeR with CPM/VST reserved for visualization, though the plan never explicitly names size factors or TMM as being estimated inside the model. BH at 0.05 and 0.10 with apeglm/ashr shrinkage and an explicit refusal to loosen thresholds is exemplary; enrichment sensibly prefers rank-based GSEA with a stated ranking metric and the retained-gene background for ORA, but omits collection version and gene-set size window. Reporting covers design, thresholds, significant-gene tallies including zero, and design caveats, but records only which package was used rather than versions."
+}

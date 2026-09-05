@@ -1,0 +1,216 @@
+id: tpl-limma-voom-qw
+version: 1.0.0
+label: "limma-voom with sample quality weights for a two-group design with an outlier sample"
+language: R
+method: M-0023
+step_types: [filter_low_counts, normalize, model_design, differential_expression, multiple_testing]
+edam_operations: [EDAM:operation_3223]
+citations: [S-0004, S-0006, S-0007, S-0008, S-0019, S-0022, S-0041, S-0046, S-0067, S-0083]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates]
+  min_replicates: 3
+  conditions:
+    - field: quality_flags
+      op: contains
+      value: [outlier_sample]
+    - field: paired
+      op: eq
+      value: false
+    - field: interaction
+      op: is_null
+    - field: n_timepoints
+      op: is_null
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample.
+    One sample is flagged as an outlier. The script keeps the sample and
+    estimates a weight per sample with voomWithQualityWeights, thus a poor
+    sample gets a small weight instead of removal. The condition column is
+    renamed to `condition` inside the script, thus the design formula names
+    `condition` and any other column of the sample table by its own name.
+    The smallest group must hold three or more samples, because the sample
+    weights come from the residuals of the fit. One contrast: test level
+    against reference level. The sample weights go to output/sample_weights.csv
+    and to a bar plot, thus the reader sees which sample lost weight.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the denominator of the fold change, for example Control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The level of the condition that is the numerator of the fold change, for example Treated."
+    adaptable: true
+  - name: design
+    type: formula
+    description: "The design formula. It must end with condition. Put a balanced batch or a covariate before it, for example ~ batch + condition."
+    adaptable: true
+    default: "~ condition"
+    default_source: "doi:10.12688/f1000research.9005.3"
+    pattern: "condition\\s*$"
+  - name: min_count
+    type: integer
+    description: "The min.count of filterByExpr: a gene stays when it has at least this many counts, on the CPM scale of the median library, in the smallest group."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 0
+  - name: min_total_count
+    type: integer
+    description: "The min.total.count of filterByExpr: a gene also needs at least this many counts over all samples."
+    adaptable: true
+    default: 15
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 0
+  - name: normalization_method
+    type: string
+    description: "The library size scaling method of calcNormFactors."
+    adaptable: true
+    default: TMM
+    default_source: "doi:10.12688/f1000research.9005.3"
+    enum: [TMM, TMMwsp, RLE, upperquartile, none]
+  - name: weight_method
+    type: string
+    description: "The estimation method of the sample weights in arrayWeights: genebygene (the default of voomWithQualityWeights) or reml."
+    adaptable: true
+    default: genebygene
+    default_source: "doi:10.1093/nar/gkv412"
+    enum: [genebygene, reml]
+  - name: robust_ebayes
+    type: boolean
+    description: "Robust empirical Bayes hyperparameter estimation, so that a hypervariable gene does not inflate the prior variance. Pinned on for an outlier design."
+    adaptable: false
+    default: true
+    default_source: "doi:10.1214/16-AOAS920"
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff that counts a gene as significant in the summary and the figures."
+    adaptable: false
+    default: 0.05
+    default_source: "guide:limma/2026-05-19#multiple-testing-across-genes-and-contrasts"
+  - name: lfc_threshold
+    type: number
+    description: "A log2 fold change threshold tested with treat (TREAT). 0 tests against no change with eBayes."
+    adaptable: true
+    default: 0
+    default_source: "guide:limma/2026-05-19#tests-relative-to-a-threshold-treat"
+    minimum: 0
+  - name: n_top_genes_mds
+    type: integer
+    description: "The number of most variable genes for the MDS plot."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 50
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example de or treated_vs_control."
+    adaptable: true
+    default: de
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV, with the condition column."
+outputs:
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested gene: gene, log_cpm_mean (mean log2 CPM), log2_fold_change, pvalue, adjusted_pvalue (BH)."
+  - name: sample_weights
+    path: "output/sample_weights.csv"
+    format: EDAM:format_3752
+    description: "One row per sample: sample, weight (the sample quality weight of voomWithQualityWeights, 1 is average)."
+  - name: logcpm
+    path: "output/{prefix}_logcpm.csv"
+    format: EDAM:format_3752
+    description: "voom log2 CPM values after the library size scaling, genes by samples, for downstream visualization."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The contrast, the design, the sample weights, the counts of tested and significant genes, the thresholds, the package versions."
+  - name: sample_weights_plot
+    path: "figures/{prefix}_sample_weights.png"
+    description: "Bar plot of the sample quality weights, colored by condition, with a line at weight 1 (and PDF)."
+  - name: voom_trend
+    path: "figures/{prefix}_voom_trend.png"
+    description: "The voom mean-variance trend: sqrt standard deviation against mean log2 count, with the lowess line (and PDF)."
+  - name: mds
+    path: "figures/{prefix}_mds.png"
+    description: "MDS plot of the samples on the top variable genes, colored by condition, sized by sample weight (and PDF)."
+  - name: volcano
+    path: "figures/{prefix}_volcano.png"
+    description: "Volcano plot, log2 fold change against -log10 adjusted p-value (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: limma
+    version: "3.68.5"
+    track: bioconductor
+  - name: edgeR
+    version: "4.10.3"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: outlier-n5
+    dataset: outlier_n5/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+    expect:
+      - "exists output/de_results.csv"
+      - "exists output/sample_weights.csv"
+      - "exists output/de_logcpm.csv"
+      - "exists output/de_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/de_sample_weights.png"
+      - "exists figures/de_sample_weights.pdf"
+      - "exists figures/de_voom_trend.png"
+      - "exists figures/de_voom_trend.pdf"
+      - "exists figures/de_mds.png"
+      - "exists figures/de_mds.pdf"
+      - "exists figures/de_volcano.png"
+      - "exists figures/de_volcano.pdf"
+      - "csv_rows output/de_results.csv >= 5000"
+      - "csv_rows output/sample_weights.csv >= 10"
+      - "json output/de_summary.json n_samples == 10"
+      - "json output/de_summary.json min_sample_weight < 1"
+      - "json output/de_summary.json lowest_weight_sample == sample_03"
+      - "truth_recall output/de_results.csv >= 0.3"
+      - "truth_fdr output/de_results.csv <= 0.1"

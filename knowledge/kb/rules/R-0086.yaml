@@ -1,0 +1,64 @@
+id: R-0086
+title: "Reproducibility record: sessionInfo, the seed, the package versions, and the pinned gene set collection version in every report"
+assertion: >-
+  Each report carries a reproducibility record. The record holds the output
+  of sessionInfo, the version of each package, the random seed of each step
+  that uses randomness, for example the permutations of a gene set test, and
+  the version of each gene set collection and annotation release. Write the
+  seed before the step runs, and set it in the script, because a permutation
+  result without its seed does not return the same p-values. Store the record
+  with the results, not in a separate note.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: report
+  parameters:
+    - name: reproducibility_record
+      value: [session_info, seed, package_versions, collection_version, annotation_release]
+      default_source: "doi:10.1371/journal.pcbi.1003285"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0062
+    paraphrase: >-
+      The rules ask the analyst to record how each result was produced, to
+      archive the exact versions of each external program, to note the random
+      seed of each analysis that includes randomness, and to store the data
+      behind each plot, because a result without these cannot be reproduced.
+    anchor: "Rule 1; Rule 3; Rule 6; Rule 7"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0039
+    paraphrase: >-
+      A survey of published RNA-seq studies finds that many reports omit the
+      software versions, the parameters, or the reference and annotation
+      versions, thus a reader cannot reproduce the analysis from the paper.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0027
+    paraphrase: >-
+      The survey of enrichment analyses finds that the gene set database
+      version is often not reported, and that the result changes with the
+      version, thus the version is a required part of the report.
+    anchor: "Results; Recommendations"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [report, reproducibility, versions]

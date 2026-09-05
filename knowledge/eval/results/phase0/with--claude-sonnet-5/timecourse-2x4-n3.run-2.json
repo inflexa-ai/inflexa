@@ -1,0 +1,1464 @@
+{
+  "campaign": "phase0",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "timecourse-2x4-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T04:55:56.149Z",
+  "elapsedMs": 600014,
+  "outcome": "error",
+  "error": "Plan generation timed out — the model may be overloaded.",
+  "usage": {
+    "inputTokens": 12344339,
+    "outputTokens": 13905,
+    "cacheCreationInputTokens": 160286,
+    "cacheReadInputTokens": 12181653,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "n_timepoints": 4,
+        "paired": false,
+        "batch": "none",
+        "library_type": "unknown",
+        "strandedness": "unknown"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "splines",
+          "clusterProfiler",
+          "fgsea",
+          "tidyverse",
+          "pheatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb human"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA and sample-distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >=3 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors (in-model)",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ condition + time + condition:time, reference levels set explicitly",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 likelihood ratio test, full ~condition+time+condition:time vs reduced ~condition+time",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "LRT"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage of condition:time coefficients",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on Wald/LRT stat vs MSigDB Hallmark",
+            "package": "fgsea"
+          },
+          {
+            "step_type": "report",
+            "method": "summary report with clustering of interaction-significant genes by time-course pattern"
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "n_timepoints": 4,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA and sample-distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >=3 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors (in-model)",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ condition + time + condition:time, reference levels set explicitly",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 likelihood ratio test, full ~condition+time+condition:time vs reduced ~condition+time (time-course interaction, 4 time points)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "LRT"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage of condition:time coefficients",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on Wald/LRT stat vs MSigDB Hallmark",
+            "package": "fgsea"
+          },
+          {
+            "step_type": "report",
+            "method": "summary report with clustering of interaction-significant genes by time-course pattern"
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": ""
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene set",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "atlas_singlecell"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "limit": 1
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "enrichment"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {}
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "msigdb",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "chembl"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "a",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "e",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "."
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "refs"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "\"\""
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "\""
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "general"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "test"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": " "
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene",
+        "datasetType": "gse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "msigdb_hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "c"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "n"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTF"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "annotation"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "interferon"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "homo sapiens"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "DoRothEA"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtf",
+        "category": "genome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "MSigDB"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "H.all"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gmt"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "."
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb",
+        "datasetType": "gse",
+        "limit": 10
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reference"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "database"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "v"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "1"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "signature"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "metabolite"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "variant"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "motif"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "taxon"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "bed"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": ".gmt"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "geneset"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "tf"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "panel"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "liability"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "drug"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "kinase"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "chembl",
+        "category": "chemistry"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "assay"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "smiles"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "z"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Homo",
+        "category": "categories"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "census"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cell"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "o"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "M"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "S"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "i"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "g"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "d"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "r"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "t"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "n",
+        "limit": 1
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "rna"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "bulk"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "counts"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "metadata"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Enrichr"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wiki"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "panther"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Cell Ontology"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "connectivity map"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "LINCS"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene ontology biological process"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "interaction network"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": ".tsv"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msig"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "go term"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Homo sapiens",
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gsea"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Kegg"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark cancer"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "database of gene sets"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "TF-target"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Homo_sapiens"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Reactome pathway database"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtf"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "panel",
+        "category": "translational"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ChEA"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "canonical"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": ".csv"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "json"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Uniprot"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Ensembl"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "symbol"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Entrez"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "deconvolution"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "CIBERSORT"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "L1000"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "DrugBank"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "OpenTargets"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ToxCast"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "PRISM"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb",
+        "category": "msigdb",
+        "limit": 1
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "genesets",
+        "category": "general-omics"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Homo",
+        "category": "enrichment"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Molecular Signatures"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark_gene_sets"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "H",
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "rda"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Broad Institute"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene set collection"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO_BP"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "C"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GS"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "P"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Human",
+        "datasetType": "gds"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark_50"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark set",
+        "limit": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdbr"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "geneset_library"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "CP"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "C2"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "C5"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "50 gene sets"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "MSIGDB_HALLMARK_HUMAN"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb_hallmark_human",
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "apoptosis"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cell cycle"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GOBP"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cytokine"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Sapiens"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "EMT"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "tp53"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "geo"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "tcga"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "mouse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "codes"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene_ids"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "files"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "provisioned"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "store"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "available"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "provisioned data"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "nothing"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "time course"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "condition"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "treatment"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "host"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "provision"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "provisioned right now"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "later call"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "query"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "substring"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "extension"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "omics"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "general-omics"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "absent"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "exists"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "datasets"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "present"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "right"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "now"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "env"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "this"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "match"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "any"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "everything"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "library"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "index"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "key"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "column"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "organism"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "shape"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "format"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "contents"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "title"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "label"
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-04",
+    "digest": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+  }
+}

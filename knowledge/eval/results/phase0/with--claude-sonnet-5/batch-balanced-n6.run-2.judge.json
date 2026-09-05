@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the known balanced batch as a covariate in the design (~ batch + condition) rather than adjusting counts beforehand, uses DESeq2 Wald with median-of-ratios size factors and an edgeR QL/TMM cross-check on the same design, which fits a 6v6 two-batch layout precisely. QC is dataset-specific: blind VST PCA colored by both condition and batch, sample-distance heatmap, and library sizes, though it only flags a low-depth sample rather than stating what would be done with it. The filter (>=10 counts in >=6 samples) is minimal and justified by the smallest group size; alpha 0.05 with BH, independent filtering, and apeglm shrinkage on the named coefficient are all explicit, as is the control reference level and contrast. Enrichment was not strictly required by the question but is executed correctly (full ranked list by Wald stat, Hallmark, 15-500 size window, BH, stated universe and version, graceful fallback). The final report enumerates design, versions, thresholds, tested and significant counts, outlier/NA handling, and interpretive caveats."
+}

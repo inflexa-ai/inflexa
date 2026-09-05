@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan identifies the design correctly as a condition-by-time interaction and makes the DESeq2 LRT of ~condition+time+condition:time against ~condition+time the primary test, with an independent edgeR QL joint F-test on the same three interaction coefficients as a robustness check and per-time-point coefficients plus trajectory clustering to interpret the omnibus call — exactly the reference approach, with the n=3 power limitation stated. QC is design-specific and complete (join reconciliation, condition x time balance table, blind VST PCA on top 500 genes colored by condition and shaped by time, distance heatmap, library sizes) with an explicit retain-and-flag policy given that dropping a sample would break a cell. The filter (>=10 counts in >=3 samples, tied to the smallest cell) is minimal and justified; normalization stays inside the models (DESeq2 size factors, edgeR TMM) with VST restricted to visualization; formulas, reference levels, and the reduced model are stated verbatim; BH at alpha 0.05 is passed to results() with apeglm shrinkage per interaction coefficient and unshrunken estimates retained. Enrichment is not strictly warranted here but is handled well — full ranked list with the metric stated and a sensitivity ranking, 15-500 size window after intersection, tested-gene universe for cluster ORA, named collections with honest degradation if none resolve — though the constructed ranking metric for an omnibus test remains a weak point. Reporting covers method, track, design, thresholds, tested and significant counts, NA accounting, and design caveats; only package version capture is left somewhat implicit."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference almost exactly: batch is entered as a covariate in ~ batch + condition with control as reference level, counts are never adjusted before the model, and the plan explicitly argues why ComBat-style correction would understate residual variance. QC is dataset-specific and thorough (condition x batch contingency check, PCA colored by condition and shaped by batch with percent variance, distance heatmap, library sizes, PC-factor regression), though the outlier policy is only implicit via Cook's-distance reporting rather than a stated action rule for a deviant or shallow sample. Filtering (>=10 counts in >=6 samples, the smallest group size) is minimal and justified, normalization stays inside the model (size factors; TMM for the voom cross-check; VST for QC only), and FDR/shrinkage handling is correct with BH at stated alphas, apeglm for ranking only, and an explicit refusal to relax thresholds or pre-filter by fold change. Enrichment is well-specified (full Wald-statistic ranking, human symbol GMTs, 10-500 size window, mapping fraction, tie handling, GO collapse, conditional ORA with tested-gene universe) but does not pin a MSigDB release version; likewise the reporting spec omits explicit software version capture, which is the only real gap in report completeness."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames the question as an interaction, fits a single DESeq2 model with ~genotype+treatment+genotype:treatment, sets explicit reference levels (WT, vehicle), and extracts the interaction coefficient plus both simple effects (the KO effect via a list() contrast), which is exactly the reference approach. QC precedes modeling with blind VST, PCA colored by both factors, distance heatmap, library sizes, and an explicit no-drop-without-justification policy; the low-count filter (>=10 counts in >=4 samples) is minimal and justified by the smallest cell size, and normalization is median-of-ratios inside the model with no pre-normalization. Shrinkage is appropriately assigned (apeglm for single coefficients including the interaction term, ashr for the composite KO contrast) with BH at alpha=0.05 stated per table and p-value histograms as diagnostics; a minor quibble is that reporting three tables with separate BH adjustments is defensible but the multiplicity across contrasts is not discussed. Enrichment is not strictly required by the question but is specified well (Wald-stat ranking, no thresholding for GSEA, named collections with versions, 15-500 size window, tested-genes universe for gated ORA). The final report names design, formula, contrasts, versions, seeds, gene counts tested and significant, diagnostics, and the correct power caveat that a null interaction is not evidence of equivalence."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 5,
+    "normalization": 3,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the paired structure and specifies ~subject + condition in DESeq2 or an equivalent edgeR paired design matrix, explicitly warning against an unpaired test, which is the central requirement. QC is only partially addressed: a PCA/paired-difference plot and dispersion/MA plot are requested, but there is no mention of library-size inspection, sample distances, or any policy for a shallow or outlying sample. The low-count filter is present but left vague ('minimum count/CPM threshold') with no stated cutoff or group-size rationale, and normalization is never named at all — size factors or TMM are only implicit in the chosen tools, and the plan does not state that raw counts go into the model. BH at FDR<0.05 is explicit but there is no log-fold-change shrinkage for reported effects, and the enrichment step names collections without stating a ranking metric, an ORA universe, collection versions, or a gene-set size window. Reporting covers design, thresholds, significant-gene counts and the n=5 power caveat, but omits software versions."
+}

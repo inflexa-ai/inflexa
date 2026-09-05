@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 9
+  },
+  "rationale": "QC, filtering, normalization, DESeq2 design/contrast, and FDR/shrinkage steps are explicit, well-justified, and match the reference closely, including a clear evidence-based policy for sample_01. The enrichment step deviates from the reference's fgsea-preranked-on-Hallmark approach, substituting GSVA+limma per-sample scores based on an unverifiable 'knowledge-service' rejection, without stating a ranking metric or a gene-set size window (15-500) for Hallmark, though the ORA steps do correctly restrict to the tested-gene universe. Reporting is comprehensive, naming versions, thresholds, gene counts, and caveats, fulfilling report_completeness fully."
+}

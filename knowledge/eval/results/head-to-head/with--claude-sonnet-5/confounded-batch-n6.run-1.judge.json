@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly diagnoses the perfect confound, refuses any batch term, ComBat-seq, removeBatchEffect, or SVA on full-rank grounds, and labels every gene- and pathway-level result as inseparable from a processing artifact, closing with a recommendation for a rebalanced follow-up design; it stops short of pausing to request that design up front, but the confounded-run alternative is explicitly and consistently caveated. QC is dataset-specific (blind VST, PCA colored by both factors with the note that the colorings are identical, distance heatmap, library sizes) but no policy is stated for handling an outlier or shallow-library sample. Filtering (>=10 counts in >=6 samples, the smaller group size) is minimal and justified, normalization is internal to DESeq2 and edgeR with no pre-adjusted counts, and the design/contrast (~condition, Control releveled as reference, Treated vs Control Wald) is fully explicit. FDR handling is complete: BH at alpha 0.05 through results() with independent filtering, apeglm shrinkage for reported effects, p-value histogram diagnostic, and no post hoc fold-change selection. Enrichment is arguably of limited value on a fully confounded contrast, but it is executed properly (full unthresholded ranked list on the Wald statistic, named collections, 15-500 size window, leading edges, versions) and explicitly flagged as possibly a technical signature; the report section names versions, design, thresholds, tested and significant gene counts, and the confound caveat before any gene table."
+}

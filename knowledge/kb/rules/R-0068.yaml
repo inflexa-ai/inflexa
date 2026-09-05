@@ -1,0 +1,69 @@
+id: R-0068
+title: "Suspected batch, no batch variable, four or more replicates: estimate the surrogate variables with sva and add them to the design"
+assertion: >-
+  If a batch is suspected, no recorded variable explains it, and each group
+  holds four or more replicates, estimate the surrogate variables with the
+  sva package. Give the model with the condition as the known factor, let
+  sva estimate the number of surrogate variables, and add each surrogate
+  variable to the design formula as a covariate beside the condition. Keep
+  the counts unchanged, and run the differential expression test on the
+  extended design. Report the number of surrogate variables and the
+  correlation of each one with the known sample variables. With fewer than
+  four replicates per group, the residual degrees of freedom are too few for
+  a stable estimate.
+modality: bulk_rna_seq
+conditions:
+  - field: batch
+    op: eq
+    value: suspected
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 4
+action:
+  step_type: model_design
+  method: M-0025
+  parameters:
+    - name: surrogate_variable_tool
+      value: sva
+      default_source: "doi:10.1093/bioinformatics/bts034"
+    - name: report_n_surrogate_variables
+      value: true
+      default_source: "doi:10.1038/nrg2825"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0061
+    paraphrase: >-
+      The package estimates surrogate variables from the expression data with
+      the known variables of interest in the model, estimates the number of
+      surrogate variables from the data, and returns them for use as
+      covariates in a downstream linear model.
+    anchor: "Abstract; Features, Surrogate variable analysis"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0015
+    paraphrase: >-
+      The review presents surrogate variable analysis as a computational
+      method for a batch effect whose source is not recorded, where the
+      estimates of the unmeasured variation enter the statistical model as
+      covariates, and it warns that no such method replaces a design where
+      the conditions are spread across the batches.
+    anchor: "Statistical solutions"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [batch, design, surrogate-variables, method-selection]

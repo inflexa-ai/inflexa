@@ -1,0 +1,12 @@
+id: M-0012
+label: "Benjamini-Hochberg false discovery rate with independent filtering"
+description: >-
+  Benjamini-Hochberg adjusted p-values, with the DESeq2 independent filter on
+  the mean of normalized counts at the target alpha, thus genes with no power
+  do not spend the multiple testing budget.
+packages:
+  - name: DESeq2
+    track: bioconductor
+    biotools: deseq2
+    version_range: ">=1.50"
+    bioconductor: "3.23"

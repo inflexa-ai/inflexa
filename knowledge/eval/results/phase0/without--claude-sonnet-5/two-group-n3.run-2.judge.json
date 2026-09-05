@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly matches a negative-binomial GLM (DESeq2 on raw Salmon counts, edgeR QL fallback) to a 3v3 unpaired single-batch design, keeps alpha at 0.05/0.1, applies apeglm/ashr shrinkage, and states the power limitation honestly rather than compensating with a stricter threshold. QC is strong and design-specific: library sizes, PCA on VST, correlation heatmap by condition, plus an explicit no-drop-without-cause policy justified by the power cost. The main gap is the absence of any stated minimal low-count pre-filter — DESeq2's independent filtering is invoked, but that is a post hoc FDR device, not the pre-model filter the reference expects; the reference level for the condition factor is also never explicitly set, leaving the contrast direction implicit. Enrichment is included though not asked for, and while GSEA on the full ranked list with FDR-adjusted terms is described, there is no explicit ORA universe, no gene set size window, and no named collection version. Reporting covers method, design, thresholds, significant-gene counts and design caveats, but omits software versions and the number of genes actually tested after filtering."
+}

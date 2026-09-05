@@ -1,0 +1,233 @@
+{
+  "campaign": "sonnet-r3",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-2x2-n4",
+  "run": 2,
+  "startedAt": "2026-09-05T09:01:34.444Z",
+  "elapsedMs": 23906,
+  "outcome": "plan_submitted",
+  "planId": "pln-0a04c318",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC counts/metadata alignment and factorial DESeq2 interaction model",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "After reconciling the 17-sample count matrix against the 16-sample metadata table, does a full factorial model (~genotype + treatment + genotype:treatment) show a significant genotype:treatment interaction term, indicating the drug's effect on gene expression differs between WT and KO?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample identity between counts.csv (17 columns) and metadata.csv (16 rows) is reconciled explicitly — any extra/unmatched sample is dropped with the mismatch reported, not silently assumed correct",
+          "DESeq2 dataset built with design ~genotype + treatment + genotype:treatment on raw integer counts, genotype and treatment coded as factors with WT and vehicle as reference levels respectively",
+          "Interaction term (genotypeKO.treatmentdrug or equivalent) extracted via results(name=...) or a designated contrast, with independent filtering and BH-adjusted p-values",
+          "Output table of genes ranked by interaction FDR, count of genes significant at FDR<0.05, and a diagnostic (PCA or dispersion plot) confirming model fit is reasonable for n=4/cell"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Simple-effect contrasts: drug vs vehicle within each genotype",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Within WT alone, and within KO alone, what are the drug-vs-vehicle differentially expressed genes, and how do the two effect-size (log2FC) distributions compare for genes flagged as interaction-significant in T1S1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Two simple-effect contrasts computed from the same fitted DESeq2 model (drug vs vehicle within WT; drug vs vehicle within KO) using appropriate contrast/results calls consistent with the factorial design coding",
+          "For the interaction-significant gene set from T1S1, a side-by-side comparison of WT log2FC vs KO log2FC (e.g., scatter or table) is produced, characterizing whether the interaction reflects a genotype-specific gain, loss, or reversal of drug response",
+          "Both simple-effect result tables (gene, log2FC, padj) are saved for downstream enrichment"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on interaction-significant genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "fgsea"
+        ],
+        "question": "Which biological pathways are over-represented among genes showing a significant genotype:treatment interaction (i.e., genotype-dependent drug response) in this brain dataset?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Uses the human WikiPathways gene set collection (organism-matched to this human dataset) for over-representation or GSEA-style analysis on the interaction gene list from T1S1 (and optionally ranked by interaction statistic)",
+          "Reports enriched pathway names, gene overlap, and BH-adjusted p-values",
+          "If the interaction gene list is empty or too small (e.g., <10 genes at FDR<0.05) for reliable enrichment, this is stated explicitly rather than forcing a nominal-p gene list through enrichment without caveat"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "PPI network module view of interaction-driven genes",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "networkx"
+        ],
+        "question": "Do the genes driving the genotype:treatment interaction form a connected protein-protein interaction module, or are they topologically scattered across the human interactome?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Uses the STRING human PPI network (protein.links + protein.info joined on preferred_name to map STRING IDs to gene symbols) restricted to the conventional high-confidence cutoff (combined_score>=700)",
+          "Subnetwork induced by the interaction-significant gene list (from T1S1) is extracted; reports number of nodes mapped, number of edges, largest connected component size, and whether connectivity is greater than expected by a degree-preserving random gene-set of the same size (simple permutation test)",
+          "If fewer than ~5 interaction genes map to STRING nodes, reports this limitation explicitly rather than presenting a near-empty subnetwork as a finding"
+        ]
+      }
+    ],
+    "title": "Genotype x Treatment Interaction DE in Brain RNA-seq",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The data is a 2x2 factorial bulk RNA-seq design (genotype: WT/KO x treatment: vehicle/drug, n=4/cell, 12000 genes x 17 samples in counts but 16 rows in metadata — one sample mismatch to resolve first) in brain tissue. The research question — does the drug act differently in KO than WT — is precisely a genotype:treatment interaction test, not a pair of simple contrasts. Step 1 aligns counts to metadata and runs a full factorial DESeq2 model (~genotype*treatment) to test the interaction term directly, which is the only correct way to answer 'does drug effect differ by genotype'. Step 2 extracts the two simple treatment effects (drug vs vehicle within WT, and within KO) for interpretation of the interaction's direction/magnitude. Step 3 runs functional enrichment on the interaction-significant gene set against human pathway gene sets to interpret which biological processes show genotype-dependent drug response. Step 4 synthesizes a network-level view of interaction-driven genes using the STRING human PPI to check for connected modules, since a scattered gene list without pathway/network coherence would be much weaker evidence of a real conditional effect."
+  },
+  "usage": {
+    "inputTokens": 43259,
+    "outputTokens": 2167,
+    "cacheCreationInputTokens": 34105,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Genotype x Treatment Interaction DE in Brain RNA-seq",
+          "analytical_narrative": "The data is a 2x2 factorial bulk RNA-seq design (genotype: WT/KO x treatment: vehicle/drug, n=4/cell, 12000 genes x 17 samples in counts but 16 rows in metadata — one sample mismatch to resolve first) in brain tissue. The research question — does the drug act differently in KO than WT — is precisely a genotype:treatment interaction test, not a pair of simple contrasts. Step 1 aligns counts to metadata and runs a full factorial DESeq2 model (~genotype*treatment) to test the interaction term directly, which is the only correct way to answer 'does drug effect differ by genotype'. Step 2 extracts the two simple treatment effects (drug vs vehicle within WT, and within KO) for interpretation of the interaction's direction/magnitude. Step 3 runs functional enrichment on the interaction-significant gene set against human pathway gene sets to interpret which biological processes show genotype-dependent drug response. Step 4 synthesizes a network-level view of interaction-driven genes using the STRING human PPI to check for connected modules, since a scattered gene list without pathway/network coherence would be much weaker evidence of a real conditional effect.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC counts/metadata alignment and factorial DESeq2 interaction model",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "After reconciling the 17-sample count matrix against the 16-sample metadata table, does a full factorial model (~genotype + treatment + genotype:treatment) show a significant genotype:treatment interaction term, indicating the drug's effect on gene expression differs between WT and KO?",
+              "acceptance_criteria": [
+                "Sample identity between counts.csv (17 columns) and metadata.csv (16 rows) is reconciled explicitly — any extra/unmatched sample is dropped with the mismatch reported, not silently assumed correct",
+                "DESeq2 dataset built with design ~genotype + treatment + genotype:treatment on raw integer counts, genotype and treatment coded as factors with WT and vehicle as reference levels respectively",
+                "Interaction term (genotypeKO.treatmentdrug or equivalent) extracted via results(name=...) or a designated contrast, with independent filtering and BH-adjusted p-values",
+                "Output table of genes ranked by interaction FDR, count of genes significant at FDR<0.05, and a diagnostic (PCA or dispersion plot) confirming model fit is reasonable for n=4/cell"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Simple-effect contrasts: drug vs vehicle within each genotype",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Within WT alone, and within KO alone, what are the drug-vs-vehicle differentially expressed genes, and how do the two effect-size (log2FC) distributions compare for genes flagged as interaction-significant in T1S1?",
+              "acceptance_criteria": [
+                "Two simple-effect contrasts computed from the same fitted DESeq2 model (drug vs vehicle within WT; drug vs vehicle within KO) using appropriate contrast/results calls consistent with the factorial design coding",
+                "For the interaction-significant gene set from T1S1, a side-by-side comparison of WT log2FC vs KO log2FC (e.g., scatter or table) is produced, characterizing whether the interaction reflects a genotype-specific gain, loss, or reversal of drug response",
+                "Both simple-effect result tables (gene, log2FC, padj) are saved for downstream enrichment"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on interaction-significant genes",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which biological pathways are over-represented among genes showing a significant genotype:treatment interaction (i.e., genotype-dependent drug response) in this brain dataset?",
+              "acceptance_criteria": [
+                "Uses the human WikiPathways gene set collection (organism-matched to this human dataset) for over-representation or GSEA-style analysis on the interaction gene list from T1S1 (and optionally ranked by interaction statistic)",
+                "Reports enriched pathway names, gene overlap, and BH-adjusted p-values",
+                "If the interaction gene list is empty or too small (e.g., <10 genes at FDR<0.05) for reliable enrichment, this is stated explicitly rather than forcing a nominal-p gene list through enrichment without caveat"
+              ],
+              "packages": [
+                "gseapy",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "PPI network module view of interaction-driven genes",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do the genes driving the genotype:treatment interaction form a connected protein-protein interaction module, or are they topologically scattered across the human interactome?",
+              "acceptance_criteria": [
+                "Uses the STRING human PPI network (protein.links + protein.info joined on preferred_name to map STRING IDs to gene symbols) restricted to the conventional high-confidence cutoff (combined_score>=700)",
+                "Subnetwork induced by the interaction-significant gene list (from T1S1) is extracted; reports number of nodes mapped, number of edges, largest connected component size, and whether connectivity is greater than expected by a degree-preserving random gene-set of the same size (simple permutation test)",
+                "If fewer than ~5 interaction genes map to STRING nodes, reports this limitation explicitly rather than presenting a near-empty subnetwork as a finding"
+              ],
+              "packages": [
+                "networkx"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "network-agent"
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

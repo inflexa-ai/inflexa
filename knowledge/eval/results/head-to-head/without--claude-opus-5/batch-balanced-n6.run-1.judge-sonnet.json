@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly uses DESeq2 with ~ batch + condition, control as reference, Wald test, apeglm shrinkage, and BH FDR at a stated alpha, explicitly forbidding pre-adjustment of counts (ComBat/removeBatchEffect reserved for visualization only) and explicitly avoiding condition-only design as primary — matching the reference exactly, with an added transparent sensitivity comparison clearly subordinated to the primary model. QC (library sizes, VST PCA colored by condition and batch, sample distances) precedes testing with an explicit balance/outlier policy. The low-count filter (≥10 counts in ≥6 samples) is minimal and justified by group size, though a touch more explicit justification of the '10 counts' threshold choice would help. Enrichment is well-specified (ranked GSEA on Wald stat, named human Hallmark/GO-BP collections, 15-500 size window after universe intersection, ORA with explicit background, leading-edge reporting, graceful fallback), losing only minor points for not pre-naming exact collection versions. Reporting is thorough: method, versions/packages, design, thresholds, gene counts pre/post filter, significant gene counts (including zero-case handling), and caveats about power and provisional annotation are all explicitly required outputs."
+}

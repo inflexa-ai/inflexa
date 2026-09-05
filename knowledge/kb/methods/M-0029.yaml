@@ -1,0 +1,19 @@
+id: M-0029
+label: "fgsea preranked on the limma moderated t-statistic with the MSigDB Hallmark collection"
+edam_operation: EDAM:operation_3501
+description: >-
+  A preranked gene set enrichment analysis with fgsea over every tested gene,
+  ranked by the moderated t-statistic of a limma or limma-voom fit, against the
+  MSigDB Hallmark collection. For a linear model fit where no Wald statistic
+  exists.
+packages:
+  - name: fgsea
+    track: bioconductor
+    biotools: fgsea
+    version_range: ">=1.30"
+    bioconductor: "3.23"
+  - name: limma
+    track: bioconductor
+    biotools: limma
+    version_range: ">=3.60"
+    bioconductor: "3.23"

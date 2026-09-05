@@ -1,0 +1,20 @@
+id: M-0019
+label: "limma-voom with a fixed-effects linear model"
+edam_operation: EDAM:operation_3223
+description: >-
+  voom precision weights on log-CPM with TMM factors, a fixed-effects linear
+  model, and empirical Bayes moderated t-statistics. For a large design with
+  many samples or many covariates, where the count models over-call.
+packages:
+  - name: limma
+    track: bioconductor
+    biotools: limma
+    version_range: ">=3.60"
+    bioconductor: "3.23"
+  - name: edgeR
+    track: bioconductor
+    biotools: edger
+    version_range: ">=4.4"
+    bioconductor: "3.23"
+templates:
+  - tpl-limma-voom-fixed

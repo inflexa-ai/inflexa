@@ -1,0 +1,502 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "two-group-n6-enrich",
+  "run": 2,
+  "startedAt": "2026-09-04T21:17:25.686Z",
+  "elapsedMs": 103413,
+  "outcome": "plan_submitted",
+  "planId": "pln-0770ac41",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, and depth-outlier adjudication",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "12,000 rows is a pre-filtered subset, not the full human transcriptome — do not describe it as genome-wide",
+          "Low library size inflates the dispersion estimate for that sample; a low size factor is expected and is not itself evidence of an outlier",
+          "With n=6 per group a single dropped sample is a substantial power loss, so the bar for exclusion should be genuine aberrance, not depth alone"
+        ],
+        "context": "Design: 6 atopic dermatitis lesional (treated) vs 6 control skin samples, unpaired, single batch. The profiled caveat is that sample_01 has a library size about 4x below the median. Depth alone does not justify exclusion in negative-binomial modelling — size-factor normalization is designed for exactly this — and dropping one of six replicates is a real power loss. The decision must be made on evidence, not on the depth number alone.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Is sample_01 — whose library size is ~4x below the median — merely shallow but biologically consistent with its group, or a genuine outlier that must be excluded from the AD lesional vs control comparison?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Probe package availability before use (R: requireNamespace for DESeq2/edgeR/limma/ggplot2; Python: import for pydeseq2/pandas/matplotlib) and state which toolchain was actually used",
+          "Do NOT remove sample_01 in this step — produce both sample sets and a recommendation; the exclusion decision is tested in T1S3",
+          "Do not impute, rescale, or otherwise alter raw counts; normalization is by size factor only",
+          "Treat the first column of counts.csv as gene symbols and check for duplicate symbols, reporting how duplicates were resolved (e.g. summed or highest-mean retained)"
+        ],
+        "description": "Load /eval-phase0-without-two-group-n6-enrich-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw integer Salmon counts) and /eval-phase0-without-two-group-n6-enrich-2/data/inputs/metadata/metadata.csv (12 rows x 2 columns, one condition column). Verify sample IDs match between the two files and in what order. Compute per-sample library size, detected-gene count, size factors (median-of-ratios or TMM), and per-sample count distributions. Apply a variance-stabilizing transform (VST/rlog, or log-CPM if only edgeR/limma is available) and produce PCA, sample-sample correlation heatmap, and hierarchical clustering, coloured by condition and annotated with library size. Explicitly assess whether sample_01 separates from its own condition group after normalization, or whether it merely sits at the low end of the depth axis. Emit a keep/drop recommendation with the numeric evidence supporting it, plus normalized matrices for both the 12-sample and the 11-sample (sample_01 removed) sets.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv columns and metadata.csv rows are confirmed to match; any mismatch or reordering is reported and fixed explicitly",
+          "Per-sample library size, detected genes, and size factors are tabulated for all 12 samples, with sample_01's ~4x deficit quantified against the actual median",
+          "PCA and sample-correlation clustering on variance-stabilized data are produced and it is stated whether sample_01 clusters with its own condition group",
+          "A written keep/drop recommendation for sample_01 is given with the specific numbers behind it, not a rule of thumb",
+          "Normalized/transformed matrices are saved for both the 12-sample and the 11-sample (sample_01 excluded) sets for downstream use",
+          "Number of genes passing a low-count filter is reported against the 12,000 input rows"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Primary differential expression: AD lesional vs control (all 12 samples)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group gives limited power; genes with modest effect sizes will be missed and the absence of a hit is not evidence of no change",
+          "Gene-symbol identifiers may contain duplicates or deprecated symbols; whatever T1S1 decided about duplicates must be applied identically here",
+          "The 12,000-gene input is already filtered, so FDR is conditioned on that subset"
+        ],
+        "context": "Input: raw Salmon gene-level counts, 12,000 gene symbols x 12 samples, from /eval-phase0-without-two-group-n6-enrich-2/data/inputs/counts/counts.csv, with condition labels from metadata.csv. T1S1 has established normalization and the sample_01 depth assessment. Expected AD lesional biology includes keratinocyte differentiation genes (FLG, LOR, filaggrin-related), antimicrobial peptides (S100A7/8/9, DEFB4A), and type-2/IL-17 inflammatory mediators (CCL17, CCL22, IL13, IL22, IL36) — but these are priors to check against, not a target to steer toward.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which genes are differentially expressed between the 6 atopic dermatitis lesional and 6 control skin samples, using all 12 samples with size-factor normalization?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use raw integer counts as input to the model — never pre-normalized or log-transformed values",
+          "Model condition only; do not add covariates that the metadata (12 x 2, condition only) does not support",
+          "Report the exact statistical method, test, and shrinkage estimator used, and confirm package availability before relying on it",
+          "Do not filter genes on fold change before testing; filter on expression level only"
+        ],
+        "description": "Fit a negative-binomial GLM to the raw counts with condition (AD lesional vs control) as the sole covariate — the design is single-batch and unpaired, so no additional terms are warranted. Prefer DESeq2 (Wald test) if available; otherwise edgeR quasi-likelihood F-test or limma-voom, whichever is importable. Apply independent low-count filtering before testing. Report log2 fold change (shrunken — apeglm/ashr, or equivalent — for ranking), standard error, unshrunken LFC, p-value, and Benjamini-Hochberg FDR for every tested gene. Set the contrast direction explicitly as AD lesional relative to control and state it in the output. Produce: full results table sorted by FDR, an MA plot, a volcano plot, counts of significant genes at FDR<0.05 with |log2FC|>1 and at FDR<0.05 alone, and normalized-expression boxplots for the top up- and down-regulated genes. Also export a ranked gene list (all tested genes, ordered by the signed test statistic) for the hallmark enrichment step.",
+        "acceptance_criteria": [
+          "A full per-gene results table is produced with log2FC (both shrunken and unshrunken), p-value, and BH-adjusted FDR, with contrast direction stated as AD lesional vs control",
+          "Number of genes tested after low-count filtering is reported, along with counts of significant genes at FDR<0.05 and at FDR<0.05 with |log2FC|>1",
+          "MA plot and volcano plot are generated and dispersion/mean-variance fit is shown",
+          "A ranked list of ALL tested genes ordered by the signed test statistic is exported for downstream GSEA",
+          "Top up- and down-regulated genes are listed with their normalized expression per group, so effect sizes can be read directly"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sensitivity analysis: DE excluding shallow sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "An unbalanced 5-vs-6 design has lower power than 6-vs-6, so some loss of significance is expected from power alone and must not be read as instability",
+          "High concordance does not prove sample_01 is clean, only that it is not driving the result"
+        ],
+        "context": "This step exists because the research question explicitly asks that the shallow sample be handled carefully. A leave-one-out re-analysis is the direct, honest test of whether any conclusion is load-bearing on that sample, and it is cheap. The alternative — silently dropping or silently keeping sample_01 — hides the dependency.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib"
+        ],
+        "question": "Do the differential expression results for AD lesional vs control depend on the inclusion of the ~4x-shallow sample_01?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Use exactly the same test, filtering thresholds, and shrinkage estimator as T1S2 — any difference invalidates the comparison",
+          "Report which condition group sample_01 belongs to and the resulting per-group n after exclusion",
+          "Do not present the 11-sample analysis as more trustworthy by default; it has less power"
+        ],
+        "description": "Re-run the exact model specification from T1S2 on the 11-sample set with sample_01 excluded (5 vs 6, or 6 vs 5 depending on which group sample_01 belongs to — report which). Compare the two result sets directly: overlap and Jaccard index of genes significant at FDR<0.05, Spearman rank correlation of the test statistic across all commonly tested genes, sign concordance of log2FC for the union of significant genes, and a scatter of log2FC(12-sample) vs log2FC(11-sample) with the discordant genes labelled. List any gene that is significant in one analysis and not the other, and flag the top T1S2 hits that lose significance without sample_01. Conclude with an explicit statement of which primary result set should be used for interpretation and why, combining this concordance evidence with the T1S1 keep/drop recommendation.",
+        "acceptance_criteria": [
+          "DE results on the 11-sample set are produced with the identical model, filtering, and shrinkage as T1S2",
+          "Concordance metrics are reported: significant-gene overlap/Jaccard, Spearman correlation of test statistics, log2FC sign agreement",
+          "A log2FC-vs-log2FC scatter between the two analyses is produced with discordant genes identified",
+          "Genes that gain or lose FDR<0.05 significance upon exclusion of sample_01 are listed explicitly",
+          "A clear recommendation names which result set is primary for interpretation, with the reasoning stated"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "MSigDB Hallmark enrichment of the AD lesional vs control signature",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The 12,000-gene input is pre-filtered, so hallmark set coverage will be incomplete and enrichment statistics are conditioned on that background",
+          "Hallmark sets overlap in membership; correlated significant sets should not be read as independent evidence",
+          "Permutation-based p-values are unstable for very small or very large sets — report set sizes alongside significance"
+        ],
+        "context": "The research question names hallmark pathways specifically. Hallmark is a small (50), coordinated, low-redundancy collection, which is why a rank-based GSEA over the whole ranked list is preferable to an over-representation test on a hard FDR cutoff — with n=6 per group the significant-gene list may be short and ORA would discard the ranking information. Input is the ranked list from T1S2 (primary) and T1S3 (sensitivity), both on gene symbols.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which of the 50 MSigDB Hallmark pathways are coordinately up- or down-regulated in atopic dermatitis lesional skin relative to control?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use Homo sapiens gene sets — the data is human skin (taxon 9606)",
+          "Match identifiers on gene symbols, and report the fraction of ranked genes that map into the collection",
+          "Rank on the signed DE test statistic over ALL tested genes; do not pre-threshold the list before GSEA",
+          "Probe for the gene set source before relying on it and report what was found; do not attempt any network download"
+        ],
+        "description": "Run rank-based gene set enrichment (GSEA/fgsea-style, permutation or adaptive multilevel p-values) on the full ranked gene list from T1S2 — all tested genes ordered by the signed DE test statistic — against the MSigDB Hallmark collection (50 gene sets) for Homo sapiens, mapped on gene symbols to match the counts.csv identifier space. Report normalized enrichment score, nominal p, BH-adjusted p, set size, and leading-edge genes for every hallmark set, and plot enrichment curves for the top significant sets plus a barplot of NES ranked by adjusted p. Restrict the gene universe to the genes actually tested in T1S2, and report how many members of each hallmark set are present in that 12,000-gene background — small overlaps make a set uninterpretable and must be flagged. Repeat the enrichment on the T1S3 (sample_01 excluded) ranking and report which hallmark calls are stable across the two rankings. REFERENCE DATA: this step needs human MSigDB Hallmark gene sets. The reference store was empty at planning time, so the step must first resolve them from whatever the environment provides at run time (a provisioned MSigDB/pathway collection, or an installed package that ships the sets such as msigdbr, gseapy, or decoupler); if Hallmark is genuinely unavailable, fall back to any available human pathway/GO collection, state prominently which collection was substituted, and report that the hallmark-specific question could not be answered as asked.",
+        "acceptance_criteria": [
+          "Enrichment results are reported for all 50 hallmark sets (or all sets of the substituted collection) with NES, nominal p, BH-adjusted p, set size, and leading-edge genes",
+          "The gene universe is the T1S2-tested gene set, and per-set overlap with that background is reported; sets with small overlap are flagged as uninterpretable",
+          "Enrichment plots for the top significant sets and an NES barplot are produced",
+          "The same enrichment is run on the T1S3 ranking and stability of the hallmark calls across the two rankings is reported",
+          "The source and version of the gene set collection actually used is stated explicitly; if Hallmark was unavailable, the substitution is reported prominently"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Integrated report: genes, pathways, and the sample_01 caveat",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Correlated hallmark sets can produce a story that looks broader than the evidence; report overlapping leading edges as such",
+          "With 6 vs 6, confidence intervals on log2FC are wide — present effect sizes with uncertainty, not point estimates alone"
+        ],
+        "context": "Final synthesis step. Its purpose is to keep interpretation tied to what was actually computed — no mechanism claimed beyond differential expression and gene set enrichment, and no pathway narrative that the leading-edge genes do not support.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Taken together, what changes between atopic dermatitis lesional and control skin at the gene and hallmark-pathway level, and how much of that conclusion is contingent on the shallow sample and the n=6 design?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "reporting",
+        "depends_on": [
+          "T1S3",
+          "T2S1"
+        ],
+        "constraints": [
+          "Every biological statement must trace to a specific computed result (a gene with its FDR, or a pathway with its NES and leading edge) — no mechanism asserted beyond DE and enrichment",
+          "Do not claim causality, treatment effect, or therapeutic implication; this is an observational lesional-vs-control contrast",
+          "Report findings that contradict expected AD biology as readily as findings that confirm it"
+        ],
+        "description": "Assemble the outputs of T1S1, T1S2, T1S3, and T2S1 into a single interpretable summary: the QC verdict on sample_01 and the exclusion decision with its evidence; the top differentially expressed genes with effect sizes and direction (AD lesional relative to control); the significant hallmark pathways with NES, adjusted p, and leading-edge genes; and the concordance between the 12-sample and 11-sample analyses at both gene and pathway level. Cross-check whether the recovered genes and pathways align with established AD lesional biology (epidermal differentiation/barrier, antimicrobial peptides, type-2 and IL-17/IL-22 inflammation, interferon response, proliferation) and state clearly where the data supports the expected biology, where it does not, and where the result is ambiguous. Produce a summary table of the top findings and a figure panel combining volcano, hallmark NES barplot, and a heatmap of leading-edge genes across the 12 samples with sample_01 marked. Close with an explicit limitations paragraph covering the n=6 power ceiling, the pre-filtered 12,000-gene background, the single-batch unpaired design (which cannot separate condition from any unrecorded batch/subject structure), and the depth outlier.",
+        "acceptance_criteria": [
+          "A ranked summary table of top DE genes with log2FC, FDR, and direction relative to control",
+          "A table of significant hallmark pathways with NES, adjusted p, and leading-edge genes",
+          "An explicit statement of whether the conclusions hold with and without sample_01, at both gene and pathway level",
+          "A combined figure panel (volcano, hallmark NES barplot, leading-edge heatmap with sample_01 annotated)",
+          "A limitations section naming the n=6 power ceiling, the 12,000-gene filtered background, the unpaired single-batch design, and the depth outlier"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark enrichment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment: 12,000 gene-symbol rows x 12 skin samples (counts.csv, raw integer Salmon counts) with a 12 x 2 metadata.csv giving one condition column, 6 atopic dermatitis lesional ('treated') vs 6 control, unpaired. The research question has two halves — which genes change, and which hallmark pathways change — plus an explicit data-quality flag: sample_01 has a library size ~4x below the median.\n\nThe plan therefore starts with a QC/normalization step (T1S1) that quantifies the depth outlier rather than assuming it. A 4x-low library is not automatically a failed sample: negative-binomial methods with size-factor normalization tolerate depth differences, and dropping 1 of 6 replicates costs real power in an n=6 design. So T1S1 measures whether sample_01 is merely shallow (size factor low, but clustering with its own group in PCA/correlation space after variance-stabilizing transform) or genuinely aberrant (outlier in PC space, inflated Cook's distance, distorted count distribution). It emits a documented keep/drop recommendation with the evidence behind it, and both the full and the sample_01-excluded sample sets are carried forward.\n\nT1S2 runs the primary differential expression on the full 12-sample set with a negative-binomial GLM (DESeq2-family; edgeR-QLF or limma-voom as installed fallbacks), condition as the only covariate since the design is single-batch and unpaired. Independent filtering of low-count genes precedes testing, and shrunken log2 fold changes are used for ranking so that low-count genes do not dominate. T1S3 is the sensitivity analysis that makes the depth caveat honest: it re-runs the identical model on the 11 samples excluding sample_01 and reports the concordance of the two result sets (overlap of significant genes, rank correlation of the test statistic, sign agreement). This is what determines whether any downstream biological claim depends on the shallow sample.\n\nT2S1 takes the ranked gene list from T1S2 into MSigDB Hallmark (50 gene sets, Homo sapiens) enrichment, run as a rank-based GSEA over the full statistic-ordered list — appropriate here because the hallmark collection is small, coordinated, and an over-representation test on a hard FDR cutoff would waste the ranking. Hallmark gene sets are external reference data and the store is currently empty; the step must resolve them at run time and, failing that, degrade to whatever human pathway collection the environment or an installed package provides, reporting explicitly which collection was used. T2S2 assembles the final integrated report tying gene-level and pathway-level results to the AD biology that would be expected (keratinocyte differentiation, type-2 and IL-17 inflammation, interferon response, proliferation) without forcing the data to match it, and states the power limits of n=6 vs n=6 plainly.\n\nCaveat carried through the whole plan: 12,000 rows is a pre-filtered subset of the transcriptome, not a full annotation, so absolute enrichment statistics are conditioned on that background and the analysis must use the observed genes as the GSEA universe rather than a genome-wide one."
+  },
+  "usage": {
+    "inputTokens": 56169,
+    "outputTokens": 7640,
+    "cacheCreationInputTokens": 19921,
+    "cacheReadInputTokens": 36212,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "fgsea",
+          "clusterProfiler",
+          "msigdbr",
+          "apeglm",
+          "ashr",
+          "sva",
+          "pheatmap",
+          "ggplot2",
+          "pandas",
+          "scikit-learn",
+          "gseapy",
+          "decoupler",
+          "statsmodels",
+          "PyDESeq2",
+          "biomaRt",
+          "org.Hs.eg.db",
+          "ComplexHeatmap",
+          "matplotlib",
+          "numpy",
+          "seaborn"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {}
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark enrichment",
+          "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment: 12,000 gene-symbol rows x 12 skin samples (counts.csv, raw integer Salmon counts) with a 12 x 2 metadata.csv giving one condition column, 6 atopic dermatitis lesional ('treated') vs 6 control, unpaired. The research question has two halves — which genes change, and which hallmark pathways change — plus an explicit data-quality flag: sample_01 has a library size ~4x below the median.\n\nThe plan therefore starts with a QC/normalization step (T1S1) that quantifies the depth outlier rather than assuming it. A 4x-low library is not automatically a failed sample: negative-binomial methods with size-factor normalization tolerate depth differences, and dropping 1 of 6 replicates costs real power in an n=6 design. So T1S1 measures whether sample_01 is merely shallow (size factor low, but clustering with its own group in PCA/correlation space after variance-stabilizing transform) or genuinely aberrant (outlier in PC space, inflated Cook's distance, distorted count distribution). It emits a documented keep/drop recommendation with the evidence behind it, and both the full and the sample_01-excluded sample sets are carried forward.\n\nT1S2 runs the primary differential expression on the full 12-sample set with a negative-binomial GLM (DESeq2-family; edgeR-QLF or limma-voom as installed fallbacks), condition as the only covariate since the design is single-batch and unpaired. Independent filtering of low-count genes precedes testing, and shrunken log2 fold changes are used for ranking so that low-count genes do not dominate. T1S3 is the sensitivity analysis that makes the depth caveat honest: it re-runs the identical model on the 11 samples excluding sample_01 and reports the concordance of the two result sets (overlap of significant genes, rank correlation of the test statistic, sign agreement). This is what determines whether any downstream biological claim depends on the shallow sample.\n\nT2S1 takes the ranked gene list from T1S2 into MSigDB Hallmark (50 gene sets, Homo sapiens) enrichment, run as a rank-based GSEA over the full statistic-ordered list — appropriate here because the hallmark collection is small, coordinated, and an over-representation test on a hard FDR cutoff would waste the ranking. Hallmark gene sets are external reference data and the store is currently empty; the step must resolve them at run time and, failing that, degrade to whatever human pathway collection the environment or an installed package provides, reporting explicitly which collection was used. T2S2 assembles the final integrated report tying gene-level and pathway-level results to the AD biology that would be expected (keratinocyte differentiation, type-2 and IL-17 inflammation, interferon response, proliferation) without forcing the data to match it, and states the power limits of n=6 vs n=6 plainly.\n\nCaveat carried through the whole plan: 12,000 rows is a pre-filtered subset of the transcriptome, not a full annotation, so absolute enrichment statistics are conditioned on that background and the analysis must use the observed genes as the GSEA universe rather than a genome-wide one.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization, and depth-outlier adjudication",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Is sample_01 — whose library size is ~4x below the median — merely shallow but biologically consistent with its group, or a genuine outlier that must be excluded from the AD lesional vs control comparison?",
+              "description": "Load /eval-phase0-without-two-group-n6-enrich-2/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw integer Salmon counts) and /eval-phase0-without-two-group-n6-enrich-2/data/inputs/metadata/metadata.csv (12 rows x 2 columns, one condition column). Verify sample IDs match between the two files and in what order. Compute per-sample library size, detected-gene count, size factors (median-of-ratios or TMM), and per-sample count distributions. Apply a variance-stabilizing transform (VST/rlog, or log-CPM if only edgeR/limma is available) and produce PCA, sample-sample correlation heatmap, and hierarchical clustering, coloured by condition and annotated with library size. Explicitly assess whether sample_01 separates from its own condition group after normalization, or whether it merely sits at the low end of the depth axis. Emit a keep/drop recommendation with the numeric evidence supporting it, plus normalized matrices for both the 12-sample and the 11-sample (sample_01 removed) sets.",
+              "context": "Design: 6 atopic dermatitis lesional (treated) vs 6 control skin samples, unpaired, single batch. The profiled caveat is that sample_01 has a library size about 4x below the median. Depth alone does not justify exclusion in negative-binomial modelling — size-factor normalization is designed for exactly this — and dropping one of six replicates is a real power loss. The decision must be made on evidence, not on the depth number alone.",
+              "question_context": null,
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv columns and metadata.csv rows are confirmed to match; any mismatch or reordering is reported and fixed explicitly",
+                "Per-sample library size, detected genes, and size factors are tabulated for all 12 samples, with sample_01's ~4x deficit quantified against the actual median",
+                "PCA and sample-correlation clustering on variance-stabilized data are produced and it is stated whether sample_01 clusters with its own condition group",
+                "A written keep/drop recommendation for sample_01 is given with the specific numbers behind it, not a rule of thumb",
+                "Normalized/transformed matrices are saved for both the 12-sample and the 11-sample (sample_01 excluded) sets for downstream use",
+                "Number of genes passing a low-count filter is reported against the 12,000 input rows"
+              ],
+              "constraints": [
+                "Probe package availability before use (R: requireNamespace for DESeq2/edgeR/limma/ggplot2; Python: import for pydeseq2/pandas/matplotlib) and state which toolchain was actually used",
+                "Do NOT remove sample_01 in this step — produce both sample sets and a recommendation; the exclusion decision is tested in T1S3",
+                "Do not impute, rescale, or otherwise alter raw counts; normalization is by size factor only",
+                "Treat the first column of counts.csv as gene symbols and check for duplicate symbols, reporting how duplicates were resolved (e.g. summed or highest-mean retained)"
+              ],
+              "caveats": [
+                "12,000 rows is a pre-filtered subset, not the full human transcriptome — do not describe it as genome-wide",
+                "Low library size inflates the dispersion estimate for that sample; a low size factor is expected and is not itself evidence of an outlier",
+                "With n=6 per group a single dropped sample is a substantial power loss, so the bar for exclusion should be genuine aberrance, not depth alone"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Primary differential expression: AD lesional vs control (all 12 samples)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between the 6 atopic dermatitis lesional and 6 control skin samples, using all 12 samples with size-factor normalization?",
+              "description": "Fit a negative-binomial GLM to the raw counts with condition (AD lesional vs control) as the sole covariate — the design is single-batch and unpaired, so no additional terms are warranted. Prefer DESeq2 (Wald test) if available; otherwise edgeR quasi-likelihood F-test or limma-voom, whichever is importable. Apply independent low-count filtering before testing. Report log2 fold change (shrunken — apeglm/ashr, or equivalent — for ranking), standard error, unshrunken LFC, p-value, and Benjamini-Hochberg FDR for every tested gene. Set the contrast direction explicitly as AD lesional relative to control and state it in the output. Produce: full results table sorted by FDR, an MA plot, a volcano plot, counts of significant genes at FDR<0.05 with |log2FC|>1 and at FDR<0.05 alone, and normalized-expression boxplots for the top up- and down-regulated genes. Also export a ranked gene list (all tested genes, ordered by the signed test statistic) for the hallmark enrichment step.",
+              "context": "Input: raw Salmon gene-level counts, 12,000 gene symbols x 12 samples, from /eval-phase0-without-two-group-n6-enrich-2/data/inputs/counts/counts.csv, with condition labels from metadata.csv. T1S1 has established normalization and the sample_01 depth assessment. Expected AD lesional biology includes keratinocyte differentiation genes (FLG, LOR, filaggrin-related), antimicrobial peptides (S100A7/8/9, DEFB4A), and type-2/IL-17 inflammatory mediators (CCL17, CCL22, IL13, IL22, IL36) — but these are priors to check against, not a target to steer toward.",
+              "acceptance_criteria": [
+                "A full per-gene results table is produced with log2FC (both shrunken and unshrunken), p-value, and BH-adjusted FDR, with contrast direction stated as AD lesional vs control",
+                "Number of genes tested after low-count filtering is reported, along with counts of significant genes at FDR<0.05 and at FDR<0.05 with |log2FC|>1",
+                "MA plot and volcano plot are generated and dispersion/mean-variance fit is shown",
+                "A ranked list of ALL tested genes ordered by the signed test statistic is exported for downstream GSEA",
+                "Top up- and down-regulated genes are listed with their normalized expression per group, so effect sizes can be read directly"
+              ],
+              "constraints": [
+                "Use raw integer counts as input to the model — never pre-normalized or log-transformed values",
+                "Model condition only; do not add covariates that the metadata (12 x 2, condition only) does not support",
+                "Report the exact statistical method, test, and shrinkage estimator used, and confirm package availability before relying on it",
+                "Do not filter genes on fold change before testing; filter on expression level only"
+              ],
+              "caveats": [
+                "n=6 per group gives limited power; genes with modest effect sizes will be missed and the absence of a hit is not evidence of no change",
+                "Gene-symbol identifiers may contain duplicates or deprecated symbols; whatever T1S1 decided about duplicates must be applied identically here",
+                "The 12,000-gene input is already filtered, so FDR is conditioned on that subset"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Sensitivity analysis: DE excluding shallow sample_01",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the differential expression results for AD lesional vs control depend on the inclusion of the ~4x-shallow sample_01?",
+              "description": "Re-run the exact model specification from T1S2 on the 11-sample set with sample_01 excluded (5 vs 6, or 6 vs 5 depending on which group sample_01 belongs to — report which). Compare the two result sets directly: overlap and Jaccard index of genes significant at FDR<0.05, Spearman rank correlation of the test statistic across all commonly tested genes, sign concordance of log2FC for the union of significant genes, and a scatter of log2FC(12-sample) vs log2FC(11-sample) with the discordant genes labelled. List any gene that is significant in one analysis and not the other, and flag the top T1S2 hits that lose significance without sample_01. Conclude with an explicit statement of which primary result set should be used for interpretation and why, combining this concordance evidence with the T1S1 keep/drop recommendation.",
+              "context": "This step exists because the research question explicitly asks that the shallow sample be handled carefully. A leave-one-out re-analysis is the direct, honest test of whether any conclusion is load-bearing on that sample, and it is cheap. The alternative — silently dropping or silently keeping sample_01 — hides the dependency.",
+              "acceptance_criteria": [
+                "DE results on the 11-sample set are produced with the identical model, filtering, and shrinkage as T1S2",
+                "Concordance metrics are reported: significant-gene overlap/Jaccard, Spearman correlation of test statistics, log2FC sign agreement",
+                "A log2FC-vs-log2FC scatter between the two analyses is produced with discordant genes identified",
+                "Genes that gain or lose FDR<0.05 significance upon exclusion of sample_01 are listed explicitly",
+                "A clear recommendation names which result set is primary for interpretation, with the reasoning stated"
+              ],
+              "constraints": [
+                "Use exactly the same test, filtering thresholds, and shrinkage estimator as T1S2 — any difference invalidates the comparison",
+                "Report which condition group sample_01 belongs to and the resulting per-group n after exclusion",
+                "Do not present the 11-sample analysis as more trustworthy by default; it has less power"
+              ],
+              "caveats": [
+                "An unbalanced 5-vs-6 design has lower power than 6-vs-6, so some loss of significance is expected from power alone and must not be read as instability",
+                "High concordance does not prove sample_01 is clean, only that it is not driving the result"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "MSigDB Hallmark enrichment of the AD lesional vs control signature",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB Hallmark pathways are coordinately up- or down-regulated in atopic dermatitis lesional skin relative to control?",
+              "description": "Run rank-based gene set enrichment (GSEA/fgsea-style, permutation or adaptive multilevel p-values) on the full ranked gene list from T1S2 — all tested genes ordered by the signed DE test statistic — against the MSigDB Hallmark collection (50 gene sets) for Homo sapiens, mapped on gene symbols to match the counts.csv identifier space. Report normalized enrichment score, nominal p, BH-adjusted p, set size, and leading-edge genes for every hallmark set, and plot enrichment curves for the top significant sets plus a barplot of NES ranked by adjusted p. Restrict the gene universe to the genes actually tested in T1S2, and report how many members of each hallmark set are present in that 12,000-gene background — small overlaps make a set uninterpretable and must be flagged. Repeat the enrichment on the T1S3 (sample_01 excluded) ranking and report which hallmark calls are stable across the two rankings. REFERENCE DATA: this step needs human MSigDB Hallmark gene sets. The reference store was empty at planning time, so the step must first resolve them from whatever the environment provides at run time (a provisioned MSigDB/pathway collection, or an installed package that ships the sets such as msigdbr, gseapy, or decoupler); if Hallmark is genuinely unavailable, fall back to any available human pathway/GO collection, state prominently which collection was substituted, and report that the hallmark-specific question could not be answered as asked.",
+              "context": "The research question names hallmark pathways specifically. Hallmark is a small (50), coordinated, low-redundancy collection, which is why a rank-based GSEA over the whole ranked list is preferable to an over-representation test on a hard FDR cutoff — with n=6 per group the significant-gene list may be short and ORA would discard the ranking information. Input is the ranked list from T1S2 (primary) and T1S3 (sensitivity), both on gene symbols.",
+              "acceptance_criteria": [
+                "Enrichment results are reported for all 50 hallmark sets (or all sets of the substituted collection) with NES, nominal p, BH-adjusted p, set size, and leading-edge genes",
+                "The gene universe is the T1S2-tested gene set, and per-set overlap with that background is reported; sets with small overlap are flagged as uninterpretable",
+                "Enrichment plots for the top significant sets and an NES barplot are produced",
+                "The same enrichment is run on the T1S3 ranking and stability of the hallmark calls across the two rankings is reported",
+                "The source and version of the gene set collection actually used is stated explicitly; if Hallmark was unavailable, the substitution is reported prominently"
+              ],
+              "constraints": [
+                "Use Homo sapiens gene sets — the data is human skin (taxon 9606)",
+                "Match identifiers on gene symbols, and report the fraction of ranked genes that map into the collection",
+                "Rank on the signed DE test statistic over ALL tested genes; do not pre-threshold the list before GSEA",
+                "Probe for the gene set source before relying on it and report what was found; do not attempt any network download"
+              ],
+              "caveats": [
+                "The 12,000-gene input is pre-filtered, so hallmark set coverage will be incomplete and enrichment statistics are conditioned on that background",
+                "Hallmark sets overlap in membership; correlated significant sets should not be read as independent evidence",
+                "Permutation-based p-values are unstable for very small or very large sets — report set sizes alongside significance"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Integrated report: genes, pathways, and the sample_01 caveat",
+              "track": "T2",
+              "step_type": "reporting",
+              "question": "Taken together, what changes between atopic dermatitis lesional and control skin at the gene and hallmark-pathway level, and how much of that conclusion is contingent on the shallow sample and the n=6 design?",
+              "description": "Assemble the outputs of T1S1, T1S2, T1S3, and T2S1 into a single interpretable summary: the QC verdict on sample_01 and the exclusion decision with its evidence; the top differentially expressed genes with effect sizes and direction (AD lesional relative to control); the significant hallmark pathways with NES, adjusted p, and leading-edge genes; and the concordance between the 12-sample and 11-sample analyses at both gene and pathway level. Cross-check whether the recovered genes and pathways align with established AD lesional biology (epidermal differentiation/barrier, antimicrobial peptides, type-2 and IL-17/IL-22 inflammation, interferon response, proliferation) and state clearly where the data supports the expected biology, where it does not, and where the result is ambiguous. Produce a summary table of the top findings and a figure panel combining volcano, hallmark NES barplot, and a heatmap of leading-edge genes across the 12 samples with sample_01 marked. Close with an explicit limitations paragraph covering the n=6 power ceiling, the pre-filtered 12,000-gene background, the single-batch unpaired design (which cannot separate condition from any unrecorded batch/subject structure), and the depth outlier.",
+              "context": "Final synthesis step. Its purpose is to keep interpretation tied to what was actually computed — no mechanism claimed beyond differential expression and gene set enrichment, and no pathway narrative that the leading-edge genes do not support.",
+              "acceptance_criteria": [
+                "A ranked summary table of top DE genes with log2FC, FDR, and direction relative to control",
+                "A table of significant hallmark pathways with NES, adjusted p, and leading-edge genes",
+                "An explicit statement of whether the conclusions hold with and without sample_01, at both gene and pathway level",
+                "A combined figure panel (volcano, hallmark NES barplot, leading-edge heatmap with sample_01 annotated)",
+                "A limitations section naming the n=6 power ceiling, the 12,000-gene filtered background, the unpaired single-batch design, and the depth outlier"
+              ],
+              "constraints": [
+                "Every biological statement must trace to a specific computed result (a gene with its FDR, or a pathway with its NES and leading edge) — no mechanism asserted beyond DE and enrichment",
+                "Do not claim causality, treatment effect, or therapeutic implication; this is an observational lesional-vs-control contrast",
+                "Report findings that contradict expected AD biology as readily as findings that confirm it"
+              ],
+              "caveats": [
+                "Correlated hallmark sets can produce a story that looks broader than the evidence; report overlapping leading edges as such",
+                "With 6 vs 6, confidence intervals on log2FC are wide — present effect sizes with uncertainty, not point estimates alone"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T2S1"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

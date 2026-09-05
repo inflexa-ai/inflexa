@@ -1,0 +1,85 @@
+id: R-0014
+title: "Time course with three or more time points: DESeq2 LRT against a reduced model without the condition:time term"
+assertion: >-
+  If the study has three or more time points, fit the DESeq2 likelihood ratio
+  test with the full design ~ condition + time + condition:time against the
+  reduced design ~ condition + time. The test finds the genes whose time
+  profile differs between the conditions, whatever the shape of the profile.
+  A Wald test on one coefficient does not answer this question, because the
+  interaction spans some coefficients. If the same subject gives the samples
+  at each time point, use limma-voom with duplicateCorrelation for the
+  subject.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_timepoints
+    op: gte
+    value: 3
+  - field: n_groups
+    op: gte
+    value: 2
+  - field: n_per_group_max
+    op: lte
+    value: 11
+action:
+  step_type: differential_expression
+  method: M-0002
+  parameters:
+    - name: full
+      value: "~ condition + time + condition:time"
+      default_source: "vignette:DESeq2/1.52.0#time-course-experiments"
+    - name: reduced
+      value: "~ condition + time"
+      default_source: "vignette:DESeq2/1.52.0#time-course-experiments"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+alternatives:
+  - method: M-0004
+    when: "The measures are repeated on the same subject across the time points, and the subject is a random effect."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette analyzes a time course with a full design that holds the
+      strain, the time, and their interaction, and a reduced design without
+      the interaction. The likelihood ratio test between the two finds the
+      genes with a strain-specific change over time, whatever the shape of
+      that change.
+    anchor: "Time-course experiments"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0040
+    paraphrase: >-
+      The workflow runs the same time course analysis on a yeast dataset. It
+      fits the full model with the interaction of strain and time, removes
+      the interaction in the reduced model, and uses the likelihood ratio
+      test to find the genes whose response to time differs between the
+      strains.
+    anchor: "Time course experiments"
+    retrieved: "2026-09-03"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0042
+    paraphrase: >-
+      The guide explains an interaction between two factors, and it shows
+      that a factor with more than two levels enters the model as a set of
+      coefficients, one for each level beyond the reference, thus a test of
+      the interaction spans more than one coefficient.
+    anchor: "Mean-reference model for factors; Studies with multiple factors"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [design, time-course, method-selection]

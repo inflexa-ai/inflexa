@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan selects DESeq2 Wald for a 6-vs-6 unpaired single-batch design with an edgeR QL cross-check, which matches the data state and replicate structure, and it keeps the shallow sample_01 through an explicit PCA/distance-based retention decision rather than removing it on depth alone. Filtering (>=10 counts in >=6 samples, tied to the smallest group) is minimal and justified, normalization is median-of-ratios inside the model with TMM for edgeR and no pre-scaling, and multiple testing is BH at a stated alpha=0.05 with apeglm shrinkage and alpha passed to results(). The contrast and reference level are named explicitly, though the design formula itself is only referred to rather than written out as ~condition. Enrichment is preranked fgsea on the full tested-gene list with the Wald statistic stated, Hallmark collection and a 15-500 size window, losing a small amount for the somewhat superfluous redundancy-collapsing step on a 50-set collection and for deferring the collection version to the report step. Reporting covers methods, versions, thresholds, gene counts, and caveats, with only light treatment of the design's own limitations."
+}

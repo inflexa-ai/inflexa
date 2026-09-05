@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject with ~subject + condition in DESeq2, cross-checked by edgeR glmQLFit on the identical design, which is exactly what this n=5 paired raw-count design demands. QC is concrete and design-aware (blind VST, PCA colored by both subject and condition, distance heatmap, library sizes, explicit check that pairs match metadata), though the outlier policy is stated as flagging rather than a decision rule. Filtering (>=10 counts in >=5 samples, justified as smallest group size), model-internal median-of-ratios and TMM normalization, explicit reference level and named contrast, BH at alpha=0.05 with independent filtering, apeglm shrinkage, Cook's/NA accounting and a p-value histogram are all correct and stated. Enrichment is appropriately preranked fgsea on the Wald statistic over all tested genes with a 15-500 size window, named collections and versions, and a stated rationale for avoiding ORA; only minor quibble is the implicit rather than explicit universe framing. The report is thorough on methods, versions, thresholds and gene counts, but the caveats section is thin — it names method-dependence of enrichment but does not commit to stating design limitations such as n=5 power or blood cell-composition confounding."
+}

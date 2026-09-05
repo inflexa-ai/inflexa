@@ -1,0 +1,574 @@
+# The primary sources of the bulk RNA-seq rules. Each locator was opened and
+# checked during the Phase 0 research (knowledge-plane-phase-zero, section 14).
+# A source enters the snapshot as metadata and a locator, never as full text.
+
+- id: S-0001
+  doi: 10.1186/s13059-014-0550-8
+  title: "Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2"
+  year: 2014
+  venue: Genome Biology
+  license: CC BY 4.0
+
+- id: S-0002
+  url: https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+  title: "Analyzing RNA-seq data with DESeq2 (the DESeq2 vignette)"
+  year: 2026
+  venue: Bioconductor
+  version: "1.52.0"
+  license: LGPL-3
+
+- id: S-0003
+  doi: 10.1093/bioinformatics/btp616
+  title: "edgeR: a Bioconductor package for differential expression analysis of digital gene expression data"
+  year: 2010
+  venue: Bioinformatics
+
+- id: S-0004
+  doi: 10.1093/nar/gkaf018
+  title: "edgeR v4: powerful differential analysis of sequencing data with expanded functionality and improved support for small counts and larger datasets"
+  year: 2025
+  venue: Nucleic Acids Research
+  license: CC BY 4.0
+
+- id: S-0005
+  url: https://bioconductor.org/packages/release/bioc/vignettes/edgeR/inst/doc/edgeRUsersGuide.pdf
+  title: "edgeR User's Guide"
+  year: 2026
+  venue: Bioconductor
+  version: "revised 2026-04-25"
+  license: LGPL-3
+
+- id: S-0006
+  doi: 10.1186/gb-2014-15-2-r29
+  title: "voom: precision weights unlock linear model analysis tools for RNA-seq read counts"
+  year: 2014
+  venue: Genome Biology
+  license: CC BY 4.0
+
+- id: S-0007
+  doi: 10.1093/nar/gkv007
+  title: "limma powers differential expression analyses for RNA-sequencing and microarray studies"
+  year: 2015
+  venue: Nucleic Acids Research
+  license: CC BY 4.0
+
+- id: S-0008
+  url: https://bioconductor.org/packages/release/bioc/vignettes/limma/inst/doc/usersguide.pdf
+  title: "limma User's Guide"
+  year: 2026
+  venue: Bioconductor
+  version: "revised 2026-05-19"
+  license: LGPL-2.1
+
+- id: S-0009
+  doi: 10.12688/f1000research.7563.2
+  title: "Differential analyses for RNA-seq: transcript-level estimates improve gene-level inferences"
+  year: 2015
+  venue: F1000Research
+  license: CC BY 4.0
+
+- id: S-0010
+  url: https://bioconductor.org/packages/release/bioc/vignettes/tximport/inst/doc/tximport.html
+  title: "Importing transcript abundance datasets with tximport (the tximport vignette)"
+  year: 2026
+  venue: Bioconductor
+  version: "2026-04-28"
+  license: LGPL-2.1
+
+- id: S-0011
+  doi: 10.1261/rna.053959.115
+  title: "How many biological replicates are needed in an RNA-seq experiment and which differential expression tool should you use?"
+  year: 2016
+  venue: RNA
+  license: CC BY 4.0
+
+- id: S-0012
+  doi: 10.1186/s13059-016-0881-8
+  title: "A survey of best practices for RNA-seq data analysis"
+  year: 2016
+  venue: Genome Biology
+  license: CC BY 4.0
+
+- id: S-0013
+  doi: 10.1146/annurev-biodatasci-072018-021255
+  title: "RNA Sequencing Data: Hitchhiker's Guide to Expression Analysis"
+  year: 2019
+  venue: Annual Review of Biomedical Data Science
+
+- id: S-0014
+  doi: 10.1093/nargab/lqaa078
+  title: "ComBat-seq: batch effect adjustment for RNA-seq count data"
+  year: 2020
+  venue: NAR Genomics and Bioinformatics
+  license: CC BY 4.0
+
+- id: S-0015
+  doi: 10.1038/nrg2825
+  title: "Tackling the widespread and critical impact of batch effects in high-throughput data"
+  year: 2010
+  venue: Nature Reviews Genetics
+
+- id: S-0016
+  doi: 10.1093/biostatistics/kxv027
+  title: "Methods that remove batch effects while retaining group differences may lead to exaggerated confidence in downstream analyses"
+  year: 2016
+  venue: Biostatistics
+
+- id: S-0017
+  doi: 10.1038/nmeth.3885
+  title: "Data-driven hypothesis weighting increases detection power in genome-scale multiple testing"
+  year: 2016
+  venue: Nature Methods
+
+- id: S-0018
+  doi: 10.1073/pnas.0914005107
+  title: "Independent filtering increases detection power for high-throughput experiments"
+  year: 2010
+  venue: PNAS
+
+- id: S-0019
+  doi: 10.1111/j.2517-6161.1995.tb02031.x
+  title: "Controlling the false discovery rate: a practical and powerful approach to multiple testing"
+  year: 1995
+  venue: Journal of the Royal Statistical Society, Series B
+
+- id: S-0020
+  doi: 10.1093/bioinformatics/bty895
+  title: "Heavy-tailed prior distributions for sequence count data: removing the noise and preserving large differences"
+  year: 2019
+  venue: Bioinformatics
+
+- id: S-0021
+  doi: 10.1093/biostatistics/kxw041
+  title: "False discovery rates: a new deal"
+  year: 2017
+  venue: Biostatistics
+
+- id: S-0022
+  doi: 10.1093/bioinformatics/btp053
+  title: "Testing significance relative to a fold-change threshold is a TREAT"
+  year: 2009
+  venue: Bioinformatics
+
+- id: S-0023
+  doi: 10.1186/s13059-022-02648-4
+  title: "Exaggerated false positives by popular differential expression methods when analyzing human population samples"
+  year: 2022
+  venue: Genome Biology
+  license: CC BY 4.0
+
+- id: S-0024
+  doi: 10.1073/pnas.0506580102
+  title: "Gene set enrichment analysis: a knowledge-based approach for interpreting genome-wide expression profiles"
+  year: 2005
+  venue: PNAS
+
+- id: S-0025
+  doi: 10.1101/060012
+  title: "Fast gene set enrichment analysis"
+  year: 2021
+  venue: bioRxiv
+
+- id: S-0026
+  doi: 10.1038/s41596-018-0103-9
+  title: "Pathway enrichment analysis and visualization of omics data using g:Profiler, GSEA, Cytoscape and EnrichmentMap"
+  year: 2019
+  venue: Nature Protocols
+
+- id: S-0027
+  doi: 10.1371/journal.pcbi.1009935
+  title: "Urgent need for consistent standards in functional enrichment analysis"
+  year: 2022
+  venue: PLoS Computational Biology
+  license: CC BY 4.0
+
+- id: S-0028
+  doi: 10.1186/s13059-015-0761-7
+  title: "Multiple sources of bias confound functional enrichment analysis of global -omics data"
+  year: 2015
+  venue: Genome Biology
+  license: CC BY 4.0
+
+- id: S-0029
+  doi: 10.1093/bib/bbz158
+  title: "Toward a gold standard for benchmarking gene set enrichment analysis"
+  year: 2021
+  venue: Briefings in Bioinformatics
+
+- id: S-0030
+  doi: 10.1093/nar/gks461
+  title: "Camera: a competitive gene set test accounting for inter-gene correlation"
+  year: 2012
+  venue: Nucleic Acids Research
+
+- id: S-0031
+  doi: 10.1016/j.cels.2015.12.004
+  title: "The Molecular Signatures Database (MSigDB) hallmark gene set collection"
+  year: 2015
+  venue: Cell Systems
+
+- id: S-0032
+  doi: 10.1038/s41592-023-02014-7
+  title: "Extending support for mouse data in the Molecular Signatures Database (MSigDB)"
+  year: 2023
+  venue: Nature Methods
+
+- id: S-0033
+  doi: 10.1038/nmeth.4197
+  title: "Salmon provides fast and bias-aware quantification of transcript expression"
+  year: 2017
+  venue: Nature Methods
+
+- id: S-0034
+  doi: 10.1038/nbt.3519
+  title: "Near-optimal probabilistic RNA-seq quantification"
+  year: 2016
+  venue: Nature Biotechnology
+
+- id: S-0035
+  doi: 10.1093/bioinformatics/bts635
+  title: "STAR: ultrafast universal RNA-seq aligner"
+  year: 2013
+  venue: Bioinformatics
+
+- id: S-0036
+  doi: 10.1186/s13059-020-02151-8
+  title: "Alignment and mapping methodology influence transcript abundance estimation"
+  year: 2020
+  venue: Genome Biology
+  license: CC BY 4.0
+
+- id: S-0037
+  doi: 10.1093/bioinformatics/btw354
+  title: "MultiQC: summarize analysis results for multiple tools and samples in a single report"
+  year: 2016
+  venue: Bioinformatics
+
+- id: S-0038
+  doi: 10.12688/f1000research.9471.2
+  title: "Whose sample is it anyway? Widespread misannotation of samples in transcriptomics studies"
+  year: 2016
+  venue: F1000Research
+  license: CC BY 4.0
+
+- id: S-0039
+  doi: 10.1093/bib/bbz124
+  title: "Current RNA-seq methodology reporting limits reproducibility"
+  year: 2021
+  venue: Briefings in Bioinformatics
+
+- id: S-0040
+  doi: 10.12688/f1000research.7035.1
+  title: "RNA-Seq workflow: gene-level exploratory analysis and differential expression"
+  year: 2015
+  venue: F1000Research
+  license: CC BY 4.0
+
+- id: S-0041
+  doi: 10.12688/f1000research.9005.3
+  title: "RNA-seq analysis is easy as 1-2-3 with limma, Glimma and edgeR"
+  year: 2018
+  venue: F1000Research
+  license: CC BY 4.0
+
+- id: S-0042
+  doi: 10.12688/f1000research.27893.1
+  title: "A guide to creating design matrices for gene expression experiments"
+  year: 2020
+  venue: F1000Research
+  license: CC BY 4.0
+
+- id: S-0043
+  url: https://nf-co.re/differentialabundance/2.0.0/
+  title: "nf-core/differentialabundance 2.0.0: parameters and usage"
+  year: 2026
+  venue: nf-core
+  version: "2.0.0"
+  license: MIT
+
+- id: S-0044
+  doi: 10.1038/s41587-020-0439-x
+  title: "The nf-core framework for community-curated bioinformatics pipelines"
+  year: 2020
+  venue: Nature Biotechnology
+
+- id: S-0045
+  doi: 10.1371/journal.pcbi.1007664
+  title: "Tximeta: Reference sequence checksums for provenance identification in RNA-seq"
+  year: 2020
+  venue: PLoS Computational Biology
+  license: CC BY 4.0
+
+# ── Added 2026-09-05 for the coverage expansion (design, data states, library
+# types, robustness, multiple testing, reporting, enrichment, annotation). Each
+# DOI resolves through the validate gate with --resolve-dois.
+
+- id: S-0046
+  doi: 10.1093/nar/gkv412
+  title: "Why weight? Modelling sample and observational level variability improves power in RNA-seq analyses"
+  year: 2015
+  venue: Nucleic Acids Research
+
+- id: S-0047
+  doi: 10.1186/1471-2105-14-7
+  title: "GSVA: gene set variation analysis for microarray and RNA-Seq data"
+  year: 2013
+  venue: BMC Bioinformatics
+
+- id: S-0048
+  doi: 10.1186/gb-2010-11-2-r14
+  title: "Gene ontology analysis for RNA-seq: accounting for selection bias"
+  year: 2010
+  venue: Genome Biology
+
+- id: S-0049
+  doi: 10.1186/1471-2105-12-323
+  title: "RSEM: accurate transcript quantification from RNA-Seq data with or without a reference genome"
+  year: 2011
+  venue: BMC Bioinformatics
+
+- id: S-0050
+  doi: 10.1093/bioinformatics/btt656
+  title: "featureCounts: an efficient general purpose program for assigning sequence reads to genomic features"
+  year: 2014
+  venue: Bioinformatics
+
+- id: S-0051
+  doi: 10.1186/1471-2164-15-419
+  title: "Comparison of RNA-Seq by poly (A) capture, ribosomal RNA depletion, and DNA microarray for expression profiling"
+  year: 2014
+  venue: BMC Genomics
+
+- id: S-0052
+  doi: 10.1038/srep25533
+  title: "The impact of amplification on differential expression analyses by RNA-seq"
+  year: 2016
+  venue: Scientific Reports
+
+- id: S-0053
+  doi: 10.1016/j.xinn.2021.100141
+  title: "clusterProfiler 4.0: A universal enrichment tool for interpreting omics data"
+  year: 2021
+  venue: The Innovation
+
+- id: S-0054
+  doi: 10.17912/micropub.biology.000811
+  title: "rrvgo: a Bioconductor package for interpreting lists of Gene Ontology terms"
+  year: 2023
+  venue: microPublication Biology
+
+- id: S-0055
+  doi: 10.1371/journal.pone.0021800
+  title: "REVIGO summarizes and visualizes long lists of Gene Ontology terms"
+  year: 2011
+  venue: PLoS ONE
+
+- id: S-0056
+  doi: 10.3390/ht7030023
+  title: "p-Value histograms: inference and diagnostics"
+  year: 2018
+  venue: High-Throughput
+
+- id: S-0057
+  doi: 10.1093/bioinformatics/btn209
+  title: "fdrtool: a versatile R package for estimating local and tail area-based false discovery rates"
+  year: 2008
+  venue: Bioinformatics
+
+- id: S-0058
+  doi: 10.1093/bib/bbx008
+  title: "Selecting between-sample RNA-Seq normalization methods from the perspective of their assumptions"
+  year: 2018
+  venue: Briefings in Bioinformatics
+
+- id: S-0059
+  doi: 10.1261/rna.074922.120
+  title: "Misuse of RPKM or TPM normalization when comparing across samples and sequencing protocols"
+  year: 2020
+  venue: RNA
+
+- id: S-0060
+  doi: 10.1007/s12064-012-0162-3
+  title: "Measurement of mRNA abundance using RNA-seq data: RPKM measure is inconsistent among samples"
+  year: 2012
+  venue: Theory in Biosciences
+
+- id: S-0061
+  doi: 10.1093/bioinformatics/bts034
+  title: "The sva package for removing batch effects and other unwanted variation in high-throughput experiments"
+  year: 2012
+  venue: Bioinformatics
+
+- id: S-0062
+  doi: 10.1371/journal.pcbi.1003285
+  title: "Ten simple rules for reproducible computational research"
+  year: 2013
+  venue: PLoS Computational Biology
+
+- id: S-0063
+  doi: 10.1093/bioinformatics/bts356
+  title: "RSeQC: quality control of RNA-seq experiments"
+  year: 2012
+  venue: Bioinformatics
+
+- id: S-0064
+  doi: 10.1093/nar/28.1.27
+  title: "KEGG: Kyoto Encyclopedia of Genes and Genomes"
+  year: 2000
+  venue: Nucleic Acids Research
+
+- id: S-0065
+  doi: 10.1038/75556
+  title: "Gene Ontology: tool for the unification of biology"
+  year: 2000
+  venue: Nature Genetics
+
+- id: S-0066
+  doi: 10.1093/nar/gku310
+  title: "Robustly detecting differential expression in RNA sequencing data using observation weights"
+  year: 2014
+  venue: Nucleic Acids Research
+
+- id: S-0067
+  doi: 10.1214/16-AOAS920
+  title: "Robust hyperparameter estimation protects against hypervariable genes and improves power to detect differential expression"
+  year: 2016
+  venue: Annals of Applied Statistics
+
+- id: S-0068
+  doi: 10.1186/s12859-017-1674-0
+  title: "Ranking metrics in gene set enrichment analysis: do they matter?"
+  year: 2017
+  venue: BMC Bioinformatics
+
+- id: S-0069
+  doi: 10.1186/s13059-019-1716-1
+  title: "A practical guide to methods controlling false discoveries in computational biology"
+  year: 2019
+  venue: Genome Biology
+
+- id: S-0070
+  doi: 10.1093/nar/gkz1031
+  title: "The reactome pathway knowledgebase"
+  year: 2020
+  venue: Nucleic Acids Research
+
+- id: S-0071
+  doi: 10.1186/1741-7007-12-42
+  title: "RNA-seq: impact of RNA degradation on transcript quantification"
+  year: 2014
+  venue: BMC Biology
+
+- id: S-0072
+  doi: 10.1016/j.ygeno.2010.07.010
+  title: "A comparison between ribo-minus RNA-sequencing and polyA-selected RNA-sequencing"
+  year: 2010
+  venue: Genomics
+
+- id: S-0073
+  doi: 10.1186/s12864-018-5393-3
+  title: "A comparison between whole transcript and 3' RNA sequencing methods using Kapa and Lexogen library preparation methods"
+  year: 2019
+  venue: BMC Genomics
+
+- id: S-0074
+  doi: 10.1038/nprot.2013.099
+  title: "Count-based differential expression analysis of RNA sequencing data using R and Bioconductor"
+  year: 2013
+  venue: Nature Protocols
+
+- id: S-0075
+  doi: 10.1093/bib/bbx115
+  title: "Comparative analysis of differential gene expression tools for RNA sequencing time course data"
+  year: 2019
+  venue: Briefings in Bioinformatics
+
+- id: S-0076
+  doi: 10.1038/nprot.2009.97
+  title: "Mapping identifiers for the integration of genomic datasets with the R/Bioconductor package biomaRt"
+  year: 2009
+  venue: Nature Protocols
+
+- id: S-0077
+  doi: 10.1261/rna.046011.114
+  title: "Power analysis and sample size estimation for RNA-Seq differential expression"
+  year: 2014
+  venue: RNA
+
+- id: S-0078
+  doi: 10.1093/bib/bbs046
+  title: "A comprehensive evaluation of normalization methods for Illumina high-throughput RNA sequencing data analysis"
+  year: 2013
+  venue: Briefings in Bioinformatics
+
+- id: S-0079
+  doi: 10.1038/nbt.2957
+  title: "A comprehensive assessment of RNA-seq accuracy, reproducibility and information content by the Sequencing Quality Control Consortium"
+  year: 2014
+  venue: Nature Biotechnology
+
+- id: S-0080
+  doi: 10.1371/journal.pone.0079217
+  title: "A comparison of gene set analysis methods in terms of sensitivity, prioritization and specificity"
+  year: 2013
+  venue: PLoS ONE
+
+- id: S-0081
+  doi: 10.1007/978-1-4939-3578-9_19
+  title: "It's DE-licious: a recipe for differential expression analyses of RNA-seq experiments using quasi-likelihood methods in edgeR"
+  year: 2016
+  venue: Methods in Molecular Biology
+
+- id: S-0082
+  doi: 10.1186/gb-2013-14-9-r95
+  title: "Comprehensive evaluation of differential gene expression analysis methods for RNA-seq data"
+  year: 2013
+  venue: Genome Biology
+
+- id: S-0083
+  doi: 10.1186/1471-2105-7-261
+  title: "Empirical array quality weights in the analysis of microarray data"
+  year: 2006
+  venue: BMC Bioinformatics
+
+- id: S-0084
+  doi: 10.2202/1544-6115.1027
+  title: "Linear models and empirical Bayes methods for assessing differential expression in microarray experiments"
+  year: 2004
+  venue: Statistical Applications in Genetics and Molecular Biology
+
+- id: S-0085
+  doi: 10.1186/gb-2010-11-3-r25
+  title: "A scaling normalization method for differential expression analysis of RNA-seq data"
+  year: 2010
+  venue: Genome Biology
+
+- id: S-0086
+  doi: 10.1093/nar/gkaa1007
+  title: "OMA orthology in 2021: website overhaul, conserved isoforms, ancestral gene order and more"
+  year: 2021
+  venue: Nucleic Acids Research
+
+- id: S-0087
+  doi: 10.3389/fgene.2020.00654
+  title: "Gene set analysis: challenges, opportunities, and future research"
+  year: 2020
+  venue: Frontiers in Genetics
+
+- id: S-0088
+  doi: 10.1186/s13059-018-1466-5
+  title: "Differential gene expression analysis tools exhibit substandard performance for long non-coding RNA-sequencing data"
+  year: 2018
+  venue: Genome Biology
+
+- id: S-0089
+  doi: 10.1093/bioinformatics/btaa687
+  title: "Dream: powerful differential expression analysis for repeated measures designs"
+  year: 2021
+  venue: Bioinformatics
+
+- id: S-0090
+  doi: 10.1186/1471-2105-14-91
+  title: "A comparison of methods for differential expression analysis of RNA-seq data"
+  year: 2013
+  venue: BMC Bioinformatics

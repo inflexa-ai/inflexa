@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the design precisely: unpaired 6v6, single batch (so no blocking term, correctly justified rather than omitted silently), DESeq2 Wald as primary with edgeR QL as a robustness check, and a sensitivity rerun quantifying the influence of the shallow library. QC is exemplary and dataset-specific: library sizes, detected genes, size factors, blind VST PCA labelled by sample, distance heatmap, and an explicit keep-by-default policy for sample_01 with removal only on a stated positive reason, plus reporting of Cook's-outlier NAs as a plausible consequence of the shallow library. Normalization is inside the model (median-of-ratios and TMM), with an explicit prohibition on pre-scaling or feeding transformed values into the test; the reference level, contrast triple and direction are stated in words; BH at alpha 0.05 with independent filtering matched to the cutoff and apeglm shrinkage with the MLE retained. Enrichment uses the full tested-gene list ranked by the Wald statistic with a stated rationale, Hallmark with a 15-500 window applied after intersection with the tested universe, recorded collection version and symbol match rate, and an honest fail-loud clause if the collection cannot be resolved. Minor deductions only: the >=10 counts in >=6 samples filter is slightly on the stricter side of minimal (though justified by smallest group size), and the Hallmark collection version is deferred to run time rather than pinned."
+}

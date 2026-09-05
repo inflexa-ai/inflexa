@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly uses ~subject + condition as the primary paired model, explicitly forbids per-subject testing (zero residual df), and adds a limma-voom cross-check and an unpaired sensitivity fit purely as comparators, never as the primary answer. QC includes library sizes, size-factor/VST correlation, and both raw and within-pair-centred PCA with an explicit outlier policy that preserves pairs. Filtering is minimally justified (min count in 5 samples) though the exact count threshold is left slightly vague. Normalization is correctly internal to DESeq2/voom with no pre-normalized counts fed into the model. BH correction at 0.05/0.10, apeglm/ashr shrinkage, and pre-specified thresholds are all handled properly. GSEA is appropriately ranked (not ORA), uses named human Hallmark/GO-BP collections with size windows, redundancy collapse, and states caveats (cell-composition confounding, ties). The report step covers versions, thresholds, gene counts, and design caveats thoroughly, matching or exceeding the reference plan's rigor."
+}

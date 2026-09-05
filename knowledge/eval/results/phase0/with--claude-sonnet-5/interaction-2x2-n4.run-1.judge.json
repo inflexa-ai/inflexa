@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the question as the genotype:treatment interaction, sets explicit reference levels (WT, vehicle), fits ~genotype + treatment + genotype:treatment, tests the interaction coefficient by Wald, and decomposes into simple effects with the correct list() contrast for the KO effect, with a well-chosen edgeR QL cross-check and an honest statement of low power at n=4/cell. QC (blind VST, PCA on top 500 variance genes colored by both factors, distance heatmap, library sizes) precedes modeling, though the outlier policy stops at 'flag explicitly' rather than stating what would be done. The low-count filter is minimal and justified by the smallest cell size, and multiple testing is BH at alpha=0.05 with independent filtering plus correct shrinkage (apeglm for single coefficients, ashr for the linear combination). Normalization is the weakest point: DESeq2 size factors and edgeR TMM are only implicit in the calls and never stated, so the plan gets credit for feeding raw counts into the count models but not for making within-model normalization explicit. Enrichment is well specified (full ranked list by Wald stat, Hallmark, 15-500 size window, tested-gene universe, BH, no-fabrication fallback), missing only an MSigDB version pin."
+}

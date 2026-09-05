@@ -1,0 +1,330 @@
+{
+  "campaign": "sonnet-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n6-enrich",
+  "run": 1,
+  "startedAt": "2026-09-05T08:08:24.737Z",
+  "elapsedMs": 36909,
+  "outcome": "plan_submitted",
+  "planId": "pln-0199987d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and count matrix preparation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A 4x depth deficit alone does not justify exclusion if detection rate and PCA position look otherwise normal; treat as a sensitivity question, not an automatic removal"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "DESeq2"
+        ],
+        "question": "What is the library-size distribution across the 12 skin samples (6 AD-lesional, 6 control), and how severe is the sample_01 depth deficit relative to the rest of the cohort?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not remove sample_01 at this stage — flag it and carry it forward so the DE step can run both with and without it",
+          "Use the raw integer counts.csv and metadata.csv exactly as provided (12000 genes x 12 samples, 12 samples x 2 columns)"
+        ],
+        "acceptance_criteria": [
+          "Reports total library size (colSum of counts) per sample and confirms sample_01 is ~4x below median",
+          "Reports gene detection rate (genes with count>0) per sample to check whether sample_01 is shallow-but-consistent or has a distorted count distribution",
+          "Produces a cleaned counts matrix and metadata table (condition: AD_lesional vs control) ready for DESeq2, with sample_01 clearly flagged (not silently dropped)",
+          "Outputs a PCA or sample-correlation plot on variance-stabilized counts to check whether sample_01 is an expression outlier in addition to being a depth outlier"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "DESeq2 differential expression: AD-lesional vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 vs n=6 (or n=5 vs n=6 in sensitivity run) is a small unpaired design; treat borderline padj calls with caution",
+          "Single batch reported, so no batch correction term is needed in the design"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "EnhancedVolcano",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 12000 profiled genes are significantly differentially expressed between AD-lesional (n=6) and control (n=6) skin, and is the result sensitive to inclusion of the shallow sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use raw integer counts as DESeq2 input (do not pre-normalize)",
+          "Apply independent filtering and Benjamini-Hochberg FDR correction (DESeq2 defaults)",
+          "Report the primary result as the all-12-sample model; the sample_01-excluded model is a sensitivity check, not a replacement"
+        ],
+        "acceptance_criteria": [
+          "Runs DESeq2 with condition (AD_lesional vs control) as the design on the full 12-sample raw count matrix; reports size factors, dispersion estimates, and confirms sample_01's larger size factor is accounted for by normalization",
+          "Reports a full results table (log2FoldChange, lfcSE, stat, pvalue, padj) for all tested genes, and a significant gene list at padj<0.05 and |log2FC|>1",
+          "Re-runs the same DESeq2 model excluding sample_01 (n=5 vs n=6) as a sensitivity analysis and reports the overlap (Jaccard/counts) of significant genes between the two runs",
+          "Explicitly flags any gene that is significant only in one of the two runs as sample_01-sensitive",
+          "Produces an MA plot and a volcano plot for the primary (all-12-sample) result"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Hallmark pathway enrichment (ORA + preranked GSEA)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With only 6 vs 6 samples, GSEA preranked results are the more stable read than ORA on a threshold-dependent gene list; report both but weight interpretation toward GSEA where they disagree"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Which of the 50 MSigDB Hallmark pathways are enriched among genes differentially expressed between AD-lesional and control skin?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Use only the MSigDB human hallmark gene set file staged in the reference store; do not substitute mouse hallmark sets or GO sets for this step",
+          "If gene symbol matching between counts.csv and the hallmark GMT is poor (e.g. due to identifier mismatch), report the overlap rate before interpreting results"
+        ],
+        "acceptance_criteria": [
+          "Loads the MSigDB human Hallmark gene sets (50 sets, HGNC symbols) from the reference store and confirms gene symbol overlap with the counts.csv gene identifiers before running enrichment",
+          "Runs over-representation analysis (ORA) on the significant DEG list (padj<0.05, |log2FC|>1) from T2S1's primary (all-12-sample) result, with all 12000 profiled genes as the background universe",
+          "Runs preranked GSEA (fgsea or gseapy) on the full DESeq2 ranked gene list (ranked by signed statistic, e.g. stat or sign(log2FC)*-log10(pvalue)) from the same primary result",
+          "Reports both ORA (padj, gene ratio) and GSEA (NES, padj) results for all hallmark pathways tested, sorted by significance",
+          "Cross-checks whether top hallmark pathways change materially when using the sample_01-excluded DE result from T2S1's sensitivity run, and reports any pathway whose significance flips"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Synthesize DE genes and hallmark pathway findings",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [],
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "What is the decision-ready summary of which genes and which hallmark pathways differ between AD-lesional and control skin, including the impact of the shallow sample_01?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "synthesis",
+        "depends_on": [
+          "T3S1"
+        ],
+        "constraints": [
+          "Do not introduce new statistical tests; this step aggregates and reports results already computed in T2S1 and T3S1"
+        ],
+        "acceptance_criteria": [
+          "Combines T2S1 DE results and T3S1 ORA/GSEA hallmark results into one summary table: top significant genes with log2FC/padj, and top hallmark pathways with NES/padj",
+          "States explicitly which top genes and pathways are robust to exclusion of sample_01 and which are not, based on the sensitivity comparisons computed upstream",
+          "Does not claim mechanism beyond what the hallmark gene set names and DE direction support; separates observation (statistics) from interpretation (biological plausibility)",
+          "Reports the small-sample caveat (n=6 vs 6, unpaired) explicitly wherever effect sizes or pathway significance are discussed"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark pathways",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "Raw Salmon gene-level counts (12000 genes x 12 samples: 6 AD-lesional vs 6 control, unpaired, single batch) are profiled with one flagged outlier — sample_01 has a library size ~4x below the median. Step 1 runs QC on library sizes/count distributions and produces two DESeq2-ready count sets (all 12 samples, and 12 samples with sample_01 flagged/down-weighted) so the DE step can assess sensitivity of results to that sample rather than silently including or excluding it. Step 2 runs DESeq2 differential expression (treated vs control) with the standard analysis as primary and a sensitivity re-run excluding sample_01 to confirm the outlier is not driving the top signal. Step 3 takes the significant DE gene list (and full ranked stats for GSEA) into hallmark pathway enrichment using the MSigDB human hallmark gene sets staged in the reference store, running both an ORA on significant DEGs and a pre-ranked GSEA on the full ranked list (more robust to threshold choice). Step 4 synthesizes DE and pathway results into a decision-ready summary of which genes and which hallmark pathways differ between lesional and control skin, explicitly flagging any results that are sensitive to sample_01."
+  },
+  "usage": {
+    "inputTokens": 139045,
+    "outputTokens": 3366,
+    "cacheCreationInputTokens": 77468,
+    "cacheReadInputTokens": 61541,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "DESeq2",
+          "fgsea",
+          "gseapy",
+          "EnhancedVolcano",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark pathways",
+          "analytical_narrative": "Raw Salmon gene-level counts (12000 genes x 12 samples: 6 AD-lesional vs 6 control, unpaired, single batch) are profiled with one flagged outlier — sample_01 has a library size ~4x below the median. Step 1 runs QC on library sizes/count distributions and produces two DESeq2-ready count sets (all 12 samples, and 12 samples with sample_01 flagged/down-weighted) so the DE step can assess sensitivity of results to that sample rather than silently including or excluding it. Step 2 runs DESeq2 differential expression (treated vs control) with the standard analysis as primary and a sensitivity re-run excluding sample_01 to confirm the outlier is not driving the top signal. Step 3 takes the significant DE gene list (and full ranked stats for GSEA) into hallmark pathway enrichment using the MSigDB human hallmark gene sets staged in the reference store, running both an ORA on significant DEGs and a pre-ranked GSEA on the full ranked list (more robust to threshold choice). Step 4 synthesizes DE and pathway results into a decision-ready summary of which genes and which hallmark pathways differ between lesional and control skin, explicitly flagging any results that are sensitive to sample_01.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and count matrix preparation",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "What is the library-size distribution across the 12 skin samples (6 AD-lesional, 6 control), and how severe is the sample_01 depth deficit relative to the rest of the cohort?",
+              "acceptance_criteria": [
+                "Reports total library size (colSum of counts) per sample and confirms sample_01 is ~4x below median",
+                "Reports gene detection rate (genes with count>0) per sample to check whether sample_01 is shallow-but-consistent or has a distorted count distribution",
+                "Produces a cleaned counts matrix and metadata table (condition: AD_lesional vs control) ready for DESeq2, with sample_01 clearly flagged (not silently dropped)",
+                "Outputs a PCA or sample-correlation plot on variance-stabilized counts to check whether sample_01 is an expression outlier in addition to being a depth outlier"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Do not remove sample_01 at this stage — flag it and carry it forward so the DE step can run both with and without it",
+                "Use the raw integer counts.csv and metadata.csv exactly as provided (12000 genes x 12 samples, 12 samples x 2 columns)"
+              ],
+              "caveats": [
+                "A 4x depth deficit alone does not justify exclusion if detection rate and PCA position look otherwise normal; treat as a sensitivity question, not an automatic removal"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "DESeq2 differential expression: AD-lesional vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 profiled genes are significantly differentially expressed between AD-lesional (n=6) and control (n=6) skin, and is the result sensitive to inclusion of the shallow sample_01?",
+              "acceptance_criteria": [
+                "Runs DESeq2 with condition (AD_lesional vs control) as the design on the full 12-sample raw count matrix; reports size factors, dispersion estimates, and confirms sample_01's larger size factor is accounted for by normalization",
+                "Reports a full results table (log2FoldChange, lfcSE, stat, pvalue, padj) for all tested genes, and a significant gene list at padj<0.05 and |log2FC|>1",
+                "Re-runs the same DESeq2 model excluding sample_01 (n=5 vs n=6) as a sensitivity analysis and reports the overlap (Jaccard/counts) of significant genes between the two runs",
+                "Explicitly flags any gene that is significant only in one of the two runs as sample_01-sensitive",
+                "Produces an MA plot and a volcano plot for the primary (all-12-sample) result"
+              ],
+              "packages": [
+                "DESeq2",
+                "EnhancedVolcano",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Use raw integer counts as DESeq2 input (do not pre-normalize)",
+                "Apply independent filtering and Benjamini-Hochberg FDR correction (DESeq2 defaults)",
+                "Report the primary result as the all-12-sample model; the sample_01-excluded model is a sensitivity check, not a replacement"
+              ],
+              "caveats": [
+                "n=6 vs n=6 (or n=5 vs n=6 in sensitivity run) is a small unpaired design; treat borderline padj calls with caution",
+                "Single batch reported, so no batch correction term is needed in the design"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Hallmark pathway enrichment (ORA + preranked GSEA)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB Hallmark pathways are enriched among genes differentially expressed between AD-lesional and control skin?",
+              "acceptance_criteria": [
+                "Loads the MSigDB human Hallmark gene sets (50 sets, HGNC symbols) from the reference store and confirms gene symbol overlap with the counts.csv gene identifiers before running enrichment",
+                "Runs over-representation analysis (ORA) on the significant DEG list (padj<0.05, |log2FC|>1) from T2S1's primary (all-12-sample) result, with all 12000 profiled genes as the background universe",
+                "Runs preranked GSEA (fgsea or gseapy) on the full DESeq2 ranked gene list (ranked by signed statistic, e.g. stat or sign(log2FC)*-log10(pvalue)) from the same primary result",
+                "Reports both ORA (padj, gene ratio) and GSEA (NES, padj) results for all hallmark pathways tested, sorted by significance",
+                "Cross-checks whether top hallmark pathways change materially when using the sample_01-excluded DE result from T2S1's sensitivity run, and reports any pathway whose significance flips"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "constraints": [
+                "Use only the MSigDB human hallmark gene set file staged in the reference store; do not substitute mouse hallmark sets or GO sets for this step",
+                "If gene symbol matching between counts.csv and the hallmark GMT is poor (e.g. due to identifier mismatch), report the overlap rate before interpreting results"
+              ],
+              "caveats": [
+                "With only 6 vs 6 samples, GSEA preranked results are the more stable read than ORA on a threshold-dependent gene list; report both but weight interpretation toward GSEA where they disagree"
+              ]
+            },
+            {
+              "id": "T4S1",
+              "name": "Synthesize DE genes and hallmark pathway findings",
+              "track": "T2",
+              "step_type": "synthesis",
+              "question": "What is the decision-ready summary of which genes and which hallmark pathways differ between AD-lesional and control skin, including the impact of the shallow sample_01?",
+              "acceptance_criteria": [
+                "Combines T2S1 DE results and T3S1 ORA/GSEA hallmark results into one summary table: top significant genes with log2FC/padj, and top hallmark pathways with NES/padj",
+                "States explicitly which top genes and pathways are robust to exclusion of sample_01 and which are not, based on the sensitivity comparisons computed upstream",
+                "Does not claim mechanism beyond what the hallmark gene set names and DE direction support; separates observation (statistics) from interpretation (biological plausibility)",
+                "Reports the small-sample caveat (n=6 vs 6, unpaired) explicitly wherever effect sizes or pathway significance are discussed"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "enrichment-agent",
+              "constraints": [
+                "Do not introduce new statistical tests; this step aggregates and reports results already computed in T2S1 and T3S1"
+              ],
+              "caveats": []
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

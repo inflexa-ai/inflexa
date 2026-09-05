@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly uses ~batch+condition with batch as covariate (not ComBat-seq pre-adjustment), explicit releveling and contrast, DESeq2 median-of-ratios normalization inside the model, apeglm shrinkage, BH at alpha 0.05, and an edgeR QL cross-check on the same design, matching the reference closely. QC is thorough (blind VST PCA colored by condition and batch, distance heatmap, library size outlier flag, batch-balance confirmation). Low-count filter (>=10 counts in >=6 samples) is minimal and justified by group size. Enrichment, while not strictly required by the reference, is well-specified with ranking metric, universe, collection versions, size window, and a fallback rule for ORA when too few DE genes exist, though it goes beyond what was asked and adds some complexity not in the reference. Report includes methods, versions, design, thresholds, gene counts, and design caveats (notably the tximport limitation), fulfilling completeness fully."
+}

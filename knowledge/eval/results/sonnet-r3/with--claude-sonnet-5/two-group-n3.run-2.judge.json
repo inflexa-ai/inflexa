@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly selects a negative binomial count model (DESeq2 Wald as primary, edgeR QLF as a cross-check) for an unpaired, single-batch 3v3 design, and explicitly refuses to alter alpha to compensate for low power while stating the correct interpretive caveat about absent genes. QC (blind VST PCA, sample distance heatmap, library sizes, outlier flagged not silently dropped), a minimal and justified >=10-counts-in->=3-samples filter, in-model median-of-ratios and TMM normalization, an explicit ~condition formula with control releveled as reference and a named contrast, BH at alpha=0.05 with independent filtering and apeglm shrinkage for reporting are all present and correct. Minor deductions: framing the DESeq2/edgeR intersection as the 'high-confidence' set is an informal, uncalibrated post hoc filter that is not itself FDR-controlled; and the enrichment step, while methodologically sound (Wald-statistic ranking, tested-gene universe, 15-500 size window, named collections with versions, leading edge), was not requested and rests on an assumed human annotation that the dataset description never states. Overall this is a strong, design-specific plan rather than a generic template."
+}

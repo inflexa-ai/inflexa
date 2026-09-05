@@ -1,0 +1,73 @@
+id: R-0013
+title: "Interaction question: DESeq2 with an interaction term, test the interaction coefficient, then the simple effects"
+assertion: >-
+  If the question is an interaction, for example whether a treatment effect
+  differs between two genotypes, fit DESeq2 with the two factors and their
+  interaction term. For two factors with two levels each, test the interaction coefficient
+  first with the Wald test. With more levels the interaction spans several
+  coefficients, and the likelihood ratio test against the model without the
+  interaction is the test. Then report the simple effects: the condition effect in the reference
+  level from the main effect, and the effect in the other level from the sum
+  of the main effect and the interaction term. The interaction coefficient is a difference of differences with a large
+  standard error, thus the power is low at two or three replicates per cell,
+  and the report states it.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: interaction
+    op: eq
+    value: true
+  - field: n_per_group_min
+    op: gte
+    value: 2
+  - field: n_per_group_max
+    op: lte
+    value: 11
+action:
+  step_type: differential_expression
+  method: M-0001
+  parameters:
+    - name: design_terms
+      value: [factor_a, factor_b, "factor_a:factor_b"]
+      default_source: "vignette:DESeq2/1.52.0#interactions"
+    - name: test
+      value: interaction
+      default_source: "vignette:DESeq2/1.52.0#interactions"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette models a condition effect that differs between the levels
+      of a second factor with an interaction term. The interaction
+      coefficient tests whether the condition effect differs between the
+      levels, the main effect gives the condition effect in the reference
+      level, and the condition effect in the other level is the sum of the
+      main effect and the interaction term.
+    anchor: "Interactions"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      The guide builds a design with two factors and their interaction. It
+      explains that the interaction coefficient measures how much the effect
+      of one factor changes across the levels of the other, and it shows the
+      contrasts that test the interaction and the effect within each level.
+    anchor: "Study of interactions and additivity of treatments; Interactions using a two-factor model"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [design, interaction, method-selection]

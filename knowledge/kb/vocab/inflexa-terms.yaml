@@ -1,0 +1,71 @@
+# The minted INFLEXA terms. Batch effect and confounding as design properties,
+# the design-to-method rule, a threshold, the design formula, the template,
+# the version pin, and the step rationale have no home in OBI, STATO, OBCS,
+# or EDAM. Each term carries a SKOS label and a definition. A mapping to an
+# official term rides in kb/mappings/inflexa.sssom.tsv when one exists.
+
+- id: INFLEXA:design_to_method_rule
+  label: design-to-method rule
+  definition: A conditional claim that maps a typed analysis situation to a statistical method, with evidence.
+
+- id: INFLEXA:batch_balanced
+  label: balanced batch
+  definition: A batch factor whose levels each hold samples of every condition, thus the batch can enter the design as a covariate.
+
+- id: INFLEXA:batch_confounded
+  label: confounded batch
+  definition: A batch factor whose levels coincide with the condition levels, thus the batch effect and the condition effect cannot be separated.
+
+- id: INFLEXA:batch_suspected
+  label: suspected batch
+  definition: A processing structure that the metadata does not name but the sample structure suggests, for example a processing date or a lane.
+
+- id: INFLEXA:min_replicates
+  label: minimum replicates per group
+  definition: The smallest number of biological replicates in any group of the design.
+
+- id: INFLEXA:count_threshold
+  label: low count threshold
+  definition: The minimum count a gene must reach in a minimum number of samples to stay in the analysis.
+
+- id: INFLEXA:design_formula
+  label: design formula
+  definition: The model formula that names the fixed effects of the analysis, in the R formula syntax.
+
+- id: INFLEXA:script_template
+  label: script template
+  definition: A tested analysis script with a typed parameter contract and a pinned environment, rendered from slot values.
+
+- id: INFLEXA:version_pin
+  label: version pin
+  definition: The exact package version that a template was tested on.
+
+- id: INFLEXA:step_rationale
+  label: step rationale
+  definition: The one-line reason a plan step carries for its method choice, with the claim identifiers that ground it.
+
+- id: INFLEXA:low_depth_sample
+  label: low depth sample
+  definition: A sample whose library size is far below the median of the study, by a stated ratio.
+
+- id: INFLEXA:descriptive_only
+  label: descriptive only outcome
+  definition: "The permitted outcome of a design that supports no inference, for example one sample per group: report fold changes with no p-value."
+
+- id: INFLEXA:disputed_rule
+  label: disputed rule
+  definition: A rule with two defensible sides that the analyst must choose between and state in the plan.
+
+- id: INFLEXA:snapshot_digest
+  label: snapshot digest
+  definition: The content digest of one dated release of the knowledge set, which a plan pins.
+
+- id: INFLEXA:claim_identifier
+  label: claim identifier
+  definition: The rule identifier plus the leading hex digits of the content hash of the rule, which changes when the rule changes.
+
+- id: INFLEXA:bulk_rna_seq_assay
+  label: bulk RNA-seq assay
+  definition: A transcriptome-wide sequencing assay of pooled RNA from a sample, quantified to gene-level counts.
+  mapped_to: OBI:0001271
+  mapping_predicate: skos:exactMatch

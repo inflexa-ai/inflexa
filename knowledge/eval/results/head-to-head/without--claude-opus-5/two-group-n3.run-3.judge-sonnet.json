@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan precisely matches the reference: DESeq2 Wald test on raw counts with ~condition, correct releveling, in-model size factors, apeglm shrinkage, BH at 0.05 (plus 0.1 as secondary, not a substitution), and explicit non-lowering of alpha for n=3. QC (library size, VST PCA, correlation heatmap, Cook's distance) precedes testing with an explicit no-silent-drop policy. Filtering (count>=10 in >=3 samples) is minimal and justified. GSEA uses the full ranked list with stated ranking metric, explicit background/universe, named collections and size windows, and ORA is conditioned on list size — very strong. Minor deductions: no explicit software/package version numbers are given for full reproducibility, and enrichment collection versions aren't pinned, which slightly weakens report_completeness and enrichment_universe_sets."
+}

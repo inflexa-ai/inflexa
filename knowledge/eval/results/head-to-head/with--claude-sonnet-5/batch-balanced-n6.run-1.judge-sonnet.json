@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly uses ~ batch + condition with batch as a fixed covariate before condition, explicit reference levels, no pre-adjustment of counts, and in-model normalization (DESeq2 size factors, edgeR TMM) — matching the reference closely and going beyond it with an edgeR cross-check (a reasonable but non-mandated addition). QC is thorough: PCA/distance heatmap/library sizes colored by both batch and condition, with an explicit outlier policy. Filtering (>=10 counts in >=6 samples) is minimal and justified by group size. FDR (BH, alpha=0.05, independent filtering) and apeglm shrinkage are correctly specified, with unshrunken and shrunken LFC both retained. Enrichment is well-justified with full ranked list, stated ranking metric, size window, and a conditional, universe-explicit ORA; the only minor deduction is that gene-set versions are not pinned. Report completeness is strong (method, design, thresholds, gene counts, caveats) but versions of tools (DESeq2/edgeR/apeglm) are not stated, slightly short of full reproducibility reporting."
+}

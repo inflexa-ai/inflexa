@@ -1,0 +1,68 @@
+id: R-0092
+title: "Interaction design: report the simple effects and the interaction contrast side by side"
+assertion: >-
+  With an interaction term in the model, the report gives three results for
+  each gene side by side: the effect of the condition at the reference level
+  of the second factor, the effect of the condition at the other level, and
+  the interaction contrast that is the difference between the two. The
+  interaction coefficient alone does not say whether the condition has an
+  effect at either level, and a simple effect alone does not say whether the
+  effect differs between the levels. Name the reference level of each factor
+  beside the table, because the meaning of each coefficient depends on it.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: interaction
+    op: eq
+    value: true
+  - field: question
+    op: in
+    value: [differential_expression, full_plan]
+  - field: n_per_group_min
+    op: gte
+    value: 2
+action:
+  step_type: report
+  parameters:
+    - name: interaction_report
+      value: [simple_effect_reference, simple_effect_other, interaction_contrast]
+      default_source: "vignette:DESeq2/1.52.0#interactions"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0002
+    paraphrase: >-
+      The vignette explains that with a design of two factors and their
+      interaction, the condition coefficient is the condition effect for the
+      reference level of the other factor, the sum of that coefficient and
+      the interaction term is the condition effect for the other level, and
+      the interaction term is the difference between the two effects. It
+      shows how to extract each of the three with results.
+    anchor: "Interactions"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      The guide to design matrices shows that in a model with an interaction
+      the coefficients depend on the reference levels, and that the
+      comparisons of interest, the effect within each level and the
+      difference between the levels, are each a contrast that the analyst
+      must write out and name.
+    anchor: "Studies with multiple factors"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [report, interaction, contrasts]

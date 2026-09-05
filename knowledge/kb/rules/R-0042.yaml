@@ -1,0 +1,65 @@
+id: R-0042
+title: "Two methods for robustness: report the overlap of DESeq2 and edgeR QL, treat the intersection as the high-confidence set"
+assertion: >-
+  When both the DESeq2 Wald test and the edgeR quasi-likelihood F-test run
+  on the same counts and the same design, report the number of significant
+  genes from each method and the size of the intersection. Treat the
+  intersection as the high-confidence set, and list the genes that only one
+  method calls as a secondary set with the name of that method. The two
+  tools agree on most genes at 2 to 11 replicates per group, but each calls
+  some genes the other does not, and the disagreement grows at low counts
+  and at low replicate numbers. Do not present the union as the result.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 2
+  - field: n_per_group_max
+    op: lte
+    value: 11
+  - field: question
+    op: in
+    value: [differential_expression, full_plan]
+action:
+  step_type: report
+  parameters:
+    - name: robustness
+      value: overlap_of_two_methods
+      default_source: "doi:10.1261/rna.053959.115"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0011
+    paraphrase: >-
+      The study runs the tools on the same data with the same subsets of
+      replicates, finds that edgeR and DESeq2 hold the false positive rate
+      at or below the nominal level with fewer than 12 replicates, and shows
+      that the gene sets from the tools overlap but are not identical, with
+      the agreement lowest at few replicates.
+    anchor: "Results, Tool performance; Discussion, Recommendations"
+    retrieved: "2026-09-03"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0012
+    paraphrase: >-
+      The survey compares the differential expression methods, states that
+      they differ in their assumptions and in the genes that they call, and
+      states that no single method is best under every condition.
+    anchor: "Differential expression analysis"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [reporting, robustness, method-comparison]

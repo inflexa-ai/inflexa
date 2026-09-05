@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect confound, refuses to fit batch or apply ComBat/SVA/RUV, uses the only estimable model (~condition), and labels every result as a treatment+batch composite rather than a treatment effect, matching the reference exactly. QC (library size, detection, VST PCA/correlation) precedes testing and explicitly flags separation as uninterpretable; filtering (count>=10 in >=6 samples) is minimal and justified; normalization is done inside DESeq2 via median-of-ratios size factors with no pre-adjustment of counts. The design/contrast (control as reference, ~condition, apeglm shrinkage) is explicit and correct, and BH FDR at alpha=0.05 with both raw and shrunken LFC is reported; enrichment uses a full ranked list for fgsea with the ranking metric stated and an explicit universe/size window for ORA, appropriately framed as non-mechanistic. The report is unusually complete, naming methods, versions-by-package, thresholds, gene counts, and caveats, with the added (not required but valuable) confound-quantification and stability diagnostics in Step 3 strengthening rather than diluting the core deliverable."
+}

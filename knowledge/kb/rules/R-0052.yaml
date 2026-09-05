@@ -1,0 +1,54 @@
+id: R-0052
+title: "Collapse redundant gene sets before the report"
+assertion: >-
+  After the enrichment test, collapse the significant gene sets that overlap
+  into groups, and report one representative set per group with its members.
+  A gene set collection holds many sets that share most of their genes, and
+  the same genes drive the enrichment of each of them. A list of such sets
+  looks like many findings, but it is one finding. Keep the full table as a
+  supplement.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: enrichment
+  parameters:
+    - name: collapse_redundant
+      value: true
+      default_source: "doi:10.1101/060012"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0025
+    paraphrase: >-
+      The preprint describes the fgsea algorithm and the multilevel procedure
+      of the fgsea package. The collapse of overlapping significant pathways to
+      a set of independent pathways is a function of the same package, and its
+      documentation, not the preprint, describes it.
+    anchor: "Methods"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0026
+    paraphrase: >-
+      The protocol builds an enrichment map, a network where gene sets with a
+      large overlap are connected and form clusters, and it labels each cluster
+      with one theme, because a raw list of hundreds of overlapping sets is not
+      interpretable.
+    anchor: "Protocol 2, Visualization and interpretation with EnrichmentMap; AutoAnnotate"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [enrichment, redundancy, report]

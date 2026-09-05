@@ -1,0 +1,68 @@
+id: R-0023
+title: "Covariates present: add each covariate to the design as a fixed effect, do not remove its effect from the counts"
+assertion: >-
+  When the situation names covariates, for example sex, age, RNA integrity, or
+  a cell line, put each covariate into the design formula as a fixed-effect
+  term beside the condition. The model then estimates the condition effect
+  adjusted for the covariate, with the correct degrees of freedom. Do not
+  regress a covariate out of the counts and then test the residuals, and do
+  not give adjusted counts to the count model. A two-step removal borrows the
+  condition signal in an unbalanced design, and the later test reports
+  confidence that the data does not support. Keep the number of terms small
+  in relation to the number of samples.
+modality: bulk_rna_seq
+conditions:
+  - field: covariates
+    op: not_null
+action:
+  step_type: model_design
+  parameters:
+    - name: covariate_handling
+      value: design_terms
+      default_source: "doi:10.12688/f1000research.27893.1"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      The guide shows how a covariate enters the design matrix as an extra
+      column, a numeric covariate as a slope and a categorical covariate as a
+      set of indicator columns, and it shows that the linear model then
+      estimates the effect of interest after adjustment for the covariate. It
+      treats a batch in the same way, as an additive term of the design.
+    anchor: "Basic models, Regression model for covariates; Accounting for factors that are not of interest"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette states that DESeq2 analyzes any design that a formula with
+      fixed-effect terms expresses, that a continuous covariate enters the
+      formula in the same way as a factor, and that a batch removed for a
+      visualization must still stay in the design formula for the test.
+    anchor: "Multi-factor designs; Frequently asked questions, continuous covariates; Why after VST are there still batches in the PCA plot?"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0016
+    paraphrase: >-
+      When a method removes a batch effect from the data and keeps the group
+      difference, a test on the adjusted data gives p-values that are too
+      small, most of all in an unbalanced design. The paper favors a batch
+      term in the statistical model over an adjustment of the data.
+    anchor: "Abstract; Discussion"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [design, covariates, batch]

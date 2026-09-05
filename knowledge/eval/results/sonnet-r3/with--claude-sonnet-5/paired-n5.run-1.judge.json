@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject with ~subject + condition in DESeq2, testing the condition coefficient within subject, which matches the reference exactly; it also anticipates the n<7 Cook's-distance NA behavior specific to this sample size. QC precedes modeling with a blind VST, PCA colored by both subject and condition, a distance heatmap, library sizes, and an explicit no-silent-drop policy for outliers. Filtering is minimal and tied to the smallest group size (>=10 counts in >=5 samples), and normalization is left to DESeq2 median-of-ratios inside the model with an explicit ban on pre-normalized input. Inference uses BH at a stated alpha=0.05 passed into results(), apeglm shrinkage for reported effects, and selection by padj only rather than post hoc LFC cuts. Enrichment is not strictly required by the question but is well specified (full ranked list by Wald stat, named collections with versions, 15-500 size window, BH, leading edge, fallback if files absent); the reporting step names method, versions, design, thresholds, gene counts, and design caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the question as the genotype:treatment interaction, fits a single ~ genotype + treatment + genotype:treatment NB GLM with explicit WT/vehicle reference levels, extracts the interaction coefficient by its resultsNames() name, and adds the within-genotype simple effects plus the vehicle baseline contrast, explicitly forbidding the collapse-to-four-groups shortcut and the difference-of-significance fallacy; the edgeR QL confirmation is well motivated at 12 residual df. QC is thorough and design-aware (size factors, library sizes by cell, VST PCA colored/shaped by both factors, distance heatmap, dispersion plot, named outlier policy with no silent dropping), the filter (counts >= 10 in >= 4 samples, the smallest cell) is minimal and justified, and normalization stays inside the models (size factors, TMM; VST only for visualization). BH at both 0.05 and 0.10 with apeglm/ashr shrinkage used for ranking only and NA-padj accounting is essentially complete, though it does not note that apeglm requires a coef while the KO simple effect needs ashr. Enrichment is appropriately preranked on the interaction statistic with size bounds, permutations, match rate and universe caveats, but the collection version is unspecified and the assertion that the data are Homo sapiens appears assumed rather than verified (a WT/KO brain design is commonly murine), which would invalidate the gene-set choice. Reporting is strong on design, thresholds, tested/significant counts, residual df and null-result honesty, but never commits to recording package or reference versions."
+}

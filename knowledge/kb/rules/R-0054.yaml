@@ -1,0 +1,56 @@
+id: R-0054
+title: "Enrichment bias: gene length and expression level bias an over-representation analysis; state the universe and use a ranked test"
+assertion: >-
+  With count data, a long gene and a highly expressed gene reach significance
+  more easily, because they collect more reads. Thus the list of significant
+  genes is a biased sample of the genome. An over-representation analysis of
+  such a list reports the sets of long or highly expressed genes as enriched.
+  Set the universe to the tested genes, because this removes the part of the
+  bias that comes from detection. When possible, use a ranked test on the
+  full list. State the bias and the universe in the report.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+action:
+  step_type: enrichment
+  parameters:
+    - name: bias_note
+      value: length_and_expression
+      default_source: "doi:10.1186/s13059-015-0761-7"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0028
+    paraphrase: >-
+      A gene list from an omics experiment is a biased sample of the genome,
+      with the transcriptome of the tissue and the detection of a gene by the
+      platform among the sources of the bias. A genome-wide background turns
+      this bias into a false enrichment of tissue processes, thus the
+      background must be the genes that the experiment detected.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-03"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0029
+    paraphrase: >-
+      The benchmark compares an over-representation analysis of a thresholded
+      gene list with methods that use the full ranked list, and it finds that
+      the two families do not agree on the number and the identity of the
+      significant sets.
+    anchor: "Results, Phenotype relevance; Discussion"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [enrichment, bias, universe, needs-source]

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly matches the design: a negative binomial DESeq2 Wald test on raw Salmon counts for an unpaired two-group comparison with no batch term, and it honestly frames n=3 power limits without lowering alpha, which is the key trap avoided. QC is strong and dataset-specific — VST PCA/sample distances labeled by group, library sizes and detection, an explicit outlier-discordance policy, plus reconciliation of the 7-column vs 6-row mismatch before modeling. Normalization is correctly left inside the model via size factors, and apeglm/ashr shrinkage is required for the reported effect size at FDR 5%, though the |LFC|>1 cut is applied post hoc rather than as an lfcThreshold in the test, and BH is only implied via padj. The main weaknesses are the absence of an explicit minimal low-count prefilter (independent filtering alone is not the same thing), a design formula stated as ~condition but with no explicit reference-level relevel for control, unstated package versions and tested-gene counts, and an enrichment step that is not warranted by the question and lacks an ORA universe, collection version, and gene-set size window."
+}

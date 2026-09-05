@@ -1,0 +1,55 @@
+id: R-0045
+title: "Gene set enrichment on the full ranked list, never on a thresholded list"
+assertion: >-
+  For a ranked gene set enrichment analysis, give the method the full list of
+  tested genes, ranked by the chosen statistic. Do not cut the list at an
+  adjusted p-value or at a fold change before the test. The enrichment
+  statistic asks whether the members of a set concentrate at the top or at the
+  bottom of the whole list. A cut removes the genes with a small but
+  coordinated change, and a set of such genes is the signal that the method
+  finds.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: enrichment
+  parameters:
+    - name: gsea_input
+      value: full_ranked_list
+      default_source: "doi:10.1073/pnas.0506580102"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0024
+    paraphrase: >-
+      GSEA takes the whole ranked list of genes and asks whether the members of
+      a set are concentrated at the top or at the bottom of the list. The
+      method was built because a threshold on single genes misses a modest
+      change that is shared by a coordinated set of genes.
+    anchor: "Abstract; Overview of GSEA; Methods, Calculation of an enrichment score"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0026
+    paraphrase: >-
+      The protocol gives two paths: an over-representation analysis of a gene
+      list with a threshold, and a GSEA of the full ranked list. The ranked
+      analysis needs no threshold, and it uses the weak signal that a threshold
+      removes.
+    anchor: "Overview of the protocol; Protocol 1B, Pathway enrichment analysis of a ranked gene list with GSEA"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [enrichment, ranked-list]

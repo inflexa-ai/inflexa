@@ -1,0 +1,65 @@
+id: R-0027
+title: "The edgeR path and the limma-voom path scale the library sizes with TMM"
+assertion: >-
+  On the edgeR path and on the limma-voom path, scale the library sizes with
+  the trimmed mean of M-values (TMM) factors. edgeR applies the factors as
+  offsets in the negative binomial model, and voom applies them in the log
+  counts per million before it computes the precision weights. The counts stay
+  raw, and no script scales the counts before the model. TMM removes the
+  composition bias between samples that a scale by the total count alone does
+  not remove.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: eq
+    value: 2
+action:
+  step_type: normalize
+  method: M-0009
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0003
+    paraphrase: >-
+      The note puts the library size of each sample into the mean of the
+      negative binomial model as a per-sample scale, thus the depth enters the
+      model and the counts stay untransformed.
+    anchor: "Model"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0005
+    paraphrase: >-
+      The guide states that the normalization step finds a set of scale
+      factors for the library sizes, that the default method is the trimmed
+      mean of M-values, and that the factors do not change the counts but give
+      effective library sizes that the model uses as offsets.
+    anchor: "Normalization; Sequencing depth; Effective library sizes"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0006
+    paraphrase: >-
+      voom converts the counts to log counts per million with library sizes
+      that the TMM factors scale, then it estimates the mean-variance trend
+      and gives each observation a precision weight for the limma linear
+      model.
+    anchor: "Methods, Normalization; voom: variance modeling at the observation-level"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [normalization, tmm]

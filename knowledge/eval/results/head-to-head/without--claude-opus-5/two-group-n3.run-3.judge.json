@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly matches the design: raw Salmon counts into a DESeq2 negative-binomial Wald test with ~condition only, explicitly justified by the unpaired, single-batch, 3-vs-3 structure, with edgeR QLF and limma-voom as genuinely independent cross-checks rather than substitutes. QC is thorough and design-aware (library sizes, VST PCA, correlation heatmap, size factors, dispersion plot, Cook's distance) with an explicit no-silent-dropout policy that flags sample removal as design-breaking at n=3; filtering (count >=10 in >=3 samples, the smallest group size) and in-model normalization (size factors, TMM, voom weights, no pre-normalization) are correct and stated. Reference leveling, BH at 0.05 (with 0.1 reported alongside, not a lowered alpha), and apeglm shrinkage for reported effect sizes are all explicit, and the caveat against re-thresholding on shrunken LFC is a good sign; the only slip is the post hoc |log2FC|>1 count instead of an lfcThreshold test. Enrichment is handled properly with the full ranked list, a stated ranking metric, the tested-gene background, a 10-500 size window, named human collections and a fixed seed, though collection versions are not pinned; the confidence audit (post-hoc detectable-effect floor, method concordance, exhaustive label-swap null, leave-one-out stability) answers the replication half of the question honestly and with the right caveats, and the report specifies design, thresholds and gene counts but not software versions."
+}

@@ -1,0 +1,73 @@
+id: R-0064
+title: "STAR and featureCounts: the raw integer counts go into the count model, with no length correction and no tximport"
+assertion: >-
+  If the counts come from an alignment with STAR and a count with
+  featureCounts, the count table holds one integer per gene and sample. Give
+  the table to the count model as it is. Do not correct the counts for the
+  gene length, because the model compares each gene across the samples and
+  the length of a gene is the same in each sample. Do not pass the table
+  through tximport, because tximport imports transcript estimates, and the
+  table holds gene counts already. State the annotation and the counting
+  options, for example the strand setting and the treatment of multi-mapped
+  reads, in the plan.
+modality: bulk_rna_seq
+conditions:
+  - field: count_source
+    op: eq
+    value: star_featurecounts
+  - field: data_state
+    op: eq
+    value: counts
+action:
+  step_type: model_design
+  parameters:
+    - name: import
+      value: raw_integer_counts_no_length_correction
+      default_source: "vignette:DESeq2/1.52.0#count-matrix-input"
+    - name: import_tool
+      value: none
+      default_source: "vignette:DESeq2/1.52.0#count-matrix-input"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0050
+    paraphrase: >-
+      featureCounts assigns each aligned read to a genomic feature, such as
+      a gene, and it returns an integer count per feature and sample, with
+      options for the strand and for multi-mapped reads.
+    anchor: "Abstract; Implementation"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette takes a matrix of un-normalized integer counts from a
+      counting tool such as featureCounts as its input, and it states that
+      the model corrects for the library size inside the model, thus the
+      counts must not be normalized or transformed before the import.
+    anchor: "Count matrix input; Why un-normalized counts?"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0074
+    paraphrase: >-
+      The protocol aligns the reads to the genome, counts the reads per gene
+      with a counting tool, and gives the raw count table to edgeR and to
+      DESeq without a length correction, because the count models take raw
+      counts.
+    anchor: "Counting reads in genes; Differential expression analysis"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [import, quantification, featurecounts]

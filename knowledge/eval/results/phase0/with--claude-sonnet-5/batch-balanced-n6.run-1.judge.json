@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly treats the balanced known batch as a fixed covariate in ~ batch + condition with condition tested last, explicitly refuses ComBat-seq pre-adjustment, and keeps median-of-ratios/TMM normalization inside the models, which matches the reference exactly for this 6v6 two-batch design. QC precedes testing on a blind VST with PCA colored by both condition and batch, sample-distance heatmap, and library sizes, though it only asks whether outliers exist without stating what action would follow their detection. The filter (>=10 counts in >=6 samples, justified as the smallest group size) is minimal and defensible, and inference is complete: Wald test, named contrast with control releveled as reference and resultsNames verification, apeglm shrinkage on the single coefficient, BH at alpha 0.05 matching the independent-filtering alpha, with an explicit prohibition on post hoc p-value or fold-change filtering. Enrichment was not requested and is arguably unwarranted here, but the ORA is specified responsibly (tested-gene universe, 15-500 size window, named collection with a version/availability probe and an honest failure mode), so it neither inflates nor fabricates findings. The final report names method, versions via sessionInfo, design, reference levels, thresholds, tested and significant counts, and the DESeq2/edgeR intersection; the main gap is that design-level caveats (n=6, confounding limits, batch absorption of variance) are only partially surfaced."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference design exactly: batch enters as a fixed covariate in ~batch+condition with an explicit control reference, no count adjustment before the model, median-of-ratios normalization internal to DESeq2, Wald test on the condition coefficient, apeglm shrinkage, BH with alpha=0.05 set in results() rather than post hoc. QC precedes testing with blind VST, PCA colored/shaped by both condition and batch, distance heatmap, library sizes, and outlier flagging, though the outlier policy is 'flag with reasoning' rather than a stated action rule. The pre-filter (>=10 counts in >=6 samples, the smallest group size) is minimal and explicitly justified as leaving the rest to independent filtering. Enrichment is well specified (full ranked list by Wald stat, universe = tested genes, 15-500 size window, BH per collection, leading edge), but collection versions are only promised in the report rather than named, and enrichment was not explicitly requested here though it is defensible as warranted. The report step is thorough on versions, design, thresholds, tested/significant counts, and caveats, missing only an explicit caveat about the batch-confounding/blocking limitation itself."
+}

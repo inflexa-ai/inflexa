@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject (~ subject + condition) with a Wald test on the condition coefficient, plus a same-design edgeR QL cross-check and per-subject paired plots that directly answer the within-subject question. QC is dataset-specific (blind VST PCA colored by condition/shaped by subject, sample-distance heatmap, library-size flagging at 50% of median) with the explicit expectation that subject dominates PC1; the outlier policy is more flagging than a stated action, which is the only soft spot. Filtering (>=10 counts in >=5 samples, filterByExpr on the design), normalization inside the model (median-of-ratios, TMM, raw counts only, VST for visualization only), explicit relevel and contrast triple, BH at alpha 0.05 with apeglm shrinkage and lfcThreshold inside results() rather than post hoc are all correct and stated. Enrichment is optional here but is well specified (full ranked list on the Wald stat with rationale, universe = tested genes, Hallmark with size window applied after intersection, collapse of redundant sets, provenance reporting, and an honest skip if no gene-set resource exists). The final report names methods, versions, design, thresholds, tested and significant counts, method overlap, session info, and n=5 and blood-composition caveats."
+}

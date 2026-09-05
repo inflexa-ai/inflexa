@@ -1,0 +1,88 @@
+id: R-0070
+title: "A blocking factor, two groups, few samples per group: duplicateCorrelation instead of a fixed block term"
+assertion: >-
+  If the design names a blocking factor, the samples are not paired, the
+  comparison has two groups, and the largest group holds three or fewer
+  samples, fit the block as a random effect with limma-voom and
+  duplicateCorrelation. An interaction design, a time course, or a design
+  with three or more groups keeps its own rule. A fixed block term spends
+  one degree of freedom per block, and with two or three samples per group
+  the residual has too few degrees of freedom left for the variance
+  estimate. duplicateCorrelation estimates one correlation within the blocks
+  for all the genes, and the linear model keeps the degrees of freedom for
+  the residual. State the estimated correlation in the report. If the block
+  has enough samples, the fixed block term in the count model is the
+  simpler choice.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: blocking_factor
+    op: not_null
+  - field: paired
+    op: eq
+    value: false
+  - field: n_per_group_min
+    op: gte
+    value: 2
+  - field: n_per_group_max
+    op: lte
+    value: 3
+  - field: n_groups
+    op: eq
+    value: 2
+  - field: interaction
+    op: is_null
+  - field: n_timepoints
+    op: is_null
+action:
+  step_type: differential_expression
+  method: M-0004
+  parameters:
+    - name: block_term
+      value: random_duplicate_correlation
+      default_source: "guide:limma/2026-05-19#multi-level-experiments"
+    - name: test
+      value: moderated_t
+      default_source: "guide:limma/2026-05-19#multi-level-experiments"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0001
+    when: "The block has enough samples for a fixed term: DESeq2 with the block in the design before the condition."
+  - method: M-0003
+    when: "The block has enough samples for a fixed term and robustness matters: edgeR quasi-likelihood with the block in the design."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      The guide explains that a factor that is not of interest can enter the
+      model as a fixed effect or as a random effect, that the fixed approach
+      estimates one coefficient per level, and that the random approach
+      through duplicateCorrelation fits one correlation for the block and
+      keeps the degrees of freedom.
+    anchor: "Treating factors that are not of direct interest as random effects"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0008
+    paraphrase: >-
+      The guide fits a block as a random effect with duplicateCorrelation,
+      where the correlation within the blocks is estimated once for all the
+      genes and then given to the linear model fit, and it presents this as
+      the method when the block does not enter the design as a fixed term.
+    anchor: "Multi-level Experiments; Blocking"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [design, blocking, replicates, method-selection]

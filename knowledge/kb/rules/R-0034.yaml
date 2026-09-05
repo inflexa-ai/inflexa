@@ -1,0 +1,56 @@
+id: R-0034
+title: "Outlier sample: investigate the cause, remove only with a stated reason, and report both analyses"
+assertion: >-
+  If a sample departs from its group on the PCA or on the sample distance
+  heatmap, do not remove it in silence. Look for a technical cause in the
+  library size, the number of detected genes, the mapping and duplication
+  metrics, and the sample metadata. Remove the sample only with a stated
+  reason. Run the analysis with the sample and without the sample, and
+  report both gene lists and the difference between them, because the
+  removal of a sample changes the dispersion estimates and the gene list.
+modality: bulk_rna_seq
+conditions:
+  - field: quality_flags
+    op: contains
+    value: [outlier_sample]
+action:
+  step_type: qc_sample_structure
+  parameters:
+    - name: outlier_policy
+      value: investigate_state_reason_report_both
+      default_source: "doi:10.1186/s13059-016-0881-8"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0012
+    paraphrase: >-
+      The survey states that a sample with a low correlation to its
+      replicates, or with an isolated position on the PCA, is a candidate
+      outlier, and that the technical metrics of the sample are examined for
+      a cause before the sample is removed.
+    anchor: "Quality control; Reproducibility"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0040
+    paraphrase: >-
+      The workflow uses the sample distance heatmap and the PCA on the
+      transformed counts to see whether the samples cluster by the
+      experimental factor, and it states that these plots show the overall
+      effect of the covariates and of a batch effect, thus a sample that
+      departs from its group is visible before the model.
+    anchor: "Exploratory analysis and visualization; Sample distances; PCA plot"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [qc, outlier-sample]

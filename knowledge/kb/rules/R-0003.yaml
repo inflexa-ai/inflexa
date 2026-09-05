@@ -1,0 +1,51 @@
+id: R-0003
+title: "No biological replication in a group: no inferential test, descriptive fold changes only"
+assertion: >-
+  If any group holds one sample, do no inferential differential expression
+  test. Without within-group replication no dispersion can be estimated, and a
+  p-value from such a design has no inferential basis. Report normalized counts
+  and descriptive log2 fold changes, state that the design has no replication,
+  and name the design that supports inference.
+modality: bulk_rna_seq
+conditions:
+  - field: n_per_group_min
+    op: lt
+    value: 2
+action:
+  step_type: differential_expression
+  method: M-0015
+  outcome: descriptive_only
+  forbids: [M-0001, M-0002, M-0003, M-0004, M-0005, M-0017]
+severity: flag
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0011
+    paraphrase: >-
+      The study measures how the number of replicates changes the ability of
+      each tool to find true differentially expressed genes, and it recommends
+      at least six replicates per condition, and twelve when the aim is to find
+      most differentially expressed genes whatever their fold change.
+    anchor: "Abstract; Discussion"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0002
+    paraphrase: >-
+      The vignette states that an experiment without replicates does not allow
+      a valid estimate of the within-group variance, thus DESeq2 cannot fit its
+      model, and it advises against inference from such data.
+    anchor: "Experiments without replicates"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [design, replicates, flag]

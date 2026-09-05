@@ -1,0 +1,23 @@
+id: M-0001
+label: "DESeq2 Wald test with apeglm log fold change shrinkage"
+edam_operation: EDAM:operation_3223
+description: >-
+  Negative binomial generalized linear model with a Wald test on each
+  coefficient, dispersion shrinkage across genes, median-of-ratios size factors,
+  independent filtering, and apeglm shrinkage of the reported log2 fold change.
+  For a fixed-effects design with about 2 to 11 replicates per group.
+packages:
+  - name: DESeq2
+    track: bioconductor
+    biotools: deseq2
+    version_range: ">=1.50"
+    bioconductor: "3.23"
+  - name: apeglm
+    track: bioconductor
+    biotools: apeglm
+    version_range: ">=1.30"
+    bioconductor: "3.23"
+templates:
+  - tpl-deseq2-two-group
+  - tpl-deseq2-blocked
+  - tpl-deseq2-interaction

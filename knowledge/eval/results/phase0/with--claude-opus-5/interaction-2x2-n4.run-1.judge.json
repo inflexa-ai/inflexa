@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan targets the interaction directly with a single DESeq2 model (~genotype + treatment + genotype:treatment), explicit WT/vehicle reference levels, an LRT cross-check, and an edgeR QL replication on the same filtered counts — exactly the reference approach, with the correct warning that discordant simple effects are not an interaction test. QC is thorough and precedes the fit (blind VST, PCA on top 500, distance heatmap, library sizes, colored by genotype, treatment and the four-level condition) with an explicit no-drop-at-this-step policy. Filtering is minimal and justified (>=10 counts in >=4 samples, smallest group size) with independent filtering left to results; normalization is inside the model (median-of-ratios, TMM for edgeR) with an explicit prohibition on pre-normalizing or batch-correcting counts. BH at a stated alpha=0.05 passed into results(), ashr shrinkage for the list-contrast simple effect with unshrunken estimates retained, and NA accounting split by cause are all correct. Preranked fgsea on the full tested-gene list ranked by the interaction Wald stat, with tested genes as universe, 15–500 window, named collection and version reporting, is well specified though the gene-set source is contingent on environment availability; the report block is complete including power, winner's curse, and missing length offset."
+}

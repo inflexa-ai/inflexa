@@ -1,0 +1,75 @@
+id: R-0087
+title: "The MA plot and the dispersion plot are the two fit diagnostics that a differential expression report carries"
+assertion: >-
+  A report of a differential expression test on counts carries two
+  diagnostic plots of the fit. The MA plot shows the log2 fold change of each
+  gene against its mean normalized count, with the significant genes marked,
+  and it shows whether the fold changes of the low count genes are shrunk and
+  whether the bulk of the genes sits at zero. The dispersion plot shows the
+  per-gene dispersion estimates, the fitted trend, and the final shrunken
+  values, and it shows whether the trend fits the data. For a limma-voom fit,
+  the mean-difference plot and the voom mean-variance trend take these
+  roles. Put both plots before the gene tables, and state what each shows.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: question
+    op: in
+    value: [differential_expression, full_plan]
+  - field: n_per_group_min
+    op: gte
+    value: 2
+action:
+  step_type: report
+  parameters:
+    - name: fit_diagnostics
+      value: [ma_plot, dispersion_plot]
+      default_source: "vignette:DESeq2/1.52.0#ma-plot"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0001
+    paraphrase: >-
+      The paper shows the dispersion estimates of each gene with the fitted
+      trend and the shrunken final values as the picture of the dispersion
+      model, and it shows the MA plot of the log fold change against the mean
+      of the normalized counts to show the effect of the shrinkage on the low
+      count genes.
+    anchor: "Results, Figure 1 (dispersion plot); Results, Figure 2 (MA plot)"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette draws the MA plot with plotMA to show the log2 fold
+      changes against the mean of the normalized counts, before and after the
+      shrinkage, and it draws the dispersion estimates with plotDispEsts to
+      show the per-gene values, the fitted trend, and the final values.
+    anchor: "MA-plot; Dispersion plot and fitting alternatives"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0006
+    paraphrase: >-
+      voom plots the square root of the residual standard deviation of each
+      gene against its mean log count with the fitted trend, and this plot
+      shows whether the mean-variance relation of the data matches the trend
+      that gives the precision weights.
+    anchor: "Methods, The voom method; Figure 1"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [report, diagnostics, ma-plot, dispersion]

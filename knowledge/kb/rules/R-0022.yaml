@@ -1,0 +1,73 @@
+id: R-0022
+title: "Suspected batch: inspect the PCA by each processing variable, add a balanced variable to the design, never adjust the counts first"
+assertion: >-
+  If a batch is suspected but not established, color the PCA and the sample
+  distance heatmap by each processing variable, for example the extraction
+  date, the library preparation batch, the sequencing lane, and the operator.
+  If a variable separates the samples and each condition occurs at each level
+  of the variable, add the variable to the design as a fixed-effect term. Do
+  not adjust the counts before the test. A removal method takes the condition
+  signal with the batch in an unbalanced design, and a test on adjusted counts
+  reports confidence that the data does not support. If the variable is
+  confounded with the condition, no model separates the two, and the
+  confounded case applies.
+modality: bulk_rna_seq
+conditions:
+  - field: batch
+    op: eq
+    value: suspected
+action:
+  step_type: qc_sample_structure
+  parameters:
+    - name: batch_check
+      value: pca_by_processing_variable
+      default_source: "doi:10.1038/nrg2825"
+severity: warn
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0015
+    paraphrase: >-
+      The review shows that batch effects are common in high-throughput data,
+      that they track the processing date and other processing variables, and
+      that a plot of the principal components or a clustering against these
+      variables reveals them. It advises that the analyst records the
+      processing variables and includes a known batch in the statistical
+      model.
+    anchor: "Group and date are only surrogates; Experimental design solutions; Statistical solutions"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0012
+    paraphrase: >-
+      The survey advises randomization of the samples across the library
+      batches and the lanes at the design stage, and it lists clustering and
+      PCA among the quality checks of the count data, where a batch shows as a
+      structure that the design does not explain. It names batch-correction
+      methods as the remedy when the design permits no other route.
+    anchor: "Experimental design, Box 2; Quality-control checkpoints; Differential gene expression analysis"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0040
+    paraphrase: >-
+      The workflow colors the PCA by the condition and by the cell line, and it
+      puts the cell line into the design formula so that the test compares the
+      condition within each cell line. For a hidden batch it estimates
+      surrogate variables and adds them to the design, and it does not change
+      the counts.
+    anchor: "PCA plot; Removing hidden batch effects"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [batch, qc, design]

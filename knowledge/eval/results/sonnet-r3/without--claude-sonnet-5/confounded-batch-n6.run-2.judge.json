@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly diagnoses the perfect confound, refuses a batch term on rank-deficiency grounds, explicitly forbids ComBat/removeBatchEffect, and labels every DE result as a treatment-or-batch signal, which matches the reference; the SVA step is a deviation but is fenced as diagnostic-only with an explicit commitment not to feed SVs into the reported model, so it costs only a little. QC is design-specific (condition x batch cross-tab, PCA colored by both, library sizes, detection rate) but lacks any stated outlier or shallow-sample policy. Filtering (filterByExpr / min count in >= smallest group size), VST for visualization with raw counts into DESeq2, ~condition design with documented justification for omitting batch, BH padj < 0.05 with apeglm shrinkage are all appropriate, though the reference level is never explicitly set and package versions are never promised in the report. The weakest element is enrichment: running WikiPathways ORA/GSEA on a list that is admittedly a batch-treatment mixture is of dubious value here, and the step leaves the universe, ranking metric, gene-set size window, and collection version unspecified, hedging between ORA and GSEA."
+}

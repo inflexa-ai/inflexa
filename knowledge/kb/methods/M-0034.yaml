@@ -1,0 +1,22 @@
+id: M-0034
+label: "GSVA per-sample pathway scores with limma on the scores"
+edam_operation: EDAM:operation_3501
+description: >-
+  A non-parametric, unsupervised score of each gene set in each sample, from
+  the ranks of the genes within the sample. The score matrix replaces the gene
+  matrix, and a limma linear model with the same design tests each set between
+  the groups. For a question that needs a per-sample pathway score or a
+  heatmap of pathways across samples.
+packages:
+  - name: GSVA
+    track: bioconductor
+    biotools: gsva
+    version_range: ">=2.0"
+    bioconductor: "3.23"
+  - name: limma
+    track: bioconductor
+    biotools: limma
+    version_range: ">=3.60"
+    bioconductor: "3.23"
+templates:
+  - tpl-gsva-hallmark

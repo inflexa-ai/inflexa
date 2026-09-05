@@ -1,0 +1,75 @@
+id: R-0001
+title: "Fixed-effects design with 2 to 11 replicates per group: DESeq2 Wald or edgeR quasi-likelihood"
+assertion: >-
+  With raw counts, a fixed-effects design, and 2 to about 11 biological
+  replicates per group, test differential expression with the DESeq2 Wald test
+  (with apeglm shrinkage of the reported fold change) or with the edgeR
+  quasi-likelihood F-test. Both control the false discovery rate at these
+  replicate numbers, and each is the second method of the other for a
+  robustness check.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 2
+  - field: n_per_group_max
+    op: lte
+    value: 11
+action:
+  step_type: differential_expression
+  method: M-0001
+  parameters:
+    - name: test
+      value: Wald
+      default_source: "doi:10.1186/s13059-014-0550-8"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+alternatives:
+  - method: M-0003
+    when: "Robustness matters, or the replicate number is at the low end: run both and report the overlap of the two gene sets."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0011
+    paraphrase: >-
+      With fewer than 12 replicates per condition, edgeR and DESeq2 are the
+      tools that keep the false positive rate at or below the nominal level
+      while they identify the largest share of the true differentially expressed
+      genes. Above 12 replicates the limma-based tools also hold.
+    anchor: "Results, Tool performance; Discussion, Recommendations"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0001
+    paraphrase: >-
+      DESeq2 fits a negative binomial generalized linear model per gene with
+      shrinkage of dispersion and of fold change, and it tests each coefficient
+      with a Wald test. The Wald test is the default, and the likelihood ratio
+      test is for a comparison of a full model against a reduced model.
+    anchor: "Methods, Model and normalization; Wald test for differential expression"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0004
+    paraphrase: >-
+      The edgeR quasi-likelihood pipeline is the recommended edgeR workflow for
+      a designed experiment, because its F-test accounts for the uncertainty in
+      the dispersion estimate and it gives reliable false discovery rate control
+      at small replicate numbers.
+    anchor: "Introduction; Quasi-likelihood methods"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [design, method-selection, replicates]

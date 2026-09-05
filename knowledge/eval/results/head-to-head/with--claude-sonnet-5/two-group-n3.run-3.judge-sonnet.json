@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan is a near-ideal match to the reference: DESeq2 Wald (with edgeR QL as a sensible cross-check) on raw Salmon counts, blind-VST PCA/QC with an explicit outlier policy, a minimal justified low-count filter, in-model median-of-ratios/TMM normalization, an explicit ~condition design with control as reference and a named contrast, BH FDR at 0.05 with independent filtering and apeglm shrinkage stated as the reported effect, and a preranked fgsea (not ORA, correctly justified) with ranking metric, size window, and named collections. It correctly states the n=3 power ceiling (Schurch 2016) without loosening alpha, and the final report specifies versions, thresholds, gene counts, and caveats in detail. Minor deductions: gene-set collection version numbers are promised for the report but not given in the plan itself, and the added edgeR robustness step, while well-justified, is slightly beyond the minimal reference design though it does not compromise correctness."
+}

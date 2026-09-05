@@ -1,0 +1,71 @@
+id: R-0072
+title: "TPM or FPKM input: keep a gene at or above 1 TPM in at least the smallest group size of samples"
+assertion: >-
+  With a TPM or FPKM table, keep a gene whose abundance is at or above 1 TPM
+  in at least as many samples as the smallest group, and remove the others.
+  If the table is FPKM or RPKM, rescale each sample so that the values sum to
+  one million, which gives TPM, because a floor in RPKM units does not mean
+  the same relative abundance in each sample. A gene below the floor has a
+  large log-scale variance and a fold change that no test can trust, and it
+  adds to the multiple testing burden. State the floor and the number of genes
+  kept in the report. The floor of 1 TPM is a common practice, not a measured
+  optimum.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: tpm_or_fpkm
+action:
+  step_type: filter_low_counts
+  method: M-0027
+  parameters:
+    - name: min_abundance_tpm
+      value: 1
+      default_source: "rule:R-0072"
+    - name: min_samples
+      value: smallest_group_size
+      default_source: "guide:limma/2026-05-19#filtering"
+severity: info
+strength: common_practice
+evidence_quality: low
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0008
+    paraphrase: >-
+      The guide removes a gene that is not expressed at a worthwhile level
+      before the linear model, with the floor met in at least the number of
+      samples of the smallest group, because such a gene gives little
+      evidence for differential expression and it interferes with the
+      statistical approximations of the pipeline.
+    anchor: "Filtering; Case studies"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0012
+    paraphrase: >-
+      The survey lists a filter of the genes with low expression among the
+      steps that come before the differential expression test.
+    anchor: "Differential expression analysis"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0060
+    paraphrase: >-
+      The article shows that RPKM is not a consistent relative measure among
+      samples, but TPM is, because the sum of TPM over the genes is the same
+      in each sample. Thus a floor in TPM units means the same relative
+      abundance in each sample.
+    anchor: "Results; Discussion"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [filter, data-state, tpm, needs-source]

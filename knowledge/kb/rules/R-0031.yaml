@@ -1,0 +1,61 @@
+id: R-0031
+title: "Three prime tag counting: no transcript length correction, import the counts without length scaling"
+assertion: >-
+  With a three prime tag library, for example QuantSeq or a three prime
+  digital gene expression protocol, the count of a gene does not depend on
+  the transcript length. Import the counts without the length scaling: take
+  the raw counts from the quantifier, set countsFromAbundance to no, and give
+  no length offset to the model. A length correction on such data introduces
+  a bias that the library does not hold. State the library type in the plan,
+  and note that a length-normalized unit such as TPM or FPKM does not apply.
+modality: bulk_rna_seq
+conditions:
+  - field: library_type
+    op: eq
+    value: three_prime
+  - field: library_type
+    op: not_null
+action:
+  step_type: model_design
+  parameters:
+    - name: import
+      value: tximport_raw_counts_no_offset
+      default_source: "vignette:tximport/2026-04-28#3-tagged-rna-seq"
+    - name: counts_from_abundance
+      value: "no"
+      default_source: "vignette:tximport/2026-04-28#3-tagged-rna-seq"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0010
+    paraphrase: >-
+      The vignette states that a correction of the counts for the gene length
+      introduces a bias in three prime tagged RNA-seq data, because these
+      counts have no length bias, and it recommends the original counts as the
+      count matrix, without a length offset and without countsFromAbundance.
+    anchor: "3' tagged RNA-seq"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:citesAsEvidence
+    source: S-0009
+    paraphrase: >-
+      The offset from the average transcript length corrects the gene-level
+      count for a change in the length of the expressed transcripts between
+      samples, because in a full-length library the count of a gene grows with
+      the length of its transcripts. The correction thus assumes a count that
+      depends on the length.
+    anchor: "Incorporating transcript-level estimates leads to more accurate DGE results"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [library-type, three-prime, tximport]

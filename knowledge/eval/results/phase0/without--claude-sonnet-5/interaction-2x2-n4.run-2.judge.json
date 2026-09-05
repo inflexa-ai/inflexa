@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly frames the question as an interaction, specifies ~genotype + treatment + genotype:treatment, insists on results(name=interaction) rather than manual LFC subtraction or a collapsed 4-level factor, and adds simple effects within each genotype with appropriate caveats about power at n=4/cell — an excellent design match. QC covers library size, detection rate, PCA/correlation with outlier flagging, though it does not state a concrete policy for what to do with a flagged outlier or name the coloring by batch. The low-count filter is gestured at ('rowSums or filterByExpr-style') without a committed rule or threshold, and normalization is handled inside DESeq2 with raw counts explicitly required, but the reference level for genotype/treatment is never stated, which matters for interpreting the interaction coefficient. FDR at BH<0.05 is explicit with apeglm/ashr shrinkage (noting apeglm cannot shrink an interaction term via name in the standard parameterization, so ashr is the right fallback and the plan hedges appropriately). Enrichment is written as conditional with no explicit universe, no named collection version, no size window, and an organism assumption (Homo sapiens org.Hs.eg.db) that conflicts with the brain-tissue mouse-KO framing; the network step adds little and is not the reference's concern."
+}

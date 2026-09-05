@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly diagnoses the perfect confound, refuses a batch term (non-full-rank), explicitly forbids ComBat-seq/SVA/removeBatchEffect, and labels every artifact as confounded, which matches the reference; it stops short of proposing a rebalanced design but running with the stated assumption plus pervasive caveats is an accepted path. QC is dataset-specific and strong (blind VST, PCA on top-500 variable genes colored by both condition and batch, distance heatmap, library sizes, explicit note that PC1 cannot be read as a treatment axis). Filtering is minimal and justified (>=10 counts in >=6 samples, smallest group size), normalization stays inside the models (median-of-ratios in DESeq(), TMM in edgeR), and the design/contrast, reference level, BH alpha=0.05 passed to results(), independent filtering and apeglm shrinkage are all explicit. Enrichment is well specified (tested-gene universe, GO BP, org.Hs.eg.db, 15-500 size window, rrvgo, stated collection versions), though running ORA/GSVA on a list that cannot be attributed to treatment is of marginal value and the justification for excluding preranked GSEA is asserted rather than argued. The final report names methods, versions, design rationale, thresholds, tested and significant gene counts, diagnostics, cross-method overlap, and places the confound disclosure ahead of the gene tables."
+}

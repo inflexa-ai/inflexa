@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan identifies the design correctly as a 2x4 time course and tests the condition:time interaction with a DESeq2 LRT of ~condition+time+condition:time against ~condition+time, with time as a factor so no linearity is assumed, plus an edgeR QL joint test of all three interaction coefficients as an independent cross-check — exactly the reference approach, and it explains why a single Wald coefficient is insufficient. QC is concrete and design-aware (blind VST, PCA and distance heatmap annotated by condition and time, library sizes, per-cell replicate correlation, cell-count table, flag-not-remove policy). The filter (>=10 counts in >=3 samples, tied to the smallest cell) is minimal and justified; normalization stays inside DESeq2 size factors and edgeR TMM with an explicit prohibition on pre-scaling or cross-feeding normalized counts. Reference levels are set explicitly, BH at alpha=0.05 with alpha passed to results(), selection by padj only, apeglm shrinkage per interaction coefficient with unshrunken values retained, and NA-by-outlier vs NA-by-filtering reported separately. Enrichment is arguably optional here but is handled properly: full ranked list, an explicitly justified signed -log10 LRT p ranking, Hallmark with a 15-500 size window applied after intersection, tested genes as ORA universe, and a clean stop if no collection exists; the report step covers versions, design, thresholds, gene counts, overlap, and the n=3 power caveat."
+}

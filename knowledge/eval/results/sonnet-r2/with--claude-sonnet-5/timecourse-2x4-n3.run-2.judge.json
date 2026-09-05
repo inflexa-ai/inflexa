@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan identifies the design correctly and uses exactly the right test: a DESeq2 LRT of ~condition + time + condition:time against ~condition + time, with per-time-point Wald simple effects and trajectory clustering to describe the significant genes, plus an honest statement of the low power of a difference-of-differences at n=3 per cell. QC (blind VST, PCA on top 500 variable genes colored by condition and time, library sizes, sample-distance heatmap) precedes modelling with an explicit rule for naming outliers, though the downstream action if one is found is left implicit. Filtering (>=10 counts in >=3 samples, the smallest cell) is minimal and justified, normalization stays inside the model with VST reserved for exploration, reference levels and both model formulas are stated, and BH at alpha=0.05 with independent filtering, apeglm shrinkage for reporting, and a p-value histogram are all specified correctly. Enrichment was not requested by the question but is added and executed rigorously (full ranked list by LRT statistic, named collections with versions, 15-500 size window, tested-gene universe, ORA gated on list size), which is defensible but slightly beyond scope. Reporting is thorough: versions, design, contrasts, thresholds, tested/significant counts, seeds, sessionInfo, and the design caveat repeated; only the muddled 24-vs-25 sample statement detracts."
+}

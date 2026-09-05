@@ -1,0 +1,289 @@
+{
+  "campaign": "sonnet-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "no-replicates-1v1",
+  "run": 1,
+  "startedAt": "2026-09-05T08:50:26.148Z",
+  "elapsedMs": 66342,
+  "outcome": "plan_submitted",
+  "planId": "pln-f5cc3350",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and normalization of the 2-sample count matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2"
+        ],
+        "question": "What do the raw salmon-derived gene counts (12000 genes x 2 samples: 1 treated, 1 control) look like after library-size normalization, and are there any genes with zero counts across both samples that should be filtered before differential testing?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts matrix loaded with gene symbols as row names and exactly 2 sample columns matched to metadata condition labels (treated/control)",
+          "Genes with zero or near-zero counts in both samples are filtered (e.g., require count >= 1 in at least one sample, or a CPM-based filter)",
+          "CPM/TMM or median-of-ratios normalization factors computed and reported",
+          "A summary table of library sizes, total genes retained after filtering, and normalization factors is produced"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression with fixed-dispersion edgeR (no-replicate design)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Which genes differ in expression between the single treated liver sample and the single control liver sample, using edgeR's classic exact test with a fixed/heuristic common dispersion appropriate for an unreplicated 1-vs-1 design?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "edgeR DGEList built from filtered, normalized counts with a 2-level condition factor (treated, control)",
+          "Because no biological replicates exist, dispersion is NOT estimated from the data; a fixed common dispersion (e.g., BCV=0.4, a documented default heuristic for human data lacking replicates) is set explicitly and this choice is reported in the output as a stated assumption, not a fitted value",
+          "exactTest (or glmFit/glmLRT with fixed dispersion) run to produce log2 fold-change, raw p-value, and BH-adjusted FDR per gene",
+          "Output table sorted by |log2FC| and p-value includes all ~12000 genes with columns: gene symbol, logCPM, log2FC, PValue, FDR",
+          "Report explicitly states that FDR/p-values from a fixed-dispersion single-replicate test are approximate and cannot be validated; results should be interpreted as a fold-change-ranked candidate list rather than a definitive DE call",
+          "A volcano plot and top 30-gene table are produced for inspection"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of candidate DE genes (WikiPathways + Hallmark)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea"
+        ],
+        "question": "Which WikiPathways human pathways and MSigDB Hallmark gene sets are enriched among the genes ranked as differentially expressed (by fold-change and nominal/FDR significance from the fixed-dispersion edgeR test) between the treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Input gene list built from T1S2 output using a stated, reasonable threshold (e.g., |log2FC| >= 1 and nominal PValue < 0.05, explicitly noting FDR from a single-replicate test is not a reliable cutoff)",
+          "Over-representation analysis (or ranked GSEA on the full log2FC-ranked gene list) run against the WikiPathways human gene sets (HGNC symbols) confirmed present in the reference store",
+          "Over-representation/GSEA also run against the MSigDB Hallmark human gene sets confirmed present in the reference store",
+          "Output includes enriched pathway/hallmark terms with adjusted p-values, gene overlap counts, and the member DE genes driving each term",
+          "Report explicitly carries forward the caveat that the input gene list derives from an unreplicated, fixed-dispersion DE screen, so enrichment results are exploratory/hypothesis-generating only"
+        ]
+      }
+    ],
+    "title": "Liver treated-vs-control DE with no replicates",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq raw gene counts (12000 genes x 3 columns implying gene symbol + 2 samples) in human liver, with metadata confirming a 1-vs-1 design (1 treated, 1 control) and no biological replication. Standard tools (DESeq2, edgeR) require replicates to estimate within-group dispersion; with n=1 per group the standard per-gene dispersion estimation is not identifiable. The only statistically defensible approaches are: (1) edgeR/DESeq2 run with a fixed, externally-supplied or heuristic dispersion (e.g., edgeR's classic mode with a manually set common dispersion, as documented for unreplicated designs), clearly flagged as an approximation, or (2) a simple fold-change + count-based heuristic (e.g., audic-claverie / Poisson-based test on raw counts) reported alongside caveats. We plan a pipeline that: normalizes counts, runs edgeR with a fixed dispersion (a widely used documented workaround for n=1 vs n=1 designs, per McCarthy/Chen/Smyth 2012 edgeR framework), reports fold-changes and nominal p-values with an explicit statement that FDR control and true statistical inference are not possible without replicates, and follows with pathway/functional enrichment on the resulting DE gene list using WikiPathways and MSigDB Hallmark human gene sets (both confirmed present) to give biological context to genes passing the fold-change/nominal-significance screen. This maximizes scientific honesty: it delivers a ranked, interpretable list of candidate DE genes while being explicit that this is a fold-change-driven screen, not a validated differential expression call, and enrichment is exploratory. Because the study is unreplicated, no biomarker/translational steps are added — the data supports gene-level screening and pathway annotation only."
+  },
+  "usage": {
+    "inputTokens": 616049,
+    "outputTokens": 3388,
+    "cacheCreationInputTokens": 87833,
+    "cacheReadInputTokens": 528060,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human gene annotation GTF"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "differential expression RNA-seq no replicates single sample comparison method",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 no replicates fold change dispersion estimate liver treatment",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "pydeseq2",
+          "fgsea",
+          "clusterProfiler",
+          "gseapy"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "edgeR dispersion no replicates two sample RNA-seq fixed dispersion",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "edgeR RNA-seq differential expression without replicates fixed dispersion estimate",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "edgeR RNA-seq differential expression without replicates fixed dispersion estimate",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed",
+        "query": "liver"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "normal-expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated-vs-control DE with no replicates",
+          "analytical_narrative": "The dataset is bulk RNA-seq raw gene counts (12000 genes x 3 columns implying gene symbol + 2 samples) in human liver, with metadata confirming a 1-vs-1 design (1 treated, 1 control) and no biological replication. Standard tools (DESeq2, edgeR) require replicates to estimate within-group dispersion; with n=1 per group the standard per-gene dispersion estimation is not identifiable. The only statistically defensible approaches are: (1) edgeR/DESeq2 run with a fixed, externally-supplied or heuristic dispersion (e.g., edgeR's classic mode with a manually set common dispersion, as documented for unreplicated designs), clearly flagged as an approximation, or (2) a simple fold-change + count-based heuristic (e.g., audic-claverie / Poisson-based test on raw counts) reported alongside caveats. We plan a pipeline that: normalizes counts, runs edgeR with a fixed dispersion (a widely used documented workaround for n=1 vs n=1 designs, per McCarthy/Chen/Smyth 2012 edgeR framework), reports fold-changes and nominal p-values with an explicit statement that FDR control and true statistical inference are not possible without replicates, and follows with pathway/functional enrichment on the resulting DE gene list using WikiPathways and MSigDB Hallmark human gene sets (both confirmed present) to give biological context to genes passing the fold-change/nominal-significance screen. This maximizes scientific honesty: it delivers a ranked, interpretable list of candidate DE genes while being explicit that this is a fold-change-driven screen, not a validated differential expression call, and enrichment is exploratory. Because the study is unreplicated, no biomarker/translational steps are added — the data supports gene-level screening and pathway annotation only.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and normalization of the 2-sample count matrix",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "What do the raw salmon-derived gene counts (12000 genes x 2 samples: 1 treated, 1 control) look like after library-size normalization, and are there any genes with zero counts across both samples that should be filtered before differential testing?",
+              "acceptance_criteria": [
+                "Counts matrix loaded with gene symbols as row names and exactly 2 sample columns matched to metadata condition labels (treated/control)",
+                "Genes with zero or near-zero counts in both samples are filtered (e.g., require count >= 1 in at least one sample, or a CPM-based filter)",
+                "CPM/TMM or median-of-ratios normalization factors computed and reported",
+                "A summary table of library sizes, total genes retained after filtering, and normalization factors is produced"
+              ],
+              "packages": [
+                "edgeR",
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression with fixed-dispersion edgeR (no-replicate design)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes differ in expression between the single treated liver sample and the single control liver sample, using edgeR's classic exact test with a fixed/heuristic common dispersion appropriate for an unreplicated 1-vs-1 design?",
+              "acceptance_criteria": [
+                "edgeR DGEList built from filtered, normalized counts with a 2-level condition factor (treated, control)",
+                "Because no biological replicates exist, dispersion is NOT estimated from the data; a fixed common dispersion (e.g., BCV=0.4, a documented default heuristic for human data lacking replicates) is set explicitly and this choice is reported in the output as a stated assumption, not a fitted value",
+                "exactTest (or glmFit/glmLRT with fixed dispersion) run to produce log2 fold-change, raw p-value, and BH-adjusted FDR per gene",
+                "Output table sorted by |log2FC| and p-value includes all ~12000 genes with columns: gene symbol, logCPM, log2FC, PValue, FDR",
+                "Report explicitly states that FDR/p-values from a fixed-dispersion single-replicate test are approximate and cannot be validated; results should be interpreted as a fold-change-ranked candidate list rather than a definitive DE call",
+                "A volcano plot and top 30-gene table are produced for inspection"
+              ],
+              "packages": [
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of candidate DE genes (WikiPathways + Hallmark)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways and MSigDB Hallmark gene sets are enriched among the genes ranked as differentially expressed (by fold-change and nominal/FDR significance from the fixed-dispersion edgeR test) between the treated and control liver samples?",
+              "acceptance_criteria": [
+                "Input gene list built from T1S2 output using a stated, reasonable threshold (e.g., |log2FC| >= 1 and nominal PValue < 0.05, explicitly noting FDR from a single-replicate test is not a reliable cutoff)",
+                "Over-representation analysis (or ranked GSEA on the full log2FC-ranked gene list) run against the WikiPathways human gene sets (HGNC symbols) confirmed present in the reference store",
+                "Over-representation/GSEA also run against the MSigDB Hallmark human gene sets confirmed present in the reference store",
+                "Output includes enriched pathway/hallmark terms with adjusted p-values, gene overlap counts, and the member DE genes driving each term",
+                "Report explicitly carries forward the caveat that the input gene list derives from an unreplicated, fixed-dispersion DE screen, so enrichment results are exploratory/hypothesis-generating only"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

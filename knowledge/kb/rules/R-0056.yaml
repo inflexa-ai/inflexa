@@ -1,0 +1,80 @@
+id: R-0056
+title: "Twelve to 49 replicates in a group: the count models hold, and limma-voom is an equal choice"
+assertion: >-
+  With raw counts and between 12 and 49 replicates in the largest group, the
+  DESeq2 Wald test and the edgeR quasi-likelihood F-test keep the false
+  discovery rate at the nominal level and find most of the true differentially
+  expressed genes, and limma-voom does as well. Use DESeq2 Wald with apeglm
+  shrinkage, or one of the two others, and state the choice. As the cohort
+  grows toward a population sample the count models start to exaggerate the
+  false positives, thus report a permutation check when the samples are
+  heterogeneous.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 2
+  - field: n_per_group_max
+    op: gte
+    value: 12
+  - field: n_per_group_min
+    op: lte
+    value: 49
+action:
+  step_type: differential_expression
+  method: M-0001
+  parameters:
+    - name: test
+      value: Wald
+      default_source: "doi:10.1186/s13059-014-0550-8"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+alternatives:
+  - method: M-0003
+    when: "A second method for a robustness check, or a preference for the quasi-likelihood pipeline."
+  - method: M-0019
+    when: "A large or heterogeneous cohort, where the linear model on log counts with precision weights is the more conservative choice."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0011
+    paraphrase: >-
+      At 12 or more replicates per condition, the limma-based tools join edgeR
+      and DESeq2 among the tools that hold the false positive rate and find
+      most of the true differentially expressed genes, thus the choice of tool
+      widens with the replicate number.
+    anchor: "Results, Tool performance; Discussion, Recommendations"
+    retrieved: "2026-09-03"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0023
+    paraphrase: >-
+      On population-level datasets the parametric methods exaggerate the false
+      positives on permuted labels, and the effect grows with the heterogeneity
+      of the samples, thus a permutation check is the control the paper uses.
+    anchor: "Abstract; Results and discussion"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0006
+    paraphrase: >-
+      voom gives each observation a precision weight from the mean-variance
+      trend of the log counts, and the limma linear models then apply to the
+      counts with a false discovery rate that is as low as the count models.
+    anchor: "Abstract; voom has the lowest false discovery rate"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [design, method-selection, replicates]

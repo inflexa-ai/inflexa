@@ -1,0 +1,62 @@
+id: R-0102
+title: "Per-sample pathway scores: GSVA when the question needs a score per sample, then limma on the scores"
+assertion: >-
+  With six or more samples per group, when the question needs a pathway
+  score per sample, for example a heatmap of pathways across samples or a
+  score that enters a later model, compute the scores with GSVA. GSVA ranks
+  the genes within each sample and gives each gene set a score per sample
+  without a group label. Use the Poisson kernel on integer counts and the
+  Gaussian kernel on log values. Then test each set between the groups with
+  limma on the score matrix with the same design as the gene-level model.
+  Report the scores as a supplement. The ranked test on the full list stays
+  the first enrichment method for a group comparison.
+modality: bulk_rna_seq
+conditions:
+  - field: n_per_group_min
+    op: gte
+    value: 6
+action:
+  step_type: enrichment
+  method: M-0034
+  parameters:
+    - name: pathway_scores
+      value: gsva_then_limma
+      default_source: "doi:10.1186/1471-2105-14-7"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0010
+    when: "The question is a group comparison with no need for a per-sample score: the ranked test on the full list is the first method."
+  - method: M-0021
+    when: "The fit is a limma fit and the inter-gene correlation must be accounted for."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0047
+    paraphrase: >-
+      GSVA is a non-parametric and unsupervised method that gives an
+      enrichment score per gene set and per sample from the gene ranks within
+      the sample, with a Poisson kernel for RNA-seq counts, and the score
+      matrix goes into a limma linear model for a group comparison.
+    anchor: "Abstract; Methods, GSVA; Results, RNA-seq"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0080
+    paraphrase: >-
+      The benchmark compares gene set analysis methods on datasets with a
+      known target pathway and finds that the methods differ in sensitivity,
+      prioritization, and specificity, thus no single method dominates.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, pathway-scores, per-sample]

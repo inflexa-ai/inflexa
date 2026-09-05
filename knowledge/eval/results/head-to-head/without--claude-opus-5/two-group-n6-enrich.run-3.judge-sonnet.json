@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan uses DESeq2 Wald on raw counts with median-of-ratios normalization inside the model, an explicit ~condition design with control as reference and correct contrast direction, matching the unpaired 6v6 single-batch design; it also correctly avoids adding unneeded covariates. QC is thorough (library size, PCA, distance heatmap, correlation metric) with a clear evidence-based retain/exclude policy for sample_01 rather than reflex removal, going beyond the reference by adding a prespecified sensitivity re-run. The low-count filter is reasonable and justified given the pre-filtered ~12k gene universe, though the exact independent-filtering interplay with the light pre-filter could be stated more precisely. BH at 0.05 with apeglm/ashr shrinkage used consistently for ranking and effect size is well specified, and fgsea preranked on Hallmark (with stated ranking metric, size window 10-500, universe caveat, and versioned/organism-confirmed collection) satisfies the enrichment criterion strongly; reporting is detailed with versions, thresholds, counts, and caveats, losing only minor points for not explicitly stating software version numbers up front."
+}

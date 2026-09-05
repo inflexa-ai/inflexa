@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan is squarely built around the genotype:treatment interaction as the primary inference, extracts the interaction plus both simple effects and main effects from a single factorial fit on all 16 samples (explicitly forbidding per-genotype refits), and repeatedly guards against the classic 'significant in KO only' misreading, including a power-honesty step calibrated to n=4 per cell. QC is concrete and design-aware (identifier-based join, 4/4/4/4 cross-tab, library sizes, PCA colored by genotype and shaped by treatment, correlation heatmap, dispersion plot, flag-not-remove outlier policy), the filter is minimal and justified by the smallest group size, and normalization stays inside the model with VST reserved for visualization. Contrasts are explicit with reference levels set to WT/vehicle and design matrix columns printed; BH at stated alphas of 0.05 and 0.1 with apeglm/ashr shrinkage used for ranking rather than inference. Enrichment is well specified (interaction statistic as ranking metric, tested-gene background for ORA, named collection and version, underpowered-ORA guard) but omits an explicit gene-set size window; reporting covers toolchain, design, thresholds, gene counts and caveats though software version capture is only implied."
+}

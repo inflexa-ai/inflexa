@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 3,
+    "qc_present": 2,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses that n=1 per group leaves no within-group variance and explicitly forbids estimateDisp/DESeq(), which is the strongest part of it, but it then reintroduces exactly what the design forbids by running exactTest with an assumed BCV=0.4 and reporting p-values, FDR, and an FDR<0.05 plus |log2FC|>=1 shortlist; caveating an invalid inference does not make it valid, and it never names the replication level (>=3 per group) that would support a real test. Normalization is handled properly (TMM size factors inside edgeR on raw counts, with a sanity check on the factors), and the low-count filter is minimal and documented, though the threshold is left as an 'e.g.'. Sample-structure QC is essentially absent: no library-size comparison, no sample-distance or correlation check, no outlier policy, only a passing note on normalization factors. The contrast direction is clear but there is no explicit design/reference-level statement, no shrinkage, and the thresholds function as post hoc filters on an uninterpretable test; the fgsea step compounds the problem by generating pathway p-values from an unreplicated ranking that carries no inferential content, and it omits collection version and gene-set size window. Reporting names the method, design, and caveats but not software versions or the number of genes tested versus called."
+}

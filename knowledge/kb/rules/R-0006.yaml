@@ -1,0 +1,64 @@
+id: R-0006
+title: "Known balanced batch: put the batch in the design as a covariate"
+assertion: >-
+  If a known batch holds samples of every condition, add the batch as a fixed
+  effect before the condition in the design formula, and test the condition
+  coefficient. Do not adjust the counts before the model. The design term
+  accounts for the batch in the test itself and keeps the count model intact.
+modality: bulk_rna_seq
+conditions:
+  - field: batch
+    op: eq
+    value: known_balanced
+action:
+  step_type: model_design
+  parameters:
+    - name: design_terms
+      value: [batch, condition]
+      default_source: "vignette:DESeq2/1.52.0#multi-factor-designs"
+    - name: batch_handling
+      value: design_term
+      default_source: "doi:10.1038/nrg2825"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      A multi-factor design adds the other variables to the design formula, for
+      example batch before condition, and the results for the condition then
+      account for the batch. The vignette shows a design of the form batch plus
+      condition for this purpose.
+    anchor: "Multi-factor designs"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0015
+    paraphrase: >-
+      When batches are balanced with respect to the biological groups, the batch
+      can be included in the statistical model as a covariate, and its effect is
+      then estimated and removed in the analysis rather than in the data.
+    anchor: "Box 2; Options for dealing with batch effects"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0042
+    paraphrase: >-
+      The guide shows how a blocking or batch variable enters the design matrix
+      as an additive term, thus the comparison of interest is made within the
+      levels of the block.
+    anchor: "Accounting for factors that are not of interest"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [batch, design]

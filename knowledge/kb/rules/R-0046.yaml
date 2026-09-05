@@ -1,0 +1,65 @@
+id: R-0046
+title: "Over-representation analysis with the tested genes as the universe, never the whole genome"
+assertion: >-
+  For an over-representation analysis, set the universe to the genes that the
+  differential expression test tested. Do not use the whole genome or the
+  whole annotation as the universe. A whole-genome universe holds genes that
+  the experiment could not detect, thus the test reports the transcriptome of
+  the tissue as an enrichment. State the universe in the report.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: enrichment
+  method: M-0011
+  parameters:
+    - name: universe
+      value: tested_genes
+      default_source: "doi:10.1371/journal.pcbi.1009935"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0027
+    paraphrase: >-
+      The survey of published enrichment analyses finds that most studies with
+      an over-representation analysis do not report a background list. A
+      whole-genome background in place of the detected genes gives false
+      positive results, and the recommended background is the set of genes
+      that the experiment detected.
+    anchor: "Results, Background gene list; Discussion, Recommendations"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0028
+    paraphrase: >-
+      A gene list from an omics experiment is a biased sample of the genome.
+      A genome-wide background produces enriched categories that reflect the
+      transcriptome of the tissue, not the condition, thus the background must
+      be the genes that the platform detects in that tissue.
+    anchor: "Abstract; Results, The choice of the background gene list"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0026
+    paraphrase: >-
+      The protocol advises a custom background of the genes that the experiment
+      measured, in place of the default of all annotated genes, because the
+      default inflates the enrichment of the genes that the assay covers.
+    anchor: "Experimental design, Background gene set; Protocol 1A, the statistical domain of g:Profiler"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [enrichment, universe, ora]

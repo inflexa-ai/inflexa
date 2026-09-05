@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the question as an interaction, fits ~genotype+treatment+genotype:treatment on raw counts with explicit reference levels (WT, vehicle), tests the interaction coefficient by Wald, and adds both simple effects via the correct coefficient/contrast constructions, with the n=4 power caveat on a difference-of-differences explicitly stated. QC is design-aware (blind VST, PCA colored by genotype and treatment, distance heatmap, library sizes with a flagging rule), though the remedy for a flagged outlier is only 'flag' rather than a stated inclusion/exclusion policy. Filtering (>=10 counts in >=4 samples, tied to the smallest cell) is minimal and justified, normalization is internal median-of-ratios with no pre-normalization, and BH at alpha=0.05 with independent filtering plus apeglm for the single coefficient and ashr for composite contrasts is exactly right, including Cook's NA reporting. Enrichment is well specified (fgsea on full ranked list by Wald stat, universe = tested genes, 15-500 size window, per-contrast tables, leading edge), losing a little only because collection versions are deferred to run-time discovery rather than pinned. The report section is thorough: contrasts, thresholds, tested and significant counts, diagnostics, versions, seed, and design caveats."
+}

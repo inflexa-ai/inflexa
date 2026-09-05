@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect confound, refuses to fit a batch term, and explicitly forbids ComBat-seq/removeBatchEffect/SVA on the grounds of a rank-deficient design, then proceeds with a condition-only model whose every output carries the confounding caveat — exactly the reference behaviour. QC is design-specific and honest (blind VST, PCA colored by both condition and batch, distance heatmap, library sizes, and the note that condition-PCA and batch-PCA are the same partition), and the filter (>=10 counts in >=6 samples, smallest group size) is minimal and justified. Normalization stays inside the models (median-of-ratios, TMM), the formula, reference level, and contrast are explicit, and inference uses Wald + apeglm with BH at alpha 0.05, independent filtering, Cook's flags, and a p-value histogram check. Enrichment is competently specified (tested-gene universe, 15-500 size window, named Hallmark/Reactome collections, BH, underpowered-list flag, confound inherited) but is of marginal value on a confounded gene list and the stated reason for rejecting GSEA is procedural rather than statistical. The final report covers methods, versions, design, thresholds, tested/significant counts, intersection handling, and puts the confound caveat up front."
+}

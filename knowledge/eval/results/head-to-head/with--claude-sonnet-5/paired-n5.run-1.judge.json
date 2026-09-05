@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats the design as paired, blocking on subject with ~subject + condition in DESeq2 and mirroring the same blocked design in an edgeR QL robustness check, so the tested coefficient is the within-subject treatment effect. QC is dataset-specific (blind VST, PCA colored by subject and condition, distance heatmap, library sizes with flagging of deviating samples), though it stops at flagging without stating what action an outlier would trigger. The filter (>=10 counts in >=5 samples, justified by smallest group size) is minimal and justified, normalization stays inside the model via median-of-ratios on raw integer counts, and the reference level, contrast, alpha, BH, independent filtering, apeglm shrinkage and p-value histogram are all explicit. Enrichment is well specified: full Wald-stat-ranked list for fgsea, named collections with versions, 15-500 size window, and an explicit tested-gene universe for any ORA fallback. The report step is thorough on design, thresholds, gene counts, diagnostics and sessionInfo, but does not explicitly commit to stating the design caveats (n=5 pairs, limited power, blood cell-composition confounding), which is the one gap."
+}

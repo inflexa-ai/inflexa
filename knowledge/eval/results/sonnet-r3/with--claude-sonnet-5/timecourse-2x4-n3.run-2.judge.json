@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the condition-by-time interaction question and specifies a DESeq2 LRT of ~condition+time+condition:time against ~condition+time, with explicit reference levels (time=t0), no batch term justified by the metadata, and per-timepoint simple effects to interpret significant genes — this fits the stated 2x4x3 design precisely. QC is concrete (blind VST, PCA on top 500 variable genes colored by condition and time, distance heatmap, library sizes) though the outlier policy is only 'report' rather than a stated action. The filter (>=10 counts in >=3 samples, tied to the smallest cell size) is minimal and justified, and normalization is median-of-ratios inside the model with an explicit prohibition on pre-normalized counts. BH at alpha=0.05 with independent filtering and a p-value histogram check is stated, and apeglm/ashr shrinkage is applied to the per-timepoint condition coefficients; the slight weakness is that shrinkage on LRT results is descriptive only and the plan does not caveat that ranking by shrunken LFC is not the test statistic. Enrichment is preranked fgsea with the ranking metric (LRT stat), universe (tested genes), size window and named/versioned collections, but LRT statistics are unsigned, so a preranked GSEA on them is a questionable metric that the plan does not acknowledge, and three collections invites cherry-picking. Reporting is thorough: versions, sessionInfo, seed, tested/significant counts, diagnostics, and an enrichment caveat, though design caveats (n=3 per cell, limited power for interaction) are only implicitly addressed."
+}

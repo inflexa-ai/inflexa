@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "QC, filtering, normalization, enrichment design, and reporting are all excellent and dataset-specific. However, the core inferential step deviates from the reference's correct joint LRT (full ~condition+time+condition:time vs reduced ~condition+time) in favor of Wald tests on individual interaction coefficients, selecting genes significant on 'at least one' of three coefficients without any joint multiplicity correction across those coefficients — this inflates false-positive risk and is not equivalent to testing the overall interaction, despite being justified as a workaround for a stated tool constraint. This weakens both the method-fit and the model/contrast criteria, since the interaction is not tested as a single coherent hypothesis. Everything downstream (shrinkage, BH, trajectories, enrichment, report) is well specified and would satisfy the reference had the omnibus interaction test been used."
+}

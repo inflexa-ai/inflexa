@@ -1,0 +1,115 @@
+id: R-0059
+title: "Three or more groups, replicated, no interaction, no time course: DESeq2 LRT for any difference, then pairwise Wald contrasts against the reference"
+assertion: >-
+  With raw counts and three or more groups, each with two or more replicates,
+  ask two questions in order. First, fit the DESeq2 likelihood ratio test
+  with the full design ~ condition against the reduced design ~ 1, which
+  finds each gene that differs between any of the groups. Second, extract
+  one Wald contrast per level against the reference level, with ashr
+  shrinkage of the reported fold change. The Wald test on one coefficient
+  does not answer the any-difference question, because the condition spans
+  more than one coefficient. If the design holds a block, a batch, or a
+  covariate, keep that term in the full model and in the reduced model, and
+  drop only the condition. The edgeR quasi-likelihood F-test on the set of
+  condition coefficients is the second method for the same question.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_groups
+    op: gte
+    value: 3
+  - field: n_per_group_min
+    op: gte
+    value: 2
+  - field: n_per_group_min
+    op: lte
+    value: 49
+  - field: paired
+    op: eq
+    value: false
+  - field: interaction
+    op: is_null
+  - field: n_timepoints
+    op: is_null
+action:
+  step_type: differential_expression
+  method: M-0002
+  parameters:
+    - name: full
+      value: "~ condition"
+      default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
+    - name: reduced
+      value: "~ 1"
+      default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
+    - name: reduced_keeps_nuisance_terms
+      value: true
+      default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
+    - name: contrasts
+      value: each_level_vs_reference
+      default_source: "vignette:DESeq2/1.52.0#contrasts"
+    - name: test
+      value: LRT_then_pairwise_Wald
+      default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+alternatives:
+  - method: M-0003
+    when: "Robustness matters, or the replicate number is at the low end: the quasi-likelihood F-test on all the condition coefficients gives the ANOVA-like test, and each contrast is a second F-test."
+  - method: M-0001
+    when: "The only question is each level against the reference level, and the any-difference question is not asked."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette states that the likelihood ratio test compares a full
+      model against a reduced model, and that it tests all the levels of a
+      factor at once when the reduced model removes that factor. It gives
+      the contrast argument of results for a comparison between two levels
+      of a factor with more than two levels.
+    anchor: "Likelihood ratio test; Contrasts"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0001
+    paraphrase: >-
+      The paper gives the Wald test as the test of one coefficient or of a
+      contrast of coefficients, which needs no reduced model, and it states
+      that the likelihood ratio test, which compares a full model against a
+      reduced model, is available as an option.
+    anchor: "Results, Hypothesis tests for differential expression; Methods, Wald test"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0081
+    paraphrase: >-
+      The recipe fits the quasi-likelihood negative binomial model to a
+      multi-group design, tests a single contrast with the F-test, and tests
+      a set of coefficients together with the same F-test to find any
+      difference between the groups.
+    anchor: "Testing for differential expression; ANOVA-like testing"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0004
+    paraphrase: >-
+      The edgeR v4 paper describes the quasi-likelihood pipeline, in which
+      the F-test takes one coefficient, a contrast, or a set of coefficients,
+      and it reports the improved dispersion estimation for small counts.
+    anchor: "Quasi-likelihood pipeline; Results"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [design, multi-group, method-selection, lrt]

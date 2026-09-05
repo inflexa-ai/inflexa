@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference design: batch enters the formula as a fixed covariate before condition (~ batch + condition), counts are explicitly not pre-adjusted (ComBat-seq is named and rejected with the correct reasoning), and DESeq2 Wald plus edgeR QL on the identical design and reference levels fit 6v6 with a balanced blocking factor. QC precedes the test with blind VST PCA, sample-distance heatmap and library sizes colored by both condition and batch, with outlier flagging by name, though the policy is flag-only rather than a stated action rule. The filter (>=10 counts in >=6 samples) is minimal and justified by the smaller group size; normalization is inside the model (median-of-ratios and TMM), reference levels are set explicitly, BH at alpha=0.05 with independent filtering and apeglm shrinkage reported alongside unshrunken estimates. Enrichment is optional here but is well specified: full ranked list by the Wald statistic, named collections with a size window, ORA universe restricted to tested genes with a sensible conditional skip; the main deduction is the somewhat ad hoc 'intersection as high-confidence' framing (which has no controlled error rate) and the absence of explicit software/database version reporting for the DE tools."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 0,
+    "qc_present": 0,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 0,
+    "report_completeness": 0
+  },
+  "rationale": "No plan was submitted; the planner timed out before producing any content. There is nothing to evaluate against any criterion, so every dimension scores 0. Scoring is based solely on what a plan states, and here no statements exist regarding design, QC, filtering, normalization, contrasts, multiple testing, enrichment, or reporting."
+}

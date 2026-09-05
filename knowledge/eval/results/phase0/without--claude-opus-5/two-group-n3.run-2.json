@@ -1,0 +1,352 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "two-group-n3",
+  "run": 2,
+  "startedAt": "2026-09-04T21:14:30.481Z",
+  "elapsedMs": 68685,
+  "outcome": "plan_submitted",
+  "planId": "pln-47ed8c31",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DE: treated vs control (n=3 vs 3)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Package inventory is UNKNOWN in this environment — a step that assumes DESeq2 exists may fail at run time; probe and fall back",
+          "Zero significant genes after FDR is a legitimate outcome at 3v3 and must be reported as such, never rescued by switching to nominal p-values",
+          "Do not drop the FDR correction or loosen thresholds to manufacture a hit list"
+        ],
+        "context": "Human liver bulk RNA-seq, raw integer gene-level counts from Salmon, unpaired 3 vs 3, single batch, so the design formula is simply ~condition with no covariates or batch term available. Gene identifiers are symbols, not Ensembl IDs — no ID mapping is needed for DE itself, but duplicate symbols may exist and must be handled (aggregate by sum or keep the highest-expressed, and say which).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 12,000 genes in counts.csv are differentially expressed between the 3 treated and the 3 control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use raw integer counts directly — do NOT feed pre-normalized, TPM, or log-transformed values into the count model",
+          "Probe packages before use in priority order and use the first available: DESeq2 (R), then edgeR quasi-likelihood F-test, then limma-voom, then pydeseq2 (Python); record the tool and version actually used in the output",
+          "Read condition level names from metadata.csv; set the control group as the reference level so positive log2FC = up in treated",
+          "Apply BH FDR across all tested genes; do not report raw p-value counts as if they were significant hits",
+          "Write the complete results table for all tested genes, not only the significant subset",
+          "If duplicate gene symbols are present, resolve them explicitly and state the rule applied"
+        ],
+        "description": "Load /eval-phase0-without-two-group-n3-2/data/inputs/counts/counts.csv (12000 x 7; first column = gene symbol, remaining 6 = samples) and /eval-phase0-without-two-group-n3-2/data/inputs/metadata/metadata.csv (6 x 2, sample + condition). Match sample column names to metadata rows explicitly and fail loudly on any mismatch. Read the actual condition level names from metadata rather than assuming strings; set the control level as the reference so log2FC is treated-over-control. Filter to genes with a minimum count in at least 3 samples (the smallest group size). Fit a negative-binomial model with ~condition and test treated vs control. Emit a full results table for every tested gene: gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj (BH), plus normalized/CPM values per sample. Also emit shrunken log2FC if a shrinkage estimator is importable. Report counts of genes at padj<0.05, padj<0.10, and padj<0.05 with |log2FC|>1, and state which tool actually ran.",
+        "acceptance_criteria": [
+          "A results table covering every gene passing the expression filter, with log2FoldChange, pvalue and BH padj columns",
+          "The reference level is the control condition and the direction of log2FC is stated in the output",
+          "Counts of DE genes at padj<0.05 and padj<0.10 are reported, including if that count is zero",
+          "The DE tool and version actually used is recorded",
+          "Filtering rule and number of genes retained out of 12000 are reported"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "QC, replicate structure and n=3 power audit",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=3 the dispersion estimates themselves are imprecise; the power curve is an estimate with wide uncertainty and must be presented that way",
+          "A clean PCA separation with n=3 per group can arise from a single confounded factor invisible in the metadata (only condition is recorded) — do not equate separation with treatment causality",
+          "If a power/RNA-seq-power package is not importable, compute detectable fold change analytically from the NB dispersion and depth rather than skipping the step"
+        ],
+        "context": "Six samples total, so every diagnostic must be interpretable at that scale — PCA on 6 points is descriptive, not inferential, and must be labelled as such. Leave-one-out at 2 vs 3 is deliberately underpowered; its purpose is stability assessment of the ranking, not fresh inference.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Is the treated-vs-control split the dominant source of variation among these 6 liver samples, and how much can we trust the DE list given only 3 replicates per group?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Reuse the same filtering, normalization and model specification as T1S1 so the LOO runs are comparable to the full run",
+          "Label PCA and clustering as descriptive with n=6; do not attach p-values to visual separation",
+          "Report the leave-one-out overlap as an explicit fraction and rank correlation, and state whether any single sample drives the result",
+          "Base the power calculation on dispersion estimated from THIS dataset, not on a literature default; state the assumptions used",
+          "Do not recommend removing a sample to improve significance"
+        ],
+        "description": "Directly answer the confidence half of the research question. (a) Sample QC: library size per sample, detected-gene count, and a variance-stabilized or log-CPM PCA plus a sample-sample correlation/distance heatmap of the 6 samples, annotated by condition — establish whether PC1 separates treated from control or whether one sample is an outlier driving the contrast. (b) Dispersion: report the fitted mean-dispersion trend and the within-group biological coefficient of variation for each group; a high BCV at n=3 directly bounds what is detectable. (c) Power/sensitivity: using the observed dispersion and library depth, compute the fold change detectable at 80% power at FDR 0.05 across expression strata, and present it as a curve or table rather than a single number. (d) Robustness: re-run the T1S1 contrast three times per group in leave-one-out fashion (dropping one sample at a time, 2 vs 3), and report the fraction of the original padj<0.05 genes that remain significant, plus rank correlation of log2FC across LOO runs. Summarize the result as an explicit, plain statement of confidence — including the possibility that the list is unstable or that the study is underpowered.",
+        "acceptance_criteria": [
+          "PCA and sample-correlation figures with condition labels for all 6 samples",
+          "Per-group BCV / dispersion summary reported numerically",
+          "A detectable-fold-change-at-80%-power table or curve across expression strata, with stated assumptions",
+          "Leave-one-out DE overlap fraction and log2FC rank correlation reported for all 6 leave-one-out runs",
+          "A written confidence statement that names the specific limitation (n=3, single batch, no covariates) rather than a generic disclaimer"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the DE signature",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A DE list from 3v3 may be too short or too noisy for meaningful ORA; prefer the rank-based GSEA, which uses the whole list",
+          "Enrichment coherence is weak corroboration of a real effect, not proof — do not present it as validation of individual genes",
+          "No reference store is provisioned as of planning; the step may find no gene sets and must degrade gracefully rather than fail the run"
+        ],
+        "context": "This step is corroborative, not central: the research question is answered by T1S1 and T1S2 without it. Its value is checking whether an n=3 signature is biologically coherent for a drug-treated human liver sample, where xenobiotic metabolism (CYPs, UGTs, nuclear receptor targets) is the a priori expected axis. The reference census reports that NO reference store is currently provisioned, so gene sets must be resolved at run time.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "msigdbr",
+          "org.Hs.eg.db",
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Do the genes shifted in treated vs control liver samples converge on coherent biology — for example xenobiotic/CYP metabolism, stress response, or lipid metabolism — as would be expected of a genuine drug-treatment effect?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use human (Homo sapiens) gene sets only — the data is taxon 9606 liver",
+          "Resolve gene-set collections against whatever the environment actually holds at run time; if no human gene sets are available and no gene-set package can supply them, report that plainly and fall back to reporting the top up- and down-regulated genes with their statistics — do NOT fabricate pathway names or enrichment scores",
+          "Use the genes actually tested in T1S1 as the background universe for any over-representation test, never the whole genome",
+          "Report FDR alongside nominal p and interpret only FDR-passing sets",
+          "Report the symbol-to-gene-set identifier mapping rate"
+        ],
+        "description": "Take the full ranked results table from T1S1 (all tested genes, ranked by the Wald/QLF statistic or by sign(log2FC)*-log10(p)) and run gene-set enrichment for human. Run both a rank-based GSEA over the entire ranked list and, if the padj<0.05 set has at least ~15 genes, an over-representation test of that set against the tested genes as background. Use human gene-set collections — hallmark and GO biological process at minimum, and a metabolic/drug-metabolism collection if available. Gene identifiers are HGNC symbols, so map to whatever identifier space the gene sets use and report the mapping rate. Report normalized enrichment score, nominal p, and FDR per set; interpret only sets passing FDR, and state clearly when nothing passes.",
+        "acceptance_criteria": [
+          "An enrichment result table with set name, size, NES or odds ratio, nominal p and FDR",
+          "The gene-set source and organism actually used is named in the output, or an explicit statement that no gene sets were available",
+          "Background universe for any ORA is the T1S1 tested-gene set",
+          "If no set passes FDR, that is stated outright rather than substituted with nominal-p results presented as findings"
+        ]
+      }
+    ],
+    "title": "Liver drug-treated vs control DE with n=3 power audit",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single bulk RNA-seq count matrix (/data/inputs/counts/counts.csv, 12,000 gene symbols x 7 columns — one gene-symbol column plus 6 sample columns) with a 6-row sample table (/data/inputs/metadata/metadata.csv, columns: sample id + condition) describing an unpaired, single-batch, 3 treated vs 3 control design in human liver. The research question has two halves and the plan mirrors them. T1S1 does the statistics properly for n=3: negative-binomial modelling with information-shared dispersion estimation (DESeq2 if installed, edgeR-QLF or limma-voom as ranked fallbacks, pydeseq2 in Python if no R stack exists), on filtered raw integer counts, with independent filtering and BH FDR — Wald/QLF on raw counts is the only defensible route at this replication level, and non-parametric tests are useless at 3v3. T1S2 confronts the confidence question head-on rather than decorating it: sample-level QC (library sizes, VST/log-CPM PCA, sample-sample correlation, per-group within-group dispersion), an explicit check that the treated/control split is the dominant axis of variation and not one outlier sample, and an empirical power/sensitivity assessment — the observed dispersion trend fed into a detectable-fold-change curve, plus leave-one-out-per-group re-runs to measure how much of the DE list survives dropping a single replicate. That LOO stability fraction is the most honest available answer to 'how confident can we be with three replicates'. T2S1 takes the ranked gene list into functional enrichment for biological coherence — a coherent, drug-plausible pathway signal in liver (xenobiotic/CYP metabolism, stress response, lipid metabolism) is weak corroboration that the n=3 signal is real, and its absence is itself informative; it depends on reference gene sets, and the census reports NO reference store provisioned right now, so the step must resolve gene sets at run time and, if none exist, report that plainly and fall back to a rank-based summary of the DE list without inventing annotation. Enrichment is an add-on: the research question survives intact without it. Package inventory could not be read, so every step must probe its imports and degrade to a named fallback; no step may assume DESeq2 exists."
+  },
+  "usage": {
+    "inputTokens": 36856,
+    "outputTokens": 4729,
+    "cacheCreationInputTokens": 18732,
+    "cacheReadInputTokens": 18100,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "ashr",
+          "sva",
+          "pheatmap",
+          "ggplot2",
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels",
+          "pydeseq2",
+          "matplotlib",
+          "seaborn",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "fgsea",
+          "msigdbr",
+          "gseapy",
+          "EnhancedVolcano",
+          "tximport",
+          "PoissonSeq",
+          "RUVSeq",
+          "BiocParallel",
+          "ComplexHeatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treated vs control DE with n=3 power audit",
+          "analytical_narrative": "The input is a single bulk RNA-seq count matrix (/data/inputs/counts/counts.csv, 12,000 gene symbols x 7 columns — one gene-symbol column plus 6 sample columns) with a 6-row sample table (/data/inputs/metadata/metadata.csv, columns: sample id + condition) describing an unpaired, single-batch, 3 treated vs 3 control design in human liver. The research question has two halves and the plan mirrors them. T1S1 does the statistics properly for n=3: negative-binomial modelling with information-shared dispersion estimation (DESeq2 if installed, edgeR-QLF or limma-voom as ranked fallbacks, pydeseq2 in Python if no R stack exists), on filtered raw integer counts, with independent filtering and BH FDR — Wald/QLF on raw counts is the only defensible route at this replication level, and non-parametric tests are useless at 3v3. T1S2 confronts the confidence question head-on rather than decorating it: sample-level QC (library sizes, VST/log-CPM PCA, sample-sample correlation, per-group within-group dispersion), an explicit check that the treated/control split is the dominant axis of variation and not one outlier sample, and an empirical power/sensitivity assessment — the observed dispersion trend fed into a detectable-fold-change curve, plus leave-one-out-per-group re-runs to measure how much of the DE list survives dropping a single replicate. That LOO stability fraction is the most honest available answer to 'how confident can we be with three replicates'. T2S1 takes the ranked gene list into functional enrichment for biological coherence — a coherent, drug-plausible pathway signal in liver (xenobiotic/CYP metabolism, stress response, lipid metabolism) is weak corroboration that the n=3 signal is real, and its absence is itself informative; it depends on reference gene sets, and the census reports NO reference store provisioned right now, so the step must resolve gene sets at run time and, if none exist, report that plainly and fall back to a rank-based summary of the DE list without inventing annotation. Enrichment is an add-on: the research question survives intact without it. Package inventory could not be read, so every step must probe its imports and degrade to a named fallback; no step may assume DESeq2 exists.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DE: treated vs control (n=3 vs 3)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12,000 genes in counts.csv are differentially expressed between the 3 treated and the 3 control liver samples?",
+              "description": "Load /eval-phase0-without-two-group-n3-2/data/inputs/counts/counts.csv (12000 x 7; first column = gene symbol, remaining 6 = samples) and /eval-phase0-without-two-group-n3-2/data/inputs/metadata/metadata.csv (6 x 2, sample + condition). Match sample column names to metadata rows explicitly and fail loudly on any mismatch. Read the actual condition level names from metadata rather than assuming strings; set the control level as the reference so log2FC is treated-over-control. Filter to genes with a minimum count in at least 3 samples (the smallest group size). Fit a negative-binomial model with ~condition and test treated vs control. Emit a full results table for every tested gene: gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj (BH), plus normalized/CPM values per sample. Also emit shrunken log2FC if a shrinkage estimator is importable. Report counts of genes at padj<0.05, padj<0.10, and padj<0.05 with |log2FC|>1, and state which tool actually ran.",
+              "context": "Human liver bulk RNA-seq, raw integer gene-level counts from Salmon, unpaired 3 vs 3, single batch, so the design formula is simply ~condition with no covariates or batch term available. Gene identifiers are symbols, not Ensembl IDs — no ID mapping is needed for DE itself, but duplicate symbols may exist and must be handled (aggregate by sum or keep the highest-expressed, and say which).",
+              "constraints": [
+                "Use raw integer counts directly — do NOT feed pre-normalized, TPM, or log-transformed values into the count model",
+                "Probe packages before use in priority order and use the first available: DESeq2 (R), then edgeR quasi-likelihood F-test, then limma-voom, then pydeseq2 (Python); record the tool and version actually used in the output",
+                "Read condition level names from metadata.csv; set the control group as the reference level so positive log2FC = up in treated",
+                "Apply BH FDR across all tested genes; do not report raw p-value counts as if they were significant hits",
+                "Write the complete results table for all tested genes, not only the significant subset",
+                "If duplicate gene symbols are present, resolve them explicitly and state the rule applied"
+              ],
+              "acceptance_criteria": [
+                "A results table covering every gene passing the expression filter, with log2FoldChange, pvalue and BH padj columns",
+                "The reference level is the control condition and the direction of log2FC is stated in the output",
+                "Counts of DE genes at padj<0.05 and padj<0.10 are reported, including if that count is zero",
+                "The DE tool and version actually used is recorded",
+                "Filtering rule and number of genes retained out of 12000 are reported"
+              ],
+              "caveats": [
+                "Package inventory is UNKNOWN in this environment — a step that assumes DESeq2 exists may fail at run time; probe and fall back",
+                "Zero significant genes after FDR is a legitimate outcome at 3v3 and must be reported as such, never rescued by switching to nominal p-values",
+                "Do not drop the FDR correction or loosen thresholds to manufacture a hit list"
+              ],
+              "depends_on": [],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "apeglm",
+                "pandas",
+                "numpy"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "QC, replicate structure and n=3 power audit",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Is the treated-vs-control split the dominant source of variation among these 6 liver samples, and how much can we trust the DE list given only 3 replicates per group?",
+              "description": "Directly answer the confidence half of the research question. (a) Sample QC: library size per sample, detected-gene count, and a variance-stabilized or log-CPM PCA plus a sample-sample correlation/distance heatmap of the 6 samples, annotated by condition — establish whether PC1 separates treated from control or whether one sample is an outlier driving the contrast. (b) Dispersion: report the fitted mean-dispersion trend and the within-group biological coefficient of variation for each group; a high BCV at n=3 directly bounds what is detectable. (c) Power/sensitivity: using the observed dispersion and library depth, compute the fold change detectable at 80% power at FDR 0.05 across expression strata, and present it as a curve or table rather than a single number. (d) Robustness: re-run the T1S1 contrast three times per group in leave-one-out fashion (dropping one sample at a time, 2 vs 3), and report the fraction of the original padj<0.05 genes that remain significant, plus rank correlation of log2FC across LOO runs. Summarize the result as an explicit, plain statement of confidence — including the possibility that the list is unstable or that the study is underpowered.",
+              "context": "Six samples total, so every diagnostic must be interpretable at that scale — PCA on 6 points is descriptive, not inferential, and must be labelled as such. Leave-one-out at 2 vs 3 is deliberately underpowered; its purpose is stability assessment of the ranking, not fresh inference.",
+              "constraints": [
+                "Reuse the same filtering, normalization and model specification as T1S1 so the LOO runs are comparable to the full run",
+                "Label PCA and clustering as descriptive with n=6; do not attach p-values to visual separation",
+                "Report the leave-one-out overlap as an explicit fraction and rank correlation, and state whether any single sample drives the result",
+                "Base the power calculation on dispersion estimated from THIS dataset, not on a literature default; state the assumptions used",
+                "Do not recommend removing a sample to improve significance"
+              ],
+              "acceptance_criteria": [
+                "PCA and sample-correlation figures with condition labels for all 6 samples",
+                "Per-group BCV / dispersion summary reported numerically",
+                "A detectable-fold-change-at-80%-power table or curve across expression strata, with stated assumptions",
+                "Leave-one-out DE overlap fraction and log2FC rank correlation reported for all 6 leave-one-out runs",
+                "A written confidence statement that names the specific limitation (n=3, single batch, no covariates) rather than a generic disclaimer"
+              ],
+              "caveats": [
+                "With n=3 the dispersion estimates themselves are imprecise; the power curve is an estimate with wide uncertainty and must be presented that way",
+                "A clean PCA separation with n=3 per group can arise from a single confounded factor invisible in the metadata (only condition is recorded) — do not equate separation with treatment causality",
+                "If a power/RNA-seq-power package is not importable, compute detectable fold change analytically from the NB dispersion and depth rather than skipping the step"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of the DE signature",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do the genes shifted in treated vs control liver samples converge on coherent biology — for example xenobiotic/CYP metabolism, stress response, or lipid metabolism — as would be expected of a genuine drug-treatment effect?",
+              "description": "Take the full ranked results table from T1S1 (all tested genes, ranked by the Wald/QLF statistic or by sign(log2FC)*-log10(p)) and run gene-set enrichment for human. Run both a rank-based GSEA over the entire ranked list and, if the padj<0.05 set has at least ~15 genes, an over-representation test of that set against the tested genes as background. Use human gene-set collections — hallmark and GO biological process at minimum, and a metabolic/drug-metabolism collection if available. Gene identifiers are HGNC symbols, so map to whatever identifier space the gene sets use and report the mapping rate. Report normalized enrichment score, nominal p, and FDR per set; interpret only sets passing FDR, and state clearly when nothing passes.",
+              "context": "This step is corroborative, not central: the research question is answered by T1S1 and T1S2 without it. Its value is checking whether an n=3 signature is biologically coherent for a drug-treated human liver sample, where xenobiotic metabolism (CYPs, UGTs, nuclear receptor targets) is the a priori expected axis. The reference census reports that NO reference store is currently provisioned, so gene sets must be resolved at run time.",
+              "constraints": [
+                "Use human (Homo sapiens) gene sets only — the data is taxon 9606 liver",
+                "Resolve gene-set collections against whatever the environment actually holds at run time; if no human gene sets are available and no gene-set package can supply them, report that plainly and fall back to reporting the top up- and down-regulated genes with their statistics — do NOT fabricate pathway names or enrichment scores",
+                "Use the genes actually tested in T1S1 as the background universe for any over-representation test, never the whole genome",
+                "Report FDR alongside nominal p and interpret only FDR-passing sets",
+                "Report the symbol-to-gene-set identifier mapping rate"
+              ],
+              "acceptance_criteria": [
+                "An enrichment result table with set name, size, NES or odds ratio, nominal p and FDR",
+                "The gene-set source and organism actually used is named in the output, or an explicit statement that no gene sets were available",
+                "Background universe for any ORA is the T1S1 tested-gene set",
+                "If no set passes FDR, that is stated outright rather than substituted with nominal-p results presented as findings"
+              ],
+              "caveats": [
+                "A DE list from 3v3 may be too short or too noisy for meaningful ORA; prefer the rank-based GSEA, which uses the whole list",
+                "Enrichment coherence is weak corroboration of a real effect, not proof — do not present it as validation of individual genes",
+                "No reference store is provisioned as of planning; the step may find no gene sets and must degrade gracefully rather than fail the run"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "msigdbr",
+                "org.Hs.eg.db",
+                "gseapy",
+                "pandas"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

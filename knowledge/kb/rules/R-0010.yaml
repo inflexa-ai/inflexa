@@ -1,0 +1,80 @@
+id: R-0010
+title: "Benjamini-Hochberg at alpha 0.05 with independent filtering; set alpha in results to the reporting cutoff"
+assertion: >-
+  Adjust the p-values with the Benjamini-Hochberg procedure and report genes at
+  an adjusted p-value below 0.05. Keep the independent filtering of DESeq2 on,
+  and pass the same alpha to results() that the report uses as its cutoff,
+  because the filter threshold is optimized for that alpha. Do not filter the
+  results table by an unadjusted p-value.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+action:
+  step_type: multiple_testing
+  method: M-0012
+  parameters:
+    - name: alpha
+      value: 0.05
+      default_source: "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+    - name: adjustment
+      value: BH
+      default_source: "doi:10.1111/j.2517-6161.1995.tb02031.x"
+    - name: independent_filtering
+      value: true
+      default_source: "doi:10.1073/pnas.0914005107"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0019
+    paraphrase: >-
+      The procedure controls the expected proportion of false discoveries among
+      the rejected hypotheses, and it is more powerful than a family-wise error
+      rate control when many hypotheses are tested.
+    anchor: "Abstract; Section 3"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0018
+    paraphrase: >-
+      A filter that is independent of the test statistic under the null, such as
+      the overall mean of a gene, removes genes with little chance of a
+      discovery before the multiple testing adjustment and increases the number
+      of discoveries at the same false discovery rate.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette states that the alpha argument of results should be set to
+      the adjusted p-value cutoff that the analysis uses, because the
+      independent filtering threshold is chosen to maximize the discoveries at
+      that alpha, and it documents that the adjustment is Benjamini-Hochberg.
+    anchor: "Independent filtering and multiple testing; Note on p-values set to NA"
+    retrieved: "2026-09-03"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0017
+    paraphrase: >-
+      Independent hypothesis weighting learns weights from a covariate such as
+      the mean count and can increase power over Benjamini-Hochberg with
+      independent filtering, at the cost of a second package.
+    anchor: "Abstract"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [multiple-testing, fdr]

@@ -1,0 +1,210 @@
+id: tpl-deseq2-sva
+version: 1.0.0
+label: "DESeq2 two-group differential expression with sva surrogate variables in the design"
+language: R
+method: M-0025
+step_types: [filter_low_counts, normalize, model_design, differential_expression, multiple_testing]
+edam_operations: [EDAM:operation_3223]
+citations: [S-0001, S-0002, S-0015, S-0020, S-0040, S-0061]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_with_suspected_batch]
+  min_replicates: 4
+  conditions:
+    - field: batch
+      op: eq
+      value: suspected
+    - field: paired
+      op: eq
+      value: false
+    - field: interaction
+      op: is_null
+    - field: n_timepoints
+      op: is_null
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample.
+    The situation is a suspected batch with no recorded batch variable. The
+    script reads only the sample identifier column and the condition column
+    of the sample table. It estimates the surrogate variables with svaseq on
+    the median-of-ratios normalized counts, with the condition as the known
+    factor and the number of surrogate variables from num.sv (method be),
+    capped by a slot. Each surrogate variable enters the design formula as a
+    covariate before the condition, thus the design is ~ SV1 + ... + condition.
+    The counts stay unchanged. When num.sv finds no surrogate variable, the
+    design is ~ condition and the surrogate variable table holds only the
+    sample column. One contrast: test level against reference level. Each
+    group must hold four or more replicates, because the residual degrees of
+    freedom pay for each surrogate variable.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the denominator of the fold change, for example Control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The level of the condition that is the numerator of the fold change, for example Treated."
+    adaptable: true
+  - name: max_surrogate_variables
+    type: integer
+    description: "The maximum number of surrogate variables that enter the design. num.sv (method be) estimates the number, and the script takes the smaller of the estimate and this cap. The script also caps at the residual degrees of freedom minus two."
+    adaptable: true
+    default: 5
+    default_source: "vignette:DESeq2/1.52.0#using-sva-with-deseq2"
+    minimum: 1
+  - name: min_count
+    type: integer
+    description: "A gene stays when it has at least this many counts in at least min_samples samples."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 0
+  - name: min_samples
+    type: integer
+    description: "The minimum number of samples for the count filter. Absent, the script uses the smallest group size."
+    adaptable: true
+    required: false
+    minimum: 1
+  - name: sva_min_mean_count
+    type: number
+    description: "A gene enters the surrogate variable estimation when its mean normalized count is above this value. The differential expression test still uses every gene that passes the count filter."
+    adaptable: true
+    default: 1
+    default_source: "vignette:DESeq2/1.52.0#using-sva-with-deseq2"
+    minimum: 0
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff, passed to results() so the independent filter is optimized for it."
+    adaptable: false
+    default: 0.05
+    default_source: "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+  - name: lfc_shrink
+    type: string
+    description: "The shrinkage estimator of the reported log2 fold change."
+    adaptable: true
+    default: apeglm
+    default_source: "doi:10.1093/bioinformatics/bty895"
+    enum: [apeglm, ashr, none]
+  - name: n_top_genes_pca
+    type: integer
+    description: "The number of most variable genes for the PCA."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 50
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example de or treated_vs_control."
+    adaptable: true
+    default: de
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table with a sample identifier column and a condition column, CSV. No batch column is necessary."
+outputs:
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested gene: gene, base_mean, log2_fold_change (shrunken), pvalue, adjusted_pvalue."
+  - name: surrogate_variables
+    path: "output/surrogate_variables.csv"
+    format: EDAM:format_3752
+    description: "One row per sample: sample, sv1, sv2, ... The estimated surrogate variables that entered the design."
+  - name: normalized_counts
+    path: "output/{prefix}_normalized_counts.csv"
+    format: EDAM:format_3752
+    description: "Median-of-ratios normalized counts, genes by samples. The counts are not adjusted for the surrogate variables."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The contrast, the design, the number of surrogate variables, the association of each surrogate variable with the condition, the counts of tested and significant genes, the thresholds, the package versions."
+  - name: pca
+    path: "figures/{prefix}_pca.png"
+    description: "PCA of the samples on the top variable genes of the VST values, colored by condition (and PDF)."
+  - name: surrogate_variables_plot
+    path: "figures/{prefix}_surrogate_variables.png"
+    description: "The value of each surrogate variable per sample, colored by condition (and PDF)."
+  - name: ma
+    path: "figures/{prefix}_ma.png"
+    description: "MA plot of the shrunken fold changes (and PDF)."
+  - name: volcano
+    path: "figures/{prefix}_volcano.png"
+    description: "Volcano plot, log2 fold change against -log10 adjusted p-value (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: DESeq2
+    version: "1.52.0"
+    track: bioconductor
+  - name: apeglm
+    version: "1.34.0"
+    track: bioconductor
+  - name: ashr
+    version: "2.2-63"
+    track: cran
+  - name: sva
+    version: "3.60.0"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: suspected-batch-n6
+    dataset: batch_balanced_n6/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+    expect:
+      - "exists output/de_results.csv"
+      - "exists output/surrogate_variables.csv"
+      - "exists output/de_summary.json"
+      - "exists output/de_normalized_counts.csv"
+      - "exists output/session_info.txt"
+      - "exists figures/de_pca.png"
+      - "exists figures/de_pca.pdf"
+      - "exists figures/de_surrogate_variables.png"
+      - "exists figures/de_surrogate_variables.pdf"
+      - "exists figures/de_ma.png"
+      - "exists figures/de_ma.pdf"
+      - "exists figures/de_volcano.png"
+      - "exists figures/de_volcano.pdf"
+      - "csv_rows output/de_results.csv >= 5000"
+      - "csv_rows output/surrogate_variables.csv == 12"
+      - "json output/de_summary.json n_samples == 12"
+      - "json output/de_summary.json n_surrogate_variables >= 1"
+      - "truth_recall output/de_results.csv >= 0.4"
+      - "truth_fdr output/de_results.csv <= 0.1"

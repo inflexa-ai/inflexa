@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the design precisely: DESeq2 Wald on raw counts with ~condition, control as reference, no spurious covariates for a single-batch unpaired 6v6, plus an explicit leave-one-out sensitivity run for the shallow sample rather than silent deletion. QC is thorough and dataset-specific (library sizes, detected genes, size factors, VST PCA labelled by depth, correlation heatmap, PC-vs-depth check, explicit keep/exclude recommendation and note that dropping sample_01 yields an unbalanced 5v6). Filtering (>=10 counts in >=6 samples, recomputed on the reduced matrix) is minimal and justified, normalization stays inside the model with an explicit ban on pre-normalized input, and BH at 0.05 with apeglm shrinkage plus reported unshrunken LFCs is correct. Enrichment is preranked fgsea on the Wald statistic over all tested genes against human Hallmark with a 15-500 size window, post-intersection set sizes, leading-edge traceability and a stability re-run; the only gap is that no MSigDB version is named. Reporting covers design, thresholds, tested-vs-significant counts, direction convention and caveats, but package/database versions are never stated, which is the one clear shortfall against the reference."
+}

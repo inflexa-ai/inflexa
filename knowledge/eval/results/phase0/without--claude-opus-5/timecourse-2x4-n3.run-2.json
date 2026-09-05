@@ -1,0 +1,520 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "timecourse-2x4-n3",
+  "run": 2,
+  "startedAt": "2026-09-04T21:28:19.613Z",
+  "elapsedMs": 111911,
+  "outcome": "plan_submitted",
+  "planId": "pln-14ebaecf",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, filter, normalise, QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Gene identifiers are symbols, not stable IDs — duplicate symbols and unmappable entries are expected and must be handled explicitly.",
+          "With n=3 per cell, a single outlier replicate can dominate a cell mean; note any such sample rather than assuming the design is balanced in practice.",
+          "Cell-line time-course data often shows a strong shared time/confluence trend that dominates PC1; that is expected and is exactly what the interaction model must condition on."
+        ],
+        "context": "Human cell-line bulk RNA-seq, salmon-derived raw integer gene-level counts. The design is a 2 x 4 factorial with 3 replicates (24 samples). Everything downstream is an interaction test, which is sensitive to a single bad replicate in a 3-replicate cell, so QC before modelling is not optional. The condition and time level names must be read from metadata.csv, not assumed — the profile records the time variable as t0..t3 with a parallel numeric time_hours column, and two condition levels whose exact labels are in the file.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the 24 samples in counts.csv match the 24 rows of metadata.csv, and does the 2-condition x 4-timepoint (t0..t3) x 3-replicate design separate cleanly after normalisation, with no outlier replicate that would distort an interaction test?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Read the actual condition and time level labels from metadata.csv and use them verbatim in all outputs and figure legends — do not invent or abbreviate them.",
+          "The package inventory for this environment could not be read. Probe each package before use (R: requireNamespace(...); Python: import in a try block) and record which DE toolchain was found. Prefer DESeq2, else edgeR, else limma-voom; if none of the three is importable, stop and report that plainly rather than silently substituting a t-test-based pipeline.",
+          "Set the baseline time level to the earliest time point (t0) and treat condition with an explicit reference level; report which level was used as reference.",
+          "Do not drop samples without stating the reason and the evidence; if an outlier is identified, keep it in the primary analysis and flag it for the sensitivity step rather than removing it silently.",
+          "Sum, do not average, counts for duplicated gene symbols; report the count of collapsed symbols."
+        ],
+        "description": "Build the analysis-ready count object from /eval-phase0-without-timecourse-2x4-n3-2/data/inputs/counts/counts.csv (12,000 rows x 25 columns: first column gene symbol, 24 sample columns) and /eval-phase0-without-timecourse-2x4-n3-2/data/inputs/metadata/metadata.csv (24 rows x 4 columns: sample id, condition, time, time_hours). Verify sample IDs match one-to-one and reorder count columns to metadata order. Collapse duplicate gene symbols by summing counts (report how many symbols were duplicated). Filter to genes with sufficient counts across the smallest design cell (n=3), e.g. CPM-based filtering requiring expression in at least 3 samples; report genes retained. Compute library-size-normalised values (median-of-ratios or TMM, whichever toolchain is present) and a variance-stabilised/log-CPM matrix for visualisation. QC: library size per sample, PCA and/or MDS on the top variable genes coloured by condition and shaped by time, within-group sample-sample correlation heatmap, and a per-cell replicate count table confirming 3 replicates in each of the 8 condition x time cells. Persist the filtered count matrix, the normalised matrix, and the reconciled sample table for downstream steps.",
+        "acceptance_criteria": [
+          "All 24 count columns are matched to metadata rows with zero unmatched IDs, and the matched order is confirmed in the output log.",
+          "A replicate table confirms 3 samples in each of the 8 condition x time cells (or reports any deviation explicitly).",
+          "Number of genes before and after low-count filtering is reported, starting from 12,000.",
+          "PCA/MDS plot coloured by condition and marked by time is produced, with variance explained by PC1/PC2 stated.",
+          "The filtered raw count matrix, the normalised/transformed matrix, and the reconciled sample table are written to disk for downstream steps.",
+          "The DE toolchain actually used is named in the output."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Condition x time interaction LRT",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Interaction terms consume more degrees of freedom and are typically far less powered than main effects; a much shorter interaction list than main-effect list is the normal outcome, not a failure.",
+          "A significant interaction can arise from a baseline (t0) difference between conditions combined with parallel trajectories — the per-timepoint decomposition in T1S3 is required to distinguish these.",
+          "Shrunken vs unshrunken log2FCs differ; state which is reported."
+        ],
+        "context": "This step is the direct answer to the research question. 'Beyond the shared time trend' means the time main effect is in both the full and reduced model, so only condition-specific deviations from the common trajectory are tested. The LRT-over-all-interaction-terms formulation is preferred over any single pairwise contrast because it asks the trajectory-shape question in one test with one FDR correction.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Which of the ~12,000 genes show a treatment-specific expression trajectory across t0..t3 — i.e. a significant condition:time interaction — after the time trend shared by both conditions is absorbed by the time main effect?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "The reduced model must include BOTH condition and time main effects — the tested difference is the interaction block only.",
+          "Use time as a factor with t0..t3 levels here (the continuous/spline parametrisation is T1S4's job); state the reference level.",
+          "Report a single BH-FDR correction over all genes tested; do not filter genes post hoc and re-correct.",
+          "Report the number of significant genes at FDR < 0.01, 0.05 and 0.10, and use FDR < 0.05 as the headline set.",
+          "Write the FULL ranked results table (all tested genes), not only the significant subset, so downstream steps can use the ranking.",
+          "State the residual degrees of freedom of the fit and note explicitly that with 3 replicates per cell the interaction test is underpowered for small effects."
+        ],
+        "description": "Fit the full model ~ condition + time + condition:time on the filtered counts from T1S1, with time as a 4-level factor (t0..t3) and condition as a 2-level factor. Test the three interaction coefficients as a single block against the reduced model ~ condition + time using a likelihood-ratio test (DESeq2 LRT with reduced=~condition+time, or edgeR glmQLFTest / limma-voom with the interaction coefficient set, matching whichever toolchain T1S1 established). Apply Benjamini-Hochberg FDR across all tested genes. Output a full ranked results table (gene symbol, LRT statistic, raw p, BH-adjusted p, each interaction log2FC coefficient, mean expression) and the significant set at FDR < 0.05 (also report counts at 0.1 and 0.01 so the reader can see threshold sensitivity). Produce a p-value histogram to check calibration, an MA-style plot of interaction effect magnitude vs expression, and a heatmap of scaled expression for the top interaction genes with samples ordered by condition then time. Also fit and report the main-effect models (shared time effect ~condition+time vs ~condition; overall condition effect) purely as context, so the size of the interaction signal can be judged against the shared time trend it is being separated from.",
+        "acceptance_criteria": [
+          "A gene-level results table for every gene retained by T1S1 is written, containing LRT statistic, p, BH-adjusted p and the interaction coefficients.",
+          "Significant gene counts at FDR 0.01/0.05/0.10 are reported, with the FDR<0.05 set saved separately.",
+          "A p-value histogram is produced and its shape commented on (uniform-with-spike vs anticonservative).",
+          "A heatmap of the top interaction genes with samples ordered by condition then time point is produced.",
+          "Main-effect (shared time trend) gene counts are reported alongside, for context on relative signal size.",
+          "If zero genes pass FDR < 0.05, the step reports that plainly with the p-value distribution as evidence rather than lowering the threshold to manufacture a hit list."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Per-timepoint decomposition and trajectory clustering",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Per-timepoint contrasts at n=3 per cell are individually noisy; they are descriptive of the interaction genes, not independent discovery tests.",
+          "Clustering z-scored trajectories will always return clusters — cluster structure is a summary device here, not evidence of discrete biological programmes.",
+          "Multiple testing across four contrasts is reported for description; the discovery-level FDR remains the T1S2 interaction test."
+        ],
+        "context": "An interaction LRT says a trajectory differs but not how. This step converts the T1S2 hit list into an interpretable description — the deliverable a biologist can act on — and separates genes whose conditions already differ at baseline from genes where treatment drives divergence over time.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "For the genes with a significant condition:time interaction, at which of t0, t1, t2, t3 does the treatment effect actually emerge, and what distinct temporal response shapes (early, late, transient, sustained, reversed) do those genes fall into?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Derive per-timepoint contrasts from the SAME fitted model as T1S2 (contrast extraction), not from independent per-timepoint two-group tests on subsets.",
+          "Explicitly flag genes with a significant condition effect at t0 as baseline-different and report their number; do not present them as treatment-induced.",
+          "Justify the number of trajectory clusters with a stated, reported criterion — do not pick k by eye without saying so.",
+          "Plot cluster mean trajectories against the numeric time_hours axis from metadata.csv, using the actual condition labels.",
+          "If the T1S2 FDR<0.05 set has fewer than ~15 genes, skip clustering, report why, and instead plot every interaction gene's trajectory individually."
+        ],
+        "description": "Using the fitted model from T1S2, extract the condition contrast at each of the four time points (t0, t1, t2, t3) — the simple effects — and assemble a per-gene table of four log2 fold changes with standard errors and adjusted p-values. Restrict the characterisation to the FDR<0.05 interaction set from T1S2 (and report the same table for the full gene set as a supplementary file). Also compute, per interaction gene, the change relative to t0 within each condition, so the divergence is described as a trajectory rather than a set of independent snapshots. Classify each interaction gene by whether the condition effect is already present at t0 (baseline difference — flag these, since they weaken a 'treatment-induced' interpretation) versus emerging at t1/t2/t3. Cluster the scaled mean trajectories of the interaction genes (k-means or hierarchical on z-scored condition-wise time profiles, choosing k by an explicit criterion such as silhouette or within-cluster sum of squares elbow, and reporting the criterion) and plot the cluster mean trajectories per condition with replicate spread shown. Output a labelled gene-to-cluster assignment table and the per-timepoint effect table.",
+        "acceptance_criteria": [
+          "A per-gene table of condition log2FC at t0, t1, t2 and t3 with standard errors and adjusted p-values is written.",
+          "The number of interaction genes that already differ at t0 is reported and those genes are flagged in the output table.",
+          "Trajectory cluster assignments are written with a stated criterion for k, or the small-set fallback is used and the reason is stated.",
+          "Cluster (or per-gene) mean trajectory plots against time_hours, split by condition, are produced with replicate spread visible."
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Continuous-time sensitivity analysis",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 4 time points, spline flexibility is severely limited; a null result from the continuous model may reflect model rigidity, not absence of signal.",
+          "Permutation resolution is limited by the number of distinct within-timepoint label permutations at n=3 per cell — report the achievable minimum p-value.",
+          "High concordance between two toolchains on the same counts is partly expected because they share assumptions; it is corroboration, not independent replication."
+        ],
+        "context": "Four time points bound how much curvature a continuous model can express, so this is a sensitivity check on the primary factor-model result rather than a competing primary analysis. Genes recovered by both a discrete and a continuous parametrisation are the ones worth carrying into interpretation; genes unique to one are parametrisation-dependent and must be labelled as such.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "splines",
+          "ggplot2"
+        ],
+        "question": "Does the treatment-specific time signal hold when time is modelled continuously (time_hours, spline/polynomial) rather than as four discrete levels, and how much of the FDR<0.05 interaction set is recovered by an independent parametrisation?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "validation",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Do not exceed spline degrees of freedom that four distinct time points can identify; state the df chosen and the reason.",
+          "When permuting, permute condition labels WITHIN time point so the shared time trend is preserved under the null — permuting globally tests the wrong null.",
+          "Report the concordance as counts and as a gene-level flag joined onto the T1S2 results table; do not replace the primary result with the sensitivity result.",
+          "Name this a sensitivity analysis in all outputs; the headline discovery set remains T1S2's factor-model LRT."
+        ],
+        "description": "Refit the interaction question with time as a continuous covariate using the time_hours column from metadata.csv: full model ~ condition * f(time_hours) versus reduced ~ condition + f(time_hours), where f is a natural spline with degrees of freedom that the four distinct time points can support (df<=2; if df=1, this reduces to a linear-trend interaction — report which was used and why). Run the same LRT/FDR procedure as T1S2. Additionally run one independent non-parametric or alternative check on the interaction question — e.g. a permutation test on the interaction statistic for the top genes, permuting condition labels within time point to preserve the shared time trend under the null, or an alternative toolchain (if T1S1 found more than one of DESeq2/edgeR/limma importable, refit with the second one). Report the overlap between the continuous-time hit set, the alternative-toolchain/permutation-supported set, and the T1S2 factor-model FDR<0.05 set as a concordance table plus a Venn/UpSet-style summary, and produce a consensus list of genes supported by more than one parametrisation.",
+        "acceptance_criteria": [
+          "Continuous-time interaction LRT results with BH-FDR are written for all tested genes, with the spline df used stated.",
+          "An independent check (permutation with within-timepoint label shuffling, or a second toolchain refit) is run and its result set reported.",
+          "A concordance table and overlap summary across the parametrisations is produced.",
+          "A consensus gene list — genes supported by more than one parametrisation — is written, and genes unique to a single parametrisation are labelled as parametrisation-dependent."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Functional enrichment of interaction genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A small interaction gene list gives enrichment very little power; empty enrichment results are an expected outcome at this sample size and must be reported as such rather than relaxed into nominal-p claims.",
+          "Over-representation on a symbol-keyed list loses genes that fail mapping — report the mapping rate.",
+          "Enrichment of a cell-line time-course signature can reflect culture/confluence biology rather than treatment biology; interpret against the shared-time-trend main effect from T1S2."
+        ],
+        "context": "Annotation layer on the primary result. Its value is interpretive — the research question is answered by T1S2/T1S3 regardless of whether this step can run. Gene identifiers in counts.csv are human gene symbols, so any gene-set resource used must be symbol-keyed or mapped to symbols for Homo sapiens.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "msigdbr",
+          "org.Hs.eg.db",
+          "ggplot2"
+        ],
+        "question": "What biological processes and pathways are over-represented among the genes with a treatment-specific temporal response, and do the temporal clusters from T1S3 correspond to distinct functional programmes?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the T1S1 post-filter gene list as the enrichment background universe, not a whole-genome default — using the wrong universe inflates significance.",
+          "The organism is Homo sapiens; do not use a mouse or other-species gene-set collection.",
+          "Probe for gene-set resources and annotation packages before use. If no Homo sapiens gene-set collection is available in this environment, report that absence plainly, skip the enrichment, and instead deliver the ranked interaction gene list with per-gene descriptions from whatever annotation is available — do not fabricate pathway results and do not hand-write a gene set from memory and present it as a curated collection.",
+          "Report adjusted p-values and the member genes for each reported set; do not report nominal p-values alone.",
+          "State the gene-set collection, its version/source, and the number of sets tested."
+        ],
+        "description": "Take the ranked interaction results from T1S2 (gene symbols, ranked by LRT statistic / adjusted p) and the FDR<0.05 interaction set, plus the trajectory cluster assignments from T1S3. Run (a) over-representation analysis of the FDR<0.05 interaction set against the genes retained after T1S1 filtering as the background universe — using the filtered gene set as universe, not the whole genome — and (b) a rank-based gene-set enrichment on the full ranked interaction statistic. Then repeat the over-representation analysis per trajectory cluster to test whether early- vs late-diverging genes are functionally distinct. Report gene sets with BH-adjusted p, the overlapping genes, and set sizes. This step requires gene-set reference data (GO biological process and/or hallmark/canonical-pathway collections) for Homo sapiens: no reference store is currently provisioned in this environment, so the step must first check what gene-set resources and annotation packages are actually available.",
+        "acceptance_criteria": [
+          "The gene-set resource actually used (or its documented absence) is named explicitly in the output.",
+          "If enrichment ran: a table of enriched terms with set size, overlap genes, raw and BH-adjusted p-values for the FDR<0.05 interaction set, using the T1S1 filtered universe.",
+          "If enrichment ran: per-cluster enrichment results for the T1S3 trajectory clusters, or a stated reason why cluster-level testing was not informative (e.g. clusters too small).",
+          "If no gene-set resource is available: a clear statement of the gap and a delivered ranked gene list, with no pathway claims made."
+        ]
+      }
+    ],
+    "title": "Treatment x time interaction DE in 24-sample RNA-seq",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a bulk RNA-seq count matrix (12,000 gene symbols x 24 sample columns after the gene-symbol key column, /data/inputs/counts/counts.csv) with a sample table (/data/inputs/metadata/metadata.csv: condition, time, time_hours) describing 2 conditions x 4 time points (t0..t3) x 3 replicates. The question — which genes change over time in a treatment-specific way, beyond the shared time trend — is precisely a condition x time interaction question, so the plan is built around an interaction likelihood-ratio test rather than pairwise contrasts.\n\nT1S1 builds the analysis-ready object: probe which DE toolchain is actually importable (the package inventory could not be read, so nothing may be assumed), load counts and metadata, reconcile sample IDs and column order, collapse duplicate gene symbols, filter low-count genes, normalise, and run QC (library sizes, PCA/MDS coloured by condition and time, sample-sample correlation) to confirm the design separates as expected and to flag outlier replicates before modelling. T1S2 is the primary test: fit ~condition + time + condition:time with time as a 4-level factor and test the interaction terms as a block by LRT against ~condition + time. This is the direct answer — genes whose temporal trajectory differs by condition, with the shared time trend absorbed by the main effect. T1S3 characterises the hits: per-timepoint condition contrasts (t0..t3) on the same fit so each interaction gene can be described by WHERE in time the divergence occurs, plus normalised trajectory profiles and clustering of interaction genes into temporal response patterns (early/late/transient/sustained divergence).\n\nT1S4 runs a sensitivity analysis rather than trusting one parametrisation: a continuous-time model using time_hours with natural splines (or a linear/quadratic term if df is limited — 4 time points cap the usable spline df) and an independent non-parametric check, then reports the overlap with the factor-model interaction set. Agreement across parametrisations is the honest evidence that a hit is a real trajectory difference and not an artefact of one model. T2S1 takes the ranked interaction gene list into functional enrichment; it is a separate track because it depends only on the T1S2 output and its value is annotation, not the answer. No reference store is currently provisioned, so that step must first confirm gene sets are available and, if they are not, report the absence plainly and fall back to reporting the ranked gene list without over-representation claims — the research question survives without it.\n\nPower is the main limitation and every step is instructed to say so: 3 replicates per condition-time cell means interaction tests (which spend more residual df than main effects) are underpowered for modest effects, so the deliverable is a ranked, FDR-controlled list with effect sizes, not a claim of exhaustive discovery."
+  },
+  "usage": {
+    "inputTokens": 36886,
+    "outputTokens": 8079,
+    "cacheCreationInputTokens": 9732,
+    "cacheReadInputTokens": 27130,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "splines",
+          "maSigPro",
+          "ImpulseDE2",
+          "apeglm",
+          "clusterProfiler",
+          "fgsea",
+          "msigdbr",
+          "pheatmap",
+          "ggplot2",
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels",
+          "matplotlib",
+          "seaborn",
+          "sva",
+          "tximport",
+          "org.Hs.eg.db",
+          "AnnotationDbi",
+          "biomaRt",
+          "ComplexHeatmap",
+          "dplyr",
+          "tidyr",
+          "gprofiler2",
+          "decoupleR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treatment x time interaction DE in 24-sample RNA-seq",
+          "analytical_narrative": "The input is a bulk RNA-seq count matrix (12,000 gene symbols x 24 sample columns after the gene-symbol key column, /data/inputs/counts/counts.csv) with a sample table (/data/inputs/metadata/metadata.csv: condition, time, time_hours) describing 2 conditions x 4 time points (t0..t3) x 3 replicates. The question — which genes change over time in a treatment-specific way, beyond the shared time trend — is precisely a condition x time interaction question, so the plan is built around an interaction likelihood-ratio test rather than pairwise contrasts.\n\nT1S1 builds the analysis-ready object: probe which DE toolchain is actually importable (the package inventory could not be read, so nothing may be assumed), load counts and metadata, reconcile sample IDs and column order, collapse duplicate gene symbols, filter low-count genes, normalise, and run QC (library sizes, PCA/MDS coloured by condition and time, sample-sample correlation) to confirm the design separates as expected and to flag outlier replicates before modelling. T1S2 is the primary test: fit ~condition + time + condition:time with time as a 4-level factor and test the interaction terms as a block by LRT against ~condition + time. This is the direct answer — genes whose temporal trajectory differs by condition, with the shared time trend absorbed by the main effect. T1S3 characterises the hits: per-timepoint condition contrasts (t0..t3) on the same fit so each interaction gene can be described by WHERE in time the divergence occurs, plus normalised trajectory profiles and clustering of interaction genes into temporal response patterns (early/late/transient/sustained divergence).\n\nT1S4 runs a sensitivity analysis rather than trusting one parametrisation: a continuous-time model using time_hours with natural splines (or a linear/quadratic term if df is limited — 4 time points cap the usable spline df) and an independent non-parametric check, then reports the overlap with the factor-model interaction set. Agreement across parametrisations is the honest evidence that a hit is a real trajectory difference and not an artefact of one model. T2S1 takes the ranked interaction gene list into functional enrichment; it is a separate track because it depends only on the T1S2 output and its value is annotation, not the answer. No reference store is currently provisioned, so that step must first confirm gene sets are available and, if they are not, report the absence plainly and fall back to reporting the ranked gene list without over-representation claims — the research question survives without it.\n\nPower is the main limitation and every step is instructed to say so: 3 replicates per condition-time cell means interaction tests (which spend more residual df than main effects) are underpowered for modest effects, so the deliverable is a ranked, FDR-controlled list with effect sizes, not a claim of exhaustive discovery.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, filter, normalise, QC",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Do the 24 samples in counts.csv match the 24 rows of metadata.csv, and does the 2-condition x 4-timepoint (t0..t3) x 3-replicate design separate cleanly after normalisation, with no outlier replicate that would distort an interaction test?",
+              "description": "Build the analysis-ready count object from /eval-phase0-without-timecourse-2x4-n3-2/data/inputs/counts/counts.csv (12,000 rows x 25 columns: first column gene symbol, 24 sample columns) and /eval-phase0-without-timecourse-2x4-n3-2/data/inputs/metadata/metadata.csv (24 rows x 4 columns: sample id, condition, time, time_hours). Verify sample IDs match one-to-one and reorder count columns to metadata order. Collapse duplicate gene symbols by summing counts (report how many symbols were duplicated). Filter to genes with sufficient counts across the smallest design cell (n=3), e.g. CPM-based filtering requiring expression in at least 3 samples; report genes retained. Compute library-size-normalised values (median-of-ratios or TMM, whichever toolchain is present) and a variance-stabilised/log-CPM matrix for visualisation. QC: library size per sample, PCA and/or MDS on the top variable genes coloured by condition and shaped by time, within-group sample-sample correlation heatmap, and a per-cell replicate count table confirming 3 replicates in each of the 8 condition x time cells. Persist the filtered count matrix, the normalised matrix, and the reconciled sample table for downstream steps.",
+              "context": "Human cell-line bulk RNA-seq, salmon-derived raw integer gene-level counts. The design is a 2 x 4 factorial with 3 replicates (24 samples). Everything downstream is an interaction test, which is sensitive to a single bad replicate in a 3-replicate cell, so QC before modelling is not optional. The condition and time level names must be read from metadata.csv, not assumed — the profile records the time variable as t0..t3 with a parallel numeric time_hours column, and two condition levels whose exact labels are in the file.",
+              "constraints": [
+                "Read the actual condition and time level labels from metadata.csv and use them verbatim in all outputs and figure legends — do not invent or abbreviate them.",
+                "The package inventory for this environment could not be read. Probe each package before use (R: requireNamespace(...); Python: import in a try block) and record which DE toolchain was found. Prefer DESeq2, else edgeR, else limma-voom; if none of the three is importable, stop and report that plainly rather than silently substituting a t-test-based pipeline.",
+                "Set the baseline time level to the earliest time point (t0) and treat condition with an explicit reference level; report which level was used as reference.",
+                "Do not drop samples without stating the reason and the evidence; if an outlier is identified, keep it in the primary analysis and flag it for the sensitivity step rather than removing it silently.",
+                "Sum, do not average, counts for duplicated gene symbols; report the count of collapsed symbols."
+              ],
+              "acceptance_criteria": [
+                "All 24 count columns are matched to metadata rows with zero unmatched IDs, and the matched order is confirmed in the output log.",
+                "A replicate table confirms 3 samples in each of the 8 condition x time cells (or reports any deviation explicitly).",
+                "Number of genes before and after low-count filtering is reported, starting from 12,000.",
+                "PCA/MDS plot coloured by condition and marked by time is produced, with variance explained by PC1/PC2 stated.",
+                "The filtered raw count matrix, the normalised/transformed matrix, and the reconciled sample table are written to disk for downstream steps.",
+                "The DE toolchain actually used is named in the output."
+              ],
+              "caveats": [
+                "Gene identifiers are symbols, not stable IDs — duplicate symbols and unmappable entries are expected and must be handled explicitly.",
+                "With n=3 per cell, a single outlier replicate can dominate a cell mean; note any such sample rather than assuming the design is balanced in practice.",
+                "Cell-line time-course data often shows a strong shared time/confluence trend that dominates PC1; that is expected and is exactly what the interaction model must condition on."
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Condition x time interaction LRT",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the ~12,000 genes show a treatment-specific expression trajectory across t0..t3 — i.e. a significant condition:time interaction — after the time trend shared by both conditions is absorbed by the time main effect?",
+              "description": "Fit the full model ~ condition + time + condition:time on the filtered counts from T1S1, with time as a 4-level factor (t0..t3) and condition as a 2-level factor. Test the three interaction coefficients as a single block against the reduced model ~ condition + time using a likelihood-ratio test (DESeq2 LRT with reduced=~condition+time, or edgeR glmQLFTest / limma-voom with the interaction coefficient set, matching whichever toolchain T1S1 established). Apply Benjamini-Hochberg FDR across all tested genes. Output a full ranked results table (gene symbol, LRT statistic, raw p, BH-adjusted p, each interaction log2FC coefficient, mean expression) and the significant set at FDR < 0.05 (also report counts at 0.1 and 0.01 so the reader can see threshold sensitivity). Produce a p-value histogram to check calibration, an MA-style plot of interaction effect magnitude vs expression, and a heatmap of scaled expression for the top interaction genes with samples ordered by condition then time. Also fit and report the main-effect models (shared time effect ~condition+time vs ~condition; overall condition effect) purely as context, so the size of the interaction signal can be judged against the shared time trend it is being separated from.",
+              "context": "This step is the direct answer to the research question. 'Beyond the shared time trend' means the time main effect is in both the full and reduced model, so only condition-specific deviations from the common trajectory are tested. The LRT-over-all-interaction-terms formulation is preferred over any single pairwise contrast because it asks the trajectory-shape question in one test with one FDR correction.",
+              "constraints": [
+                "The reduced model must include BOTH condition and time main effects — the tested difference is the interaction block only.",
+                "Use time as a factor with t0..t3 levels here (the continuous/spline parametrisation is T1S4's job); state the reference level.",
+                "Report a single BH-FDR correction over all genes tested; do not filter genes post hoc and re-correct.",
+                "Report the number of significant genes at FDR < 0.01, 0.05 and 0.10, and use FDR < 0.05 as the headline set.",
+                "Write the FULL ranked results table (all tested genes), not only the significant subset, so downstream steps can use the ranking.",
+                "State the residual degrees of freedom of the fit and note explicitly that with 3 replicates per cell the interaction test is underpowered for small effects."
+              ],
+              "acceptance_criteria": [
+                "A gene-level results table for every gene retained by T1S1 is written, containing LRT statistic, p, BH-adjusted p and the interaction coefficients.",
+                "Significant gene counts at FDR 0.01/0.05/0.10 are reported, with the FDR<0.05 set saved separately.",
+                "A p-value histogram is produced and its shape commented on (uniform-with-spike vs anticonservative).",
+                "A heatmap of the top interaction genes with samples ordered by condition then time point is produced.",
+                "Main-effect (shared time trend) gene counts are reported alongside, for context on relative signal size.",
+                "If zero genes pass FDR < 0.05, the step reports that plainly with the p-value distribution as evidence rather than lowering the threshold to manufacture a hit list."
+              ],
+              "caveats": [
+                "Interaction terms consume more degrees of freedom and are typically far less powered than main effects; a much shorter interaction list than main-effect list is the normal outcome, not a failure.",
+                "A significant interaction can arise from a baseline (t0) difference between conditions combined with parallel trajectories — the per-timepoint decomposition in T1S3 is required to distinguish these.",
+                "Shrunken vs unshrunken log2FCs differ; state which is reported."
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Per-timepoint decomposition and trajectory clustering",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "For the genes with a significant condition:time interaction, at which of t0, t1, t2, t3 does the treatment effect actually emerge, and what distinct temporal response shapes (early, late, transient, sustained, reversed) do those genes fall into?",
+              "description": "Using the fitted model from T1S2, extract the condition contrast at each of the four time points (t0, t1, t2, t3) — the simple effects — and assemble a per-gene table of four log2 fold changes with standard errors and adjusted p-values. Restrict the characterisation to the FDR<0.05 interaction set from T1S2 (and report the same table for the full gene set as a supplementary file). Also compute, per interaction gene, the change relative to t0 within each condition, so the divergence is described as a trajectory rather than a set of independent snapshots. Classify each interaction gene by whether the condition effect is already present at t0 (baseline difference — flag these, since they weaken a 'treatment-induced' interpretation) versus emerging at t1/t2/t3. Cluster the scaled mean trajectories of the interaction genes (k-means or hierarchical on z-scored condition-wise time profiles, choosing k by an explicit criterion such as silhouette or within-cluster sum of squares elbow, and reporting the criterion) and plot the cluster mean trajectories per condition with replicate spread shown. Output a labelled gene-to-cluster assignment table and the per-timepoint effect table.",
+              "context": "An interaction LRT says a trajectory differs but not how. This step converts the T1S2 hit list into an interpretable description — the deliverable a biologist can act on — and separates genes whose conditions already differ at baseline from genes where treatment drives divergence over time.",
+              "constraints": [
+                "Derive per-timepoint contrasts from the SAME fitted model as T1S2 (contrast extraction), not from independent per-timepoint two-group tests on subsets.",
+                "Explicitly flag genes with a significant condition effect at t0 as baseline-different and report their number; do not present them as treatment-induced.",
+                "Justify the number of trajectory clusters with a stated, reported criterion — do not pick k by eye without saying so.",
+                "Plot cluster mean trajectories against the numeric time_hours axis from metadata.csv, using the actual condition labels.",
+                "If the T1S2 FDR<0.05 set has fewer than ~15 genes, skip clustering, report why, and instead plot every interaction gene's trajectory individually."
+              ],
+              "acceptance_criteria": [
+                "A per-gene table of condition log2FC at t0, t1, t2 and t3 with standard errors and adjusted p-values is written.",
+                "The number of interaction genes that already differ at t0 is reported and those genes are flagged in the output table.",
+                "Trajectory cluster assignments are written with a stated criterion for k, or the small-set fallback is used and the reason is stated.",
+                "Cluster (or per-gene) mean trajectory plots against time_hours, split by condition, are produced with replicate spread visible."
+              ],
+              "caveats": [
+                "Per-timepoint contrasts at n=3 per cell are individually noisy; they are descriptive of the interaction genes, not independent discovery tests.",
+                "Clustering z-scored trajectories will always return clusters — cluster structure is a summary device here, not evidence of discrete biological programmes.",
+                "Multiple testing across four contrasts is reported for description; the discovery-level FDR remains the T1S2 interaction test."
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Continuous-time sensitivity analysis",
+              "track": "T1",
+              "step_type": "validation",
+              "question": "Does the treatment-specific time signal hold when time is modelled continuously (time_hours, spline/polynomial) rather than as four discrete levels, and how much of the FDR<0.05 interaction set is recovered by an independent parametrisation?",
+              "description": "Refit the interaction question with time as a continuous covariate using the time_hours column from metadata.csv: full model ~ condition * f(time_hours) versus reduced ~ condition + f(time_hours), where f is a natural spline with degrees of freedom that the four distinct time points can support (df<=2; if df=1, this reduces to a linear-trend interaction — report which was used and why). Run the same LRT/FDR procedure as T1S2. Additionally run one independent non-parametric or alternative check on the interaction question — e.g. a permutation test on the interaction statistic for the top genes, permuting condition labels within time point to preserve the shared time trend under the null, or an alternative toolchain (if T1S1 found more than one of DESeq2/edgeR/limma importable, refit with the second one). Report the overlap between the continuous-time hit set, the alternative-toolchain/permutation-supported set, and the T1S2 factor-model FDR<0.05 set as a concordance table plus a Venn/UpSet-style summary, and produce a consensus list of genes supported by more than one parametrisation.",
+              "context": "Four time points bound how much curvature a continuous model can express, so this is a sensitivity check on the primary factor-model result rather than a competing primary analysis. Genes recovered by both a discrete and a continuous parametrisation are the ones worth carrying into interpretation; genes unique to one are parametrisation-dependent and must be labelled as such.",
+              "constraints": [
+                "Do not exceed spline degrees of freedom that four distinct time points can identify; state the df chosen and the reason.",
+                "When permuting, permute condition labels WITHIN time point so the shared time trend is preserved under the null — permuting globally tests the wrong null.",
+                "Report the concordance as counts and as a gene-level flag joined onto the T1S2 results table; do not replace the primary result with the sensitivity result.",
+                "Name this a sensitivity analysis in all outputs; the headline discovery set remains T1S2's factor-model LRT."
+              ],
+              "acceptance_criteria": [
+                "Continuous-time interaction LRT results with BH-FDR are written for all tested genes, with the spline df used stated.",
+                "An independent check (permutation with within-timepoint label shuffling, or a second toolchain refit) is run and its result set reported.",
+                "A concordance table and overlap summary across the parametrisations is produced.",
+                "A consensus gene list — genes supported by more than one parametrisation — is written, and genes unique to a single parametrisation are labelled as parametrisation-dependent."
+              ],
+              "caveats": [
+                "With 4 time points, spline flexibility is severely limited; a null result from the continuous model may reflect model rigidity, not absence of signal.",
+                "Permutation resolution is limited by the number of distinct within-timepoint label permutations at n=3 per cell — report the achievable minimum p-value.",
+                "High concordance between two toolchains on the same counts is partly expected because they share assumptions; it is corroboration, not independent replication."
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "splines",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Functional enrichment of interaction genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "What biological processes and pathways are over-represented among the genes with a treatment-specific temporal response, and do the temporal clusters from T1S3 correspond to distinct functional programmes?",
+              "description": "Take the ranked interaction results from T1S2 (gene symbols, ranked by LRT statistic / adjusted p) and the FDR<0.05 interaction set, plus the trajectory cluster assignments from T1S3. Run (a) over-representation analysis of the FDR<0.05 interaction set against the genes retained after T1S1 filtering as the background universe — using the filtered gene set as universe, not the whole genome — and (b) a rank-based gene-set enrichment on the full ranked interaction statistic. Then repeat the over-representation analysis per trajectory cluster to test whether early- vs late-diverging genes are functionally distinct. Report gene sets with BH-adjusted p, the overlapping genes, and set sizes. This step requires gene-set reference data (GO biological process and/or hallmark/canonical-pathway collections) for Homo sapiens: no reference store is currently provisioned in this environment, so the step must first check what gene-set resources and annotation packages are actually available.",
+              "context": "Annotation layer on the primary result. Its value is interpretive — the research question is answered by T1S2/T1S3 regardless of whether this step can run. Gene identifiers in counts.csv are human gene symbols, so any gene-set resource used must be symbol-keyed or mapped to symbols for Homo sapiens.",
+              "constraints": [
+                "Use the T1S1 post-filter gene list as the enrichment background universe, not a whole-genome default — using the wrong universe inflates significance.",
+                "The organism is Homo sapiens; do not use a mouse or other-species gene-set collection.",
+                "Probe for gene-set resources and annotation packages before use. If no Homo sapiens gene-set collection is available in this environment, report that absence plainly, skip the enrichment, and instead deliver the ranked interaction gene list with per-gene descriptions from whatever annotation is available — do not fabricate pathway results and do not hand-write a gene set from memory and present it as a curated collection.",
+                "Report adjusted p-values and the member genes for each reported set; do not report nominal p-values alone.",
+                "State the gene-set collection, its version/source, and the number of sets tested."
+              ],
+              "acceptance_criteria": [
+                "The gene-set resource actually used (or its documented absence) is named explicitly in the output.",
+                "If enrichment ran: a table of enriched terms with set size, overlap genes, raw and BH-adjusted p-values for the FDR<0.05 interaction set, using the T1S1 filtered universe.",
+                "If enrichment ran: per-cluster enrichment results for the T1S3 trajectory clusters, or a stated reason why cluster-level testing was not informative (e.g. clusters too small).",
+                "If no gene-set resource is available: a clear statement of the gap and a delivered ranked gene list, with no pathway claims made."
+              ],
+              "caveats": [
+                "A small interaction gene list gives enrichment very little power; empty enrichment results are an expected outcome at this sample size and must be reported as such rather than relaxed into nominal-p claims.",
+                "Over-representation on a symbol-keyed list loses genes that fail mapping — report the mapping rate.",
+                "Enrichment of a cell-line time-course signature can reflect culture/confluence biology rather than treatment biology; interpret against the shared-time-trend main effect from T1S2."
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "msigdbr",
+                "org.Hs.eg.db",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

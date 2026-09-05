@@ -1,0 +1,180 @@
+id: tpl-deseq2-interaction
+version: 1.0.0
+label: "DESeq2 2x2 factorial design with an interaction term and ashr shrinkage"
+language: R
+method: M-0001
+step_types: [filter_low_counts, normalize, model_design, differential_expression, shrink_lfc, multiple_testing]
+edam_operations: [EDAM:operation_3223]
+citations: [S-0001, S-0002, S-0021, S-0040, S-0042]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_factor_interaction]
+  min_replicates: 2
+  conditions:
+    - field: interaction
+      op: eq
+      value: true
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers. A sample table with one row per sample.
+    Two factors with exactly two levels each, thus four cells. The script
+    renames the two columns to `factor_a` and `factor_b`, sets the reference
+    level of each, and fits `~ factor_a + factor_b + factor_a:factor_b`. The
+    primary result is the interaction term: the change of the factor_b effect
+    between the two levels of factor_a. The script also writes the simple
+    effect of factor_b inside each level of factor_a. The shrinkage estimator
+    is ashr. A simple effect inside the test level of factor_a is a contrast
+    of two coefficients, and apeglm shrinks one coefficient only. The same
+    estimator then serves the three tables.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: factor_a_column
+    type: string
+    description: "The column of the sample table that holds the first factor, for example genotype. It must hold exactly two levels."
+    adaptable: true
+  - name: factor_a_reference
+    type: string
+    description: "The reference level of the first factor, for example WT. The other level is the test level."
+    adaptable: true
+  - name: factor_b_column
+    type: string
+    description: "The column of the sample table that holds the second factor, for example treatment. It must hold exactly two levels."
+    adaptable: true
+  - name: factor_b_reference
+    type: string
+    description: "The reference level of the second factor, for example vehicle. The other level is the test level."
+    adaptable: true
+  - name: min_count
+    type: integer
+    description: "A gene stays when it has at least this many counts in at least min_samples samples."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 0
+  - name: min_samples
+    type: integer
+    description: "The minimum number of samples for the count filter. Absent, the script uses the smallest cell size of the 2x2 design."
+    adaptable: true
+    required: false
+    minimum: 1
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff, passed to results() so the independent filter is optimized for it."
+    adaptable: false
+    default: 0.05
+    default_source: "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+  - name: lfc_shrink
+    type: string
+    description: "The shrinkage estimator of the reported log2 fold change. ashr serves a coefficient and a contrast of coefficients alike, thus the interaction and the two simple effects get one estimator."
+    adaptable: true
+    default: ashr
+    default_source: "doi:10.1093/biostatistics/kxw041"
+    enum: [ashr, none]
+  - name: lfc_threshold
+    type: number
+    description: "A log2 fold change threshold tested with the Wald test (TREAT-style). 0 tests against no change."
+    adaptable: true
+    default: 0
+    default_source: "vignette:DESeq2/1.52.0#tests-of-log2-fold-change-above-or-below-a-threshold"
+    minimum: 0
+  - name: n_top_genes_pca
+    type: integer
+    description: "The number of most variable genes for the PCA."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 50
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example de or genotype_by_treatment."
+    adaptable: true
+    default: de
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+outputs:
+  - name: interaction_results
+    path: "output/{prefix}_interaction_results.csv"
+    format: EDAM:format_3752
+    description: "The interaction term, one row per tested gene: gene, base_mean, log2_fold_change (shrunken), lfc_se, stat, pvalue, adjusted_pvalue."
+  - name: simple_effect_results
+    path: "output/{prefix}_simple_effect_{level_a}.csv"
+    format: EDAM:format_3752
+    description: "One table per level of factor_a: the effect of factor_b test level against reference level inside that level, with the same columns as the interaction table."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The design, the two factors and their levels, the cell sizes, the counts of tested and significant genes per table, the thresholds, the package versions."
+  - name: pca
+    path: "figures/{prefix}_pca.png"
+    description: "PCA of the samples on the top variable genes, color by factor_a and shape by factor_b (and PDF)."
+  - name: ma
+    path: "figures/{prefix}_ma.png"
+    description: "MA plot of the shrunken interaction log2 fold changes (and PDF)."
+  - name: volcano
+    path: "figures/{prefix}_volcano.png"
+    description: "Volcano plot of the interaction term, log2 fold change against -log10 adjusted p-value (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: DESeq2
+    version: "1.52.0"
+    track: bioconductor
+  - name: ashr
+    version: "2.2-63"
+    track: cran
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: interaction-2x2-n4
+    dataset: interaction_2x2_n4/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      factor_a_column: genotype
+      factor_a_reference: WT
+      factor_b_column: treatment
+      factor_b_reference: vehicle
+    expect:
+      - "exists output/de_interaction_results.csv"
+      - "exists output/de_simple_effect_WT.csv"
+      - "exists output/de_simple_effect_KO.csv"
+      - "exists output/de_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/de_pca.png"
+      - "exists figures/de_pca.pdf"
+      - "exists figures/de_ma.png"
+      - "exists figures/de_volcano.pdf"
+      - "csv_rows output/de_interaction_results.csv >= 5000"
+      - "csv_rows output/de_simple_effect_KO.csv >= 5000"
+      - "json output/de_summary.json interaction.n_significant > 0"
+      - "truth_recall output/de_interaction_results.csv >= 0.3"
+      - "truth_fdr output/de_interaction_results.csv <= 0.15"

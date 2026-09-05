@@ -1,0 +1,37 @@
+id: bulk_rna_seq
+label: Bulk RNA-seq
+step_order:
+  - qc_sample_structure
+  - filter_low_counts
+  - normalize
+  - model_design
+  - differential_expression
+  - shrink_lfc
+  - multiple_testing
+  - enrichment
+  - report
+question_steps:
+  qc:
+    - qc_sample_structure
+  differential_expression:
+    - qc_sample_structure
+    - filter_low_counts
+    - normalize
+    - model_design
+    - differential_expression
+    - shrink_lfc
+    - multiple_testing
+    - report
+  enrichment:
+    - enrichment
+    - report
+  full_plan:
+    - qc_sample_structure
+    - filter_low_counts
+    - normalize
+    - model_design
+    - differential_expression
+    - shrink_lfc
+    - multiple_testing
+    - enrichment
+    - report

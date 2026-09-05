@@ -1,0 +1,426 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "confounded-batch-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T04:57:04.132Z",
+  "elapsedMs": 73631,
+  "outcome": "plan_submitted",
+  "planId": "pln-fa28de49",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and confound verification",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Because batch and condition are identical partitions of the 12 samples, PCA/clustering cannot distinguish which one drives any observed separation — report this explicitly rather than attributing structure to treatment"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scikit-learn",
+          "matplotlib"
+        ],
+        "question": "Do the raw counts and metadata confirm that batch (B1/B2) is perfectly confounded with condition (control/treated) across all 12 samples, and what do library size, sample clustering, and PCA show about the dominant axis of variation?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use raw counts as given; do not attempt any correction here, this step is descriptive only"
+        ],
+        "acceptance_criteria": [
+          "Cross-tabulation of condition x batch from metadata.csv is reported and confirms 6/6 perfect confounding (or reports a discrepancy if the profile is wrong)",
+          "Library size (total counts) per sample is computed and compared across batch/condition",
+          "PCA on normalized (e.g., log-CPM) counts is run and PC1/PC2 loadings against condition and batch are reported side by side",
+          "Hierarchical clustering or sample-sample correlation heatmap is produced to show whether samples separate by condition/batch (necessarily the same split here)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Standard DE test (confound-labeled)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do NOT attempt ComBat, SVA, RUVSeq, or any batch-correction/covariate-adjustment method here — with 6/6 perfect confounding these methods have no information to separate batch from condition and will either fail (rank-deficient design), silently remove the entire condition effect along with batch, or produce arbitrary results depending on algorithm internals; using them would fabricate a false sense of correction",
+          "Do not report this gene list as a validated treatment signature; it is confounded by construction and must be labeled as such in every downstream artifact"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Using a standard count-based DE model (e.g., DESeq2 or edgeR, whichever is available) with condition (control vs treated) as the sole factor, which genes are significantly different, understanding that this list is statistically identical to a B1-vs-B2 batch comparison?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Model condition only; do not include batch as a covariate given perfect collinearity",
+          "State FDR threshold used and report both raw and adjusted p-values"
+        ],
+        "acceptance_criteria": [
+          "Package availability (DESeq2, edgeR, or limma-voom) is probed at runtime before use; falls back to the first available, and if none is available, falls back to a documented count-based test (e.g., a Python-based negative binomial GLM or Wilcoxon on normalized counts) with the limitation stated",
+          "Raw counts are normalized (size factors or TMM/CPM) and a condition-only model is fit — a batch term is NOT added because it is collinear with condition and would make the design matrix rank-deficient",
+          "Full results table (log2FC, p-value, adjusted p-value/FDR) is produced for all ~12000 genes and a significant gene list at a stated FDR threshold (e.g., 0.05) is reported with counts of up/down genes",
+          "Output explicitly states, next to the results, that because batch B1/B2 is perfectly confounded with condition, this gene list cannot be attributed to treatment effect versus batch/processing effect — it is mathematically indistinguishable from a B2-vs-B1 comparison"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Confound-aware synthesis report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This step is a synthesis/writing step, not a new statistical test — it must not introduce new claims beyond what T1S1 and T1S2 produced"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "Given the QC-confirmed perfect confound between batch and condition, and the DE gene list produced under a condition-only model, what can and cannot be concluded about genes that differ between treated and control?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "reporting",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Cite the structural nature of the confound (6 controls all in B1, 6 treated all in B2) explicitly using the actual sample counts from the data context"
+        ],
+        "acceptance_criteria": [
+          "Report states plainly, before any gene list, that batch (B1/B2) is perfectly confounded with condition (control/treated) in this 12-sample dataset and that no computational method can separate the two effects from this design alone",
+          "Report presents the DE gene list from T1S2 labeled as 'treated-vs-control OR B2-vs-B1 (indistinguishable)', not as a validated treatment effect",
+          "Report references the QC outputs from T1S1 (library size, PCA, clustering) to characterize how strongly samples separate along the confounded axis",
+          "Report explicitly recommends that any biological interpretation, pathway enrichment, or druggability claim be withheld until a follow-up experiment with condition balanced across batches is run, and states this is why no enrichment/mechanistic step was included in this analysis",
+          "No causal or mechanistic language about 'treatment effect' appears anywhere in the report without the confound caveat attached"
+        ]
+      }
+    ],
+    "title": "Treated vs control DE with confounded batch (transparent report)",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The data context is explicit: 12000 genes x 13 columns (12 samples + gene column), 6 treated vs 6 control, raw salmon counts, and batch B1/B2 is perfectly confounded with condition (all controls in B1, all treated in B2). This is a structural design flaw, not a data-quality issue: no computational method (ComBat, limma removeBatchEffect, RUVSeq, SVA, or including batch as a covariate in a GLM) can separate a treatment effect from a batch effect when every sample of one condition sits in one batch and every sample of the other condition sits in the other. Any model with both terms is rank-deficient (batch and condition are the same design column up to relabeling), and any correction method that estimates and removes 'batch' will simultaneously and unavoidably remove all or part of the true condition signal, because they are mathematically identical partitions of the 12 samples. This has been formally documented as an unrecoverable design defect (Leek et al. 2010, Nat Rev Genet, PMID 20838408 — batch effects correlated with the outcome of interest lead to incorrect conclusions and cannot be reliably corrected post hoc). The only honest path forward is: (1) run standard QC to confirm the confound is real and not an artifact of the metadata, (2) run the DE analysis as specified, clearly flagging that any resulting gene list reflects 'treated vs control OR B2 vs B1' with no way to attribute the source, (3) explicitly quantify how much of the observed differential signal could plausibly be batch-driven using structure that does not depend on the confounded label (e.g., PCA/clustering to see if batch and condition co-vary with the same drivers, and technical-covariate proxies like library size, GC content, if derivable from counts) so the report can characterize confidence rather than assert causality, and (4) produce a report that states the confound prominently, marks the DE result as uninterpretable with respect to treatment causation, and recommends a follow-up experiment with balanced batches before any biological claims are made. No enrichment, druggability, or mechanistic interpretation step is included, because building interpretation on top of a gene list that cannot be attributed to treatment vs batch would fabricate confidence the data does not support."
+  },
+  "usage": {
+    "inputTokens": 196234,
+    "outputTokens": 6585,
+    "cacheCreationInputTokens": 25469,
+    "cacheReadInputTokens": 170645,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "sva",
+          "RUVSeq",
+          "combat-seq",
+          "apeglm",
+          "ashr",
+          "pheatmap",
+          "ggplot2"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression batch confounded with condition unable to correct",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "batch effect confounded with treatment group RNA-seq caveat interpretation",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "confounded batch effects RNA-seq experimental design",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "confounded batch effects irreparable design cannot be corrected statistical genomics",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Leek Storey batch effects study design confounding",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "tackling batch effects genomic data Leek",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "20838408"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control DE with confounded batch (transparent report)",
+          "analytical_narrative": "The data context is explicit: 12000 genes x 13 columns (12 samples + gene column), 6 treated vs 6 control, raw salmon counts, and batch B1/B2 is perfectly confounded with condition (all controls in B1, all treated in B2). This is a structural design flaw, not a data-quality issue: no computational method (ComBat, limma removeBatchEffect, RUVSeq, SVA, or including batch as a covariate in a GLM) can separate a treatment effect from a batch effect when every sample of one condition sits in one batch and every sample of the other condition sits in the other. Any model with both terms is rank-deficient (batch and condition are the same design column up to relabeling), and any correction method that estimates and removes 'batch' will simultaneously and unavoidably remove all or part of the true condition signal, because they are mathematically identical partitions of the 12 samples. This has been formally documented as an unrecoverable design defect (Leek et al. 2010, Nat Rev Genet, PMID 20838408 — batch effects correlated with the outcome of interest lead to incorrect conclusions and cannot be reliably corrected post hoc). The only honest path forward is: (1) run standard QC to confirm the confound is real and not an artifact of the metadata, (2) run the DE analysis as specified, clearly flagging that any resulting gene list reflects 'treated vs control OR B2 vs B1' with no way to attribute the source, (3) explicitly quantify how much of the observed differential signal could plausibly be batch-driven using structure that does not depend on the confounded label (e.g., PCA/clustering to see if batch and condition co-vary with the same drivers, and technical-covariate proxies like library size, GC content, if derivable from counts) so the report can characterize confidence rather than assert causality, and (4) produce a report that states the confound prominently, marks the DE result as uninterpretable with respect to treatment causation, and recommends a follow-up experiment with balanced batches before any biological claims are made. No enrichment, druggability, or mechanistic interpretation step is included, because building interpretation on top of a gene list that cannot be attributed to treatment vs batch would fabricate confidence the data does not support.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and confound verification",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the raw counts and metadata confirm that batch (B1/B2) is perfectly confounded with condition (control/treated) across all 12 samples, and what do library size, sample clustering, and PCA show about the dominant axis of variation?",
+              "acceptance_criteria": [
+                "Cross-tabulation of condition x batch from metadata.csv is reported and confirms 6/6 perfect confounding (or reports a discrepancy if the profile is wrong)",
+                "Library size (total counts) per sample is computed and compared across batch/condition",
+                "PCA on normalized (e.g., log-CPM) counts is run and PC1/PC2 loadings against condition and batch are reported side by side",
+                "Hierarchical clustering or sample-sample correlation heatmap is produced to show whether samples separate by condition/batch (necessarily the same split here)"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Because batch and condition are identical partitions of the 12 samples, PCA/clustering cannot distinguish which one drives any observed separation — report this explicitly rather than attributing structure to treatment"
+              ],
+              "constraints": [
+                "Use raw counts as given; do not attempt any correction here, this step is descriptive only"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Standard DE test (confound-labeled)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using a standard count-based DE model (e.g., DESeq2 or edgeR, whichever is available) with condition (control vs treated) as the sole factor, which genes are significantly different, understanding that this list is statistically identical to a B1-vs-B2 batch comparison?",
+              "acceptance_criteria": [
+                "Package availability (DESeq2, edgeR, or limma-voom) is probed at runtime before use; falls back to the first available, and if none is available, falls back to a documented count-based test (e.g., a Python-based negative binomial GLM or Wilcoxon on normalized counts) with the limitation stated",
+                "Raw counts are normalized (size factors or TMM/CPM) and a condition-only model is fit — a batch term is NOT added because it is collinear with condition and would make the design matrix rank-deficient",
+                "Full results table (log2FC, p-value, adjusted p-value/FDR) is produced for all ~12000 genes and a significant gene list at a stated FDR threshold (e.g., 0.05) is reported with counts of up/down genes",
+                "Output explicitly states, next to the results, that because batch B1/B2 is perfectly confounded with condition, this gene list cannot be attributed to treatment effect versus batch/processing effect — it is mathematically indistinguishable from a B2-vs-B1 comparison"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do NOT attempt ComBat, SVA, RUVSeq, or any batch-correction/covariate-adjustment method here — with 6/6 perfect confounding these methods have no information to separate batch from condition and will either fail (rank-deficient design), silently remove the entire condition effect along with batch, or produce arbitrary results depending on algorithm internals; using them would fabricate a false sense of correction",
+                "Do not report this gene list as a validated treatment signature; it is confounded by construction and must be labeled as such in every downstream artifact"
+              ],
+              "constraints": [
+                "Model condition only; do not include batch as a covariate given perfect collinearity",
+                "State FDR threshold used and report both raw and adjusted p-values"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Confound-aware synthesis report",
+              "track": "T1",
+              "step_type": "reporting",
+              "question": "Given the QC-confirmed perfect confound between batch and condition, and the DE gene list produced under a condition-only model, what can and cannot be concluded about genes that differ between treated and control?",
+              "acceptance_criteria": [
+                "Report states plainly, before any gene list, that batch (B1/B2) is perfectly confounded with condition (control/treated) in this 12-sample dataset and that no computational method can separate the two effects from this design alone",
+                "Report presents the DE gene list from T1S2 labeled as 'treated-vs-control OR B2-vs-B1 (indistinguishable)', not as a validated treatment effect",
+                "Report references the QC outputs from T1S1 (library size, PCA, clustering) to characterize how strongly samples separate along the confounded axis",
+                "Report explicitly recommends that any biological interpretation, pathway enrichment, or druggability claim be withheld until a follow-up experiment with condition balanced across batches is run, and states this is why no enrichment/mechanistic step was included in this analysis",
+                "No causal or mechanistic language about 'treatment effect' appears anywhere in the report without the confound caveat attached"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "This step is a synthesis/writing step, not a new statistical test — it must not introduce new claims beyond what T1S1 and T1S2 produced"
+              ],
+              "constraints": [
+                "Cite the structural nature of the confound (6 controls all in B1, 6 treated all in B2) explicitly using the actual sample counts from the data context"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control DE with confounded batch (transparent report)",
+          "analytical_narrative": "The data context is explicit: 12000 genes x 13 columns (12 samples + gene column), 6 treated vs 6 control, raw salmon counts, and batch B1/B2 is perfectly confounded with condition (all controls in B1, all treated in B2). This is a structural design flaw, not a data-quality issue: no computational method (ComBat, limma removeBatchEffect, RUVSeq, SVA, or including batch as a covariate in a GLM) can separate a treatment effect from a batch effect when every sample of one condition sits in one batch and every sample of the other condition sits in the other. Any model with both terms is rank-deficient (batch and condition are the same design column up to relabeling), and any correction method that estimates and removes 'batch' will simultaneously and unavoidably remove all or part of the true condition signal, because they are mathematically identical partitions of the 12 samples. This has been formally documented as an unrecoverable design defect (Leek et al. 2010, Nat Rev Genet, PMID 20838408 — batch effects correlated with the outcome of interest lead to incorrect conclusions and cannot be reliably corrected post hoc). The only honest path forward is: (1) run standard QC to confirm the confound is real and not an artifact of the metadata, (2) run the DE analysis as specified, clearly flagging that any resulting gene list reflects 'treated vs control OR B2 vs B1' with no way to attribute the source, (3) explicitly quantify how much of the observed differential signal could plausibly be batch-driven using structure that does not depend on the confounded label (e.g., PCA/clustering to see if batch and condition co-vary with the same drivers, and technical-covariate proxies like library size, GC content, if derivable from counts) so the report can characterize confidence rather than assert causality, and (4) produce a report that states the confound prominently, marks the DE result as uninterpretable with respect to treatment causation, and recommends a follow-up experiment with balanced batches before any biological claims are made. No enrichment, druggability, or mechanistic interpretation step is included, because building interpretation on top of a gene list that cannot be attributed to treatment vs batch would fabricate confidence the data does not support.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and confound verification",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the raw counts and metadata confirm that batch (B1/B2) is perfectly confounded with condition (control/treated) across all 12 samples, and what do library size, sample clustering, and PCA show about the dominant axis of variation?",
+              "acceptance_criteria": [
+                "Cross-tabulation of condition x batch from metadata.csv is reported and confirms 6/6 perfect confounding (or reports a discrepancy if the profile is wrong)",
+                "Library size (total counts) per sample is computed and compared across batch/condition",
+                "PCA on normalized (e.g., log-CPM) counts is run and PC1/PC2 loadings against condition and batch are reported side by side",
+                "Hierarchical clustering or sample-sample correlation heatmap is produced to show whether samples separate by condition/batch (necessarily the same split here)"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Because batch and condition are identical partitions of the 12 samples, PCA/clustering cannot distinguish which one drives any observed separation — report this explicitly rather than attributing structure to treatment"
+              ],
+              "constraints": [
+                "Use raw counts as given; do not attempt any correction here, this step is descriptive only"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Standard DE test (confound-labeled)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using a standard count-based DE model (e.g., DESeq2 or edgeR, whichever is available) with condition (control vs treated) as the sole factor, which genes are significantly different, understanding that this list is statistically identical to a B1-vs-B2 batch comparison?",
+              "acceptance_criteria": [
+                "Package availability (DESeq2, edgeR, or limma-voom) is probed at runtime before use; falls back to the first available, and if none is available, falls back to a documented count-based test (e.g., a Python-based negative binomial GLM or Wilcoxon on normalized counts) with the limitation stated",
+                "Raw counts are normalized (size factors or TMM/CPM) and a condition-only model is fit — a batch term is NOT added because it is collinear with condition and would make the design matrix rank-deficient",
+                "Full results table (log2FC, p-value, adjusted p-value/FDR) is produced for all ~12000 genes and a significant gene list at a stated FDR threshold (e.g., 0.05) is reported with counts of up/down genes",
+                "Output explicitly states, next to the results, that because batch B1/B2 is perfectly confounded with condition, this gene list cannot be attributed to treatment effect versus batch/processing effect — it is mathematically indistinguishable from a B2-vs-B1 comparison"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do NOT attempt ComBat, SVA, RUVSeq, or any batch-correction/covariate-adjustment method here — with 6/6 perfect confounding these methods have no information to separate batch from condition and will either fail (rank-deficient design), silently remove the entire condition effect along with batch, or produce arbitrary results depending on algorithm internals; using them would fabricate a false sense of correction",
+                "Do not report this gene list as a validated treatment signature; it is confounded by construction and must be labeled as such in every downstream artifact"
+              ],
+              "constraints": [
+                "Model condition only; do not include batch as a covariate given perfect collinearity",
+                "State FDR threshold used and report both raw and adjusted p-values"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Confound-aware synthesis report",
+              "track": "T1",
+              "step_type": "reporting",
+              "question": "Given the QC-confirmed perfect confound between batch and condition, and the DE gene list produced under a condition-only model, what can and cannot be concluded about genes that differ between treated and control?",
+              "acceptance_criteria": [
+                "Report states plainly, before any gene list, that batch (B1/B2) is perfectly confounded with condition (control/treated) in this 12-sample dataset and that no computational method can separate the two effects from this design alone",
+                "Report presents the DE gene list from T1S2 labeled as 'treated-vs-control OR B2-vs-B1 (indistinguishable)', not as a validated treatment effect",
+                "Report references the QC outputs from T1S1 (library size, PCA, clustering) to characterize how strongly samples separate along the confounded axis",
+                "Report explicitly recommends that any biological interpretation, pathway enrichment, or druggability claim be withheld until a follow-up experiment with condition balanced across batches is run, and states this is why no enrichment/mechanistic step was included in this analysis",
+                "No causal or mechanistic language about 'treatment effect' appears anywhere in the report without the confound caveat attached"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "This step is a synthesis/writing step, not a new statistical test — it must not introduce new claims beyond what T1S1 and T1S2 produced"
+              ],
+              "constraints": [
+                "Cite the structural nature of the confound (6 controls all in B1, 6 treated all in B2) explicitly using the actual sample counts from the data context"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

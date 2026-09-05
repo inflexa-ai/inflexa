@@ -1,0 +1,67 @@
+id: R-0074
+title: "Log-scale input: no normalization step, a check of the value range, and a report of the scale"
+assertion: >-
+  With a table of log-normalized values, do not normalize again. The values
+  already carry the normalization of the producer, and a second normalization
+  hides what the producer did. Do a check of the value range before the
+  model. A range of about 0 to 20 with a fractional part is a log2 scale, but
+  a range in the thousands with only integers is a count table, and then the
+  count path applies instead. State the producer, the normalization, and the
+  log base in the report. Fit the limma linear model on these values with the
+  trend option.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: log_normalized
+action:
+  step_type: normalize
+  parameters:
+    - name: normalization
+      value: none_already_normalized
+      default_source: "guide:limma/2026-05-19#normalization"
+    - name: value_range_check
+      value: required
+      default_source: "rule:R-0074"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0007
+    paraphrase: >-
+      The limma-trend pipeline fits its linear model on log-CPM values that
+      are already normalized, and it takes the log scale with its
+      mean-variance trend as the input, not the counts.
+    anchor: "Methods; The limma-trend pipeline"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0084
+    paraphrase: >-
+      The linear model and the empirical Bayes moderation take normalized
+      log-expression values as their input. Normalization is a step before
+      the model, not a part of it.
+    anchor: "Introduction; The linear model"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0008
+    paraphrase: >-
+      The guide describes the normalization of the intensities as a step that
+      comes before the linear model, and its case studies fit lmFit on the
+      normalized log-expression matrix.
+    anchor: "Normalization; Linear models"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [normalize, data-state, log-scale]

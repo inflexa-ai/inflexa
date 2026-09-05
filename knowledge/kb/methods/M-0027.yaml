@@ -1,0 +1,11 @@
+id: M-0027
+label: "Low abundance filter on TPM, FPKM, or log expression values"
+description: >-
+  A pre-filter for a table that is not a count table. It keeps a gene with an
+  abundance at or above a floor in at least the smallest group size of samples,
+  or a gene whose mean log expression is above a floor. The floor is a stated
+  choice, and the number of genes kept goes into the report.
+packages:
+  - name: matrixStats
+    track: cran
+    version_range: ">=1.0"

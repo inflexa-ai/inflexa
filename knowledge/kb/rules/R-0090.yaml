@@ -1,0 +1,72 @@
+id: R-0090
+title: "Outlier sample removed: fit again and report both fits with the change in the significant set"
+assertion: >-
+  If an outlier sample is removed, fit the model twice, once with the sample
+  and once without it. Report both fits with the number of significant genes
+  from each, the size of the intersection, and the genes that change status.
+  State the criterion of the removal and the sample that it removed. A
+  removal changes the dispersion estimates and the power, and a reader who
+  sees one fit cannot judge how much of the result depends on that one
+  sample. Name the fit that the stated criterion supports as the primary
+  result, and present the other fit as the sensitivity run.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: quality_flags
+    op: contains
+    value: [outlier_sample]
+  - field: question
+    op: in
+    value: [differential_expression, full_plan]
+action:
+  step_type: report
+  parameters:
+    - name: outlier_sensitivity
+      value: refit_and_report_both
+      default_source: "doi:10.1093/nar/gkv412"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0046
+    paraphrase: >-
+      The removal of a poor quality sample is a subjective decision that
+      loses the information in the sample and the power that comes with it.
+      The paper compares the analysis with the sample, without the sample,
+      and with a sample weight, and it shows that the choice changes the
+      significant set.
+    anchor: "Introduction; Results, Comparison with sample removal"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0012
+    paraphrase: >-
+      The survey names the sample-level checks of the count data, among them
+      the clustering and the principal component analysis of the samples,
+      as the means to find an outlier sample before the test.
+    anchor: "Quality control of the count data"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0079
+    paraphrase: >-
+      The consortium measures the agreement of the differentially expressed
+      gene sets across sites, replicates, and analysis pipelines, and it
+      finds that the set depends on the choices of the analysis.
+    anchor: "Results, Reproducibility of differential expression"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [report, outlier, sensitivity, warn]

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies this as an interaction question and fits ~genotype+treatment+genotype:treatment with explicit reference levels, extracting the interaction coefficient and both simple effects via correct contrasts (main coefficient for WT, list-contrast for KO), matching the reference exactly. QC precedes testing with blind VST, PCA colored by both factors, distance heatmap, library sizes, and an explicit outlier-naming policy. The filter (>=10 counts in >=4 samples) is minimal and justified by smallest cell size. Normalization is DESeq2 size-factor based on raw counts as required, though the caveat about missing tximport offsets is honestly flagged rather than hidden. FDR is BH at stated alpha with appropriate shrinkage method chosen per contrast type (apeglm for single coefficients, ashr for the linear combination), and power caveats for the interaction term are explicitly stated. Enrichment is well-justified per-contrast fgsea on full ranked lists with stated collections/versions and size windows, only slightly dinged for conditional ORA logic adding complexity beyond the reference's simpler treatment. The final report is comprehensive, naming design, thresholds, gene counts, diagnostics, and caveats including the power-limitation framing the reference explicitly requires."
+}

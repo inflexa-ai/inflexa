@@ -1,0 +1,184 @@
+id: tpl-qc-log-abundance
+version: 1.0.0
+label: "Sample structure QC on log abundance values: detected genes, PCA, sample distances, MDS"
+language: R
+method: M-0026
+step_types: [qc_sample_structure]
+edam_operations: [EDAM:operation_3218]
+citations: [S-0007, S-0008, S-0012, S-0059]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  min_replicates: 1
+  conditions:
+    - field: data_state
+      op: in
+      value: [tpm_or_fpkm, log_normalized]
+  notes: >-
+    An abundance matrix whose first column is the gene identifier and whose
+    header holds the sample identifiers, plus a sample table with one row per
+    sample. The values are TPM, FPKM, or RPKM on the linear scale, or values
+    that are already on a log2 scale, for example log-CPM or microarray
+    intensities. A linear-scale value becomes log2(value + offset). A log-scale
+    value stays as it is. No count model and no variance stabilizing
+    transformation applies to such values. The script reads no design formula.
+    The condition column colors the PCA, the MDS plot, and the distance
+    heatmap. An optional batch column gives the point shape of the PCA and the
+    MDS plot and a second annotation of the heatmap. The number of detected
+    genes per sample is a gene whose log2 expression is above the detection
+    floor. The template applies to any design pattern.
+parameters:
+  - name: abundance_path
+    type: string
+    description: "Path of the abundance matrix CSV, first column gene id, header sample ids, TPM or FPKM or RPKM, or log2 values when values_are_log is true."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the abundance matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest. It colors the PCA, the MDS plot, and the heatmap."
+    adaptable: true
+  - name: batch_column
+    type: string
+    description: "The column of the sample table that holds the batch or the processing variable. Absent, the PCA and the MDS plot use one point shape and the heatmap has no batch annotation."
+    adaptable: true
+    required: false
+  - name: values_are_log
+    type: boolean
+    description: "True when the matrix already holds log2 values, for example log-CPM or microarray intensities. False when it holds TPM, FPKM, or RPKM on the linear scale, which the script transforms with log2(value + log_offset)."
+    adaptable: true
+    default: false
+  - name: log_offset
+    type: number
+    description: "The offset added before the log2 transform of a linear-scale value, to keep a zero finite and to damp the variance of a low value. Unused when values_are_log is true."
+    adaptable: true
+    default: 1
+    default_source: "guide:limma/2026-05-19#limma-trend"
+    minimum: 0
+  - name: detection_floor
+    type: number
+    description: "A gene counts as detected in a sample when its log2 expression is above this floor. 0 counts a linear-scale value above 0 under the default offset."
+    adaptable: true
+    default: 0
+    default_source: "doi:10.1186/s13059-016-0881-8"
+  - name: n_top_genes
+    type: integer
+    description: "The number of most variable genes for the PCA and the MDS plot."
+    adaptable: true
+    default: 500
+    default_source: "guide:limma/2026-05-19#multidimensional-scaling-plots"
+    minimum: 50
+  - name: mds_gene_selection
+    type: string
+    description: "The gene selection of plotMDS: common takes the top genes by variance across all samples, thus the MDS plot and the PCA use the same genes."
+    adaptable: false
+    default: common
+    default_source: "guide:limma/2026-05-19#multidimensional-scaling-plots"
+    enum: [common, pairwise]
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example qc or lesional_qc."
+    adaptable: true
+    default: qc
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: abundance
+    path: "{{abundance_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample abundance values, CSV: TPM, FPKM, RPKM, or log2 values."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+outputs:
+  - name: sample_qc
+    path: "output/sample_{prefix}.csv"
+    format: EDAM:format_3752
+    description: "One row per sample: sample, detected_genes, pc1, pc2, mds1, mds2, condition, and batch when a batch column is given."
+  - name: log_expression
+    path: "output/{prefix}_log_expression.csv"
+    format: EDAM:format_3752
+    description: "The log2 expression values, genes by samples, for downstream visualization."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The inputs, the transform, n_samples, n_genes, the detected genes per sample, the percent variance of PC1 and PC2, the thresholds, the package versions."
+  - name: pca_figure
+    path: "figures/{prefix}_pca.png"
+    description: "PCA of the samples on the top variable genes, colored by condition, shaped by batch (and PDF)."
+  - name: sample_distances
+    path: "figures/{prefix}_sample_distances.png"
+    description: "Euclidean sample distance heatmap on the log2 expression values (and PDF)."
+  - name: mds_figure
+    path: "figures/{prefix}_mds.png"
+    description: "MDS plot of the samples on the top variable genes, colored by condition, shaped by batch (and PDF)."
+  - name: detected_genes_figure
+    path: "figures/{prefix}_detected_genes.png"
+    description: "Detected genes per sample, colored by condition (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: limma
+    version: "3.68.5"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: pheatmap
+    version: "1.0.13"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n6-tpm
+    dataset: two_group_n6/seed-1
+    slots:
+      abundance_path: /work/data/tpm.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+    expect:
+      - "exists output/qc_summary.json"
+      - "exists output/sample_qc.csv"
+      - "exists output/qc_log_expression.csv"
+      - "exists output/session_info.txt"
+      - "exists figures/qc_pca.png"
+      - "exists figures/qc_pca.pdf"
+      - "exists figures/qc_sample_distances.png"
+      - "exists figures/qc_sample_distances.pdf"
+      - "exists figures/qc_mds.png"
+      - "exists figures/qc_mds.pdf"
+      - "exists figures/qc_detected_genes.png"
+      - "exists figures/qc_detected_genes.pdf"
+      - "csv_rows output/sample_qc.csv >= 12"
+      - "csv_rows output/qc_log_expression.csv >= 5000"
+      - "json output/qc_summary.json n_samples == 12"
+      - "json output/qc_summary.json log_offset == 1"
+      - "json output/qc_summary.json percent_variance.PC1 > 0"
+  - name: balanced-batch-tpm
+    dataset: batch_balanced_n6/seed-1
+    slots:
+      abundance_path: /work/data/tpm.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      batch_column: batch
+      output_prefix: qc_batch
+    expect:
+      - "exists output/qc_batch_summary.json"
+      - "exists output/sample_qc_batch.csv"
+      - "exists figures/qc_batch_pca.png"
+      - "exists figures/qc_batch_mds.png"
+      - "exists figures/qc_batch_sample_distances.png"
+      - "csv_rows output/sample_qc_batch.csv == 12"
+      - "json output/qc_batch_summary.json n_samples == 12"
+      - "json output/qc_batch_summary.json batch_column == batch"

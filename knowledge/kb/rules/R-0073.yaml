@@ -1,0 +1,72 @@
+id: R-0073
+title: "TPM or FPKM input: the log transform is the only transform, and TPM is not comparable across library protocols"
+assertion: >-
+  With a TPM or FPKM table, do not apply a between-sample normalization made
+  for counts, such as size factors or TMM. These methods expect raw counts,
+  and the table already carries a within-sample scaling for length and depth.
+  Transform the values to log2(value + 1) and go to the linear model. State
+  in the plan that TPM values from different library protocols are not
+  comparable, because each protocol captures a different transcript pool. If
+  the samples come from more than one protocol, the protocol is a batch
+  variable, and a protocol confounded with the condition is a confounded
+  batch.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: tpm_or_fpkm
+action:
+  step_type: normalize
+  parameters:
+    - name: normalization
+      value: log2_plus_1_only
+      default_source: "rule:R-0073"
+    - name: protocol_comparability
+      value: not_across_protocols
+      default_source: "doi:10.1261/rna.074922.120"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0059
+    paraphrase: >-
+      The review states that RPKM and TPM are relative abundances among the
+      sequenced transcripts, and that the sequenced RNA repertoire differs
+      across sequencing protocols and can differ across conditions. It
+      illustrates the scenarios where a comparison of these values across
+      samples or protocols is a misuse.
+    anchor: "Abstract; Typical scenarios of misuse"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0060
+    paraphrase: >-
+      RPKM is inconsistent among samples because its per-sample sum depends on
+      the length distribution of the expressed transcripts, but TPM has a
+      constant sum. Thus TPM is the measure for a comparison among samples of
+      one protocol.
+    anchor: "Results; Discussion"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0058
+    paraphrase: >-
+      The review sorts the normalization methods by their assumptions. It
+      places RPKM and TPM among the within-sample methods that correct for
+      length and depth, and it notes that the between-sample methods for
+      counts assume that most genes are not differentially expressed.
+    anchor: "Normalization methods and their assumptions"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [normalize, data-state, tpm]

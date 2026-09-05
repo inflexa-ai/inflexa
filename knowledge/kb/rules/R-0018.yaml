@@ -1,0 +1,74 @@
+id: R-0018
+title: "Salmon or kallisto quantifications: import with tximport at the gene level and carry the length offsets"
+assertion: >-
+  If the counts come from Salmon or kallisto, import the transcript estimates
+  with tximport and sum them to the gene level. Carry the average transcript
+  length per gene and sample into the count model as an offset, or use the
+  lengthScaledTPM counts from abundance for a tool that takes no offset.
+  The length offset prevents a false call from a change in isoform use, and
+  the gain over simple counting is largest for a gene with differential
+  transcript usage. Do not round transcript-level TPM to counts without the
+  length correction. For a three prime tag library the three prime rule
+  applies instead, with no length offset.
+modality: bulk_rna_seq
+conditions:
+  - field: count_source
+    op: in
+    value: [salmon, kallisto]
+action:
+  step_type: model_design
+  parameters:
+    - name: import
+      value: tximport_lengthScaledTPM_or_offsets
+      default_source: "doi:10.12688/f1000research.7563.2"
+    - name: import_tool
+      value: tximport
+      default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0009
+    paraphrase: >-
+      Gene-level counts from summed transcript-level estimates improve the
+      gene-level inference for genes with differential transcript usage, and
+      simple counting gives similar conclusions on the real datasets. A change
+      in the average transcript length between the samples enters the model as
+      an offset, otherwise a shift in isoform use looks like differential
+      expression.
+    anchor: "Abstract; Incorporating transcript-level estimates leads to more accurate DGE results"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0010
+    paraphrase: >-
+      The vignette imports Salmon or kallisto transcript estimates, sums them
+      to the gene level, and passes the average transcript length to DESeq2
+      and to edgeR as an offset. For limma-voom it recommends the
+      lengthScaledTPM counts from abundance, which carry the length
+      correction inside the counts.
+    anchor: "Downstream DGE in Bioconductor; DESeq2; edgeR; limma-voom"
+    retrieved: "2026-09-03"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0045
+    paraphrase: >-
+      tximeta imports Salmon quantifications through tximport and adds the
+      identity of the reference transcriptome from a checksum of the index,
+      thus the gene-level object carries its provenance and the correct
+      annotation into the downstream model.
+    anchor: "Abstract; Design and implementation"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [import, quantification, tximport]

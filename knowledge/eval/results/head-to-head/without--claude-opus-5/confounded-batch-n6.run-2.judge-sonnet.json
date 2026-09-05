@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies perfect confounding, refuses to fit batch or use ComBat/SVA/RUV, and runs only the estimable ~condition model, labeling every output as a combined condition+batch effect — exactly matching the reference. QC (PCA/correlation/library size by condition and batch) precedes testing, filtering is minimal and stated (>=10 counts in >=6 samples), normalization is done via DESeq2/edgeR internal size factors/TMM on raw counts, and the model/contrast (control as reference, Wald test, BH FDR 0.05, apeglm/ashr shrinkage) are explicit. Enrichment is appropriately caveated as describing the confounded axis rather than treatment biology, with universe, collection, and size-window specified, though it could have more strongly argued that enrichment is barely warranted here. Report completeness is excellent, with versions, thresholds, caveats, and gene counts all specified across steps."
+}

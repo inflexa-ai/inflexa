@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject in a ~subject+condition DESeq2 fit with the control level set as reference, Wald test on the condition coefficient, plus blocked limma-voom and edgeR QL as like-for-like sensitivity checks rather than false replication — exactly the reference design, and it verifies the pairing empirically rather than assuming it. QC is thorough and design-aware (library sizes, zero fraction, PCA coloured by condition and labelled by subject, sample-correlation heatmap, within-pair correlation, explicit variance attribution to subject vs condition) with a stated policy that no sample is dropped and a broken pair is flagged loudly. Filtering uses filterByExpr on the paired design with before/after counts, and normalization stays inside the count model with VST reserved for visualisation and descriptive per-subject deltas, correctly caveated as carrying no p-value. FDR is BH at stated alphas with apeglm/ashr shrinkage for ranking and unshrunk coefficients for inference, and the plan pre-commits to reporting zero hits honestly rather than tuning filters. Enrichment is the weakest part: preranked GSEA on the full list with a stated ranking metric and human symbol verification is right, but no gene-set collection version, no size window (minSize/maxSize), and no explicit ORA universe; reporting also omits software versions."
+}

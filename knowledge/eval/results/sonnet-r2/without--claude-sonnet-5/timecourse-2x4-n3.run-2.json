@@ -1,0 +1,984 @@
+{
+  "campaign": "sonnet-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "timecourse-2x4-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T08:39:35.991Z",
+  "elapsedMs": 600055,
+  "outcome": "error",
+  "error": "Plan generation timed out — the model may be overloaded.",
+  "usage": {
+    "inputTokens": 25201963,
+    "outputTokens": 11826,
+    "cacheCreationInputTokens": 570455,
+    "cacheReadInputTokens": 24629888,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "limma",
+          "splines",
+          "fgsea",
+          "clusterProfiler",
+          "edgeR"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/deseq2",
+        "query": "likelihood ratio test LRT reduced model interaction condition time"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "likelihood ratio test LRT reduced model interaction design"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeq2 likelihood ratio test LRT reduced model interaction time course design ~condition*time"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 likelihood ratio test time course interaction condition treatment RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq time course differential expression likelihood ratio test DESeq2",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "time course RNA-seq DESeq2 interaction"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 differential expression time series analysis"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Love Huber Anders differential analysis count data DESeq2"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifiers human symbol entrez mapping annotation"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "GSVA",
+          "decoupleR",
+          "mclust"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/decoupler",
+        "query": "DESeq2 LRT reduced model wald test contrast"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/decoupler",
+        "query": "read_gmt hallmark function usage"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/fgsea",
+        "query": "fgsea function ranked gene list pathways"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "fgsea",
+        "query": "fgsea function usage ranked list gene sets"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "fgsea function signature ranks minSize maxSize pathways gmtPathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/eval-sonnet-r2-without-timecourse-2x4-n3-2/data/inputs/metadata"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "mclust",
+          "clusterProfiler",
+          "gseapy",
+          "fgsea"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "degreport",
+          "TCseq",
+          "maSigPro",
+          "ImpulseDE2",
+          "timecourse"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "timecourse",
+          "Mfuzz"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "timecourse"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "timecourse"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "splines"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "mgcv"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "gam"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "rms"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "Hmisc"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "splines2",
+          "ns"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "splines2",
+          "rms",
+          "Hmisc"
+        ]
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "splines",
+        "query": "natural cubic spline basis function ns bs"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeq2 vignette time course likelihood ratio test reduced full design splines ns() function example"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 vignette time series interaction full model reduced model design(~genotype + time + genotype:time)"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "time course RNA-seq treatment-specific dynamics likelihood ratio test full reduced design"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 time course RNA-seq interaction condition time likelihood ratio test full reduced model",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "RNA-seq time course differential expression trajectory clustering condition interaction",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "RNA-seq time course differential expression treatment interaction likelihood ratio test",
+        "limit": 5
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "splineTimeR package time course differential expression spline basis"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "splineTimeR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "splineTimeR"
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 time course likelihood ratio test interaction condition full reduced model example",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 timecourse LRT design",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 time series tutorial",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 timecourse",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 time course experiment condition-specific gene expression analysis",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 time course experiment condition-specific gene expression analysis",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Storey significance analysis time course microarray SAM"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Storey significance analysis time course experiments"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "16141318"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "mclust"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "kegg medicus canonical"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "time course transcriptomics soft clustering trajectory patterns",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "STEM short time series expression miner clustering"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "16597342"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human 2026.07.10"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "TF target regulon collectri dorothea"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "natural cubic spline model gene expression time series comparison of trajectories between groups",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "natural cubic spline gene expression time course treatment interaction test",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "spline time course RNA-seq treatment interaction test",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "natural cubic spline design matrix RNA-seq differential expression time treatment"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "RNA-seq time course DESeq2 likelihood ratio test analysis workflow",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "RNA-seq time course DESeq2 likelihood ratio test analysis workflow",
+        "limit": 5
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeq2 vignette rlog vst variance stabilizing transformation clustering heatmap"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ClusterGVis"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "two-condition time series RNA-seq design contrast at each time point interaction test approach",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "functional data analysis gene expression time course comparison groups splines",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 differential expression across time points design formula shared time trend condition",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "Trapnell Love DESeq2 time course design formula treatment time interaction LRT vignette workflow",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "RNA-seq workflow time course experiments Bioconductor tutorial Love",
+        "limit": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq workflow gene-level differential expression time course Love Anders Kim Huber"
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "DESeq2 RNA-seq workflow gene-level differential expression tutorial time course",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 rlog time course heatmap cluster genes vignette LRT",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 timecourse tutorial LRT design",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "rnaseqGene bioconductor workflow",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "wald test contrast time point vs baseline treatment vs control differential expression multiple time points",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 LRT time interaction design full reduced example script",
+        "language": "r",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "time course RNA-seq clustering degPatterns",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DEGreport"
+        ]
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "degPatterns DEGreport clustering time series gene expression groups",
+        "limit": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "canonical pathways kegg medicus"
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "mclust Gaussian mixture model clustering time series trajectory patterns treatment specific",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "enrichment analysis fgsea hallmark gene set testing ranked gene list",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "PCA batch effect correction RNA-seq quality control before differential expression",
+        "limit": 2
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "clusterProfiler over-representation analysis gene ontology enrichment",
+        "limit": 2
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "fgsea hallmark WikiPathways R script differential expression ranked genes",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "fgsea RNAseq tutorial",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "fgsea tutorial hallmark",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "fgsea",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "STRING protein network module detection differentially expressed genes cluster subnetwork",
+        "limit": 2
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "principal component analysis time course transcriptomics condition effect visualization",
+        "limit": 2
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "gene expression dynamic response cluster shape enrichment analysis pathway per cluster time course",
+        "limit": 2
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "GSVA gene set variation analysis function usage ssgsea parameter"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "clusterProfiler enricher compareCluster gmt TERM2GENE read.gmt"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "R6"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cell line"
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "interaction test full model reduced model gene by treatment gene by time significance",
+        "limit": 2
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 time course experiment design formula full model condition time interaction reduced model without interaction likelihood ratio test",
+        "limit": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression treatment time interaction likelihood ratio test full reduced model"
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "gene expression time course volcano plot pathway analysis R script",
+        "limit": 3
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "mclust",
+        "query": "Mclust function usage model based clustering"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "mclust",
+        "query": "Mclust model based clustering function"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "mclust"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "MultiRNAflow time course RNA-seq treatment condition analysis package"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "MultiRNAflow"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping human"
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "machine learning batch correction confounder RNA-seq DESeq2 mixed effect model repeated measures",
+        "limit": 2
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "time-course RNA-seq DESeq2 interaction test approach",
+        "limit": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "time course RNA-seq"
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "time course expression clustering",
+        "limit": 3
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeq2"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "DESeqDataSetFromMatrix results LRT"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ashr",
+          "apeglm"
+        ]
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "apeglm shrinkage estimator effect size sequence count data",
+        "limit": 2
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "apeglm effect size shrinkage RNA-seq",
+        "limit": 2
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "apeglm"
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "apeglm",
+        "limit": 2
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeq2 vignette"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "apeglm",
+        "query": "apeglm shrinkage lfcShrink"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "a",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "a"
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "a",
+        "limit": 1
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "a",
+        "limit": 1
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "a"
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "a",
+        "limit": 1
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/git_git_bioconductor_org/packages_apeglm",
+        "query": "apeglm function usage"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "a",
+        "query": "a"
+      }
+    }
+  ]
+}

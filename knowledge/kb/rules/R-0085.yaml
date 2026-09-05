@@ -1,0 +1,78 @@
+id: R-0085
+title: "Report the shrunken and the unshrunken log2 fold change with the standard error; never rank by the unshrunken value alone"
+assertion: >-
+  In the gene table of the report, give the unshrunken log2 fold change from
+  the test, the shrunken log2 fold change from lfcShrink, and the standard
+  error of the unshrunken estimate, for each gene. Rank the genes and draw
+  the plots on the shrunken value, because the unshrunken estimate of a gene
+  with low counts is large and noisy, and a rank on it puts such genes at the
+  top. Keep the p-values from the unshrunken fit, because the shrinkage does
+  not change the test. Name the shrinkage estimator in the table header.
+  This rank is for the gene table and the plots only. The ranked list of the
+  enrichment step uses the test statistic, not a fold change.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: question
+    op: in
+    value: [differential_expression, full_plan]
+  - field: n_per_group_min
+    op: gte
+    value: 2
+action:
+  step_type: report
+  parameters:
+    - name: effect_columns
+      value: [log2FoldChange, shrunken_log2FoldChange, lfcSE]
+      default_source: "doi:10.1093/bioinformatics/bty895"
+    - name: rank_genes_by
+      value: shrunken_log2FoldChange
+      default_source: "vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0020
+    paraphrase: >-
+      The unshrunken log fold change of a gene with low counts or high
+      dispersion is noisy. The apeglm estimator with a heavy-tailed prior
+      removes that noise and keeps a large true effect, and the paper
+      presents the shrunken estimate as the one for ranking and
+      visualization.
+    anchor: "Abstract; Introduction; Results"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0021
+    paraphrase: >-
+      The method takes an effect estimate and its standard error for each
+      unit, and it returns a posterior estimate of the effect that is shrunk
+      toward zero in proportion to its uncertainty. The framework puts the
+      effect size and its precision, not only the p-value, at the center of
+      the report of a large set of tests.
+    anchor: "Abstract; Section 2, Methods; Section 4, Discussion"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette states that lfcShrink gives a shrunken log2 fold change
+      for visualization and for ranking, and that the results table holds
+      the unshrunken estimate with its standard error in the lfcSE column.
+    anchor: "Log fold change shrinkage for visualization and ranking; More information on results columns"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [report, shrinkage, effect-size]

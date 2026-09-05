@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies that n=1 per condition makes within-group dispersion unestimable, refuses to report inferential p-values, delivers size-factor-normalized counts with shrunken descriptive log2FC, and adds a power/sample-size step that names the replication needed for a valid follow-up — all matching the reference. It loses points for nonetheless running DESeq2/edgeR under assumed fixed dispersions and reporting 'genes passing FDR<0.05' counts; although labelled as conditional, this reintroduces exactly the pseudo-inferential output the reference rules out and invites misreading. QC is thin by necessity (no PCA or sample-distance structure is possible with two samples) but the plan does report library sizes/size factors, an MA plot and a treated-vs-control scatter, plus duplicate-symbol and label checks; there is no outlier policy. The filter (≥10 counts in at least one sample, with retained/dropped reported) and in-model normalization (median-of-ratios or TMM, size factors reported, pseudocount stated) are appropriate; the contrast direction and label-reading from metadata are explicit though no design formula exists to specify. Enrichment is arguably unwarranted on an unreplicated ranking and its ORA/GSEA p-values risk lending false weight, though it is well-scoped (filtered universe reported, human WikiPathways named, leading-edge counts, mapping rate) apart from missing collection version and gene-set size window."
+}

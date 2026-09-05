@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan nails the design: a condition:time interaction LRT of ~condition+time+condition:time against ~condition+time with time as a 4-level factor referenced to t0, plus explicitly labelled spline and second-engine sensitivity checks and honest treatment of n=3 power limits. QC (library sizes, PCA colored by condition/shaped by time, replicate correlation, dispersion) precedes modelling with a stated keep/drop policy, the low-count filter is minimal and tied to the smallest group size, and normalization stays inside the model with VST reserved for visualization and no batch correction of modelled counts. Multiple testing is BH at stated alphas with an explicit refusal to relax thresholds to manufacture hits, but LFC shrinkage for the reported interaction effects is never mentioned, and the T1S3 fallback to FDR<0.10 is a mild post hoc relaxation (at least it is flagged). Enrichment correctly uses the T1S1-filtered background, a ranked list by LRT statistic, and per-cluster ORA, but names no collection version or gene-set size window. Reporting covers engine, formulas, gene counts, p-value histogram, and design caveats, though package versions are only implied."
+}

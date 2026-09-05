@@ -1,0 +1,77 @@
+id: R-0060
+title: "Three or more groups: name the reference level and one contrast per comparison in the design"
+assertion: >-
+  With three or more groups, set the reference level of the condition factor
+  with an explicit call, and write one named contrast for each comparison that
+  the question asks. A comparison between two non-reference levels is a
+  contrast of two coefficients, not a coefficient of the model, thus it must
+  be named as the factor, the numerator level, and the denominator level. A
+  design with k levels holds k minus 1 coefficients, and each of them is a
+  comparison against the reference level only. List the reference level and
+  each contrast in the plan and in the report, because a change of the
+  reference level changes the meaning of each coefficient without an error.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: n_groups
+    op: gte
+    value: 3
+  - field: n_per_group_min
+    op: gte
+    value: 2
+action:
+  step_type: model_design
+  parameters:
+    - name: contrast_plan
+      value: one_named_contrast_per_comparison
+      default_source: "vignette:DESeq2/1.52.0#contrasts"
+    - name: reference_level_policy
+      value: explicit_and_reported
+      default_source: "doi:10.12688/f1000research.27893.1"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette states that the contrast argument of results takes the
+      factor, the numerator level, and the denominator level, that this form
+      compares any two levels of a factor with more than two levels, and that
+      a level other than the reference is a comparison of two coefficients.
+    anchor: "Contrasts; Note on factor levels"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      The guide shows a factor with more than two levels in a mean-reference
+      model, where the intercept is the reference level and each other
+      coefficient is a difference from it. A comparison between two
+      non-reference levels is a contrast built from two coefficients, and the
+      guide writes each comparison as its own contrast.
+    anchor: "Mean-reference model for factors; Means model for factors; Contrast matrix for computing differences; All pairwise comparisons"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0074
+    paraphrase: >-
+      The protocol builds the design matrix from the sample table with the
+      factor levels, fits the count model to it, and extracts each comparison
+      as a coefficient or a contrast of the fitted model.
+    anchor: "Differential expression analysis with edgeR; Design matrix"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [design, multi-group, contrast, reference-level]

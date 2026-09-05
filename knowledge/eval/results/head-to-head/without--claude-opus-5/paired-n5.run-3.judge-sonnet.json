@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly uses DESeq2 with ~subject+condition, treats subject as an explicit blocking factor, and cross-checks with limma-voom/edgeR under the same blocked design, with per-subject sign concordance tying the answer directly to the within-subject question. QC (PCA by subject/condition, library sizes, subject-vs-condition variance decomposition) precedes testing and includes an explicit pairing-break policy. Filtering uses filterByExpr on the paired design rather than an arbitrary cutoff, normalization/VST is done inside DESeq2 (VST used only for descriptive diagnostics, not fed into the count model), and BH/padj at stated alphas with apeglm/ashr shrinkage are used correctly with pre-stated thresholds. GSEA on the full shrunk-ranking with named Hallmark/GO-BP collections, match-rate reporting, and a conditional ORA fallback is appropriate and well-specified, though exact collection versions aren't pinned. Report completeness is strong, naming methods, packages, thresholds, gene counts, and design caveats (residual df, power, pairing risk), losing only minor points for not fixing tool/database version numbers explicitly."
+}

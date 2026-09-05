@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 5,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The core statistical approach is exactly right for this design: a DESeq2 LRT of ~condition + time + condition:time against ~condition + time, with time kept categorical given n=3 per cell, plus a stated limma-voom moderated F-test fallback and an explicit t0 reference level. QC is described concretely (library sizes, PCA/clustering, cross-tabulation of the 8 cells, outlier flagging within condition:time with a no-drop-without-justification policy), though batch coloring and a firmer outlier rule are absent. The low-count filter is left as a placeholder ('a stated, justified threshold, e.g. minimum count sum'), and the caveat demanding BH across all 12000 genes rather than the filtered set contradicts the filtering step and would mildly harm power. Normalization is handled correctly inside the model with raw counts and no pre-normalization; FDR is BH at alpha 0.05, but no LFC shrinkage is specified for the per-time-point fold changes reported in the trajectory step. Enrichment correctly fixes foreground and the filtered background universe and honestly flags the missing reference, but names no collection, version, or gene-set size window; the report names design, thresholds, significant-gene counts, and power caveats but not software versions."
+}

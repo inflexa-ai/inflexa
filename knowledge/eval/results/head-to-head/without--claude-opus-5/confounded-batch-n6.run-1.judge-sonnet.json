@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect confound, mathematically demonstrates rank-deficiency of ~condition+batch, refuses batch correction/ComBat/SVA, and fits only the estimable ~condition model with control as reference, labeling every output as a confounded composite effect rather than a treatment effect. QC (PCA, sample correlation, library size/detection by batch) precedes and contextualizes the test without being used to select genes, and a permutation null is a nice added calibration. Filtering (>=10 counts in >=6 samples) is minimal, group-agnostic, and justified; normalization is handled internally by DESeq2 size factors on raw counts with no pre-adjustment. BH FDR at padj<0.05 with apeglm shrinkage for ranking/effect size is used correctly, though no explicit alpha is stated beyond the conventional 0.05 threshold. Enrichment appropriately uses preranked GSEA on the full list with stated ranking metric and human hallmark/GO-BP collections, plus ORA with an explicit universe, all clearly labeled as confounded; the report is thorough, naming methods, versions, design, thresholds, gene counts, and caveats, fully matching the reference's expectation of stopping short of false correction."
+}

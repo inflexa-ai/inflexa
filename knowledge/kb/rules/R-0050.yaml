@@ -1,0 +1,56 @@
+id: R-0050
+title: "Other organism: no curated collection; map orthologs to human or use GO, and state the limit"
+assertion: >-
+  For an organism other than human or mouse, the knowledge plane serves no
+  curated gene set collection. Map the genes to their human orthologs and use
+  a human collection, or use the Gene Ontology annotation of the organism.
+  Each path has a limit. An ortholog map drops each gene without a one-to-one
+  human ortholog, and the GO annotation of a less studied organism is thin.
+  State the path and its limit in the report.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: organism
+    op: eq
+    value: other
+action:
+  step_type: enrichment
+  parameters:
+    - name: gene_set_collection
+      value: orthology_mapped_or_go
+      default_source: "doi:10.1038/s41596-018-0103-9"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0026
+    paraphrase: >-
+      The protocol runs its enrichment with Gene Ontology and pathway gene
+      sets, and it notes that the coverage of the annotations differs between
+      organisms, with human the best annotated. A study of another organism can
+      map its genes to human orthologs before the analysis.
+    anchor: "Experimental design, Pathway gene set databases; Limitations"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0032
+    paraphrase: >-
+      An orthology conversion of a curated human collection loses the genes
+      without a clear ortholog and the sets that are specific to the organism.
+      This loss is the reason that MSigDB built native mouse collections.
+    anchor: "Abstract; Main text"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [enrichment, gene-set-collection, other-organism]

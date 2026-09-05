@@ -1,0 +1,57 @@
+id: R-0075
+title: "Log-scale input: filter on the mean log expression before the linear model"
+assertion: >-
+  With log-normalized values, remove a gene whose mean log expression over the
+  samples is below a floor at the low end of the distribution, or a gene that
+  is above the floor in fewer samples than the smallest group. State the floor
+  and report the number of genes kept. A gene near the floor of detection has
+  a variance that the empirical Bayes trend cannot model, and it costs power
+  in the multiple testing correction. Do not set the floor from the group
+  labels, because a filter must be independent of the test.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: log_normalized
+action:
+  step_type: filter_low_counts
+  method: M-0027
+  parameters:
+    - name: filter_statistic
+      value: mean_log_expression
+      default_source: "guide:limma/2026-05-19#filtering"
+    - name: min_samples
+      value: smallest_group_size
+      default_source: "guide:limma/2026-05-19#filtering"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0008
+    paraphrase: >-
+      The guide filters a gene that is not expressed above a low level in at
+      least a few samples before the linear model, and it sets the number of
+      samples from the smallest group.
+    anchor: "Filtering; Case studies"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0018
+    paraphrase: >-
+      A filter on a statistic that is independent of the test statistic under
+      the null, such as the overall mean expression, increases the detection
+      power and keeps the control of the error rate.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [filter, data-state, log-scale]

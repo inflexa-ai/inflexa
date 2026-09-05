@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly diagnoses the perfect batch-condition confound, refuses to add a batch term or apply ComBat-seq/SVA/removeBatchEffect, explains the rank-deficiency reasoning, and labels every result as an inseparable treatment/batch difference, which matches the reference behavior. Design specification is explicit and dataset-specific (control as reference, ~condition, treated-vs-control contrast), the filter is minimal and tied to the n=6 group size, normalization stays inside the models (DESeq2 size factors, edgeR TMM, blind VST only for QC/GSVA), and inference uses BH at alpha 0.05 with apeglm shrinkage plus p-value histogram and dispersion diagnostics. QC is thorough (VST PCA colored by both labelings with the note they are identical, distance heatmap, library sizes) but only says outliers will be 'flagged' without a stated exclusion policy. Enrichment was not requested and is of doubtful value on a fully confounded gene list; the plan runs three layers of it (ORA, rrvgo, GSVA/limma) — well-specified with a tested-gene universe and named collections, though no size window for the ORA and it adds interpretive surface the design cannot support. The final report is comprehensive: confound-first framing, design, contrast, thresholds, tested and significant counts, versions and gene-set provenance."
+}

@@ -1,0 +1,209 @@
+id: tpl-deseq2-multigroup
+version: 1.0.0
+label: "DESeq2 likelihood ratio test for three or more groups, then one Wald contrast per level with ashr shrinkage"
+language: R
+method: M-0002
+step_types: [filter_low_counts, normalize, model_design, differential_expression, shrink_lfc, multiple_testing]
+edam_operations: [EDAM:operation_3223]
+citations: [S-0001, S-0002, S-0021, S-0040, S-0042]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [multi_group_unpaired, multi_group_with_blocking_factor, multi_group_with_covariates]
+  min_replicates: 2
+  conditions:
+    - field: n_groups
+      op: gte
+      value: 3
+    - field: n_timepoints
+      op: is_null
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample.
+    The condition column is renamed to `condition` inside the script, and it
+    must hold three or more levels with two or more samples each. The
+    likelihood ratio test compares the full design against the reduced design,
+    thus under the default designs it finds the genes that differ between any
+    of the groups. Then the script extracts one Wald contrast per level
+    against the reference level from the same fit. A block, a batch, or a
+    covariate goes into both designs by its own column name, for example
+    `~ subject + condition` against `~ subject`. The any-difference table
+    reports the largest shrunken contrast of each gene as its log2 fold
+    change.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest, with three or more levels."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the denominator of every contrast, for example control."
+    adaptable: true
+  - name: full_design
+    type: formula
+    description: "The full design. It must end with condition. Put a block, a balanced batch, or a covariate before it, for example ~ batch + condition."
+    adaptable: true
+    default: "~ condition"
+    default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
+    pattern: "condition\\s*$"
+  - name: reduced_design
+    type: formula
+    description: "The reduced design. It holds every term of the full design except condition, for example ~ batch. With no other term it is ~ 1."
+    adaptable: true
+    default: "~ 1"
+    default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
+  - name: min_count
+    type: integer
+    description: "A gene stays when it has at least this many counts in at least min_samples samples."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 0
+  - name: min_samples
+    type: integer
+    description: "The minimum number of samples for the count filter. Absent, the script uses the smallest group size."
+    adaptable: true
+    required: false
+    minimum: 1
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff, passed to results() so the independent filter is optimized for it."
+    adaptable: false
+    default: 0.05
+    default_source: "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+  - name: lfc_shrink
+    type: string
+    description: "The shrinkage estimator of the reported log2 fold change of each contrast. ashr takes a contrast, thus it is the estimator for a level against the reference."
+    adaptable: true
+    default: ashr
+    default_source: "doi:10.1093/biostatistics/kxw041"
+    enum: [ashr, none]
+  - name: n_top_genes_pca
+    type: integer
+    description: "The number of most variable genes for the PCA."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 50
+  - name: n_top_genes_heatmap
+    type: integer
+    description: "The number of top any-difference genes, by p-value, in the heatmap of the variance stabilized values."
+    adaptable: true
+    default: 50
+    minimum: 2
+  - name: output_prefix
+    type: string
+    description: "The prefix of the summary, the normalized counts, the VST values, and the figures, for example multigroup or dose_response."
+    adaptable: true
+    default: multigroup
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+outputs:
+  - name: any_difference_results
+    path: "output/any_difference_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested gene: gene, base_mean, log2_fold_change (the largest shrunken contrast by absolute value), largest_contrast (the level of that contrast), stat (the likelihood ratio statistic), pvalue, adjusted_pvalue."
+  - name: contrast_results
+    path: "output/{level}_vs_{reference}_results.csv"
+    format: EDAM:format_3752
+    description: "One file per non-reference level. One row per tested gene: gene, base_mean, log2_fold_change (shrunken), log2_fold_change_unshrunken, lfc_se, stat, pvalue, adjusted_pvalue of the Wald test."
+  - name: normalized_counts
+    path: "output/{prefix}_normalized_counts.csv"
+    format: EDAM:format_3752
+    description: "Median-of-ratios normalized counts, genes by samples."
+  - name: vst
+    path: "output/{prefix}_vst.csv"
+    format: EDAM:format_3752
+    description: "Variance stabilized values, genes by samples, for downstream visualization."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The two designs, the terms that the test removes, the counts of tested and significant genes of the any-difference test and of each contrast, the thresholds, the package versions."
+  - name: pca
+    path: "figures/{prefix}_pca.png"
+    description: "PCA of the samples on the top variable genes, colored by condition (and PDF)."
+  - name: sample_distances
+    path: "figures/{prefix}_sample_distances.png"
+    description: "Euclidean sample distance heatmap on the VST values (and PDF)."
+  - name: heatmap
+    path: "figures/{prefix}_top_genes_heatmap.png"
+    description: "Heatmap of the top any-difference genes on the variance stabilized values, scaled by row, columns ordered by condition (and PDF)."
+  - name: ma
+    path: "figures/{prefix}_ma_{level}_vs_{reference}.png"
+    description: "One MA plot per contrast of the shrunken fold changes (and PDF)."
+  - name: volcano
+    path: "figures/{prefix}_volcano_{level}_vs_{reference}.png"
+    description: "One volcano plot per contrast, log2 fold change against -log10 adjusted p-value (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: DESeq2
+    version: "1.52.0"
+    track: bioconductor
+  - name: ashr
+    version: "2.2-63"
+    track: cran
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: pheatmap
+    version: "1.0.13"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: multi-group-3x4
+    dataset: multi_group_3x4/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+    expect:
+      - "exists output/any_difference_results.csv"
+      - "csv_rows output/any_difference_results.csv >= 5000"
+      - "truth_recall output/any_difference_results.csv >= 0.5"
+      - "truth_fdr output/any_difference_results.csv <= 0.1"
+      - "exists output/treated_a_vs_control_results.csv"
+      - "exists output/treated_b_vs_control_results.csv"
+      - "exists output/multigroup_summary.json"
+      - "exists output/multigroup_normalized_counts.csv"
+      - "exists output/multigroup_vst.csv"
+      - "exists output/session_info.txt"
+      - "exists figures/multigroup_pca.png"
+      - "exists figures/multigroup_pca.pdf"
+      - "exists figures/multigroup_sample_distances.png"
+      - "exists figures/multigroup_top_genes_heatmap.png"
+      - "exists figures/multigroup_top_genes_heatmap.pdf"
+      - "exists figures/multigroup_ma_treated_a_vs_control.png"
+      - "exists figures/multigroup_volcano_treated_a_vs_control.png"
+      - "exists figures/multigroup_volcano_treated_b_vs_control.pdf"
+      - "json output/multigroup_summary.json df_tested == 2"
+      - "json output/multigroup_summary.json n_groups == 3"
+      - "json output/multigroup_summary.json n_samples == 12"

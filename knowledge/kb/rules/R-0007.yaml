@@ -1,0 +1,89 @@
+id: R-0007
+title: "Ranked gene set enrichment on the full list, with a disputed choice of ranking statistic"
+assertion: >-
+  For enrichment after a differential expression test, rank every tested gene
+  and run a preranked gene set enrichment analysis (fgsea) against the MSigDB
+  Hallmark collection, with Benjamini-Hochberg adjustment. The ranking
+  statistic is disputed: the Wald statistic, the signed negative log10 p-value,
+  and the shrunken log2 fold change each have a defensible case. Choose one and
+  state the choice in the plan.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: question
+    op: in
+    value: [enrichment, full_plan]
+action:
+  step_type: enrichment
+  method: M-0010
+  parameters:
+    - name: rank_metric
+      value: stat
+      default_source: "doi:10.1101/060012"
+severity: info
+strength: disputed
+evidence_quality: moderate
+recommendation_strength: conditional
+disputed_sides:
+  - label: "Wald statistic (stat column of DESeq2 results): signed and scaled by the standard error"
+    method: M-0010
+  - label: "Signed negative log10 p-value: sign(log2FC) times -log10(p)"
+    method: M-0010
+  - label: "Shrunken log2 fold change (apeglm): effect size, low-count noise removed"
+    method: M-0010
+alternatives:
+  - method: M-0011
+    when: "The question is about a discrete gene list, for example the genes below an adjusted p-value cutoff."
+  - method: M-0021
+    when: "Inter-gene correlation within a set must be accounted for; camera on the limma fit is the competitive test that does so."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0024
+    paraphrase: >-
+      GSEA uses the whole ranked list of genes and asks whether the members of
+      a set concentrate at the top or the bottom, thus it needs no threshold on
+      the individual genes.
+    anchor: "Abstract; Overview of GSEA"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0025
+    paraphrase: >-
+      fgsea computes the same preranked enrichment statistic with an adaptive
+      multilevel permutation scheme that gives accurate low p-values in seconds.
+    anchor: "Abstract; Methods"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0026
+    paraphrase: >-
+      The protocol recommends a ranking that carries both direction and
+      significance, for example a signed test statistic or a signed
+      -log10 p-value, and it warns that a ranking by p-value alone drops the
+      direction.
+    anchor: "Procedure, Step 2: Rank the gene list"
+    retrieved: "2026-09-03"
+  - direction: disputes
+    eco: ECO:0000033
+    cito: cito:disagreesWith
+    source: S-0027
+    paraphrase: >-
+      The survey finds that the ranking metric, the gene set database version,
+      and the background are inconsistently reported and that each changes the
+      result, thus no single ranking is a settled standard and the choice must
+      be stated.
+    anchor: "Results; Recommendations"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [enrichment, disputed]

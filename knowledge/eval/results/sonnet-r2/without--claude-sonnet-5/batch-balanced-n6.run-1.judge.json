@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 5,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly treats the balanced batch as a covariate in a ~batch + condition DESeq2 design on raw integer counts, explicitly forbids pre-normalization or log transformation, and reasons about why ComBat is unnecessary here — this matches the reference closely. QC is present but thin: a vst PCA colored by condition and shaped by batch plus dispersion plots, with no sample-distance heatmap, library-size check, or stated policy for an outlier or shallow sample. Low-count filtering is only implicit via DESeq2 independent filtering, with no minimal pre-filter stated or justified, and the |log2FC| > 1 criterion is applied post hoc as a summary count rather than through lfcThreshold in the test, although BH padj and apeglm/ashr shrinkage are correctly specified. Enrichment names a versioned WikiPathways collection and a signed ranking metric with a sensible ORA-to-GSEA fallback, but never defines the ORA background universe as the tested genes and gives no gene-set size window. Reporting covers method, design, thresholds, and significant-gene counts, but omits package versions and a clear statement of the number of genes tested after filtering and design caveats."
+}

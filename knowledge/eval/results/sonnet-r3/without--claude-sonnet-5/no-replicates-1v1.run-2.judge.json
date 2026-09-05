@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 3,
+    "qc_present": 5,
+    "low_count_filter": 6,
+    "normalization": 8,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 2,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses the 1-vs-1 design and states that dispersion cannot be estimated, and it commendably adds an assumption-free descriptive log2FC ranking, but it then undermines this by running edgeR with a hand-picked BCV=0.4 and reporting p-values and FDR<0.05 as a DE candidate list — exactly the inferential output the design cannot support, and caveat text does not make invalid p-values valid. It also never states the design that would support inference (≥3 replicates per group), gives no design formula or reference level beyond an implicit treated-vs-control direction, and no effect-size shrinkage. QC is thin: library sizes and zero fractions only, no sample-distance or outlier policy, and the noted 3-columns-in-counts vs 2-rows-in-metadata discrepancy is not given a resolution rule. Normalization is handled properly (TMM inside edgeR, CPM only for descriptive ranking) and the zero-in-both filter is minimal and acceptable, but enrichment is run on a statistically unsupported gene list with no universe, no collection versions, and no gene-set size window."
+}

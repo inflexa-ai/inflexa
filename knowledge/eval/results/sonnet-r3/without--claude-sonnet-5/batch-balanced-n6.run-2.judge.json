@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 2,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly places the known balanced batch as an additive covariate in ~ batch + condition on raw counts, explicitly rejects ComBat/SVA as redundant, and releveles control as reference, which matches the reference design closely (the stray \"3x2\" phrasing is a minor slip). QC is strong and design-specific: library sizes, PCA on VST colored by both condition and batch, clustering, a metadata-mismatch reconciliation policy, and an outlier policy that avoids removal absent technical failure; it also correctly keeps the batch effect visible rather than pre-correcting counts. The main gap is the complete absence of a low-count pre-filter — only DESeq2's internal independent filtering is mentioned — and normalization is implied by feeding raw counts to DESeq2 but size factors are never named. FDR is handled well (BH, padj<0.05, apeglm/ashr shrinkage), though the |log2FC|>1 cut is applied post hoc rather than via lfcThreshold in the test. Enrichment names WikiPathways and offers ORA or ranked GSEA, but omits an explicit expressed-gene universe, collection version, gene-set size window, and a precisely stated ranking metric; reporting covers design, thresholds, significant counts, residual df, and caveats but not software versions or the number of genes tested."
+}

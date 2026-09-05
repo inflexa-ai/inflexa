@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly matches an unpaired, single-batch, 6v6 design to DESeq2 (edgeR fallback) on raw counts with condition as the only factor, and it handles the shallow sample as the reference asks: library sizes reported, PCA/correlation inspected, no automatic removal, and a documented, justified decision either way. Normalization is handled well and explicitly inside the model via median-of-ratios or TMM rather than total-count scaling. Weaknesses: the design formula, reference level (control) and contrast direction are never written out; the low-count filter is gestured at (\"minimum count/CPM\") without a concrete, justified threshold; LFC shrinkage is made conditional on retaining sample_01 rather than standard for reported effects, and an extra |log2FC|>1 cut is layered on top of BH. Enrichment names Hallmark and states the fgsea ranking metric but omits the collection version, the 15-500 set size window, and an explicit universe for the ORA arm; the report section lists thresholds, group sizes, significant counts and power caveats but never commits to naming software versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald with ~condition, control explicitly releveled as reference, apeglm shrinkage, BH at alpha=0.05, plus an edgeR QL cross-check appropriate for an unpaired 6v6 single-batch design. QC precedes testing with library-size barplot, VST PCA and distance heatmap, sample_01 labeled and a stated keep-unless-independently-outlying policy, which is exactly the reference handling of the shallow sample. The filter (>=10 counts in >=6 samples, tied to the smaller group size) is minimal and justified, and normalization is median-of-ratios inside the GLM with no pre-normalization. Enrichment is preranked fgsea on the full tested-gene list ranked by the Wald stat, Hallmark with a 15-500 size window and versions stated, with ORA correctly withheld absent enough significant genes; the report step covers design, thresholds, gene counts, plots, caveats and session info, losing only a trivial point for asserting a Hallmark version number that may be assumed rather than verified.\"}"
+}

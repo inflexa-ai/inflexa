@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the paired structure and specifies DESeq2 with ~subject + condition, control releveled as reference, Wald test on the condition coefficient, with edgeR QL on the same blocked design as a cross-check — exactly the reference approach, and the additive subject-offset assumption is stated as a caveat. QC is dataset-specific (blind VST, PCA colored by both condition and subject, sample-distance heatmap, library sizes) and anticipates subject dominating PC1 in a paired design, though the outlier policy is somewhat permissive ('no step blocks the pipeline'). Filtering (>=10 counts in >=5 samples, justified as smallest group size, with independent filtering left to results()) and normalization (median-of-ratios computed internally, explicit refusal to pre-normalize) are both correct. FDR handling is complete: alpha=0.05 matched to the reporting cutoff, apeglm shrinkage retaining both shrunken and unshrunken LFCs, p-value histogram diagnostic, Cook's-outlier NAs separated from filtering NAs. Enrichment is arguably beyond the stated question but is specified properly (full Wald-stat ranking for fgsea, named versioned collections, 15-500 size window, explicit tested-gene universe and a power-based skip rule for ORA); the report section names versions, design, contrast, counts, diagnostics, and n=5 power caveats."
+}

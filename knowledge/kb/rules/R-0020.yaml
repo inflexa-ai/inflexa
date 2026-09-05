@@ -1,0 +1,62 @@
+id: R-0020
+title: "FASTQ input: quantification is upstream, stop and ask for counts or transcript quantifications"
+assertion: >-
+  If the input is FASTQ reads, the differential expression plan cannot
+  start. Quantification is an upstream step with its own decisions: the
+  aligner or the mapper, the reference, the decoys, and the annotation. Each
+  of these decisions changes the abundance estimates. Stop, and ask for a
+  count matrix from an alignment pipeline or for the transcript
+  quantifications from Salmon or kallisto. Then continue with the count
+  rules.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: fastq
+action:
+  step_type: differential_expression
+  outcome: stop_quantify_first
+severity: flag
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:citesAsEvidence
+    source: S-0033
+    paraphrase: >-
+      Salmon quantifies transcript abundance from the reads with a
+      lightweight mapping and with models for sequence-specific and
+      positional bias. Its output is a set of transcript-level estimates,
+      and the differential expression step takes these estimates as input.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0036
+    paraphrase: >-
+      The choice of the alignment or mapping method, and of the decoy
+      sequences, changes the transcript abundance estimates, and the
+      differences reach the differential expression calls.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0012
+    paraphrase: >-
+      The survey lays out the analysis as read-level quality control, then
+      alignment or transcript quantification, then gene-level counting, and
+      only then differential expression. The differential expression tools
+      take a matrix of counts or abundances as input, not the reads.
+    anchor: "Figure 1; Quality-control checkpoints; Transcript quantification"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [data-state, quantification, flag]

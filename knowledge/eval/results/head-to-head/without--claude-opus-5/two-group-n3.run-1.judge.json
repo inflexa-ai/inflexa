@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: DESeq2 negative-binomial Wald on raw counts with ~condition and control as reference, edgeR-QLF as a concordance check, median-of-ratios normalization inside the model, VST restricted to visualization, and an explicit, justified low-count filter (>=10 counts in >=3 samples, the smallest group size) with survivor counts reported. QC precedes testing with library sizes, size factors, PCA percent variance, correlation clustering and a stated no-drop-at-n=3 outlier policy, and the plan correctly refuses to lower alpha, instead quantifying power via detectable-LFC-per-decile, p-value histogram/pi0, FDR sensitivity, an exhaustive 10-partition permutation null and leave-one-out stability, with the coarseness of that null stated. Minor deductions: the |shrunken LFC|>1 criterion is applied as a post hoc filter rather than via lfcThreshold in the Wald test, package versions are not explicitly promised in the report, and enrichment (not requested) is added, though it is well specified as pre-ranked fgsea with a named ranking metric, human hallmark/GO-BP in HGNC symbols, a 15-500 size window, a fixed seed, mapping-loss reporting and a graceful skip if references are missing."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses the balanced batch as a nuisance covariate and puts it in the design (~ batch + condition, control as reference, treated-vs-control contrast) on raw counts, explicitly forbidding batch-corrected values as test input and restricting removeBatchEffect output to visualisation — exactly the reference behaviour. QC is thorough and design-specific: library sizes, correlation heatmap, clustering, PCA coloured by condition and shaped by batch plus a display-only corrected PCA, variance attribution, and a stated no-drop-without-evidence outlier policy. Filtering is a CPM filter tied to the smallest group size (n=6) with retained-gene counts reported, and BH at alpha 0.05/0.10 with apeglm/ashr shrinkage (and honest fallback) is specified; normalisation is left implicit in the toolchain rather than naming size factors or TMM, which costs a little. Enrichment is the weakest element: GSEA over the full ranked list with a stated ranking metric is good, but there is no explicit ORA universe, no collection version, and no gene-set size window. Reporting is otherwise strong on design, thresholds, tested-versus-significant counts and small-n caveats, though software versions are only implied by 'record which toolchain was used'."
+}

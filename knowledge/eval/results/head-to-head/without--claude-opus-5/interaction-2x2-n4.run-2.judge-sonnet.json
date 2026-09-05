@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan centers explicitly on the genotype:treatment interaction (Wald + LRT), correctly frames simple effects as descriptive, and never substitutes a collapsed one-factor model. QC (library size, size factors, PCA, sample-distance heatmap, outlier/batch handling) precedes testing, and normalization is left inside DESeq2 with raw counts preserved. The low-count filter (>=10 counts in >=4 samples) is reasonable and justified though a touch more conservative than a minimal filter would require. BH FDR is stated per contrast with an explicit alpha, and apeglm/ashr shrinkage is applied specifically to the interaction term with correct caveats about ranking vs inference. Enrichment is well-specified with ranking metric, human HGNC gene sets, ORA universe, and GO redundancy collapsing. The final report explicitly separates tested vs hypothesis-level claims, states gene counts and thresholds, and lists design caveats (df, no batch column, single tissue)."
+}

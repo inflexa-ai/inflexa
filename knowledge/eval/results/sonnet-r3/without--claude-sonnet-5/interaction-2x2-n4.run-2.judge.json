@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 1,
+    "normalization": 5,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly frames the question as a genotype:treatment interaction, specifies a full factorial DESeq2 design with explicit reference levels, names the interaction coefficient, and follows with simple treatment effects within each genotype plus a WT-vs-KO log2FC comparison — this is exactly the reference approach, and it also catches the 17-vs-16 sample mismatch. QC is thin: only a PCA or dispersion plot is mentioned as a 'diagnostic', with no sample distances, library-size check, condition/batch coloring, or an outlier policy. There is no low-count pre-filter at all (DESeq2 independent filtering is not a substitute and is a different mechanism), and normalization is only implied by feeding raw integer counts to DESeq2 rather than stated as median-of-ratios size factors inside the model. BH at FDR<0.05 is stated, but apeglm is merely listed as a package with no shrinkage step in any acceptance criterion, and apeglm cannot shrink an arbitrary contrast (ashr would be needed for the simple effects). Enrichment names WikiPathways but gives no version, no size window, no explicit ORA universe, and asserts a human collection without justifying organism; the STRING network step adds scope beyond what the question requires, and reporting omits software versions and the number of genes tested."
+}

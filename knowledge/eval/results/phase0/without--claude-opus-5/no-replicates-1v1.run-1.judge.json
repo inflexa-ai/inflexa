@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan opens correctly: it states plainly that n=1 per group leaves no within-group variance, that DESeq2/edgeR/limma-voom cannot estimate dispersion, and it makes a descriptive log2FC ranking the primary deliverable, which matches the reference. It then undercuts that by generating two families of p-values anyway — a BH-adjusted Poisson \"technical noise\" statistic and a fixed-BCV edgeR/NB sweep with FDR<0.05 and <0.1 gene counts — which the reference explicitly rules out; the careful labelling mitigates but does not remove the problem, since these tables will be read as significance lists, and the enrichment step compounds it with nominal and FDR-adjusted enrichment p-values on a single unreplicated ranking. QC is well matched to a two-sample design (library sizes, detection, zero fraction, MA plot, correlation, an explicit >2-fold depth warning), the low-count filter (≥10 counts in one sample, with threshold sensitivity) is minimal and justified, and normalization is sensible (CPM plus TMM/median-of-ratios with factors reported, offsets used in the NB sweep). Weakest points: no explicit statement of the design that would support inference (no recommended replicate number, no reference level/contrast formalism beyond direction of the ratio), the pseudocount is described as \"shrinkage\" when it is not effect-size shrinkage, and the report omits software versions and gene-set collection versions/size windows."
+}

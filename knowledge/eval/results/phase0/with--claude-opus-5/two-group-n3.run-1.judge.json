@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly for a 3v3 unpaired single-batch raw-count design: DESeq2 negative binomial Wald test with an edgeR quasi-likelihood cross-check, minimal >=10-in->=3 filter tied to the smallest group size, median-of-ratios size factors estimated inside the model with an explicit prohibition on pre-normalized or pre-scaled input, ~condition with relevel() to control and a stated contrast direction, and BH at alpha 0.05 with independent filtering plus apeglm shrinkage and effect-size thresholds via lfcThreshold rather than post hoc filtering. Blind-VST PCA, sample distances, library sizes and a flag-but-do-not-drop outlier policy precede the model, and the power caveat is stated plainly with an explicit refusal to loosen alpha, backed by a dispersion-derived minimum detectable log2FC curve. Preranked GSEA is defensible here and is specified with the full tested-gene ranked list, the Wald statistic as the stated ranking metric, universe = tested genes, a 15-500 size window applied after intersection, and a database/version provenance block; the only soft spot is the exhaustive 3-vs-3 label permutation, whose 10 distinct splits add little beyond what the plan itself concedes as a 0.1 resolution floor. The final report names method, versions, design, thresholds, genes tested and significant, and design-specific limitations including the absent tximport length offsets."
+}

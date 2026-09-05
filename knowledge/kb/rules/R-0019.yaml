@@ -1,0 +1,57 @@
+id: R-0019
+title: "Log-normalized or microarray values: limma-trend, never a count model"
+assertion: >-
+  If the values are on a normalized log scale, for example log2 TPM, log-CPM,
+  or microarray intensities, fit a limma linear model with trend=TRUE in the
+  empirical Bayes step. The negative binomial models of DESeq2 and edgeR, and
+  voom, take raw counts, and a log-scale value is not a count. The trend
+  option lets the prior variance follow the mean, which fits the
+  mean-variance relation of such data. Do not convert the values back to
+  counts for a count model.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: log_normalized
+action:
+  step_type: differential_expression
+  method: M-0005
+  forbids: [M-0001, M-0002, M-0003, M-0004, M-0017, M-0019]
+  parameters:
+    - name: trend
+      value: true
+      default_source: "doi:10.1093/nar/gkv007"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0007
+    paraphrase: >-
+      limma fits a linear model to log-scale expression values from a
+      microarray or from RNA-seq, and the empirical Bayes step can fit a
+      mean-variance trend to the prior variances, which is the limma-trend
+      route, beside the voom weights for counts.
+    anchor: "Empirical Bayes; RNA-seq (the trended prior variance and voom)"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0008
+    paraphrase: >-
+      The guide applies limma-trend to log-CPM values with eBayes and the
+      trend argument, and it states that this route is a good choice when
+      the library sizes are reasonably consistent. The same linear model and
+      empirical Bayes steps apply to microarray log intensities.
+    anchor: "RNA-seq data; Differential expression: limma-trend"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [data-state, method-selection, limma-trend]

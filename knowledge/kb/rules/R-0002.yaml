@@ -1,0 +1,56 @@
+id: R-0002
+title: "Pre-filter: keep a gene with at least 10 counts in at least the smallest group size of samples"
+assertion: >-
+  Before the model, remove a gene that does not reach 10 counts in at least as
+  many samples as the smallest group holds. The filter lowers the memory and the
+  multiple testing burden, it keeps a gene expressed in one whole group, and it
+  does not replace the independent filtering of the results step.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+action:
+  step_type: filter_low_counts
+  method: M-0007
+  parameters:
+    - name: min_count
+      value: 10
+      default_source: "doi:10.12688/f1000research.7035.1"
+    - name: min_samples
+      value: smallest_group_size
+      default_source: "vignette:DESeq2/1.52.0#pre-filtering"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0040
+    paraphrase: >-
+      The workflow keeps rows with at least 10 reads in total as a minimal
+      pre-filter, because it reduces the size of the object and speeds up the
+      computation, while the results step applies the stricter independent
+      filtering.
+    anchor: "Pre-filtering the dataset"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette recommends a minimal pre-filter that keeps genes with a count
+      of 10 or more in a minimal number of samples, where the minimal number is
+      the smallest group size, and it states that pre-filtering is not necessary
+      for the results because independent filtering runs in any case.
+    anchor: "Pre-filtering"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [filtering]

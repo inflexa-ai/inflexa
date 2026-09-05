@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the design: unpaired 6v6, single batch, raw counts, DESeq2 Wald with control releveled as reference and an explicitly named contrast, with an edgeR QL cross-check (the 'intersection as high-confidence' framing is a mild, non-standard addition but does not harm validity). QC is concrete and dataset-specific: blind VST, PCA and distance heatmap on all 12, per-sample library size and detected genes with sample_01 numerically compared to the cohort median and an evidence-based retain/exclude decision rather than a silent drop. Filtering (>=10 counts in >=6 samples, tied to the smallest group size, with retained-gene count reported) is defensible though slightly on the strict side of minimal; normalization is median-of-ratios inside the model with no pre-normalized input, and inference is BH at alpha 0.05 with apeglm shrinkage, independent filtering, p-value histogram and dispersion/MA diagnostics. Enrichment is exemplary: fgsea preranked on the full tested list with the Wald stat named as the metric, Hallmark with version and a 15-500 size window, leading-edge reporting, and an explicit justification for omitting ORA. The only soft spots are the GSVA add-on, whose Poisson-kernel-on-raw-counts choice is questionable given the 4x depth disparity in sample_01, and the redundancy it introduces; the final report otherwise names versions, design, thresholds, gene counts, the sample_01 decision and full provenance."
+}

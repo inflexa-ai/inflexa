@@ -1,0 +1,84 @@
+id: R-0088
+title: "Population-scale cohorts: the enrichment runs on the limma-voom fit with camera, or fgsea on the moderated t-statistic"
+assertion: >-
+  If each group holds 50 or more samples, the differential expression test
+  is a limma-voom fit, and the enrichment takes that fit as its input. Run
+  camera on the fit, because it estimates the inter-gene correlation of each
+  set from the many samples and corrects the set test for it. As the second
+  method, rank every tested gene by the moderated t-statistic of the fit and
+  run fgsea on the ranked list. Do not rank by a Wald statistic from a count
+  model, because the count models over-call at this sample size and the
+  enrichment inherits the false positives. The limma fit holds the false
+  discovery rate better than the count models, but not on every dataset,
+  thus state the caution of the test beside the enrichment result. State the
+  fit and the statistic in the report.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 50
+  - field: question
+    op: in
+    value: [enrichment, full_plan]
+action:
+  step_type: enrichment
+  method: M-0021
+  parameters:
+    - name: rank_metric
+      value: moderated_t
+      default_source: "doi:10.1186/gb-2014-15-2-r29"
+    - name: inter_gene_cor
+      value: estimate_from_data
+      default_source: "doi:10.1093/nar/gks461"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0029
+    when: "A ranked test on the full list is wanted beside camera: rank by the moderated t-statistic of the same fit and run fgsea."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0030
+    paraphrase: >-
+      camera is a competitive gene set test on a limma linear model fit that
+      estimates the correlation between the genes of a set from the data and
+      inflates the variance of the set statistic to match it, because a
+      competitive test that assumes independent genes gives too many
+      significant sets when the genes are correlated.
+    anchor: "Abstract; Methods, The camera procedure; Results"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0023
+    paraphrase: >-
+      On human population samples, DESeq2 and edgeR call many genes on
+      permuted labels, with an actual false discovery rate that sometimes
+      exceeds 20 percent at a target of 5 percent. limma-voom, NOISeq, and
+      dearseq also fail the control on some data, and the authors recommend
+      the Wilcoxon rank-sum test at a large sample size.
+    anchor: "Abstract; Results and discussion"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0006
+    paraphrase: >-
+      After the voom transformation the limma linear model gives a moderated
+      t-statistic per gene for each contrast, and the gene set tests of limma
+      apply to the fit as they do to microarray data.
+    anchor: "Methods, The voom method; Discussion"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, population-scale, camera, method-selection]

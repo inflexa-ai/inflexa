@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly frames the question as an interaction, fits ~ genotype + treatment + genotype:treatment on all 16 samples, names the interaction coefficient explicitly with WT/vehicle as references, derives the two simple treatment effects as contrasts of the same fit rather than subset models, adds an LRT against the additive reduced model, and explicitly forbids the difference-of-significance heuristic — this is exactly the reference behaviour and is design-specific rather than generic. QC (PCA colored by genotype/shaped by treatment, sample-distance heatmap, library sizes, stated no-drop outlier policy, acknowledgement that no batch variable exists) precedes testing on the modelled matrix; the filter (>=10 counts in >=4 samples, tied to the smallest group size) is minimal and justified. Normalization is handled by size factors/TMM with VST used only for visualization, though the plan never states outright that raw counts enter the model unadjusted. BH at stated alphas (0.05 and 0.10) with apeglm/ashr shrinkage for ranking and unshrunken LFCs in tables is correct, and the power/permutation step is a sensible honest-null safeguard. Enrichment is the weakest part: ranked GSEA with the universe restricted to tested genes is right, but the collection version and size window are unstated and the species is asserted as Homo sapiens without justification for a knockout brain study."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 3,
+    "low_count_filter": 5,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the paired structure and specifies a blocked DESeq2 model (~subject + condition) on raw integer counts, with an explicit caveat that an unpaired model would be wrong — this is the central design requirement and it is met. QC is the weakest element: Step 1 is labeled QC but its acceptance criteria are only matrix loading, pairing verification, and sample-order matching; there is no PCA, sample-distance heatmap, library-size inspection, or outlier policy. The low-count filter is gestured at ('count >0 in a minimum number of samples') without a concrete, justified rule, and normalization is only implicit in DESeq2's defaults rather than stated as size-factor estimation inside the model. BH at padj<0.05 is stated but LFC shrinkage for reported effects is never mentioned; enrichment names a versioned human WikiPathways collection and a profiled-gene background, but hedges between ORA and GSEA without stating a ranking metric or gene-set size window, and software versions are absent from the reporting requirements."
+}

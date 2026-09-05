@@ -1,0 +1,22 @@
+id: M-0026
+label: "Sample structure QC on log abundance values: MDS or PCA, sample distances, detected genes"
+description: >-
+  Sample structure QC for a table that is not a count table. The values are
+  log2(TPM + 1), log2(FPKM + 1), or a log-scale table as the producer gave it.
+  A multidimensional scaling or PCA plot on the most variable genes, a
+  Euclidean sample distance heatmap, and the number of detected genes per
+  sample, colored by condition and by each processing variable.
+packages:
+  - name: limma
+    track: bioconductor
+    biotools: limma
+    version_range: ">=3.60"
+    bioconductor: "3.23"
+  - name: pheatmap
+    track: cran
+    version_range: ">=1.0"
+  - name: ggplot2
+    track: cran
+    version_range: ">=3.5"
+templates:
+  - tpl-qc-log-abundance

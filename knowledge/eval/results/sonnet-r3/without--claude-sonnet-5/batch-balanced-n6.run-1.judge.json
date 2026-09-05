@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the balanced batch structure and models it as a covariate (~ batch + condition) in DESeq2 on raw integer counts, explicitly forbidding ComBat-style pre-correction, with control releveled as reference and a full-rank check — this matches the reference closely. QC is concrete and design-aware (sample/metadata concordance, condition x batch cross-tab, library sizes, PCA colored by both condition and batch, dispersion plot), though no explicit policy is stated for what to do if an outlier or shallow sample is found. The low-count filter is gestured at ('rowSums > 0 or a filter appropriate for 12000 x 12') but left unspecified and unjustified. FDR handling is solid (BH, padj < 0.05, apeglm/ashr shrinkage, independent filtering). Enrichment is the weakest element: WikiPathways is named without a version, and there is no explicit ORA universe or gene-set size window, only an ambiguous ORA/GSEA choice; the report also omits software versions and an explicit count of tested genes."
+}

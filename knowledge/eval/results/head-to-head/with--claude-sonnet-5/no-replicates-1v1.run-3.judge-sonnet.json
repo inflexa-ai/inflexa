@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly refuses inferential testing given n=1 per group, computes only descriptive normalized counts and (raw and apeglm-shrunken) log2FCs, and explicitly states the design needed for valid inference, matching the reference closely. QC is reasonable given the 2-sample constraint (library size, detected genes, VST-based distance) though PCA is explicitly and justifiably replaced. Filtering (>=10 counts in >=1 sample) is minimal and justified for the smallest group size of 1. Normalization is properly done inside DESeq2 via median-of-ratios with no pre-scaling. The contrast/reference level is explicit (control as reference) though there's no real design formula complexity to test given a single factor. No p-values/FDR are reported anywhere, and apeglm shrinkage is applied appropriately to the effect size only. The GO enrichment step is optional/borderline given the non-inferential input, but it is appropriately hedged, uses a stated universe, named collection (GO BP), and caveats the hypothesis-generating nature, losing minor points only because enrichment on a fold-change-ranked list without significance is inherently weaker justification. The final report is thorough, naming versions, thresholds, gene counts, and design caveats."
+}

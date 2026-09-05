@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the design (unpaired, single batch, 3v3, raw Salmon counts) and selects a negative-binomial framework with DESeq2 Wald as first choice and edgeR-QLF/limma-voom/pydeseq2 as named fallbacks, with an explicit ~condition formula, control set as reference from the metadata, and a stated direction of log2FC; it also refuses to lower alpha or substitute nominal p-values and instead audits power honestly via dispersion/BCV, a detectable-fold-change curve, and leave-one-out stability, which is the right response to the confidence half of the question. QC is concrete and pre-test: library sizes, detected genes, VST/log-CPM PCA and sample-correlation heatmap labelled by condition, an explicit outlier-driving check, and a policy of not dropping samples to gain significance. Weaknesses: the low-count filter is justified by the smallest group size but leaves the count threshold unspecified; normalization inside the model is implied by 'raw integer counts, no TPM/log' but size factors/TMM are never named; and shrinkage is only conditional ('if a shrinkage estimator is importable') while the |log2FC|>1 cut is applied post hoc rather than as an lfcThreshold in the test. Enrichment is well specified (ranked-list GSEA with a stated ranking metric, tested genes as ORA universe, hallmark and GO BP for human, mapping rate, FDR-only interpretation) but omits gene-set size windows and collection versions."
+}

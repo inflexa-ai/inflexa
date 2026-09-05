@@ -1,0 +1,67 @@
+id: R-0009
+title: "Shrink the reported log2 fold change with apeglm; use ashr when the contrast is not one coefficient"
+assertion: >-
+  Report and rank on a shrunken log2 fold change. Use apeglm for a single
+  coefficient, because its heavy-tailed prior removes the noise of low-count
+  genes and keeps a large true effect. Use ashr when the comparison is a
+  contrast between levels that is not one coefficient of the model, because
+  apeglm accepts a coefficient only. Keep the unshrunken estimate in the table
+  beside the shrunken one.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+action:
+  step_type: shrink_lfc
+  method: M-0013
+  parameters:
+    - name: lfc_shrink
+      value: apeglm
+      default_source: "doi:10.1093/bioinformatics/bty895"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+alternatives:
+  - method: M-0014
+    when: "The comparison is a contrast between two non-reference levels, which apeglm cannot take; ashr accepts a contrast."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0020
+    paraphrase: >-
+      apeglm uses a heavy-tailed Cauchy prior for the effect size, which shrinks
+      small noisy estimates and preserves large true differences, and it gives
+      lower error and better ranking than the earlier normal prior.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette recommends lfcShrink with type apeglm as the default
+      shrinkage for ranking and visualization, notes that apeglm takes a
+      coefficient and not a contrast, and names ashr as the estimator that
+      accepts a contrast.
+    anchor: "Log fold change shrinkage for visualization and ranking; Extended section on shrinkage estimators"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0021
+    paraphrase: >-
+      Adaptive shrinkage estimates a unimodal prior from the effects and their
+      standard errors and gives posterior effect sizes and local false sign
+      rates, and it applies to any set of estimates with standard errors.
+    anchor: "Abstract; Methods"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [shrinkage, effect-size]

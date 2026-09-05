@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan selects the right estimator for the design — DESeq2 Wald on ~condition with control as reference, cross-checked by edgeR quasi-likelihood and limma-voom — and explicitly refuses batch/SVA correction on a single-batch 6-sample matrix, which is the correct call; the n=3 power question is answered quantitatively (BCV strata, minimum detectable fold change, enumerable 3v3 permutation null with its stated 1/10 floor) rather than by lowering alpha. QC is thorough and precedes the test (library sizes, VST PCA, sample-distance heatmap, detected genes, p-value histogram) with an explicit policy that dropping a sample at n=3 is a design change, not cleanup. Normalization sits inside each model (size factors, TMM) with integrality verified and no pre-normalized input; BH is applied at stated thresholds with apeglm/ashr shrinkage for the reported effect and an explicit refusal to rescue an empty list. Weaknesses: no explicit minimal pre-filter for the DESeq2 arm (it leans on independent filtering and edgeR's filterByExpr), and the enrichment step omits gene-set collection versions, a minSize/maxSize window, and an explicit ORA universe. Reporting is strong on design, thresholds, tiered gene lists with lfcSE, and limitations, but does not commit to naming software versions."
+}

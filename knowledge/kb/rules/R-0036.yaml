@@ -1,0 +1,65 @@
+id: R-0036
+title: "Explicit reference level and named contrast: set the reference level, name the contrast as factor, numerator, denominator"
+assertion: >-
+  With two or more groups, set the reference level of the condition factor
+  with an explicit call before the model, and do not depend on the
+  alphabetical order of the levels. Name each contrast as a triple of the
+  factor, the numerator level, and the denominator level, so a positive log2
+  fold change means higher expression in the numerator. R takes the first
+  level in alphabetical order as the reference when nothing is stated, and a
+  wrong reference level turns each fold change around without an error.
+  Write the reference level and each contrast into the plan and into the
+  report.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: n_groups
+    op: gte
+    value: 2
+action:
+  step_type: model_design
+  parameters:
+    - name: reference_level
+      value: explicit
+      default_source: "vignette:DESeq2/1.52.0#note-on-factor-levels"
+    - name: contrast_form
+      value: factor_numerator_denominator
+      default_source: "vignette:DESeq2/1.52.0#contrasts"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette states that R selects the reference level of a factor by
+      alphabetical order, that the comparisons then obey that order unless
+      the user sets the levels with relevel or names the comparison, and that
+      the contrast argument of results takes the factor, the numerator level,
+      and the denominator level.
+    anchor: "Note on factor levels; Contrasts"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      The guide explains that in a mean-reference model the intercept is the
+      reference level and each other coefficient is the difference from the
+      reference, that the choice of the reference level decides the meaning
+      of each coefficient, and that a contrast is written as the numerator
+      group minus the denominator group.
+    anchor: "Introduction, Design and contrast matrices; Means model for factors; Mean-reference model for factors"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [design, contrast, reference-level]

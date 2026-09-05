@@ -1,0 +1,648 @@
+{
+  "campaign": "phase0",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "timecourse-2x4-n3",
+  "run": 1,
+  "startedAt": "2026-09-05T04:54:42.734Z",
+  "elapsedMs": 73408,
+  "outcome": "plan_submitted",
+  "planId": "pln-03db133e",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not use this QC step's VST for the differential test itself — the DE model uses raw counts with DESeq2's internal median-of-ratios normalization"
+        ],
+        "context": "Counts file: /eval-phase0-with-timecourse-2x4-n3-1/data/inputs/counts/counts.csv (12000 genes x 24 samples, raw integer salmon counts). Metadata: /eval-phase0-with-timecourse-2x4-n3-1/data/inputs/metadata/metadata.csv (condition, time, time_hours columns, 24 samples).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 24 samples cluster by condition and time as expected, and are there outlier samples or library-size problems that would undermine the interaction test?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "M-0006 sample structure QC (blind VST, PCA on top 500 variable genes, sample distance heatmap) applies directly before any count model.",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use blind dispersion estimation (blind=TRUE) for the VST used in QC, per rule R-0033 — this step must not use the final design-aware VST",
+          "Report library sizes for all 24 samples explicitly, not just a plot"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the count matrix",
+          "PCA on top 500 variable genes colored by condition and time produced",
+          "Sample-to-sample distance heatmap produced",
+          "Library size per sample reported; any sample with markedly low depth or that fails to cluster with its condition/time group is flagged"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Minimal low-count pre-filter",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Same 12000x24 count matrix and metadata as T1S1.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which of the 12000 genes have enough counts to support the interaction test, using a minimal pre-filter that does not pre-empt the independent filtering done at the results stage?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b"
+          ],
+          "reason": "M-0007 minimal pre-filter (>=10 counts in >= smallest group size of samples); independent filtering at the results step does the rest.",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not raise the threshold beyond 10 counts in >=3 samples — over-filtering here removes genes the interaction test would otherwise have power to call, per rule R-0029"
+        ],
+        "acceptance_criteria": [
+          "Genes retained: at least 10 counts in at least 3 samples (the smallest group-time cell size)",
+          "Number of genes before and after filtering reported"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "DESeq2 interaction model: condition x time LRT",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "This is a difference-of-differences test at n=3 per cell: expect low power, detecting mainly large-effect interactions; a gene absent from the significant list is not evidence of no interaction",
+          "Genes with condition:time interaction may still show some raw fold-change even under the null due to noise; only padj<0.05 genes should be called significant"
+        ],
+        "context": "12000 (pre-filter reduces this) x 24 raw salmon gene counts, 2 conditions x 4 time points (t0..t3) x 3 replicates. This design has no batch variable in the metadata.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes have a time trajectory that differs between the treatment and control conditions (condition:time interaction), beyond the shared time trend common to both conditions?",
+        "grounding": {
+          "claims": [
+            "R-0014@a226",
+            "R-0013@2639",
+            "R-0017@8a47",
+            "R-0039@e17a",
+            "R-0001@9a17"
+          ],
+          "reason": "R-0014 selects the DESeq2 LRT (full ~condition+time+condition:time vs reduced ~condition+time) as the correct test for a >=3-timepoint interaction question; R-0017 flags the n=3-per-cell design as low-power and requires stating this rather than loosening alpha.",
+          "status": "flagged",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+          "template": "tpl-deseq2-interaction@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Design formula must be exactly ~condition + time + condition:time for the full model and ~condition + time for the reduced model, tested via DESeq2's LRT (test='LRT')",
+          "Set factor reference levels explicitly (do not rely on alphabetical default) and state them",
+          "Keep DESeq2's default count-outlier handling (Cook's distance NA flagging) on and report the flagged gene count",
+          "Do not change alpha or filtering thresholds to compensate for the small (n=3) group size"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 object fit with full design ~condition + time + condition:time (condition and time as explicit factors, reference levels set explicitly and stated, e.g. condition reference = control, time reference = t0)",
+          "Likelihood ratio test run against reduced design ~condition + time",
+          "Results table produced with raw and BH-adjusted p-values (independent filtering on, alpha=0.05) for every tested gene",
+          "Number of genes tested after filtering and number significant at padj<0.05 reported",
+          "Count outlier flags (Cook's distance NA p-values) reported separately from independent-filtering NAs",
+          "Power limitation of n=3 replicates per condition-time cell stated explicitly in the output summary"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "LFC shrinkage and significant gene export",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With only 3 replicates per cell, individual gene trajectories will be noisy; visual inspection of flagged top genes is for interpretation, not additional statistical confirmation"
+        ],
+        "context": "Output of the interaction LRT fit from T2S1: DESeq2 results object and dds with condition:time coefficients.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "What are the shrunken effect-size estimates for the genes called significant in the interaction LRT, and what does the trajectory of each look like across the two conditions and four time points?",
+        "grounding": {
+          "claims": [
+            "R-0009@f54e",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "M-0013 apeglm shrinkage for reporting effect sizes; selection of DE genes by BH-adjusted p-value at alpha 0.05, not by raw p or fold change alone.",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "shrink_lfc",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Use apeglm for single-coefficient shrinkage; fall back to ashr only if the reported effect is a multi-coefficient contrast apeglm cannot accept, and state which was used",
+          "Keep the unshrunken LFC estimate alongside the shrunken one in the exported table"
+        ],
+        "acceptance_criteria": [
+          "apeglm (or ashr if the interaction is a multi-coefficient contrast apeglm cannot take) shrinkage applied to the interaction coefficients",
+          "Final results table with gene id, baseMean, shrunken LFC per relevant coefficient, LRT stat, raw p, padj",
+          "Table of significant genes (padj<0.05) exported, sorted by padj",
+          "Per-gene normalized-count trajectory plot (or heatmap of z-scored trajectories) for the top significant interaction genes, split by condition, across t0-t3"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment on the interaction signal",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are method- and ranking-statistic-dependent; present as a hypothesis-generating follow-up, not a proven finding",
+          "No reference gene-set store was found provisioned when this plan was drafted; this may have changed by execution time"
+        ],
+        "context": "Ranked gene list is the full set of genes tested in the T2S1 interaction LRT, ranked by the LRT test statistic. Organism is Homo sapiens. This step needs a Hallmark (MSigDB) gene set collection for human; no reference store was found provisioned in this environment at planning time, so the executing agent must re-check availability at run time and report explicitly if the gene sets are absent rather than fabricate an enrichment result.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "msigdbr"
+        ],
+        "question": "Which biological pathways or processes are over-represented among genes whose time trajectory diverges between the treatment and control conditions?",
+        "grounding": {
+          "claims": [
+            "R-0048@500d",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0007@b99a"
+          ],
+          "reason": "M-0010 fgsea preranked GSEA on MSigDB Hallmark, ranked by LRT stat (chosen side of the disputed R-0007 ranking-metric rule since T2S1 uses an LRT, so no single Wald stat or single-coefficient LFC exists across all interaction coefficients).",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S2"
+        ],
+        "constraints": [
+          "Rank by the DESeq2 LRT statistic (stat column) — not a post-hoc p-value or fold-change cut list",
+          "If no human Hallmark/MSigDB gene set reference is available in the environment at execution time, report that the enrichment step could not run and why, rather than substituting a fabricated or hardcoded gene set list"
+        ],
+        "acceptance_criteria": [
+          "Every tested gene from T2S1 ranked by the LRT statistic (stat column), full ranked list used, no pre-thresholding",
+          "fgsea preranked GSEA run against MSigDB Hallmark gene sets for Homo sapiens if available in the reference store; if not available, this step reports the gap explicitly and is skipped rather than fabricated",
+          "Gene sets restricted to 15-500 members among tested genes",
+          "BH-adjusted enrichment p-values reported",
+          "Redundant/overlapping significant gene sets collapsed and one representative reported per group, full table kept as supplement",
+          "Enrichment report states database name/version, ranking metric used (LRT stat), universe (tested genes), and size window"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Final report of treatment-specific time-course genes",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [],
+        "context": "Aggregates outputs from T1S1 (QC), T2S1/T2S2 (interaction DE results), T3S1 (enrichment).",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "Summarize, with full methodological transparency, which genes show a treatment-specific (condition:time interaction) change over the four time points beyond the shared time trend, and how confident that call is given the design.",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0017@8a47"
+          ],
+          "reason": "Report step must name method/versions/design/thresholds/counts per R-0041, enrichment provenance per R-0051, method-dependence caveat per R-0055, and the power caveat per R-0017.",
+          "status": "grounded",
+          "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S2",
+          "T3S1"
+        ],
+        "constraints": [
+          "Do not present enrichment sets as proven biology; label as hypothesis-generating",
+          "Include session/package version info for reproducibility"
+        ],
+        "acceptance_criteria": [
+          "Report states: DESeq2 version, design formula (full vs reduced), reference levels, alpha=0.05, BH adjustment, independent filtering, number of genes tested after filtering, number of genes with significant condition:time interaction (padj<0.05)",
+          "Report explicitly states the n=3-per-cell power limitation and that a gene absent from the significant list is not shown to be unchanged",
+          "Report includes the enrichment results (or explicitly notes their absence) with database, version, ranking metric, universe, and size window stated",
+          "Report includes QC findings from T1S1 (sample clustering, any outliers) and how they affected interpretation, if at all"
+        ]
+      }
+    ],
+    "title": "Time-course DESeq2 LRT: treatment x time interaction genes",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The design is 2 conditions (treatment vs control, named per metadata) across 4 time points (t0-t3) with 3 replicates per cell (12000 genes x 24 samples counts, salmon-derived). The question — which genes change over time in a treatment-specific way, beyond the shared time trend — is exactly the DESeq2 likelihood-ratio-test (LRT) time-course design: fit the full model ~condition + time + condition:time and compare it against the reduced model ~condition + time. Genes significant in this LRT have a time trajectory that differs by condition, independent of any trend shared by both arms. The plan runs QC first (checking sample structure/outliers before trusting the model), pre-filters minimally, fits the interaction LRT, shrinks fold changes for reporting, applies BH-adjusted significance, clusters/visualizes the significant genes' trajectories to characterize the interaction pattern, and runs pathway enrichment on the ranked interaction statistic. Every step is grounded in the returned bulk-rna-seq time-course procedure (snapshot sha256:833150c...). Power caveat: n=3 per cell is a genuinely small design for detecting an interaction (a difference of differences); the plan states this explicitly per rule R-0017 and does not loosen thresholds to compensate."
+  },
+  "usage": {
+    "inputTokens": 299429,
+    "outputTokens": 5860,
+    "cacheCreationInputTokens": 53643,
+    "cacheReadInputTokens": 245690,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "n_timepoints": 4,
+        "interaction": true
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "fgsea",
+          "ashr",
+          "tximport",
+          "msigdbr",
+          "ggplot2",
+          "pheatmap",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": ""
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "language": "r"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Time-course DESeq2 LRT: treatment x time interaction genes",
+          "analytical_narrative": "The design is 2 conditions (treatment vs control, named per metadata) across 4 time points (t0-t3) with 3 replicates per cell (12000 genes x 24 samples counts, salmon-derived). The question — which genes change over time in a treatment-specific way, beyond the shared time trend — is exactly the DESeq2 likelihood-ratio-test (LRT) time-course design: fit the full model ~condition + time + condition:time and compare it against the reduced model ~condition + time. Genes significant in this LRT have a time trajectory that differs by condition, independent of any trend shared by both arms. The plan runs QC first (checking sample structure/outliers before trusting the model), pre-filters minimally, fits the interaction LRT, shrinks fold changes for reporting, applies BH-adjusted significance, clusters/visualizes the significant genes' trajectories to characterize the interaction pattern, and runs pathway enrichment on the ranked interaction statistic. Every step is grounded in the returned bulk-rna-seq time-course procedure (snapshot sha256:833150c...). Power caveat: n=3 per cell is a genuinely small design for detecting an interaction (a difference of differences); the plan states this explicitly per rule R-0017 and does not loosen thresholds to compensate.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 24 samples cluster by condition and time as expected, and are there outlier samples or library-size problems that would undermine the interaction test?",
+              "acceptance_criteria": [
+                "Blind VST computed on the count matrix",
+                "PCA on top 500 variable genes colored by condition and time produced",
+                "Sample-to-sample distance heatmap produced",
+                "Library size per sample reported; any sample with markedly low depth or that fails to cluster with its condition/time group is flagged"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Counts file: /eval-phase0-with-timecourse-2x4-n3-1/data/inputs/counts/counts.csv (12000 genes x 24 samples, raw integer salmon counts). Metadata: /eval-phase0-with-timecourse-2x4-n3-1/data/inputs/metadata/metadata.csv (condition, time, time_hours columns, 24 samples).",
+              "constraints": [
+                "Use blind dispersion estimation (blind=TRUE) for the VST used in QC, per rule R-0033 — this step must not use the final design-aware VST",
+                "Report library sizes for all 24 samples explicitly, not just a plot"
+              ],
+              "caveats": [
+                "Do not use this QC step's VST for the differential test itself — the DE model uses raw counts with DESeq2's internal median-of-ratios normalization"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "M-0006 sample structure QC (blind VST, PCA on top 500 variable genes, sample distance heatmap) applies directly before any count model.",
+                "template": "tpl-qc-eda@1.0.0"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Minimal low-count pre-filter",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "Which of the 12000 genes have enough counts to support the interaction test, using a minimal pre-filter that does not pre-empt the independent filtering done at the results stage?",
+              "acceptance_criteria": [
+                "Genes retained: at least 10 counts in at least 3 samples (the smallest group-time cell size)",
+                "Number of genes before and after filtering reported"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same 12000x24 count matrix and metadata as T1S1.",
+              "constraints": [
+                "Do not raise the threshold beyond 10 counts in >=3 samples — over-filtering here removes genes the interaction test would otherwise have power to call, per rule R-0029"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b"
+                ],
+                "reason": "M-0007 minimal pre-filter (>=10 counts in >= smallest group size of samples); independent filtering at the results step does the rest."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "DESeq2 interaction model: condition x time LRT",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Which genes have a time trajectory that differs between the treatment and control conditions (condition:time interaction), beyond the shared time trend common to both conditions?",
+              "acceptance_criteria": [
+                "DESeq2 object fit with full design ~condition + time + condition:time (condition and time as explicit factors, reference levels set explicitly and stated, e.g. condition reference = control, time reference = t0)",
+                "Likelihood ratio test run against reduced design ~condition + time",
+                "Results table produced with raw and BH-adjusted p-values (independent filtering on, alpha=0.05) for every tested gene",
+                "Number of genes tested after filtering and number significant at padj<0.05 reported",
+                "Count outlier flags (Cook's distance NA p-values) reported separately from independent-filtering NAs",
+                "Power limitation of n=3 replicates per condition-time cell stated explicitly in the output summary"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 (pre-filter reduces this) x 24 raw salmon gene counts, 2 conditions x 4 time points (t0..t3) x 3 replicates. This design has no batch variable in the metadata.",
+              "constraints": [
+                "Design formula must be exactly ~condition + time + condition:time for the full model and ~condition + time for the reduced model, tested via DESeq2's LRT (test='LRT')",
+                "Set factor reference levels explicitly (do not rely on alphabetical default) and state them",
+                "Keep DESeq2's default count-outlier handling (Cook's distance NA flagging) on and report the flagged gene count",
+                "Do not change alpha or filtering thresholds to compensate for the small (n=3) group size"
+              ],
+              "caveats": [
+                "This is a difference-of-differences test at n=3 per cell: expect low power, detecting mainly large-effect interactions; a gene absent from the significant list is not evidence of no interaction",
+                "Genes with condition:time interaction may still show some raw fold-change even under the null due to noise; only padj<0.05 genes should be called significant"
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0014@a226",
+                  "R-0013@2639",
+                  "R-0017@8a47",
+                  "R-0039@e17a",
+                  "R-0001@9a17"
+                ],
+                "reason": "R-0014 selects the DESeq2 LRT (full ~condition+time+condition:time vs reduced ~condition+time) as the correct test for a >=3-timepoint interaction question; R-0017 flags the n=3-per-cell design as low-power and requires stating this rather than loosening alpha.",
+                "template": "tpl-deseq2-interaction@1.0.0"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "LFC shrinkage and significant gene export",
+              "track": "T2",
+              "step_type": "shrink_lfc",
+              "question": "What are the shrunken effect-size estimates for the genes called significant in the interaction LRT, and what does the trajectory of each look like across the two conditions and four time points?",
+              "acceptance_criteria": [
+                "apeglm (or ashr if the interaction is a multi-coefficient contrast apeglm cannot take) shrinkage applied to the interaction coefficients",
+                "Final results table with gene id, baseMean, shrunken LFC per relevant coefficient, LRT stat, raw p, padj",
+                "Table of significant genes (padj<0.05) exported, sorted by padj",
+                "Per-gene normalized-count trajectory plot (or heatmap of z-scored trajectories) for the top significant interaction genes, split by condition, across t0-t3"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Output of the interaction LRT fit from T2S1: DESeq2 results object and dds with condition:time coefficients.",
+              "constraints": [
+                "Use apeglm for single-coefficient shrinkage; fall back to ashr only if the reported effect is a multi-coefficient contrast apeglm cannot accept, and state which was used",
+                "Keep the unshrunken LFC estimate alongside the shrunken one in the exported table"
+              ],
+              "caveats": [
+                "With only 3 replicates per cell, individual gene trajectories will be noisy; visual inspection of flagged top genes is for interpretation, not additional statistical confirmation"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0009@f54e",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "reason": "M-0013 apeglm shrinkage for reporting effect sizes; selection of DE genes by BH-adjusted p-value at alpha 0.05, not by raw p or fold change alone."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment on the interaction signal",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Which biological pathways or processes are over-represented among genes whose time trajectory diverges between the treatment and control conditions?",
+              "acceptance_criteria": [
+                "Every tested gene from T2S1 ranked by the LRT statistic (stat column), full ranked list used, no pre-thresholding",
+                "fgsea preranked GSEA run against MSigDB Hallmark gene sets for Homo sapiens if available in the reference store; if not available, this step reports the gap explicitly and is skipped rather than fabricated",
+                "Gene sets restricted to 15-500 members among tested genes",
+                "BH-adjusted enrichment p-values reported",
+                "Redundant/overlapping significant gene sets collapsed and one representative reported per group, full table kept as supplement",
+                "Enrichment report states database name/version, ranking metric used (LRT stat), universe (tested genes), and size window"
+              ],
+              "packages": [
+                "fgsea",
+                "msigdbr"
+              ],
+              "depends_on": [
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Ranked gene list is the full set of genes tested in the T2S1 interaction LRT, ranked by the LRT test statistic. Organism is Homo sapiens. This step needs a Hallmark (MSigDB) gene set collection for human; no reference store was found provisioned in this environment at planning time, so the executing agent must re-check availability at run time and report explicitly if the gene sets are absent rather than fabricate an enrichment result.",
+              "constraints": [
+                "Rank by the DESeq2 LRT statistic (stat column) — not a post-hoc p-value or fold-change cut list",
+                "If no human Hallmark/MSigDB gene set reference is available in the environment at execution time, report that the enrichment step could not run and why, rather than substituting a fabricated or hardcoded gene set list"
+              ],
+              "caveats": [
+                "Enrichment results are method- and ranking-statistic-dependent; present as a hypothesis-generating follow-up, not a proven finding",
+                "No reference gene-set store was found provisioned when this plan was drafted; this may have changed by execution time"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0048@500d",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0007@b99a"
+                ],
+                "reason": "M-0010 fgsea preranked GSEA on MSigDB Hallmark, ranked by LRT stat (chosen side of the disputed R-0007 ranking-metric rule since T2S1 uses an LRT, so no single Wald stat or single-coefficient LFC exists across all interaction coefficients).",
+                "template": "tpl-fgsea-preranked@1.0.0"
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "Final report of treatment-specific time-course genes",
+              "track": "T4",
+              "step_type": "report",
+              "question": "Summarize, with full methodological transparency, which genes show a treatment-specific (condition:time interaction) change over the four time points beyond the shared time trend, and how confident that call is given the design.",
+              "acceptance_criteria": [
+                "Report states: DESeq2 version, design formula (full vs reduced), reference levels, alpha=0.05, BH adjustment, independent filtering, number of genes tested after filtering, number of genes with significant condition:time interaction (padj<0.05)",
+                "Report explicitly states the n=3-per-cell power limitation and that a gene absent from the significant list is not shown to be unchanged",
+                "Report includes the enrichment results (or explicitly notes their absence) with database, version, ranking metric, universe, and size window stated",
+                "Report includes QC findings from T1S1 (sample clustering, any outliers) and how they affected interpretation, if at all"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T2S2",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Aggregates outputs from T1S1 (QC), T2S1/T2S2 (interaction DE results), T3S1 (enrichment).",
+              "constraints": [
+                "Do not present enrichment sets as proven biology; label as hypothesis-generating",
+                "Include session/package version info for reproducibility"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0017@8a47"
+                ],
+                "reason": "Report step must name method/versions/design/thresholds/counts per R-0041, enrichment provenance per R-0051, method-dependence caveat per R-0055, and the power caveat per R-0017."
+              }
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-04",
+    "digest": "sha256:833150c5e45cf8a541b59ec599683b486b4c93e5c3fdba069dfabb107e66da2c"
+  }
+}

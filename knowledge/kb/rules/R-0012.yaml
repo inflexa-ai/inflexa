@@ -1,0 +1,68 @@
+id: R-0012
+title: "A named blocking factor, unpaired: put the block in the design"
+assertion: >-
+  If the design names a blocking factor and the samples are not paired, put
+  the block in the design as a fixed term before the condition. The block can
+  be a cell line, a litter, a sequencing run, or a processing day. The block
+  term removes the variation between the blocks from the residual, thus the
+  test of the condition has more power. Do not adjust the counts for the block before the model, because the model
+  accounts for the block. A known balanced batch stays in the design beside
+  the block.
+modality: bulk_rna_seq
+conditions:
+  - field: blocking_factor
+    op: not_null
+  - field: paired
+    op: eq
+    value: false
+action:
+  step_type: model_design
+  parameters:
+    - name: blocking_term
+      value: block
+      default_source: "doi:10.12688/f1000research.27893.1"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      The guide adds a blocking factor to the design matrix as an additive
+      term beside the treatment. The block coefficients absorb the difference
+      between the blocks, and the treatment coefficient then measures the
+      effect within the blocks.
+    anchor: "Accounting for factors that are not of interest"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette puts a second factor into the design formula before the
+      condition of interest. The model then accounts for the effect of that
+      factor, and the results are extracted for the condition, which is the
+      last term of the formula.
+    anchor: "Multi-factor designs"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0008
+    paraphrase: >-
+      The guide treats a blocking variable as an additive term in the linear
+      model, thus the treatment comparison is made within the blocks. It
+      shows a design that adds the block as a factor next to the treatment
+      and extracts the treatment coefficient.
+    anchor: "Additive Models and Blocking; Blocking"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [design, blocking]

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies n=1 per group as precluding dispersion estimation and inference, uses DESeq2 size-factor normalization inside the model, reports only descriptive raw/apeglm-shrunken log2FC with no p-values, explicitly sets control as reference, and the final report states caveats, design needs, and versions. QC is present with library size/detected genes/sample distance but substitutes a scatter/MA plot for PCA without a stated outlier-handling policy. Filtering threshold is reasonable but somewhat arbitrary (fixed 10-count cutoff not tied to CPM or library size). The plan adds a substantial GSEA/enrichment step (Hallmark+Reactome) that the reference does not call for given the design's limitations; while it is caveated as hypothesis-generating and uses proper universe/size-window practices, this goes beyond what a minimal correct plan would include for an unreplicated dataset, so it is scored as partially warranted rather than ideal."
+}

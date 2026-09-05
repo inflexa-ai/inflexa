@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the decisive fact — one sample per condition — and confines itself to normalized counts and descriptive log2 fold changes, explicitly forbidding DESeq()/edgeR/limma calls, p-values, FDR columns and even apeglm/ashr shrinkage (with the right reason: shrinkage needs a dispersion this design cannot supply), while naming the replicated design (>=3, preferably 5-6 per arm, balanced batches) that would license a Wald or QL test. QC is adapted honestly to n=2: library sizes, detection breadth, blind VST or log-CPM fallback, pairwise scatter/MA and correlations, with an explicit statement that PCA, clustering and outlier detection are meaningless with two points. Filtering (>=10 counts in at least the smallest group size, here one sample) is minimal and justified, size factors are median-of-ratios computed on raw unscaled counts with no pre-scaling, and the contrast is explicit with control set as the reference and the sign convention verified on a worked example. The weak point is the enrichment step: although it is conditional, uses the full ranked list, states the ranking metric, universe, 15-500 size window and mapping counts, and is labelled exploratory, it still proposes BH-adjusted set-level p-values derived from a 1v1 ranking, which reintroduces inferential output the rest of the plan rightly refuses; omitting it entirely would have been cleaner. Reporting is otherwise exemplary, leading with the limitation rather than burying it."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject (~subject + condition) with a Wald test on the condition coefficient, plus an edgeR QL cross-check on the same design, which matches the reference exactly. QC is concrete (blind VST, PCA on top 500, distance heatmap, library sizes, colored by subject and condition), though it only commits to flagging an aberrant sample rather than stating what would be done about it. The filter (>=10 counts in >=5 samples, justified as the smallest group size) is minimal and reasoned; normalization is handled inside the models with TMM named for edgeR, but DESeq2's median-of-ratios size factors are only implicit. Multiple testing, apeglm shrinkage, alpha, and padj-only selection are all explicit, and the enrichment section correctly uses the full ranked Wald statistic with the tested-gene universe, a 15-500 size window, per-collection BH, and version tags, with the only quibble being the sprawl of four collections queried in sequence. The report step is thorough, naming design, reference level, contrast, thresholds, counts, versions, and the n=5 power caveat."
+}

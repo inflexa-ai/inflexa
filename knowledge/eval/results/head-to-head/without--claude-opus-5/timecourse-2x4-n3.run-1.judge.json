@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan operationalises the question exactly as the reference does: a DESeq2 LRT of ~condition+time+condition:time against ~condition+time, with time as a 4-level factor and an explicit rationale for why the reduced model absorbs the shared time trend, plus a limma-voom joint interaction F-test as a framework-concordance check appropriate for n=3. QC (library sizes, VST PCA by condition and time, correlation heatmap, named-not-dropped outlier policy), a minimal justified filter (>=10 counts in >=3 samples, the smallest cell size), and raw counts fed directly to DESeq2 with no pre-normalisation are all stated explicitly; reference levels, coefficient decomposition and per-timepoint log2FCs are correct and correctly framed as descriptive follow-ups. BH at stated alphas with a pre-declared FDR<0.10 exploratory fallback and lfcShrink reserved for coefficient reporting is right, though the sensitivity check contrast and the shrinkage prior are only lightly specified. Enrichment is well-constructed (expressed-gene background, human-only collections, honest caveat on the unsigned LRT ranking) but omits gene-set size windows and collection version numbers; the report likewise names design, thresholds and gene counts but never commits to reporting software versions."
+}

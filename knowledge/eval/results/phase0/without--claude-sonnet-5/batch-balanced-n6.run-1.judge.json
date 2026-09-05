@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly treats the balanced batch as an additive covariate in a negative-binomial GLM (~ batch + condition) and explicitly warns against dropping the batch term or relying on raw per-gene dispersion, which matches the reference; it also avoids any pre-model count adjustment such as ComBat-seq. QC is concrete and design-specific (contingency table of batch x condition, library sizes and sparsity per sample and batch, PCA colored by condition and shaped by batch, outliers reported rather than silently dropped). Weaknesses: normalization is never named (no mention of size factors or TMM estimated inside the model, only vaguely 'normalized/variance-stabilized' counts for PCA), the low-count filter is deferred to 'independent filtering or equivalent' without a stated minimal, justified rule, and the reference level for condition and the explicit contrast are not stated. Shrinkage is only implied via the apeglm package listing and a caveat about built-in moderation rather than committed to for the reported log2FC. Enrichment checks for collection availability and applies multiple testing, but names no explicit ORA universe, no ranking metric for GSEA, no collection version or gene-set size window; reporting lacks software versions and explicit counts of tested versus significant genes."
+}

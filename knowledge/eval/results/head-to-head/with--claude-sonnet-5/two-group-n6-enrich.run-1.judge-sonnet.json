@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the design well: DESeq2 Wald (~condition, control releveled as reference) with apeglm shrinkage fits 6v6 unpaired single-batch raw counts, plus an edgeR QLF cross-check for robustness. QC is thorough and explicit, retaining sample_01 by default with a stated evidence-based removal policy via PCA, distance heatmap, and library-size/detected-gene table. Filtering (>=10 counts in >=6 samples) is minimal and justified, and normalization is correctly done inside DESeq2/edgeR (median-of-ratios/TMM) with no pre-normalization. BH-adjusted p<0.05 with independent filtering and apeglm shrinkage are correctly specified as in-test thresholds. Enrichment uses full-ranked fgsea preranked on Wald stat against Hallmark (named version, 15-500 size window) with a reasonable ORA-avoidance rationale, though the added Reactome pass slightly exceeds the Hallmark-only reference scope; report completeness is excellent, naming versions, thresholds, gene counts, and caveats."
+}

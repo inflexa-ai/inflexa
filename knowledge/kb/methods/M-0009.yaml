@@ -1,0 +1,12 @@
+id: M-0009
+label: "TMM normalization (edgeR)"
+edam_operation: EDAM:operation_3435
+description: >-
+  Trimmed mean of M-values scaling factors, the normalization of edgeR and of
+  the limma-voom path. Applied inside the model, never to pre-normalize the counts.
+packages:
+  - name: edgeR
+    track: bioconductor
+    biotools: edger
+    version_range: ">=4.4"
+    bioconductor: "3.23"

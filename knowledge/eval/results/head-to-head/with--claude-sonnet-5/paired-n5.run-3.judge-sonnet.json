@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly uses ~subject+condition in DESeq2 with control as reference, Wald test on condition, apeglm shrinkage, and BH-FDR with independent filtering exactly as the reference specifies, plus an edgeR QL cross-check on the same paired design. QC is blind-VST PCA/heatmap colored by subject and condition with library size checks and a sensible non-blocking outlier policy, though it doesn't specify a concrete numeric outlier threshold. The filter (>=10 counts in >=5 samples) is minimal and justified relative to group size. Normalization is strictly internal to DESeq2 (median-of-ratios), no pre-normalization. Enrichment correctly defaults to preranked GSEA given small n with full ranked list, stated ranking metric, named/versioned collections and size window, and conditionally adds ORA with an explicit universe only if power allows. The report section is exhaustive on versions, thresholds, counts, and design caveats, fully matching the reference's completeness bar."
+}

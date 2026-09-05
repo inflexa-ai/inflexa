@@ -1,0 +1,200 @@
+id: tpl-deseq2-two-group
+version: 1.0.0
+label: "DESeq2 two-group differential expression with apeglm shrinkage"
+language: R
+method: M-0001
+step_types: [filter_low_counts, normalize, model_design, differential_expression, shrink_lfc, multiple_testing]
+edam_operations: [EDAM:operation_3223]
+citations: [S-0001, S-0002, S-0020, S-0040]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates]
+  min_replicates: 2
+  conditions:
+    - field: paired
+      op: eq
+      value: false
+    - field: interaction
+      op: is_null
+    - field: n_timepoints
+      op: is_null
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample.
+    The condition column is renamed to `condition` inside the script, thus the
+    design formula names `condition` and any other column of the sample table
+    by its own name. One contrast: test level against reference level.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the denominator of the fold change, for example Control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The level of the condition that is the numerator of the fold change, for example Treated."
+    adaptable: true
+  - name: design
+    type: formula
+    description: "The design formula. It must end with condition. Put a balanced batch or a covariate before it, for example ~ batch + condition."
+    adaptable: true
+    default: "~ condition"
+    default_source: "doi:10.1186/s13059-014-0550-8"
+    pattern: "condition\\s*$"
+  - name: min_count
+    type: integer
+    description: "A gene stays when it has at least this many counts in at least min_samples samples."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 0
+  - name: min_samples
+    type: integer
+    description: "The minimum number of samples for the count filter. Absent, the script uses the smallest group size."
+    adaptable: true
+    required: false
+    minimum: 1
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff, passed to results() so the independent filter is optimized for it."
+    adaptable: false
+    default: 0.05
+    default_source: "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+  - name: lfc_shrink
+    type: string
+    description: "The shrinkage estimator of the reported log2 fold change."
+    adaptable: true
+    default: apeglm
+    default_source: "doi:10.1093/bioinformatics/bty895"
+    enum: [apeglm, ashr, none]
+  - name: lfc_threshold
+    type: number
+    description: "A log2 fold change threshold tested with the Wald test (TREAT-style). 0 tests against no change."
+    adaptable: true
+    default: 0
+    default_source: "vignette:DESeq2/1.52.0#tests-of-log2-fold-change-above-or-below-a-threshold"
+    minimum: 0
+  - name: n_top_genes_pca
+    type: integer
+    description: "The number of most variable genes for the PCA."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 50
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example de or lesional_vs_control."
+    adaptable: true
+    default: de
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+outputs:
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested gene: gene, base_mean, log2_fold_change (shrunken), log2_fold_change_unshrunken, lfc_se, stat, pvalue, adjusted_pvalue."
+  - name: normalized_counts
+    path: "output/{prefix}_normalized_counts.csv"
+    format: EDAM:format_3752
+    description: "Median-of-ratios normalized counts, genes by samples."
+  - name: vst
+    path: "output/{prefix}_vst.csv"
+    format: EDAM:format_3752
+    description: "Variance stabilized values, genes by samples, for downstream visualization."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The contrast, the counts of tested and significant genes, the thresholds, the package versions."
+  - name: pca
+    path: "figures/{prefix}_pca.png"
+    description: "PCA of the samples on the top variable genes, colored by condition (and PDF)."
+  - name: sample_distances
+    path: "figures/{prefix}_sample_distances.png"
+    description: "Euclidean sample distance heatmap on the VST values (and PDF)."
+  - name: ma
+    path: "figures/{prefix}_ma.png"
+    description: "MA plot of the shrunken fold changes (and PDF)."
+  - name: volcano
+    path: "figures/{prefix}_volcano.png"
+    description: "Volcano plot, log2 fold change against -log10 adjusted p-value (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: DESeq2
+    version: "1.52.0"
+    track: bioconductor
+  - name: apeglm
+    version: "1.34.0"
+    track: bioconductor
+  - name: ashr
+    version: "2.2-63"
+    track: cran
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: pheatmap
+    version: "1.0.13"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n6
+    dataset: two_group_n6/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+    expect:
+      - "exists output/de_results.csv"
+      - "exists output/de_summary.json"
+      - "exists figures/de_pca.png"
+      - "exists figures/de_volcano.pdf"
+      - "csv_rows output/de_results.csv >= 5000"
+      - "truth_recall output/de_results.csv >= 0.5"
+      - "truth_fdr output/de_results.csv <= 0.1"
+  - name: balanced-batch
+    dataset: batch_balanced_n6/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+      design: "~ batch + condition"
+      output_prefix: treated_vs_control
+    expect:
+      - "exists output/treated_vs_control_results.csv"
+      - "truth_recall output/treated_vs_control_results.csv >= 0.5"
+      - "truth_fdr output/treated_vs_control_results.csv <= 0.1"

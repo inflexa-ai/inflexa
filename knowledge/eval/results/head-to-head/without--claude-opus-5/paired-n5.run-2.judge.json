@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the paired structure and centers the analysis on ~ subject + condition with subject as a blocking factor, verifies one control/one treated per subject, and adds a limma-voom paired cross-check plus an explicit statement that true per-subject testing has zero residual df — this is exactly the reference design and is stated, not assumed. QC is dataset-specific and strong: library sizes, size factors, sample correlation heatmap, and both raw and within-pair-centred PCA with the correct expectation that raw PCA is dominated by subject, plus an outlier policy that preserves pairs. Filtering is tied to the smaller group size (n=5) with the threshold to be reported, though no concrete count is given; normalization stays inside the model (size factors, raw integer counts in, VST only for visualization and per-subject ratios). The contrast, reference level, BH alpha at 0.05/0.10, and apeglm/ashr shrinkage (with unshrunken LFC retained) are all explicit. Enrichment is appropriately preranked fgsea on the paired contrast with a 15-500 size window, symbol-overlap reporting and GO redundancy collapsing, but the ranking metric is left as an either/or and no MSigDB version is named; reporting is otherwise thorough except that software versions are never required to be stated."
+}

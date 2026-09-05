@@ -1,0 +1,125 @@
+id: tpl-goseq-hallmark
+version: 1.0.0
+label: "goseq over-representation with a gene length probability weighting function on a results table and the MSigDB Hallmark collection"
+language: R
+method: M-0033
+step_types: [enrichment]
+edam_operations: [EDAM:operation_3501]
+citations: [S-0019, S-0028, S-0031, S-0048]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, rsem]
+  conditions:
+    - field: count_source
+      op: in
+      value: [salmon, kallisto, rsem]
+  notes: >-
+    A differential expression results table with the columns `gene` and
+    `adjusted_pvalue`, a gene length table with the columns `gene` and
+    `length` (the effective length from the quantifier, or the annotation
+    length), plus a GMT file of gene sets in the same identifier space. The
+    universe is the set of tested genes: every row with a non-missing adjusted
+    p-value that also has a length. A gene is called when its adjusted p-value
+    is under alpha. goseq fits the probability weighting function of the call
+    against the length with nullp, then it tests each set with the Wallenius
+    non-central hypergeometric approximation. The over-represented p-values
+    get a Benjamini-Hochberg adjustment over the tested sets, and every set is
+    reported. No genome or annotation download: the lengths come from the
+    table, and the categories come from the GMT.
+parameters:
+  - name: results_path
+    type: string
+    description: "Path of the differential expression results CSV with the columns gene and adjusted_pvalue."
+    adaptable: true
+  - name: lengths_path
+    type: string
+    description: "Path of the gene length CSV with the columns gene and length, one row per gene, in the identifier space of the results table."
+    adaptable: true
+  - name: gmt_path
+    type: string
+    description: "Path of the GMT file of gene sets, one set per line, in the identifier space of the results table."
+    adaptable: true
+  - name: alpha
+    type: number
+    description: "A gene is called differentially expressed when its adjusted p-value is under this cutoff."
+    adaptable: true
+    default: 0.05
+    default_source: "vignette:goseq/1.64.0#reading-data"
+    minimum: 0
+    maximum: 1
+  - name: test_method
+    type: string
+    description: "The goseq approximation of the null distribution of each category."
+    adaptable: false
+    default: Wallenius
+    default_source: "vignette:goseq/1.64.0#using-the-wallenius-approximation"
+    enum: [Wallenius]
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example goseq or goseq_hallmark."
+    adaptable: true
+    default: goseq
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: results
+    path: "{{results_path}}"
+    format: EDAM:format_3752
+    description: "Differential expression results, one row per gene, CSV."
+  - name: gene_lengths
+    path: "{{lengths_path}}"
+    format: EDAM:format_3752
+    description: "Gene lengths, one row per gene, CSV."
+  - name: gene_sets
+    path: "{{gmt_path}}"
+    format: EDAM:format_2330
+    description: "Gene sets, GMT."
+outputs:
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested gene set: pathway, size, num_de, pvalue (over-represented), padj (BH), genes (semicolon-joined called genes)."
+  - name: pwf
+    path: "output/{prefix}_pwf.csv"
+    format: EDAM:format_3752
+    description: "One row per universe gene: gene, de, length, pwf (the fitted probability of a call)."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The inputs, the sizes of the universe and of the called list, the counts of tested and significant sets, the thresholds, the package versions."
+  - name: pwf_plot
+    path: "figures/{prefix}_pwf.png"
+    description: "The probability weighting function: the proportion of called genes per length bin, with the fitted curve (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: goseq
+    version: "1.64.0"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n6-hallmark
+    dataset: two_group_n6/seed-1
+    slots:
+      results_path: /work/data/de_results.csv
+      lengths_path: /work/data/gene_lengths.csv
+      gmt_path: /work/refs/hallmark.gmt
+    expect:
+      - "exists output/goseq_results.csv"
+      - "exists output/goseq_pwf.csv"
+      - "exists output/goseq_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/goseq_pwf.png"
+      - "exists figures/goseq_pwf.pdf"
+      - "csv_rows output/goseq_results.csv >= 40"
+      - "json output/goseq_summary.json n_universe >= 5000"
+      - "json output/goseq_summary.json n_sets_tested >= 40"
+      - "truth_set_recall output/goseq_results.csv >= 0.66"

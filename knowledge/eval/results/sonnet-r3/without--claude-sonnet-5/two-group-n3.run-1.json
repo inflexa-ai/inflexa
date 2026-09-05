@@ -1,0 +1,290 @@
+{
+  "campaign": "sonnet-r3",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n3",
+  "run": 1,
+  "startedAt": "2026-09-05T08:55:53.224Z",
+  "elapsedMs": 36888,
+  "outcome": "plan_submitted",
+  "planId": "pln-5d02eac5",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, reconcile, and QC counts/metadata",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The counts file has 7 sample columns against a 6-row metadata table (3 treated vs 3 control) — do not assume they align positionally; match on sample ID and report explicitly if one counts column has no metadata match or must be dropped",
+          "Do not filter genes so aggressively that low-count genes relevant to a small liver panel are lost prematurely — use a standard low-count filter (e.g., min count sum or CPM threshold) documented explicitly"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "Do the raw Salmon gene-level counts (12000 genes) and the sample metadata (condition: treated vs control) align, and what do library size, gene detection, and count distributions look like across the 3 treated vs 3 control samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts and metadata sample identifiers are matched and reconciled; any discrepancy between the 7 count columns and the 6 metadata rows is explicitly resolved and reported (e.g., extra column dropped or identified as duplicate/mislabel) with justification, not silently ignored",
+          "Final analysis-ready count matrix and metadata confirm exactly 3 treated and 3 control samples, unpaired, single batch",
+          "Library size, total detected genes per sample, and a sample-sample correlation/PCA are reported to flag any outlier sample before DE testing"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group gives a minimum of 2 residual degrees of freedom per gene for dispersion estimation before pooling — DESeq2's empirical Bayes shrinkage compensates but do not claim gene-wise dispersion is well-estimated independently",
+          "Use apeglm shrinkage rather than raw MLE log2FoldChange for ranking/reporting effect sizes, since raw LFCs are noisy at this sample size"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes are significantly differentially expressed between treated and control liver samples (Wald test, BH-adjusted p<0.05, with apeglm-shrunk log2 fold changes)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 model fit on the reconciled raw integer counts with condition (treated vs control) as the sole design factor",
+          "Output table includes baseMean, shrunken log2FoldChange (apeglm), p-value, and BH-adjusted p-value for every gene, sorted by adjusted p-value",
+          "Number of significant DE genes at padj<0.05 and at a more conservative padj<0.01 is reported, plus a volcano plot and dispersion plot are generated"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Power and confidence assessment for n=3 vs n=3 design",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 3 vs 3 samples, leave-one-out results are themselves noisy — report them as a stability indicator, not as validation of biological truth",
+          "Do not present any post-hoc power number as a formal a priori power calculation; frame it as a diagnostic on the observed dispersion/effect-size distribution"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "Given only 3 replicates per arm, how much statistical confidence do the treated-vs-control DE calls actually carry, and how sensitive are the results to a single sample being removed or to the multiple-testing correction chosen?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistical_robustness",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Leave-one-out re-analysis (drop each of the 6 samples in turn, rerun DESeq2) reports how many of the original significant genes remain significant, quantifying result stability under n=2-vs-3 or n=3-vs-2 perturbation",
+          "Dispersion estimate diagnostics (gene-wise vs fitted vs final/shrunk dispersion, and the dispersion plot) are interpreted specifically in terms of what n=3 replication allows and does not allow",
+          "A comparison of nominal p-value distribution (histogram) against the uniform expectation is reported to flag any miscalibration typical of very small n",
+          "A plain-language statement of achievable statistical power at this sample size (e.g., approximate power to detect a 2-fold change at typical dispersion, referencing standard RNA-seq power literature/guidance) is included, explicitly separating what padj<0.05 calls do and do not guarantee here"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway enrichment of significant DE genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways human gene sets use HGNC gene symbols — confirm the counts file's gene identifier column is also HGNC symbol before matching, or convert if it uses a different namespace",
+          "Enrichment results from a handful of DE genes at n=3 per group should be reported as exploratory/hypothesis-generating, consistent with the limited power flagged in T1S3, not as confirmed pathway involvement"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea"
+        ],
+        "question": "Which biological pathways are enriched among genes significantly differentially expressed between treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Over-representation analysis run on the padj<0.05 DE gene list from T1S2 against WikiPathways human gene sets",
+          "If fewer than ~10 significant genes are returned by T1S2, the step reports this explicitly and falls back to a ranked (fgsea-style) enrichment on the full ranked gene list rather than failing silently",
+          "Enriched pathways reported with adjusted p-values and the overlapping gene members, contextualized as liver/drug-treatment relevant where applicable"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control DESeq2 DE with power caveats",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is a bulk RNA-seq liver drug-treatment study with raw Salmon gene-level counts (12000 genes x 7 samples in the counts file; metadata describes a 3-vs-3 design across 6 samples, unpaired, single batch — note the counts file column count (7) exceeds the metadata row count (6), which the first step must reconcile before any modeling). With only n=3 per arm, standard DESeq2 shrinkage-based testing is appropriate but statistical power is inherently limited: the pipeline must explicitly quantify and report that limitation (this is the core of the research question, not an afterthought) rather than just deliver a gene list. Step 1 loads and QC's the counts/metadata, reconciling any sample mismatch and checking library size and gene detection distributions. Step 2 runs DESeq2 (Wald test, apeglm LFC shrinkage) for the treated-vs-control contrast, producing the DE gene table. Step 3 performs a dedicated power/confidence assessment appropriate to n=3 per group: dispersion estimate stability, post-hoc power curves via effect-size/dispersion relationships, sensitivity to outlier removal (e.g., leave-one-out), and correction-method comparison (BH vs more conservative options), to give an honest answer to 'how confident can we be'. Step 4 runs pathway enrichment (WikiPathways human gene sets, confirmed present in the reference store) on the significant DE genes to add biological interpretation, contingent on the DE step yielding a usable gene list."
+  },
+  "usage": {
+    "inputTokens": 132016,
+    "outputTokens": 3138,
+    "cacheCreationInputTokens": 69760,
+    "cacheReadInputTokens": 62220,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "fgsea",
+          "clusterProfiler",
+          "pheatmap"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control DESeq2 DE with power caveats",
+          "analytical_narrative": "The dataset is a bulk RNA-seq liver drug-treatment study with raw Salmon gene-level counts (12000 genes x 7 samples in the counts file; metadata describes a 3-vs-3 design across 6 samples, unpaired, single batch — note the counts file column count (7) exceeds the metadata row count (6), which the first step must reconcile before any modeling). With only n=3 per arm, standard DESeq2 shrinkage-based testing is appropriate but statistical power is inherently limited: the pipeline must explicitly quantify and report that limitation (this is the core of the research question, not an afterthought) rather than just deliver a gene list. Step 1 loads and QC's the counts/metadata, reconciling any sample mismatch and checking library size and gene detection distributions. Step 2 runs DESeq2 (Wald test, apeglm LFC shrinkage) for the treated-vs-control contrast, producing the DE gene table. Step 3 performs a dedicated power/confidence assessment appropriate to n=3 per group: dispersion estimate stability, post-hoc power curves via effect-size/dispersion relationships, sensitivity to outlier removal (e.g., leave-one-out), and correction-method comparison (BH vs more conservative options), to give an honest answer to 'how confident can we be'. Step 4 runs pathway enrichment (WikiPathways human gene sets, confirmed present in the reference store) on the significant DE genes to add biological interpretation, contingent on the DE step yielding a usable gene list.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, reconcile, and QC counts/metadata",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the raw Salmon gene-level counts (12000 genes) and the sample metadata (condition: treated vs control) align, and what do library size, gene detection, and count distributions look like across the 3 treated vs 3 control samples?",
+              "acceptance_criteria": [
+                "Counts and metadata sample identifiers are matched and reconciled; any discrepancy between the 7 count columns and the 6 metadata rows is explicitly resolved and reported (e.g., extra column dropped or identified as duplicate/mislabel) with justification, not silently ignored",
+                "Final analysis-ready count matrix and metadata confirm exactly 3 treated and 3 control samples, unpaired, single batch",
+                "Library size, total detected genes per sample, and a sample-sample correlation/PCA are reported to flag any outlier sample before DE testing"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "The counts file has 7 sample columns against a 6-row metadata table (3 treated vs 3 control) — do not assume they align positionally; match on sample ID and report explicitly if one counts column has no metadata match or must be dropped",
+                "Do not filter genes so aggressively that low-count genes relevant to a small liver panel are lost prematurely — use a standard low-count filter (e.g., min count sum or CPM threshold) documented explicitly"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are significantly differentially expressed between treated and control liver samples (Wald test, BH-adjusted p<0.05, with apeglm-shrunk log2 fold changes)?",
+              "acceptance_criteria": [
+                "DESeq2 model fit on the reconciled raw integer counts with condition (treated vs control) as the sole design factor",
+                "Output table includes baseMean, shrunken log2FoldChange (apeglm), p-value, and BH-adjusted p-value for every gene, sorted by adjusted p-value",
+                "Number of significant DE genes at padj<0.05 and at a more conservative padj<0.01 is reported, plus a volcano plot and dispersion plot are generated"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=3 per group gives a minimum of 2 residual degrees of freedom per gene for dispersion estimation before pooling — DESeq2's empirical Bayes shrinkage compensates but do not claim gene-wise dispersion is well-estimated independently",
+                "Use apeglm shrinkage rather than raw MLE log2FoldChange for ranking/reporting effect sizes, since raw LFCs are noisy at this sample size"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Power and confidence assessment for n=3 vs n=3 design",
+              "track": "T1",
+              "step_type": "statistical_robustness",
+              "question": "Given only 3 replicates per arm, how much statistical confidence do the treated-vs-control DE calls actually carry, and how sensitive are the results to a single sample being removed or to the multiple-testing correction chosen?",
+              "acceptance_criteria": [
+                "Leave-one-out re-analysis (drop each of the 6 samples in turn, rerun DESeq2) reports how many of the original significant genes remain significant, quantifying result stability under n=2-vs-3 or n=3-vs-2 perturbation",
+                "Dispersion estimate diagnostics (gene-wise vs fitted vs final/shrunk dispersion, and the dispersion plot) are interpreted specifically in terms of what n=3 replication allows and does not allow",
+                "A comparison of nominal p-value distribution (histogram) against the uniform expectation is reported to flag any miscalibration typical of very small n",
+                "A plain-language statement of achievable statistical power at this sample size (e.g., approximate power to detect a 2-fold change at typical dispersion, referencing standard RNA-seq power literature/guidance) is included, explicitly separating what padj<0.05 calls do and do not guarantee here"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "caveats": [
+                "With only 3 vs 3 samples, leave-one-out results are themselves noisy — report them as a stability indicator, not as validation of biological truth",
+                "Do not present any post-hoc power number as a formal a priori power calculation; frame it as a diagnostic on the observed dispersion/effect-size distribution"
+              ]
+            },
+            {
+              "id": "T1S4",
+              "name": "Pathway enrichment of significant DE genes",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among genes significantly differentially expressed between treated and control liver samples?",
+              "acceptance_criteria": [
+                "Over-representation analysis run on the padj<0.05 DE gene list from T1S2 against WikiPathways human gene sets",
+                "If fewer than ~10 significant genes are returned by T1S2, the step reports this explicitly and falls back to a ranked (fgsea-style) enrichment on the full ranked gene list rather than failing silently",
+                "Enriched pathways reported with adjusted p-values and the overlapping gene members, contextualized as liver/drug-treatment relevant where applicable"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "WikiPathways human gene sets use HGNC gene symbols — confirm the counts file's gene identifier column is also HGNC symbol before matching, or convert if it uses a different namespace",
+                "Enrichment results from a handful of DE genes at n=3 per group should be reported as exploratory/hypothesis-generating, consistent with the limited power flagged in T1S3, not as confirmed pathway involvement"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

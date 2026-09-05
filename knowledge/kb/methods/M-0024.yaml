@@ -1,0 +1,15 @@
+id: M-0024
+label: "edgeR robust dispersion estimation with observation weights (estimateGLMRobustDisp)"
+edam_operation: EDAM:operation_3223
+description: >-
+  Negative binomial generalized linear model with observation weights that
+  down-weight an outlier count, estimated by estimateGLMRobustDisp, then the
+  edgeR quasi-likelihood F-test on the weighted fit. For a design where one
+  sample or some counts depart from the group and the sample stays in the
+  analysis.
+packages:
+  - name: edgeR
+    track: bioconductor
+    biotools: edger
+    version_range: ">=4.4"
+    bioconductor: "3.23"

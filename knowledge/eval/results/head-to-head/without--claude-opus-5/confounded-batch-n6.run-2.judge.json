@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan identifies the perfect confounding explicitly, verifies it with a contingency table, refuses any batch term as rank-deficient, and forbids ComBat/SVA/RUV with the correct reasoning that correction would either erase the effect or launder the batch into apparent biology; every output is required to carry the confounding caveat, which matches the reference. QC is solid (PCA colored by condition and shaped by batch, correlation heatmap, library size and detection-rate comparison, VST boxplots) though no explicit outlier-exclusion policy is stated beyond the later leave-one-out fragility check. The filter (>=10 counts in >=6 samples, pre/post counts reported) is minimal and tied to group size; normalization stays inside the models (DESeq2 size factors, TMM+voom cross-check, VST for visualization only). The contrast, reference level, BH at 0.05, and apeglm/ashr shrinkage for reported effects are all explicit, and the permutation/stability/technical-association work is honest about what it can and cannot rule out. Minor gaps: software and MSigDB collection versions are not pinned in the report requirements, and enrichment on a knowingly confounded ranking is arguably unwarranted, though it is at least labeled as describing the combined condition+batch axis and used diagnostically."
+}

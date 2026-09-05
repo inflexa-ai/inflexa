@@ -1,0 +1,57 @@
+id: R-0103
+title: "Few significant genes: an over-representation test of a short list has no power, use the ranked method on the full list"
+assertion: >-
+  If fewer than about 50 genes pass the significance threshold, do not run
+  an over-representation test on that list. A hypergeometric test of a short
+  list finds no category, and a change of the threshold changes the list and
+  the result. Run the ranked method on the full list of tested genes instead,
+  because it finds a set of genes with a small but coordinated change that
+  no single gene shows. State the size of the significant list in the
+  report.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: question
+    op: in
+    value: [enrichment, full_plan]
+action:
+  step_type: enrichment
+  parameters:
+    - name: ora_min_significant_genes
+      value: 50
+      default_source: "doi:10.3389/fgene.2020.00654"
+severity: warn
+strength: common_practice
+evidence_quality: low
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0024
+    paraphrase: >-
+      GSEA was made for the case in which no single gene passes a threshold
+      but a set of genes shows a coordinated modest change, and it uses the
+      whole ranked list, thus it needs no cutoff.
+    anchor: "Abstract; Introduction; Overview of GSEA"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0087
+    paraphrase: >-
+      The review classifies the gene set analysis methods by their
+      components, their requirements, and their assumptions, and it puts the
+      methods that need a cutoff on the gene list beside the methods that use
+      every gene.
+    anchor: "Abstract; Classification of gene set analysis methods"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, warn, thresholds, needs-source]

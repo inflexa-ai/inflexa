@@ -1,0 +1,61 @@
+id: R-0093
+title: "limma on abundance or log values: robust empirical Bayes moderation against hypervariable genes"
+assertion: >-
+  In a limma fit on TPM, FPKM, or log-normalized values, call eBayes with
+  robust set to TRUE and trend set to TRUE. A few genes with a hypervariable
+  dispersion, from an outlier value or a real biological cause, inflate the
+  prior variance estimate, and the moderated variance of every other gene
+  then rises, which costs power over the whole set. The robust estimate of
+  the hyperparameters down-weights those genes in the prior, keeps their
+  own variance large, thus a hypervariable gene does not reach significance
+  on one outlier value. Report the option in the method description.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [tpm_or_fpkm, log_normalized]
+  - field: n_per_group_min
+    op: gte
+    value: 2
+action:
+  step_type: differential_expression
+  parameters:
+    - name: robust
+      value: true
+      default_source: "doi:10.1214/16-AOAS920"
+severity: info
+strength: common_practice
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0067
+    paraphrase: >-
+      The empirical Bayes test can be heavily influenced by a small number
+      of genes with a very large or very small variance. The robust
+      hyperparameter estimation makes the prior less informative for the
+      outlier genes and more informative for the other genes, thus a
+      hypervariable gene is less often called by mistake and the power for
+      the main body of genes rises. The procedure is in limma.
+    anchor: "Abstract"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0008
+    paraphrase: >-
+      The guide documents eBayes with the trend argument, which fits a
+      mean-variance trend to the prior variances, and the robust argument,
+      which makes the estimate of the prior degrees of freedom and the prior
+      variance robust against outlier sample variances.
+    anchor: "Linear models and empirical Bayes; eBayes"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [limma, robust, empirical-bayes]

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 1,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses the perfect batch/condition confound, refuses ComBat-seq/SVA/rank-deficient designs with an explicit rank argument, and labels every result as unattributable, which matches the reference behavior; it does not offer the option of pausing for a rebalanced design, a minor shortfall. QC is solid (library sizes, PCA/clustering with condition-batch labels, explicit no-correction rule) but states no outlier or shallow-library policy. There is no low-count filter anywhere, and normalization is only implicit (raw counts into DESeq2, vst/log-CPM for PCA) without naming size factors. Multiple testing is only padj < 0.05 with BH unnamed and no lfcShrink, with top genes ranked by unshrunken log2FC. Enrichment names WikiPathways human but omits version, universe, gene-set size window, and any ranking metric; the report lacks software versions and counts of genes tested after filtering."
+}

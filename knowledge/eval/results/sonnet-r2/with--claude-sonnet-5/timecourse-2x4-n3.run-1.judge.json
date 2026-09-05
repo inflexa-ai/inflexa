@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan identifies the design correctly and uses exactly the reference approach: a DESeq2 LRT of ~condition + time + condition:time against ~condition + time with time as a categorical factor, plus per-timepoint simple-effect contrasts and trajectory clustering to describe the pattern, with repeated and explicit statements about low power at n=3 per cell. QC (blind VST PCA colored by condition and shaped by time, distance heatmap, library sizes with a deviance flag), a minimal justified filter (>=10 counts in >=3 samples, tied to the smallest cell), model-internal size factors, explicit relevel of both factors, BH at 0.05 with independent filtering and apeglm/ashr shrinkage on the reported effects are all stated rather than implied. The main weakness is enrichment: ranking a preranked fgsea by the unsigned LRT statistic produces a one-sided, directionless ranking that fgsea handles poorly, and the plan does not acknowledge this or propose a signed alternative, though the collection versions, universe, size window and leading edge are otherwise handled well. Reporting is thorough and design-specific; minor deductions elsewhere are for a somewhat narrative rather than pre-specified outlier policy."
+}

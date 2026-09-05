@@ -1,0 +1,129 @@
+{
+  "campaign": "head-to-head",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "timecourse-2x4-n3",
+  "run": 1,
+  "startedAt": "2026-09-05T11:08:48.824Z",
+  "elapsedMs": 33798,
+  "outcome": "clarification_needed",
+  "question": "skip",
+  "usage": {
+    "inputTokens": 893694,
+    "outputTokens": 1117,
+    "cacheCreationInputTokens": 153331,
+    "cacheReadInputTokens": 740231,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "n_timepoints": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "library_type": "unknown",
+        "strandedness": "unknown"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "fgsea",
+          "tximport",
+          "ashr",
+          "DEGreport",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "rrvgo",
+          "pheatmap",
+          "ggplot2"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "mclust",
+          "TCseq",
+          "Mfuzz"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb reactome wikipathways human C2"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "c2 curated"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "c2"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR",
+          "GSVA",
+          "DEP"
+        ]
+      }
+    },
+    {
+      "name": "request_clarification",
+      "input": {
+        "question": "skip"
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:709bb1f721581df3610596af409b71aa0a0e4ea88eea34e9ea302eaeb15e5439"
+  }
+}

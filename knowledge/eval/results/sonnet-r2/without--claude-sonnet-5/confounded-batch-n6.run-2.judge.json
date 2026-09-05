@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 3,
+    "normalization": 6,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly diagnoses the perfect aliasing of batch with condition, refuses ComBat-seq/SVA/RUV, explains the rank deficiency, fits ~condition alone, and labels every result as confounded — this matches the reference closely, though it proceeds without offering the option to pause for a rebalanced design. QC is solid (library sizes, VST PCA, correlation clustering, colored by the merged condition/batch factor) but no policy is stated for handling an outlier or shallow sample. The low-count filter is merely 'standard filtering', with no threshold or justification, and normalization is only implicit in DESeq2's size factors rather than stated; no shrunken LFC (lfcShrink) is requested and the |log2FC|>1 cut is applied post hoc to the results table rather than inside the test. Enrichment names WikiPathways human/HGNC and checks its presence, but leaves the ORA universe undefined, the ranking metric unstated, and gives no collection version or gene-set size window; the report also omits software versions and the count of genes tested after filtering."
+}

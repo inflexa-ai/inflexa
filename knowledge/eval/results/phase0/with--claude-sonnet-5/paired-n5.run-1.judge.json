@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the paired design and blocks on subject (~subject + condition) with an explicit control reference level and Wald test on the condition coefficient, matching the reference exactly; the edgeR QL cross-check on the same design is a reasonable, non-harmful robustness addition. QC precedes testing with blind VST PCA, sample-distance heatmap, per-sample library sizes annotated by subject and condition, and an explicit policy to flag rather than silently drop outliers (slightly short of stating what would be done with a confirmed outlier or a label swap). The low-count filter (>=10 counts in >=5 samples, the smallest group size) is minimal and justified, and normalization is median-of-ratios internal to DESeq() with an explicit prohibition on pre-normalized input. FDR handling is sound: BH at alpha=0.05 with independent filtering, apeglm shrinkage of the reported effect, NA categories split by cause, and no post hoc fold-change filter. GSEA is preranked on the full tested list with the Wald statistic stated, Hallmark collection, a 15-500 size window and a fail-loud rule if the collection is unavailable; the report names design, contrast, versions, thresholds, gene counts and the n=5 power caveat."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject with DESeq2 (~ subject + condition), releveling control as reference and testing the condition coefficient by Wald test, which matches the reference exactly. QC is dataset-specific and appropriate (blind VST, PCA colored by both subject and condition to verify pairing, distance heatmap, library sizes), though the outlier policy stops at flagging rather than stating what would be done if a subject or sample is discordant. Filtering (>=10 counts in >=5 samples, justified by smallest group size), median-of-ratios normalization inside the model, alpha-matched BH via results(alpha=0.05), independent filtering, apeglm shrinkage with raw LFC retained, and Cook's-flag reporting are all handled correctly and explicitly. Enrichment is well specified (full ranked list on Wald stat, Hallmark, 15-500 size window among tested genes, BH, explicit skip if the collection is absent), losing a little only because the collection version is deferred to the report rather than pinned. The report covers methods, versions, thresholds, tested/significant counts, and an enrichment caveat, but the design-specific caveats (n=5 subjects, limited power, no ability to test per-subject heterogeneity despite the question's 'within each subject' phrasing) are not named."
+}

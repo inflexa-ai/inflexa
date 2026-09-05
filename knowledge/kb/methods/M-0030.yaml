@@ -1,0 +1,22 @@
+id: M-0030
+label: "Fit diagnostics: the MA plot and the dispersion or mean-variance plot"
+description: >-
+  The two plots that show whether the differential expression fit holds: the
+  MA plot of the log fold change against the mean, and the plot of the
+  per-gene dispersion estimates with the fitted trend. For a DESeq2 fit these
+  are plotMA and plotDispEsts. For a limma-voom fit these are plotMD and the
+  voom mean-variance trend with plotSA.
+packages:
+  - name: DESeq2
+    track: bioconductor
+    biotools: deseq2
+    version_range: ">=1.50"
+    bioconductor: "3.23"
+  - name: limma
+    track: bioconductor
+    biotools: limma
+    version_range: ">=3.60"
+    bioconductor: "3.23"
+  - name: ggplot2
+    track: cran
+    version_range: ">=3.5"

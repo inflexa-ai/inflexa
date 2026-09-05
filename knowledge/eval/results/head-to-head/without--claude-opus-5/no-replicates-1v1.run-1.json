@@ -1,0 +1,326 @@
+{
+  "campaign": "head-to-head",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "no-replicates-1v1",
+  "run": 1,
+  "startedAt": "2026-09-05T11:11:55.270Z",
+  "elapsedMs": 69971,
+  "outcome": "plan_submitted",
+  "planId": "pln-1432283c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Normalized fold-change ranking, treated vs control (n=1 each)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A single ratio of library sizes drives normalization; if the two libraries differ greatly in depth the fold changes are fragile",
+          "Genes with zero counts in one sample produce infinite raw log2FC — handle with the pseudocount and flag them separately",
+          "Gene symbols as row keys may contain duplicates or non-unique entries; check and report before aggregating",
+          "The word 'differentially expressed' in the research question cannot be honoured statistically — do not soften this in the writeup"
+        ],
+        "context": "Human liver bulk RNA-seq, salmon gene-level counts, 12,000 genes, exactly 2 samples: 1 treated vs 1 control. The data profile explicitly flags 'No biological replication: one sample per condition'. This is the core constraint of the entire analysis.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "ggplot2",
+          "data.table",
+          "apeglm"
+        ],
+        "question": "Which of the 12,000 genes in counts.csv show the largest normalized expression shift between the single treated sample and the single control sample, and how sensitive is that ranking to the unestimable within-group dispersion?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do NOT report any p-value or adjusted p-value as an inferential result; any such value must be presented only inside the clearly labelled 'assumed dispersion' sensitivity analysis",
+          "Do NOT let DESeq2 or edgeR silently proceed with its default behaviour for unreplicated designs — set the dispersion explicitly and say what was set",
+          "Read condition labels from metadata.csv; do not hardcode 'treated'/'control' strings without checking",
+          "Apply an expression filter before ranking and report the number of genes before and after",
+          "Rank primarily by shrunken log2FC combined with mean expression, so that low-count genes do not dominate the top of the list"
+        ],
+        "description": "Load /eval-head-to-head-without-no-replicates-1v1-1/data/inputs/counts/counts.csv (12,000 gene symbols x 2 sample columns, raw integer salmon counts) and /eval-head-to-head-without-no-replicates-1v1-1/data/inputs/metadata/metadata.csv (2 rows, one per sample, with a condition column identifying treated vs control). Verify the sample column names in counts.csv match the metadata rows and read the actual condition labels from the file rather than assuming them. Filter to genes with non-trivial expression (e.g. raw count >= 10 in at least one of the two samples) and report how many genes are retained and how many dropped. Normalize for library size using median-of-ratios (DESeq2 estimateSizeFactors) or TMM (edgeR calcNormFactors) — with only two libraries, report the size factors explicitly since a single ratio drives the whole comparison. Compute log2 fold change (treated over control) on normalized counts with a small pseudocount (report the pseudocount used), and also compute the shrunken/moderated fold change for low-count genes so that a 3-vs-0 count does not outrank a 3000-vs-500 gene. Produce a ranked table of all retained genes: gene symbol, raw counts per sample, normalized counts per sample, mean normalized expression, raw log2FC, shrunken log2FC. Additionally run a sensitivity analysis: fit DESeq2 (or edgeR exactTest) under at least three fixed assumed dispersion values spanning the plausible range for human liver tissue (e.g. BCV 0.2, 0.4, 0.6 -> dispersion 0.04, 0.16, 0.36) and report how many genes would clear FDR<0.05 under each assumption, plus the overlap between the gene sets. Label these counts explicitly as 'what would follow IF dispersion were X', never as a result. Export an MA plot and a scatter of log-normalized counts (treated vs control) with the top-shifted genes labelled. The written summary MUST state up front that with one sample per condition there is no biological replication, within-group variance is unestimable, no valid p-value or FDR can be computed, and that every gene listed is a candidate ranked by effect size only — technical noise, library-prep variation, and single-animal/single-donor biological variation are all fully confounded with treatment.",
+        "acceptance_criteria": [
+          "Condition labels are read from metadata.csv and the actual label strings (not placeholders) appear in the outputs",
+          "Size factors / normalization factors for both libraries are reported numerically",
+          "A ranked gene table is written covering all expression-filtered genes with raw counts, normalized counts, mean expression, raw log2FC and shrunken log2FC",
+          "The dispersion sensitivity analysis reports gene counts passing FDR<0.05 under at least three assumed dispersion values, each explicitly labelled as conditional on an assumption",
+          "No output presents a p-value or FDR as if it were an estimated result from the data",
+          "The summary states in its first paragraph that n=1 per condition makes formal differential expression testing invalid",
+          "MA plot and treated-vs-control scatter are produced with top-shifted genes labelled"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Exploratory pathway context for top-shifted genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon gene-symbol rows may not all map cleanly to HGNC symbols in the GMT; report the mapping rate",
+          "With only 12,000 genes in the matrix the background is already a filtered subset of the transcriptome, which biases enrichment toward well-expressed liver genes — say so",
+          "Enrichment on an n=1 ranking is unstable: a modest change in the fold-change cutoff can change the top pathways substantially; note sensitivity if apparent"
+        ],
+        "context": "Downstream of T1S1. Input is a gene-symbol-keyed ranked list from a human liver 1v1 comparison. Human WikiPathways GMT (HGNC symbols) is present in the reference store; org.Hs.eg.db and clusterProfiler/fgsea are installed.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db",
+          "GSEABase",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which human pathways are over-represented among the most strongly up- and down-shifted genes in the treated vs control liver comparison, treated strictly as hypothesis generation?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use human gene sets only — the data is Homo sapiens liver; do not use the mouse or rat WikiPathways files present in the store",
+          "Use the expression-filtered gene set from T1S1 as the ORA background",
+          "Do not describe any pathway result as evidence that a pathway is 'activated' or 'suppressed' by treatment; frame all of it as a hypothesis to be tested in a replicated experiment"
+        ],
+        "description": "Take the ranked gene table from T1S1 and run over-representation analysis separately on the top up-shifted and top down-shifted gene sets (use a fixed effect-size-based selection, e.g. top 200-300 genes per direction by shrunken log2FC among expression-filtered genes; report the exact cutoff used) against the expression-filtered gene universe from T1S1 — not against the whole genome. Use human pathway gene sets: the environment carries WikiPathways for Homo sapiens as a GMT keyed on HGNC symbols (the descriptor field is '%'-delimited: split it to recover the readable pathway name). Confirm the resource is present at run time before relying on it; if it is absent, report that and fall back to GO biological process via the installed human annotation package, stating the substitution. Also run a rank-based GSEA using the full shrunken log2FC ranking as the gene-level statistic, since a rank-based method uses the whole ranking rather than an arbitrary cutoff. Report overlap between the ORA and GSEA results. Report enrichment p-values and FDRs, but state clearly that these quantify only the over-representation of a gene list within pathways — they inherit no statistical validity for the underlying treatment contrast, because that contrast has no replication. Flag whether the top pathways are dominated by a handful of shared genes (report leading-edge / overlap gene counts per pathway) since with a fold-change-only ranking a single noisy gene family can drive apparent enrichment.",
+        "acceptance_criteria": [
+          "ORA is run against the T1S1 expression-filtered universe, not a default genome-wide background, and the universe size is reported",
+          "The pathway resource actually used is named in the output, including whether it was WikiPathways human or the stated GO fallback",
+          "Separate up-shifted and down-shifted results are reported, with the exact gene-count cutoff stated",
+          "A rank-based GSEA on the full shrunken log2FC ranking is reported alongside the ORA, with overlap between the two noted",
+          "Per-pathway overlap/leading-edge gene counts are reported so single-gene-driven hits are visible",
+          "The summary states that enrichment significance does not confer statistical validity on the unreplicated underlying contrast"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Replication requirement and confirmation design",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Power estimates depend entirely on the assumed BCV, which is the one quantity this dataset cannot supply — present the range, not a single number",
+          "If the observed log2FC distribution is dominated by low-count genes, the percentile effect sizes will be inflated; use the expression-filtered, shrinkage-adjusted values"
+        ],
+        "context": "Downstream of T1S1 (effect sizes, per-gene mean expression) and T1S2 (pathway coherence). The dataset has 12,000 genes and 1 sample per condition; the deliverable is the design for the experiment that would actually answer the research question.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "How many biological replicates per group would be needed to formally detect the effect sizes observed in the treated vs control liver comparison, and which candidate genes should a confirmation experiment target?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Assumed BCV values must be stated as assumptions, with a note that they cannot be estimated from this dataset",
+          "Use the actual per-gene mean normalized expression from T1S1 for the power calculation, not generic simulated means",
+          "Do not present the candidate list as a validated differential expression result"
+        ],
+        "description": "Using the effect-size distribution from T1S1 (shrunken log2FC and mean normalized expression per gene), compute a power/sample-size analysis for a future replicated RNA-seq experiment. For a grid of plausible within-group biological coefficients of variation for human liver bulk RNA-seq (e.g. BCV 0.2, 0.4, 0.6), and for target effect sizes drawn from the observed distribution (e.g. the log2FC at the 90th, 95th and 99th percentiles of the observed shift), compute the replicates per group required to reach 80% power at a genome-wide FDR of 0.05 across ~12,000 tested genes. Use a negative-binomial power calculation appropriate for count data (an RNASeqPower-style closed form implemented directly, or simulation from a negative binomial with the observed per-gene means and the assumed dispersion, followed by the same DE pipeline and FDR control — state which was used). Output a compact table of required n per (BCV, effect size) cell and a curve of power vs n. Separately, produce a short prioritized candidate list (roughly 20-50 genes) for targeted confirmation, chosen for large shrunken log2FC AND high mean expression AND, where T1S2 provides it, membership in a coherently enriched pathway — because a qPCR or targeted panel confirmation is cheap and these are the genes worth spending it on. State plainly that this step's purpose is to convert an uninterpretable 1v1 comparison into a concrete, adequately powered follow-up design, and that no conclusion about treatment effect should be drawn until that follow-up is run.",
+        "acceptance_criteria": [
+          "A required-n table is produced spanning at least three assumed BCV values and at least three effect sizes taken from the observed log2FC distribution",
+          "The power calculation method (closed-form NB or simulation) is named, and the FDR target and number of tests (~12,000) are stated",
+          "A power-vs-n curve is produced",
+          "A prioritized candidate list of ~20-50 genes for targeted confirmation is exported with the selection criteria (log2FC, mean expression, pathway membership) shown per gene",
+          "The summary states that no treatment-effect conclusion is warranted from the present data"
+        ]
+      }
+    ],
+    "title": "1v1 liver treated vs control: descriptive fold-change screen",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a 12,000-gene x 2-sample raw count matrix (counts.csv, salmon gene-level counts keyed by gene symbol) with a 2-row metadata table giving one treated and one control human liver sample. With n=1 per condition there is no replication, so within-group dispersion cannot be estimated from the data and no valid p-value or FDR for differential expression exists. Any tool that returns p-values here (DESeq2 with a blind/fixed dispersion, edgeR with a guessed BCV) does so by asserting a dispersion the data cannot support, and the resulting 'significant gene' lists are not inferential. The plan therefore refuses to fabricate significance and instead delivers what the data can honestly support: (T1S1) library-size normalization and a ranked descriptive fold-change screen with explicit sensitivity to the assumed dispersion, and (T1S2) a functional read on the top-ranked up- and down-shifted genes using human WikiPathways (confirmed present under /mnt/refs) purely as hypothesis generation. Every output is labelled exploratory. The plan explicitly states the power limitation rather than burying it, because the research question as posed ('which genes are differentially expressed') cannot be answered inferentially from 1v1 data — it can only be answered as 'which genes show the largest expression shift, and what would it take to confirm them'."
+  },
+  "usage": {
+    "inputTokens": 87793,
+    "outputTokens": 5090,
+    "cacheCreationInputTokens": 69621,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pydeseq2",
+          "statsmodels"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "differential expression without replicates RNA-seq single sample per condition",
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "1v1 liver treated vs control: descriptive fold-change screen",
+          "analytical_narrative": "The input is a 12,000-gene x 2-sample raw count matrix (counts.csv, salmon gene-level counts keyed by gene symbol) with a 2-row metadata table giving one treated and one control human liver sample. With n=1 per condition there is no replication, so within-group dispersion cannot be estimated from the data and no valid p-value or FDR for differential expression exists. Any tool that returns p-values here (DESeq2 with a blind/fixed dispersion, edgeR with a guessed BCV) does so by asserting a dispersion the data cannot support, and the resulting 'significant gene' lists are not inferential. The plan therefore refuses to fabricate significance and instead delivers what the data can honestly support: (T1S1) library-size normalization and a ranked descriptive fold-change screen with explicit sensitivity to the assumed dispersion, and (T1S2) a functional read on the top-ranked up- and down-shifted genes using human WikiPathways (confirmed present under /mnt/refs) purely as hypothesis generation. Every output is labelled exploratory. The plan explicitly states the power limitation rather than burying it, because the research question as posed ('which genes are differentially expressed') cannot be answered inferentially from 1v1 data — it can only be answered as 'which genes show the largest expression shift, and what would it take to confirm them'.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Normalized fold-change ranking, treated vs control (n=1 each)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12,000 genes in counts.csv show the largest normalized expression shift between the single treated sample and the single control sample, and how sensitive is that ranking to the unestimable within-group dispersion?",
+              "description": "Load /eval-head-to-head-without-no-replicates-1v1-1/data/inputs/counts/counts.csv (12,000 gene symbols x 2 sample columns, raw integer salmon counts) and /eval-head-to-head-without-no-replicates-1v1-1/data/inputs/metadata/metadata.csv (2 rows, one per sample, with a condition column identifying treated vs control). Verify the sample column names in counts.csv match the metadata rows and read the actual condition labels from the file rather than assuming them. Filter to genes with non-trivial expression (e.g. raw count >= 10 in at least one of the two samples) and report how many genes are retained and how many dropped. Normalize for library size using median-of-ratios (DESeq2 estimateSizeFactors) or TMM (edgeR calcNormFactors) — with only two libraries, report the size factors explicitly since a single ratio drives the whole comparison. Compute log2 fold change (treated over control) on normalized counts with a small pseudocount (report the pseudocount used), and also compute the shrunken/moderated fold change for low-count genes so that a 3-vs-0 count does not outrank a 3000-vs-500 gene. Produce a ranked table of all retained genes: gene symbol, raw counts per sample, normalized counts per sample, mean normalized expression, raw log2FC, shrunken log2FC. Additionally run a sensitivity analysis: fit DESeq2 (or edgeR exactTest) under at least three fixed assumed dispersion values spanning the plausible range for human liver tissue (e.g. BCV 0.2, 0.4, 0.6 -> dispersion 0.04, 0.16, 0.36) and report how many genes would clear FDR<0.05 under each assumption, plus the overlap between the gene sets. Label these counts explicitly as 'what would follow IF dispersion were X', never as a result. Export an MA plot and a scatter of log-normalized counts (treated vs control) with the top-shifted genes labelled. The written summary MUST state up front that with one sample per condition there is no biological replication, within-group variance is unestimable, no valid p-value or FDR can be computed, and that every gene listed is a candidate ranked by effect size only — technical noise, library-prep variation, and single-animal/single-donor biological variation are all fully confounded with treatment.",
+              "context": "Human liver bulk RNA-seq, salmon gene-level counts, 12,000 genes, exactly 2 samples: 1 treated vs 1 control. The data profile explicitly flags 'No biological replication: one sample per condition'. This is the core constraint of the entire analysis.",
+              "question_note": "",
+              "acceptance_criteria": [
+                "Condition labels are read from metadata.csv and the actual label strings (not placeholders) appear in the outputs",
+                "Size factors / normalization factors for both libraries are reported numerically",
+                "A ranked gene table is written covering all expression-filtered genes with raw counts, normalized counts, mean expression, raw log2FC and shrunken log2FC",
+                "The dispersion sensitivity analysis reports gene counts passing FDR<0.05 under at least three assumed dispersion values, each explicitly labelled as conditional on an assumption",
+                "No output presents a p-value or FDR as if it were an estimated result from the data",
+                "The summary states in its first paragraph that n=1 per condition makes formal differential expression testing invalid",
+                "MA plot and treated-vs-control scatter are produced with top-shifted genes labelled"
+              ],
+              "constraints": [
+                "Do NOT report any p-value or adjusted p-value as an inferential result; any such value must be presented only inside the clearly labelled 'assumed dispersion' sensitivity analysis",
+                "Do NOT let DESeq2 or edgeR silently proceed with its default behaviour for unreplicated designs — set the dispersion explicitly and say what was set",
+                "Read condition labels from metadata.csv; do not hardcode 'treated'/'control' strings without checking",
+                "Apply an expression filter before ranking and report the number of genes before and after",
+                "Rank primarily by shrunken log2FC combined with mean expression, so that low-count genes do not dominate the top of the list"
+              ],
+              "caveats": [
+                "A single ratio of library sizes drives normalization; if the two libraries differ greatly in depth the fold changes are fragile",
+                "Genes with zero counts in one sample produce infinite raw log2FC — handle with the pseudocount and flag them separately",
+                "Gene symbols as row keys may contain duplicates or non-unique entries; check and report before aggregating",
+                "The word 'differentially expressed' in the research question cannot be honoured statistically — do not soften this in the writeup"
+              ],
+              "depends_on": [],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "ggplot2",
+                "data.table",
+                "apeglm"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Exploratory pathway context for top-shifted genes",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which human pathways are over-represented among the most strongly up- and down-shifted genes in the treated vs control liver comparison, treated strictly as hypothesis generation?",
+              "description": "Take the ranked gene table from T1S1 and run over-representation analysis separately on the top up-shifted and top down-shifted gene sets (use a fixed effect-size-based selection, e.g. top 200-300 genes per direction by shrunken log2FC among expression-filtered genes; report the exact cutoff used) against the expression-filtered gene universe from T1S1 — not against the whole genome. Use human pathway gene sets: the environment carries WikiPathways for Homo sapiens as a GMT keyed on HGNC symbols (the descriptor field is '%'-delimited: split it to recover the readable pathway name). Confirm the resource is present at run time before relying on it; if it is absent, report that and fall back to GO biological process via the installed human annotation package, stating the substitution. Also run a rank-based GSEA using the full shrunken log2FC ranking as the gene-level statistic, since a rank-based method uses the whole ranking rather than an arbitrary cutoff. Report overlap between the ORA and GSEA results. Report enrichment p-values and FDRs, but state clearly that these quantify only the over-representation of a gene list within pathways — they inherit no statistical validity for the underlying treatment contrast, because that contrast has no replication. Flag whether the top pathways are dominated by a handful of shared genes (report leading-edge / overlap gene counts per pathway) since with a fold-change-only ranking a single noisy gene family can drive apparent enrichment.",
+              "context": "Downstream of T1S1. Input is a gene-symbol-keyed ranked list from a human liver 1v1 comparison. Human WikiPathways GMT (HGNC symbols) is present in the reference store; org.Hs.eg.db and clusterProfiler/fgsea are installed.",
+              "acceptance_criteria": [
+                "ORA is run against the T1S1 expression-filtered universe, not a default genome-wide background, and the universe size is reported",
+                "The pathway resource actually used is named in the output, including whether it was WikiPathways human or the stated GO fallback",
+                "Separate up-shifted and down-shifted results are reported, with the exact gene-count cutoff stated",
+                "A rank-based GSEA on the full shrunken log2FC ranking is reported alongside the ORA, with overlap between the two noted",
+                "Per-pathway overlap/leading-edge gene counts are reported so single-gene-driven hits are visible",
+                "The summary states that enrichment significance does not confer statistical validity on the unreplicated underlying contrast"
+              ],
+              "constraints": [
+                "Use human gene sets only — the data is Homo sapiens liver; do not use the mouse or rat WikiPathways files present in the store",
+                "Use the expression-filtered gene set from T1S1 as the ORA background",
+                "Do not describe any pathway result as evidence that a pathway is 'activated' or 'suppressed' by treatment; frame all of it as a hypothesis to be tested in a replicated experiment"
+              ],
+              "caveats": [
+                "Salmon gene-symbol rows may not all map cleanly to HGNC symbols in the GMT; report the mapping rate",
+                "With only 12,000 genes in the matrix the background is already a filtered subset of the transcriptome, which biases enrichment toward well-expressed liver genes — say so",
+                "Enrichment on an n=1 ranking is unstable: a modest change in the fold-change cutoff can change the top pathways substantially; note sensitivity if apparent"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db",
+                "GSEABase",
+                "ggplot2",
+                "data.table"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Replication requirement and confirmation design",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "How many biological replicates per group would be needed to formally detect the effect sizes observed in the treated vs control liver comparison, and which candidate genes should a confirmation experiment target?",
+              "description": "Using the effect-size distribution from T1S1 (shrunken log2FC and mean normalized expression per gene), compute a power/sample-size analysis for a future replicated RNA-seq experiment. For a grid of plausible within-group biological coefficients of variation for human liver bulk RNA-seq (e.g. BCV 0.2, 0.4, 0.6), and for target effect sizes drawn from the observed distribution (e.g. the log2FC at the 90th, 95th and 99th percentiles of the observed shift), compute the replicates per group required to reach 80% power at a genome-wide FDR of 0.05 across ~12,000 tested genes. Use a negative-binomial power calculation appropriate for count data (an RNASeqPower-style closed form implemented directly, or simulation from a negative binomial with the observed per-gene means and the assumed dispersion, followed by the same DE pipeline and FDR control — state which was used). Output a compact table of required n per (BCV, effect size) cell and a curve of power vs n. Separately, produce a short prioritized candidate list (roughly 20-50 genes) for targeted confirmation, chosen for large shrunken log2FC AND high mean expression AND, where T1S2 provides it, membership in a coherently enriched pathway — because a qPCR or targeted panel confirmation is cheap and these are the genes worth spending it on. State plainly that this step's purpose is to convert an uninterpretable 1v1 comparison into a concrete, adequately powered follow-up design, and that no conclusion about treatment effect should be drawn until that follow-up is run.",
+              "context": "Downstream of T1S1 (effect sizes, per-gene mean expression) and T1S2 (pathway coherence). The dataset has 12,000 genes and 1 sample per condition; the deliverable is the design for the experiment that would actually answer the research question.",
+              "acceptance_criteria": [
+                "A required-n table is produced spanning at least three assumed BCV values and at least three effect sizes taken from the observed log2FC distribution",
+                "The power calculation method (closed-form NB or simulation) is named, and the FDR target and number of tests (~12,000) are stated",
+                "A power-vs-n curve is produced",
+                "A prioritized candidate list of ~20-50 genes for targeted confirmation is exported with the selection criteria (log2FC, mean expression, pathway membership) shown per gene",
+                "The summary states that no treatment-effect conclusion is warranted from the present data"
+              ],
+              "constraints": [
+                "Assumed BCV values must be stated as assumptions, with a note that they cannot be estimated from this dataset",
+                "Use the actual per-gene mean normalized expression from T1S1 for the power calculation, not generic simulated means",
+                "Do not present the candidate list as a validated differential expression result"
+              ],
+              "caveats": [
+                "Power estimates depend entirely on the assumed BCV, which is the one quantity this dataset cannot supply — present the range, not a single number",
+                "If the observed log2FC distribution is dominated by low-count genes, the percentile effect sizes will be inflated; use the expression-filtered, shrinkage-adjusted values"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "packages": [
+                "edgeR",
+                "DESeq2",
+                "ggplot2",
+                "data.table"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

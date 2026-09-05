@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly treats the balanced batch as a covariate in a ~batch+condition DESeq2 design, explicitly sets control as reference, keeps condition last for the default contrast, feeds raw filtered counts to the model, and explicitly rejects pre-correcting counts — a precise fit to the stated design. QC is concrete and design-aware (library sizes, detection, VST PCA colored by both batch and condition, confirmation that batch is not confounded, and a cautious outlier policy for n=12). The low-count filter (>=10 in >=6 samples) is group-size-aware and reasonable but is offered as an 'e.g.' with no justification, and BH at alpha 0.05 with apeglm/ashr shrinkage for ranking is properly specified. Enrichment is the weakest element: the collection and version are named and a GSEA-style ranked analysis is mentioned, but the ranking metric is only hinted at, no ORA universe (the tested/filtered gene set) is defined, and no gene-set size window is given; reporting also names packages but no versions."
+}

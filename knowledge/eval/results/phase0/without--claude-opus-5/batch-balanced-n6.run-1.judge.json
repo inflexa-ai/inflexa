@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly places the balanced batch as a covariate in ~ batch + condition on raw counts, explicitly forbids feeding a batch-corrected matrix into the test, and confines removeBatchEffect-style residualization to visualization, which matches the reference exactly; it also adds a defensible sensitivity fit without batch and correctly refuses a batch x condition interaction with only two batches. QC precedes inference with PCA colored by both condition and batch, percent variance per PC, sample correlation/clustering, and library sizes, though the outlier policy is 'describe, do not over-interpret' rather than a concrete action rule. Filtering (CPM>=1 in at least the smallest group size of 6) is minimal and justified, and normalization is median-of-ratios/TMM inside the model with no pre-normalized input. BH is applied with alpha stated at 0.05/0.10, shrinkage via apeglm/ashr with the correct caveat that p-values come from the unshrunken fit, and thresholds are fixed in advance with an explicit prohibition on post hoc relaxation. Enrichment is the weak point: the branch logic and honesty about a missing collection are good and the GSEA ranking metric is named, but no ORA universe is specified, no collection version or gene-set size window is given, and the whole step is contingent on run-time discovery. Reporting names the stack, design, reference level, thresholds, tested and significant gene counts, and design caveats."
+}

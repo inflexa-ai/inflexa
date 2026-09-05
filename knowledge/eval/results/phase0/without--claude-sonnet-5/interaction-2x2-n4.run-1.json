@@ -1,0 +1,1589 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-2x2-n4",
+  "run": 1,
+  "startedAt": "2026-09-05T04:44:46.888Z",
+  "elapsedMs": 503126,
+  "outcome": "plan_submitted",
+  "planId": "pln-e920d6c9",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, alignment, filtering and normalization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "After aligning the 16-sample counts.csv (12000 genes) to metadata.csv (genotype WT/KO, treatment vehicle/drug, 4 replicates/cell), are there low-count genes, outlier samples, or batch/PCA patterns that must be addressed before fitting the factorial model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_normalization",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv columns are exactly matched and ordered to metadata.csv rows; any mismatch is reported and resolved or flagged",
+          "Low-count genes are filtered using a threshold appropriate to the smallest group size (n=4/cell), e.g. retain genes with count >=10 in at least 4 samples",
+          "A normalized/variance-stabilized expression matrix, a PCA plot colored by genotype and shaped by treatment, and a sample-distance heatmap are produced",
+          "Any package requirement (DESeq2 primary; edgeR/limma-voom fallback) is probed at runtime before use, with the choice actually used stated in the output",
+          "Output QC note explicitly flags (or clears) outlier samples/batch effects before downstream modeling"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Full factorial DESeq2 model with genotype:treatment interaction",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2"
+        ],
+        "question": "Does the effect of drug vs vehicle differ significantly between KO and WT genotypes (genotype:treatment interaction term), and what are the main effects of treatment and genotype for context?",
+        "grounding": {
+          "claims": [],
+          "reason": "DESeq2 negative-binomial GLM with an explicit interaction term is the standard method for testing genotype-by-treatment effects in a factorial RNA-seq design (Love, Huber & Anders 2014, PMID 25516281).",
+          "status": "grounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 fit uses design = ~ genotype + treatment + genotype:treatment on the filtered count matrix from T1S1",
+          "Results table extracted for the genotype:treatment interaction coefficient, with BH-adjusted p-values (padj) and log2 fold changes",
+          "Results tables also extracted for the main effect of treatment and main effect of genotype, with an explicit caveat that these are not simply interpretable as 'average' effects when the interaction is significant",
+          "Log2FC shrinkage (apeglm if usable given the model coefficients, else ashr) attempted and reported; if neither package is available, unshrunken LFCs are reported with a stated caveat",
+          "Number and identity of genes with significant interaction (padj<0.05) reported, plus MA and volcano plots for the interaction term"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Simple-effects contrasts: drug vs vehicle within each genotype",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "What is the drug-vs-vehicle effect specifically within WT samples, and specifically within KO samples, and how do these two effects compare gene-by-gene (concordant, attenuated, enhanced, or reversed in KO)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1",
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 refit on the same filtered counts from T1S1 using a single 4-level group factor (WT_vehicle, WT_drug, KO_vehicle, KO_drug) to extract two independent contrasts: WT_drug vs WT_vehicle, and KO_drug vs KO_vehicle",
+          "Per-gene log2FC and padj reported for both simple effects across all tested genes",
+          "A per-gene comparison (difference and correlation of WT log2FC vs KO log2FC) is computed and genes classified as concordant / KO-attenuated / KO-enhanced / KO-reversed",
+          "This classification is cross-checked against the interaction-significant gene list from T2S1 for consistency",
+          "Scatter plot of WT log2FC vs KO log2FC, colored by interaction significance, is produced"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Consolidated summary table and visualization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Across all tested genes, what does the combined evidence (interaction term, WT-simple-effect, KO-simple-effect, main effects) show about whether and how strongly the drug acts differently in KO versus WT?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "reporting",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "acceptance_criteria": [
+          "One consolidated per-gene table merging: interaction LFC/padj, WT-simple-effect LFC/padj, KO-simple-effect LFC/padj, main-genotype LFC/padj, main-treatment LFC/padj, for all ~12000 tested genes",
+          "Heatmap of VST-normalized expression for the top interaction-significant genes (ranked by padj), with samples annotated by genotype and treatment",
+          "Labeled volcano plot for the interaction term",
+          "A plain-language descriptive statement of how many genes reach interaction significance and the general magnitude/direction of genotype-dependent effects, without offering biological interpretation beyond what the statistics show"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment on the genotype-dependent drug response",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which biological pathways or processes are enriched among genes showing a genotype-dependent drug response (ranked by the genotype:treatment interaction statistic)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Checks for an available curated human (Homo sapiens) gene-set collection (e.g., MSigDB Hallmark or GO Biological Process) before running any enrichment; if none is provisioned, reports the ranked interaction gene list only and explicitly states that pathway-level interpretation could not be performed, rather than fabricating a result",
+          "If a gene-set collection is available, runs a preranked test (e.g., fgsea) on the full interaction-ranked gene list (by test statistic) and/or an overrepresentation test on the padj<0.05 interaction gene subset, using the ~12000 tested genes as background",
+          "Reports BH/FDR-corrected q-values for any enrichment result",
+          "Top pathways distinguishing WT vs KO drug response are reported with their gene sets"
+        ]
+      }
+    ],
+    "title": "2x2 genotype x drug interaction DE analysis",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The research question — does the drug act differently in KO than in WT — is a genotype-by-treatment interaction question in a balanced 2x2 factorial (WT/KO x vehicle/drug, n=4/cell, 16 samples, 12000 genes, raw salmon counts). The design directly supports a DESeq2 negative-binomial model with design ~ genotype + treatment + genotype:treatment (Love, Huber & Anders 2014, PMID 25516281): the genotype:treatment coefficient is the direct test of whether the drug's effect differs by genotype. QC/normalization and gene filtering come first because DESeq2's dispersion estimates and independent filtering are sensitive to low-count genes and outlier samples in a modest n=4/group design. After the omnibus interaction test, simple-effects contrasts (drug vs vehicle within WT, and within KO, via a group-means parameterization) are fit on the same filtered data to characterize the direction and magnitude of the divergence the interaction test flags — an omnibus interaction p-value alone does not say which genotype the drug is stronger/weaker/reversed in. A consolidated summary/visualization step turns the three sets of statistics (interaction, WT-simple-effect, KO-simple-effect, main effects) into one interpretable table and figure set. Finally, pathway enrichment on the interaction-ranked gene list adds mechanistic context on which biological processes drive the genotype-dependent drug response — conditioned explicitly on a curated gene-set collection actually being available in this environment, since no reference store is currently provisioned and the step must degrade to reporting the ranked gene list alone if it is not."
+  },
+  "usage": {
+    "inputTokens": 11895622,
+    "outputTokens": 21143,
+    "cacheCreationInputTokens": 287695,
+    "cacheReadInputTokens": 11605513,
+    "reasoningTokens": 5912
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "ashr",
+          "IHW",
+          "pheatmap",
+          "ggplot2"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark human gene sets"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 interaction term 2x2 factorial design genotype treatment RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 interaction term factorial design",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Love Huber Anders DESeq2 moderated fold change",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "MSigDB hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "msigdbr",
+          "apeglm",
+          "ashr",
+          "pheatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "language": "r"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "deseq"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "language": "python"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "limit": 50
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 2x2 factorial interaction genotype treatment RNA-seq analysis script",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 factorial design interaction term tutorial",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 tutorial",
+        "limit": 5
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "design formula with interaction term for 2x2 factorial genotype treatment"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "design formula interaction term genotype treatment results contrast list"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "enrichment"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "fgsea preranked gene set enrichment analysis method",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Korotkevich fast gene set enrichment analysis fgsea",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "fgsea fast preranked gene set enrichment analysis Korotkevich",
+        "limit": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {}
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "a"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": ""
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "homo sapiens"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "brain"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": " "
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "limit": 1
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "atlas_singlecell"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO biological process"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "kegg"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene sets"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathway"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "annotation"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtf"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "any",
+        "limit": 1
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "TF"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "database"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "mouse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "refs"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "."
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "."
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "refs"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "categories"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways",
+        "limit": 1
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {}
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "c",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "e",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "homo",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "tissue"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "baseline"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTEx"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "n"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hgnc"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "t"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "g"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "s"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "o"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "l"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "i"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "r"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "d"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "a"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "p"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "y"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "m"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "v"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "b"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "u"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "z"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "w"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "k"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "f"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "j"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "q"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "x"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "h"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "enrichr"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "go.gmt"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gmt"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "geneset"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "signaling"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "csv"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "counts"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "store"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "sig"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "index"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "1"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "2"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "3"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "4"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "5"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "6"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "7"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "8"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "9"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "0"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "RNA"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "seq"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "knockout"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "drug"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "vehicle"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "condition"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "genotype"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "metadata"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "17"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wt"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ko"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "salmon"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "factorial"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "design"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "replicate"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "sample"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "table"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "2",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "2x2"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "interaction"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "n4"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "eval"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "phase0"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "without-interaction"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "no interaction"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "enrichment-agent"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hs"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Hs"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmarks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GOBP"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "c2"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "c5"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "c7"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "go_bp"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "bp"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cc"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "mf"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "panglao"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cellmarker"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "progeny"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "go"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "panther"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.hs"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "go term"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "c3"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Symbol"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ID"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "version"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "v2024"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "2024"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "2023"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msig"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "db"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "nervous"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "neuro"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "disease"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "protein"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "interactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "stringdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "network"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "opentargets"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "drugbank"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "liability"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "safety"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "toxcast"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "prism"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cmap"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "connectivity"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "chembl"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "compound"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "smiles"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "phenotype"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "mgi"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "imouse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "impc"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "expression atlas"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "brain atlas"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "tabula"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cell type"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "deconvolution"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "bio"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reference"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "genome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "chr"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "fasta"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "bed"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "2x2 genotype x drug interaction DE analysis",
+          "analytical_narrative": "The research question — does the drug act differently in KO than in WT — is a genotype-by-treatment interaction question in a balanced 2x2 factorial (WT/KO x vehicle/drug, n=4/cell, 16 samples, 12000 genes, raw salmon counts). The design directly supports a DESeq2 negative-binomial model with design ~ genotype + treatment + genotype:treatment (Love, Huber & Anders 2014, PMID 25516281): the genotype:treatment coefficient is the direct test of whether the drug's effect differs by genotype. QC/normalization and gene filtering come first because DESeq2's dispersion estimates and independent filtering are sensitive to low-count genes and outlier samples in a modest n=4/group design. After the omnibus interaction test, simple-effects contrasts (drug vs vehicle within WT, and within KO, via a group-means parameterization) are fit on the same filtered data to characterize the direction and magnitude of the divergence the interaction test flags — an omnibus interaction p-value alone does not say which genotype the drug is stronger/weaker/reversed in. A consolidated summary/visualization step turns the three sets of statistics (interaction, WT-simple-effect, KO-simple-effect, main effects) into one interpretable table and figure set. Finally, pathway enrichment on the interaction-ranked gene list adds mechanistic context on which biological processes drive the genotype-dependent drug response — conditioned explicitly on a curated gene-set collection actually being available in this environment, since no reference store is currently provisioned and the step must degrade to reporting the ranked gene list alone if it is not.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, alignment, filtering and normalization",
+              "track": "T1",
+              "step_type": "qc_normalization",
+              "question": "After aligning the 16-sample counts.csv (12000 genes) to metadata.csv (genotype WT/KO, treatment vehicle/drug, 4 replicates/cell), are there low-count genes, outlier samples, or batch/PCA patterns that must be addressed before fitting the factorial model?",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv columns are exactly matched and ordered to metadata.csv rows; any mismatch is reported and resolved or flagged",
+                "Low-count genes are filtered using a threshold appropriate to the smallest group size (n=4/cell), e.g. retain genes with count >=10 in at least 4 samples",
+                "A normalized/variance-stabilized expression matrix, a PCA plot colored by genotype and shaped by treatment, and a sample-distance heatmap are produced",
+                "Any package requirement (DESeq2 primary; edgeR/limma-voom fallback) is probed at runtime before use, with the choice actually used stated in the output",
+                "Output QC note explicitly flags (or clears) outlier samples/batch effects before downstream modeling"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Full factorial DESeq2 model with genotype:treatment interaction",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Does the effect of drug vs vehicle differ significantly between KO and WT genotypes (genotype:treatment interaction term), and what are the main effects of treatment and genotype for context?",
+              "acceptance_criteria": [
+                "DESeq2 fit uses design = ~ genotype + treatment + genotype:treatment on the filtered count matrix from T1S1",
+                "Results table extracted for the genotype:treatment interaction coefficient, with BH-adjusted p-values (padj) and log2 fold changes",
+                "Results tables also extracted for the main effect of treatment and main effect of genotype, with an explicit caveat that these are not simply interpretable as 'average' effects when the interaction is significant",
+                "Log2FC shrinkage (apeglm if usable given the model coefficients, else ashr) attempted and reported; if neither package is available, unshrunken LFCs are reported with a stated caveat",
+                "Number and identity of genes with significant interaction (padj<0.05) reported, plus MA and volcano plots for the interaction term"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "DESeq2 negative-binomial GLM with an explicit interaction term is the standard method for testing genotype-by-treatment effects in a factorial RNA-seq design (Love, Huber & Anders 2014, PMID 25516281)."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Simple-effects contrasts: drug vs vehicle within each genotype",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "What is the drug-vs-vehicle effect specifically within WT samples, and specifically within KO samples, and how do these two effects compare gene-by-gene (concordant, attenuated, enhanced, or reversed in KO)?",
+              "acceptance_criteria": [
+                "DESeq2 refit on the same filtered counts from T1S1 using a single 4-level group factor (WT_vehicle, WT_drug, KO_vehicle, KO_drug) to extract two independent contrasts: WT_drug vs WT_vehicle, and KO_drug vs KO_vehicle",
+                "Per-gene log2FC and padj reported for both simple effects across all tested genes",
+                "A per-gene comparison (difference and correlation of WT log2FC vs KO log2FC) is computed and genes classified as concordant / KO-attenuated / KO-enhanced / KO-reversed",
+                "This classification is cross-checked against the interaction-significant gene list from T2S1 for consistency",
+                "Scatter plot of WT log2FC vs KO log2FC, colored by interaction significance, is produced"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S3",
+              "name": "Consolidated summary table and visualization",
+              "track": "T2",
+              "step_type": "reporting",
+              "question": "Across all tested genes, what does the combined evidence (interaction term, WT-simple-effect, KO-simple-effect, main effects) show about whether and how strongly the drug acts differently in KO versus WT?",
+              "acceptance_criteria": [
+                "One consolidated per-gene table merging: interaction LFC/padj, WT-simple-effect LFC/padj, KO-simple-effect LFC/padj, main-genotype LFC/padj, main-treatment LFC/padj, for all ~12000 tested genes",
+                "Heatmap of VST-normalized expression for the top interaction-significant genes (ranked by padj), with samples annotated by genotype and treatment",
+                "Labeled volcano plot for the interaction term",
+                "A plain-language descriptive statement of how many genes reach interaction significance and the general magnitude/direction of genotype-dependent effects, without offering biological interpretation beyond what the statistics show"
+              ],
+              "packages": [
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment on the genotype-dependent drug response",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Which biological pathways or processes are enriched among genes showing a genotype-dependent drug response (ranked by the genotype:treatment interaction statistic)?",
+              "acceptance_criteria": [
+                "Checks for an available curated human (Homo sapiens) gene-set collection (e.g., MSigDB Hallmark or GO Biological Process) before running any enrichment; if none is provisioned, reports the ranked interaction gene list only and explicitly states that pathway-level interpretation could not be performed, rather than fabricating a result",
+                "If a gene-set collection is available, runs a preranked test (e.g., fgsea) on the full interaction-ranked gene list (by test statistic) and/or an overrepresentation test on the padj<0.05 interaction gene subset, using the ~12000 tested genes as background",
+                "Reports BH/FDR-corrected q-values for any enrichment result",
+                "Top pathways distinguishing WT vs KO drug response are reported with their gene sets"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,216 @@
+id: tpl-camera-hallmark
+version: 1.0.0
+label: "camera competitive gene set test on a limma-voom fit with the MSigDB Hallmark collection"
+language: R
+method: M-0021
+step_types: [enrichment]
+edam_operations: [EDAM:operation_3501]
+citations: [S-0006, S-0007, S-0008, S-0030, S-0031, S-0041]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates]
+  min_replicates: 2
+  conditions:
+    - field: data_state
+      op: eq
+      value: counts
+    - field: paired
+      op: eq
+      value: false
+    - field: interaction
+      op: is_null
+    - field: n_timepoints
+      op: is_null
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample,
+    plus a gene set collection in GMT format whose gene identifiers match the
+    gene column of the count matrix. The script builds the limma-voom fit
+    itself: filterByExpr, TMM scaling factors, voom, lmFit, and eBayes. Then
+    camera tests every set of the collection on the condition coefficient of
+    that fit. The condition column is renamed to `condition` inside the
+    script, thus the design formula names `condition` and any other column of
+    the sample table by its own name. One contrast: test level against
+    reference level. camera is a competitive test with a variance inflation
+    factor for the inter-gene correlation. By default the factor comes from a
+    fixed correlation of 0.01, and the switch estimate_inter_gene_cor makes
+    camera estimate the correlation of each set from the residuals.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the denominator of the contrast, for example Control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The level of the condition that is the numerator of the contrast, for example Treated."
+    adaptable: true
+  - name: design
+    type: formula
+    description: "The design formula. It must end with condition. Put a balanced batch or a covariate before it, for example ~ batch + condition."
+    adaptable: true
+    default: "~ condition"
+    default_source: "doi:10.12688/f1000research.9005.3"
+    pattern: "condition\\s*$"
+  - name: gmt_path
+    type: string
+    description: "Path of the gene set collection in GMT format, one set per line: name, description, then the gene identifiers."
+    adaptable: true
+  - name: min_count
+    type: integer
+    description: "The min.count of filterByExpr: a gene stays when it has at least this many counts, on the CPM scale of the median library, in the smallest group."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 0
+  - name: min_total_count
+    type: integer
+    description: "The min.total.count of filterByExpr: a gene also needs at least this many counts over all samples."
+    adaptable: true
+    default: 15
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 0
+  - name: normalization_method
+    type: string
+    description: "The library size scaling method of calcNormFactors."
+    adaptable: true
+    default: TMM
+    default_source: "doi:10.12688/f1000research.9005.3"
+    enum: [TMM, TMMwsp, RLE, upperquartile, none]
+  - name: inter_gene_cor
+    type: number
+    description: "The fixed inter-gene correlation of camera, applied to every set as one variance inflation factor. Ignored when estimate_inter_gene_cor is true."
+    adaptable: true
+    default: 0.01
+    default_source: "guide:limma/2026-05-19#gene-set-tests"
+    minimum: 0
+    maximum: 0.99
+  - name: estimate_inter_gene_cor
+    type: boolean
+    description: "True makes camera estimate the inter-gene correlation of each set from the residuals of the fit (inter.gene.cor NA), and the results table reports the estimate per set."
+    adaptable: true
+    default: false
+    default_source: "doi:10.1093/nar/gks461"
+  - name: use_ranks
+    type: boolean
+    description: "True runs the rank-based version of camera (a Wilcoxon-type statistic), false the parametric version on the moderated t-statistics."
+    adaptable: true
+    default: false
+    default_source: "doi:10.1093/nar/gks461"
+  - name: min_size
+    type: integer
+    description: "A gene set enters the test when it has at least this many members among the fitted genes."
+    adaptable: true
+    default: 15
+    default_source: "doi:10.1073/pnas.0506580102"
+    minimum: 2
+  - name: max_size
+    type: integer
+    description: "A gene set enters the test when it has at most this many members among the fitted genes."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.1073/pnas.0506580102"
+    minimum: 2
+  - name: padj_cutoff
+    type: number
+    description: "The FDR cutoff that counts a set as significant in the summary and the figures."
+    adaptable: false
+    default: 0.05
+    default_source: "guide:limma/2026-05-19#multiple-testing-across-genes-and-contrasts"
+  - name: n_top_sets
+    type: integer
+    description: "The number of sets, by FDR, in the top sets bar plot."
+    adaptable: true
+    default: 20
+    minimum: 1
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example camera or hallmark_treated_vs_control."
+    adaptable: true
+    default: camera
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV, with the condition column."
+  - name: gene_sets
+    path: "{{gmt_path}}"
+    description: "Gene set collection, GMT, in the identifier space of the count matrix."
+outputs:
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested gene set: pathway, size, direction (Up or Down), pvalue, padj (Benjamini-Hochberg FDR), mean_moderated_t (the mean moderated t-statistic of the members, a signed NES-like statistic), inter_gene_cor (the value used, or the estimate per set), genes (the fitted members, semicolon-joined)."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The contrast, the design, the database, the counts of fitted genes and of tested and significant sets, the camera settings, the package versions."
+  - name: top_sets
+    path: "figures/{prefix}_top_sets.png"
+    description: "Bar plot of the top sets by FDR: signed -log10 FDR, positive for Up, colored by direction, with the cutoff lines (and PDF)."
+  - name: barcode_top_set
+    path: "figures/{prefix}_barcode_top_set.png"
+    description: "Barcode plot of the members of the top set on the ranked moderated t-statistics (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: limma
+    version: "3.68.5"
+    track: bioconductor
+  - name: edgeR
+    version: "4.10.3"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n6-hallmark
+    dataset: two_group_n6/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+      gmt_path: /work/refs/hallmark.gmt
+    expect:
+      - "exists output/camera_results.csv"
+      - "exists output/camera_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/camera_top_sets.png"
+      - "exists figures/camera_top_sets.pdf"
+      - "exists figures/camera_barcode_top_set.png"
+      - "exists figures/camera_barcode_top_set.pdf"
+      - "csv_rows output/camera_results.csv >= 40"
+      - "json output/camera_summary.json n_samples == 12"
+      - "json output/camera_summary.json n_sets_tested >= 40"
+      - "truth_set_recall output/camera_results.csv >= 0.66"

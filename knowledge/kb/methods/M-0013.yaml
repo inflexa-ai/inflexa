@@ -1,0 +1,12 @@
+id: M-0013
+label: "apeglm log fold change shrinkage"
+description: >-
+  Empirical Bayes shrinkage of the log2 fold change with a heavy-tailed prior,
+  for one coefficient. It removes the noise of low count genes and preserves a
+  large true effect. The default shrinkage for ranking and for a reported effect.
+packages:
+  - name: apeglm
+    track: bioconductor
+    biotools: apeglm
+    version_range: ">=1.30"
+    bioconductor: "3.23"

@@ -1,0 +1,69 @@
+id: R-0021
+title: "Repeated measures over time with the subjects split between the conditions: a random subject effect"
+assertion: >-
+  If each subject gives samples at two or more time points, and the subjects
+  are split between the conditions, the subject is nested in the condition.
+  A fixed subject term then absorbs the condition, and the model matrix is
+  not full rank. Fit the subject as a random effect: the dream mixed model
+  from variancePartition with voom weights, which fits a variance for each
+  gene, or limma-voom with duplicateCorrelation, which fits one correlation
+  for all the genes and is the simpler method for one balanced block. State
+  the choice in the plan.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: paired
+    op: eq
+    value: true
+  - field: n_timepoints
+    op: gte
+    value: 2
+  - field: n_groups
+    op: gte
+    value: 2
+  - field: n_per_group_min
+    op: gte
+    value: 2
+action:
+  step_type: differential_expression
+  method: M-0017
+severity: info
+strength: common_practice
+evidence_quality: low
+recommendation_strength: conditional
+alternatives:
+  - method: M-0004
+    when: "The design has one random term and a balanced block, and one correlation for all the genes is enough."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      The guide shows a time series with repeated measurements of mice nested
+      within treatments, where a fixed mouse term makes the matrix not full
+      rank because the treatment effects are encompassed within the mouse
+      effects, and it presents the random effect for the mouse through
+      duplicateCorrelation as the way to keep the treatment comparison.
+    anchor: "Time series experiment with repeated mouse measurements nested within treatments; Treating factors that are not of direct interest as random effects"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0008
+    paraphrase: >-
+      For a multi-level experiment where each subject gives samples under
+      more than one condition and the subjects belong to groups, the guide
+      fits the subject as a random effect with duplicateCorrelation, because
+      a fixed subject term would absorb the comparison between the groups.
+    anchor: "Multi-level Experiments"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [design, repeated-measures, mixed-model, needs-source]

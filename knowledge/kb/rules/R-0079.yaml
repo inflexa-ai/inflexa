@@ -1,0 +1,53 @@
+id: R-0079
+title: "Strandedness unknown: infer the strandedness from the alignments before you count or trust the counts"
+assertion: >-
+  If the strandedness of the library is unknown, infer it before the counting
+  step, and before you trust a count table that a counter made with a strand
+  setting. Run an inference on a sample of aligned reads against the
+  annotation, for example the infer_experiment module of RSeQC, and record
+  the result for every sample. A wrong strand setting counts the antisense
+  reads of an overlapping gene, or it drops half of the reads, and the sample
+  structure QC does not show the error.
+modality: bulk_rna_seq
+conditions:
+  - field: strandedness
+    op: eq
+    value: unknown
+action:
+  step_type: qc_sample_structure
+  parameters:
+    - name: strandedness_inference
+      value: rseqc_infer_experiment
+      default_source: "doi:10.1093/bioinformatics/bts356"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0063
+    paraphrase: >-
+      RSeQC gives an infer_experiment module that samples the aligned reads
+      and compares the read strand with the gene strand of the annotation, to
+      tell whether the library is strand-specific and in which orientation.
+    anchor: "Modules; infer_experiment"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0012
+    paraphrase: >-
+      The survey lists the strand specificity of the library among the
+      properties of the protocol that decide how the reads are assigned to
+      the genes.
+    anchor: "Experimental design; Read mapping and quantification"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [qc, strandedness]

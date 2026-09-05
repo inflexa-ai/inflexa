@@ -1,0 +1,300 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n6-enrich",
+  "run": 1,
+  "startedAt": "2026-09-05T04:41:03.795Z",
+  "elapsedMs": 38226,
+  "outcome": "plan_submitted",
+  "planId": "pln-e8555b69",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, low-library-size sample assessment, normalization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A shallow sample can appear as an outlier in PCA purely due to technical noise, not because it lacks biological signal — check whether it still clusters with its condition group before deciding to exclude",
+          "If excluded, the design becomes unbalanced (6 vs 5); note this explicitly for the DE step"
+        ],
+        "context": "Input is /eval-phase0-without-two-group-n6-enrich-1/data/inputs/counts/counts.csv (12000 genes x 12 samples) and metadata.csv (12 x 2, condition column) for AD-lesional (n=6) vs control (n=6) skin, unpaired, single batch. Data profile flags sample_01 as having a library size about 4x below the median — this must be resolved with evidence before DE, not silently ignored or silently dropped.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Does sample_01's low library size (~4x below median) distort normalization or clustering enough to warrant exclusion or down-weighting before differential expression between AD-lesional and control skin?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Probe for DESeq2 and edgeR availability before use; fall back to the one present, or to a CPM+log2 approach with limma-voom if neither R package is importable",
+          "Do not drop sample_01 without first showing the QC evidence (PCA/clustering position, detection rate) — the decision must be justified in the step's output, not assumed from the caveat alone",
+          "Keep this step under the per-step script budget; do not begin DE modeling here"
+        ],
+        "acceptance_criteria": [
+          "Library size / total counts per sample computed and ranked, confirming sample_01's magnitude of deviation from the median",
+          "PCA or hierarchical clustering on normalized (e.g., variance-stabilized or log-CPM) counts produced, with sample_01 flagged and visually assessed for outlier behavior relative to its assigned condition group",
+          "Gene detection rate (genes with nonzero/above-threshold counts) computed per sample and compared for sample_01 vs the cohort",
+          "A documented, criterion-based decision is recorded: retain sample_01 with normalization as-is, retain with cautionary flag, or exclude — based on the QC evidence, not assumption",
+          "If sample_01 is retained, size-factor/normalization method used is confirmed to be robust to library-size heterogeneity (e.g., DESeq2 median-of-ratios or edgeR TMM, not naive total-count scaling)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: AD-lesional vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group (or 6 vs 5), power is limited for detecting modest effect sizes — state this explicitly rather than implying comprehensive coverage of true biological change",
+          "Unpaired design assumed per data context; if metadata reveals hidden pairing structure, this should be flagged, not assumed away"
+        ],
+        "context": "Continues from T1S1's QC decision on sample_01. Design is unpaired, single-batch, 6 vs 6 (or 6 vs 5 if excluded). Counts are raw Salmon gene-level integers appropriate for DESeq2/edgeR negative-binomial modeling.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which of the 12000 profiled genes are significantly differentially expressed between AD-lesional and control skin, after accounting for the sample_01 library-size decision made in QC?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the same tool (DESeq2 or edgeR) whose availability was confirmed in T1S1 — do not switch tools between steps without re-justifying",
+          "Apply independent filtering of low-count genes before testing (standard DESeq2/edgeR practice) to avoid inflating the multiple-testing burden",
+          "Report effect sizes (log2FC) alongside significance — do not rely on p-value/FDR alone"
+        ],
+        "acceptance_criteria": [
+          "DE model fit using the sample set and normalization approach decided in T1S1 (raw counts with DESeq2/edgeR, or voom-transformed with limma), single covariate = condition (AD_lesional vs control), unpaired two-group design",
+          "Full results table produced for all tested genes: log2 fold change, raw p-value, BH-adjusted p-value (FDR)",
+          "Significant gene set defined at a stated threshold (e.g., FDR < 0.05) and reported with counts of up- and down-regulated genes",
+          "MA plot and/or volcano plot generated to visualize the DE result",
+          "If sample_01 was retained, a sensitivity check (e.g., Cook's distance flags in DESeq2, or a leave-one-out comparison) reported to show whether its inclusion changes the top DE gene list materially"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark pathway enrichment on DE results",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GSEA on ~12000 background genes (rather than genome-wide ~20000) may shift enrichment statistics slightly versus a full-transcriptome background — note this as a limitation",
+          "Small per-group n (6 vs 6) means the underlying ranked list has limited statistical power; pathway-level enrichment can still be informative but should not be overstated as definitive mechanism"
+        ],
+        "context": "Input is the full DE results table (all ~12000 genes with log2FC, p-value, FDR) from T1S2, comparing AD-lesional vs control skin. Research question specifically asks which hallmark pathways change, so MSigDb Hallmark (H) collection is the target gene set — organism is human (taxon 9606).",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "msigdbr",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which MSigDb Hallmark pathways are enriched among genes changed between AD-lesional and control skin?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Confirm the gene set collection is the Hallmark (H) set specifically, not C2/C5/other MSigDb collections, since the research question names hallmark pathways explicitly",
+          "Use gene symbols consistently between the DE table (already gene-symbol indexed per data profile) and the pathway gene sets — verify identifier match rate before interpreting results",
+          "Report both GSEA and ORA results distinctly; do not merge them into a single number"
+        ],
+        "acceptance_criteria": [
+          "Hallmark gene set collection for Homo sapiens located (via reference store or an installed package's bundled sets such as msigdbr) and its availability explicitly confirmed before use",
+          "GSEA run on the full ranked gene list (ranked by signed statistic, e.g., -log10(p)*sign(log2FC), from T1S2) against Hallmark sets, reporting normalized enrichment score, p-value, and FDR per pathway",
+          "Complementary over-representation analysis (ORA) run on the significant DE gene subset (FDR < 0.05 from T1S2) against Hallmark sets as a robustness cross-check",
+          "Top enriched pathways (both directions) reported with leading-edge/core enrichment genes named",
+          "If Hallmark gene sets are unavailable in the environment, this is reported explicitly as a gap rather than substituted silently with an unstated gene set"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark enrichment",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "Raw Salmon gene-level counts (12000 genes x 12 samples: 6 AD-lesional, 6 control, unpaired, single batch) require standard count-based DE modeling. sample_01 has a library size ~4x below the median, which threatens both normalization (size-factor estimation) and dispersion estimation if left unaddressed. The plan first runs QC that explicitly quantifies this outlier's impact and decides — with a transparent, criterion-based rule rather than ad hoc exclusion — whether to drop it or retain it with appropriate weighting, then proceeds to DESeq2-based differential expression, followed by hallmark pathway enrichment (GSEA and/or ORA) on the resulting gene-level statistics. Package availability (DESeq2/edgeR, fgsea/clusterProfiler, msigdbr) is unconfirmed in this sandbox, so each step is written to probe and degrade gracefully to an available equivalent, and the enrichment step is written to check for hallmark gene sets in the reference store first and fall back to a bundled/programmatic source only if genuinely absent."
+  },
+  "usage": {
+    "inputTokens": 36959,
+    "outputTokens": 3477,
+    "cacheCreationInputTokens": 18699,
+    "cacheReadInputTokens": 18236,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "fgsea",
+          "clusterProfiler",
+          "msigdbr",
+          "apeglm",
+          "tximport",
+          "pheatmap",
+          "ggplot2"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark enrichment",
+          "analytical_narrative": "Raw Salmon gene-level counts (12000 genes x 12 samples: 6 AD-lesional, 6 control, unpaired, single batch) require standard count-based DE modeling. sample_01 has a library size ~4x below the median, which threatens both normalization (size-factor estimation) and dispersion estimation if left unaddressed. The plan first runs QC that explicitly quantifies this outlier's impact and decides — with a transparent, criterion-based rule rather than ad hoc exclusion — whether to drop it or retain it with appropriate weighting, then proceeds to DESeq2-based differential expression, followed by hallmark pathway enrichment (GSEA and/or ORA) on the resulting gene-level statistics. Package availability (DESeq2/edgeR, fgsea/clusterProfiler, msigdbr) is unconfirmed in this sandbox, so each step is written to probe and degrade gracefully to an available equivalent, and the enrichment step is written to check for hallmark gene sets in the reference store first and fall back to a bundled/programmatic source only if genuinely absent.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, low-library-size sample assessment, normalization",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Does sample_01's low library size (~4x below median) distort normalization or clustering enough to warrant exclusion or down-weighting before differential expression between AD-lesional and control skin?",
+              "acceptance_criteria": [
+                "Library size / total counts per sample computed and ranked, confirming sample_01's magnitude of deviation from the median",
+                "PCA or hierarchical clustering on normalized (e.g., variance-stabilized or log-CPM) counts produced, with sample_01 flagged and visually assessed for outlier behavior relative to its assigned condition group",
+                "Gene detection rate (genes with nonzero/above-threshold counts) computed per sample and compared for sample_01 vs the cohort",
+                "A documented, criterion-based decision is recorded: retain sample_01 with normalization as-is, retain with cautionary flag, or exclude — based on the QC evidence, not assumption",
+                "If sample_01 is retained, size-factor/normalization method used is confirmed to be robust to library-size heterogeneity (e.g., DESeq2 median-of-ratios or edgeR TMM, not naive total-count scaling)"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input is /eval-phase0-without-two-group-n6-enrich-1/data/inputs/counts/counts.csv (12000 genes x 12 samples) and metadata.csv (12 x 2, condition column) for AD-lesional (n=6) vs control (n=6) skin, unpaired, single batch. Data profile flags sample_01 as having a library size about 4x below the median — this must be resolved with evidence before DE, not silently ignored or silently dropped.",
+              "constraints": [
+                "Probe for DESeq2 and edgeR availability before use; fall back to the one present, or to a CPM+log2 approach with limma-voom if neither R package is importable",
+                "Do not drop sample_01 without first showing the QC evidence (PCA/clustering position, detection rate) — the decision must be justified in the step's output, not assumed from the caveat alone",
+                "Keep this step under the per-step script budget; do not begin DE modeling here"
+              ],
+              "caveats": [
+                "A shallow sample can appear as an outlier in PCA purely due to technical noise, not because it lacks biological signal — check whether it still clusters with its condition group before deciding to exclude",
+                "If excluded, the design becomes unbalanced (6 vs 5); note this explicitly for the DE step"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: AD-lesional vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 profiled genes are significantly differentially expressed between AD-lesional and control skin, after accounting for the sample_01 library-size decision made in QC?",
+              "acceptance_criteria": [
+                "DE model fit using the sample set and normalization approach decided in T1S1 (raw counts with DESeq2/edgeR, or voom-transformed with limma), single covariate = condition (AD_lesional vs control), unpaired two-group design",
+                "Full results table produced for all tested genes: log2 fold change, raw p-value, BH-adjusted p-value (FDR)",
+                "Significant gene set defined at a stated threshold (e.g., FDR < 0.05) and reported with counts of up- and down-regulated genes",
+                "MA plot and/or volcano plot generated to visualize the DE result",
+                "If sample_01 was retained, a sensitivity check (e.g., Cook's distance flags in DESeq2, or a leave-one-out comparison) reported to show whether its inclusion changes the top DE gene list materially"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Continues from T1S1's QC decision on sample_01. Design is unpaired, single-batch, 6 vs 6 (or 6 vs 5 if excluded). Counts are raw Salmon gene-level integers appropriate for DESeq2/edgeR negative-binomial modeling.",
+              "constraints": [
+                "Use the same tool (DESeq2 or edgeR) whose availability was confirmed in T1S1 — do not switch tools between steps without re-justifying",
+                "Apply independent filtering of low-count genes before testing (standard DESeq2/edgeR practice) to avoid inflating the multiple-testing burden",
+                "Report effect sizes (log2FC) alongside significance — do not rely on p-value/FDR alone"
+              ],
+              "caveats": [
+                "With n=6 per group (or 6 vs 5), power is limited for detecting modest effect sizes — state this explicitly rather than implying comprehensive coverage of true biological change",
+                "Unpaired design assumed per data context; if metadata reveals hidden pairing structure, this should be flagged, not assumed away"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark pathway enrichment on DE results",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which MSigDb Hallmark pathways are enriched among genes changed between AD-lesional and control skin?",
+              "acceptance_criteria": [
+                "Hallmark gene set collection for Homo sapiens located (via reference store or an installed package's bundled sets such as msigdbr) and its availability explicitly confirmed before use",
+                "GSEA run on the full ranked gene list (ranked by signed statistic, e.g., -log10(p)*sign(log2FC), from T1S2) against Hallmark sets, reporting normalized enrichment score, p-value, and FDR per pathway",
+                "Complementary over-representation analysis (ORA) run on the significant DE gene subset (FDR < 0.05 from T1S2) against Hallmark sets as a robustness cross-check",
+                "Top enriched pathways (both directions) reported with leading-edge/core enrichment genes named",
+                "If Hallmark gene sets are unavailable in the environment, this is reported explicitly as a gap rather than substituted silently with an unstated gene set"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "msigdbr",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Input is the full DE results table (all ~12000 genes with log2FC, p-value, FDR) from T1S2, comparing AD-lesional vs control skin. Research question specifically asks which hallmark pathways change, so MSigDb Hallmark (H) collection is the target gene set — organism is human (taxon 9606).",
+              "constraints": [
+                "Confirm the gene set collection is the Hallmark (H) set specifically, not C2/C5/other MSigDb collections, since the research question names hallmark pathways explicitly",
+                "Use gene symbols consistently between the DE table (already gene-symbol indexed per data profile) and the pathway gene sets — verify identifier match rate before interpreting results",
+                "Report both GSEA and ORA results distinctly; do not merge them into a single number"
+              ],
+              "caveats": [
+                "GSEA on ~12000 background genes (rather than genome-wide ~20000) may shift enrichment statistics slightly versus a full-transcriptome background — note this as a limitation",
+                "Small per-group n (6 vs 6) means the underlying ranked list has limited statistical power; pathway-level enrichment can still be informative but should not be overstated as definitive mechanism"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

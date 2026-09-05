@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan names the correct test for this design: a DESeq2 LRT of ~condition + time + condition:time against ~condition + time, with explicit reference levels, Cook's outlier reporting, and an honest n=3 interaction-power caveat, so it is clearly tailored to a 2x4x3 time course rather than generic. QC is design-aware (blind VST, PCA colored by condition and time, sample distances, per-sample library sizes) though the outlier response is limited to flagging rather than a stated inclusion/exclusion policy. Filtering (>=10 counts in >=3 samples, smallest cell size, before/after counts reported) and normalization (raw counts into median-of-ratios, blind VST kept out of the test) are both minimal and correctly placed. FDR at alpha 0.05 with independent filtering and apeglm/ashr shrinkage of the interaction coefficients is right; the main weakness is ranking fgsea by the unsigned LRT statistic, which is directionally uninformative for a preranked GSEA even though the universe, collection, size window, and fallback behavior are all specified. The final report step covers versions, formulas, thresholds, gene counts, QC findings, and design caveats."
+}

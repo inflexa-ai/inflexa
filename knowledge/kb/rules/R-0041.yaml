@@ -1,0 +1,72 @@
+id: R-0041
+title: "The report names the method, the package versions, the design, the thresholds, the number of tested genes, and the number of DE genes"
+assertion: >-
+  Each report of a differential expression analysis names the method, the
+  version of each package, the design formula and each contrast, the
+  thresholds on the adjusted p-value and on the fold change, the number of
+  genes tested after the filter, and the number of differentially expressed
+  genes per contrast. Attach the session information with every package
+  version, and name the reference genome and the annotation release. A
+  survey of published RNA-seq studies finds that a large share of the
+  reports omit at least one of these items, thus a reader cannot reproduce
+  the analysis. Write these items in the report before the gene tables.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: question
+    op: in
+    value: [differential_expression, full_plan]
+action:
+  step_type: report
+  parameters:
+    - name: report_fields
+      value: [method, versions, design, thresholds, n_tested, n_de, session_info]
+      default_source: "doi:10.1093/bib/bbz124"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0039
+    paraphrase: >-
+      The survey reads the methods sections of published RNA-seq studies and
+      finds that the tool, its version, its parameters, and the reference
+      genome and annotation are absent in a large share of them, so that the
+      analysis cannot be repeated from the paper. It asks for a minimal set
+      of reported items.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-03"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0012
+    paraphrase: >-
+      The survey describes the choices at each step of an RNA-seq analysis,
+      the quality control, the normalization, the differential expression
+      method, and the thresholds, and it states that the choice of the
+      normalization and of the differential expression method changes the
+      result.
+    anchor: "Differential expression analysis"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0044
+    paraphrase: >-
+      The framework requires that each pipeline records the version of every
+      tool in the run, pins the software in a container, and writes a report
+      of the run, so that another person can reproduce a result.
+    anchor: "Main text; Figure 1"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [reporting, reproducibility]

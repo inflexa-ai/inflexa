@@ -1,0 +1,61 @@
+id: R-0048
+title: "Human: MSigDB Hallmark first, then Reactome, WikiPathways, and GO; KEGG is not served"
+assertion: >-
+  For a human dataset, run the first enrichment against the MSigDB Hallmark
+  collection. The 50 hallmark sets condense the overlapping founder sets into
+  coherent signatures with less redundancy, thus the first pass is easy to
+  read. Then examine a hallmark hit against the Reactome and WikiPathways sets
+  of the C2 collection and against the Gene Ontology sets of the C5
+  collection. The knowledge plane serves no KEGG collection. A user with a
+  KEGG license adds the KEGG sets on the user side.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: organism
+    op: eq
+    value: human
+action:
+  step_type: enrichment
+  parameters:
+    - name: gene_set_collection
+      value: msigdb_hallmark_human
+      default_source: "doi:10.1016/j.cels.2015.12.004"
+    - name: follow_up
+      value: [reactome, wikipathways, go]
+      default_source: "doi:10.1038/s41596-018-0103-9"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0031
+    paraphrase: >-
+      The hallmark collection reduces the founder sets of MSigDB to 50 gene
+      sets. Each set summarizes a well defined biological state or process,
+      with less overlap and less noise than the founder sets, and the authors
+      present the collection as the starting point for an enrichment analysis.
+    anchor: "Abstract; Results, Hallmark gene sets"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0026
+    paraphrase: >-
+      The protocol recommends Gene Ontology biological process and curated
+      pathway databases such as Reactome and WikiPathways as the gene sets for
+      a broad analysis, and it states that the gene set files must be current
+      and that their version must be recorded.
+    anchor: "Experimental design, Pathway gene set databases"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-04"
+tags: [enrichment, gene-set-collection, human, needs-source]

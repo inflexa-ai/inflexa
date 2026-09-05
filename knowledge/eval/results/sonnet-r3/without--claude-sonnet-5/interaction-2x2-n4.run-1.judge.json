@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 1,
+    "normalization": 5,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies this as an interaction question and specifies the full factorial DESeq2 model with releveled reference categories, the named interaction coefficient (with LRT as an alternative), and genotype-stratified simple effects — a good match to the design, with an appropriate caveat that n=4/cell gives modest interaction power and that stratified significance is not the same as a significant interaction. QC is well specified (library sizes, detection, PCA/clustering colored by both factors, outliers flagged rather than dropped). The main gap is that no low-count filter is stated at all, and normalization is only asserted by the step title rather than described as median-of-ratios size factors estimated inside the model. BH at alpha 0.05 is explicit but shrinkage appears only as a package name (apeglm) with no statement of which coefficient is shrunk or that shrunk LFCs are reported. Enrichment names human-specific collections and sensibly falls back to fgsea on the ranked interaction statistic, but gives no ORA universe, no gene-set size window, and no collection versions; the report plan omits software versions and the number of genes tested."
+}

@@ -1,0 +1,74 @@
+id: R-0083
+title: "The p-value histogram is a diagnostic of the fit: inspect it before you trust the adjusted p-values"
+assertion: >-
+  Before the multiple testing adjustment, plot the histogram of the
+  unadjusted p-values of the tested genes. A correct fit gives a flat
+  histogram, or one that slopes down from left to right, because the null
+  p-values are uniform and the true effects add a peak near zero. A
+  histogram with a hill in the middle or a rise toward one is irregular. Its
+  causes are a distributional assumption that the test does not meet, a
+  correlation among the genes, or a discrete test. The Benjamini-Hochberg
+  procedure assumes uniform null p-values, thus the adjusted p-values from
+  such a fit are not reliable. Report the histogram and its shape beside the
+  number of significant genes.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 2
+action:
+  step_type: multiple_testing
+  parameters:
+    - name: pvalue_histogram
+      value: inspect_before_adjustment
+      default_source: "doi:10.3390/ht7030023"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0056
+    paraphrase: >-
+      The article defines a regular p-value histogram as one that is flat or
+      slopes down from left to right, and an irregular histogram as any
+      other shape. Its case studies show a hill near 0.3 and an excess near
+      1. The causes it examines are low power, a distributional assumption
+      that the test does not meet, and correlation among the features, and
+      it gives a binomial bound per bin as a quality control test.
+    anchor: "Section 2.1, Background; Section 2.3, Quality Control; Section 2.4, Causes of Anomalous p-Value Histograms"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0057
+    paraphrase: >-
+      The package estimates local and tail area false discovery rates from
+      p-values, z-scores, t-scores, or correlations, and it fits an empirical
+      null model where possible, to take account of an over-dispersion or an
+      under-dispersion of the theoretical null.
+    anchor: "Abstract"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0040
+    paraphrase: >-
+      The workflow plots the histogram of the p-values of the genes with a
+      mean normalized count above a small value, and it explains that the
+      genes with very small counts give a spike in the histogram that the
+      independent filter removes.
+    anchor: "Independent filtering; Histogram of p values"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [multiple-testing, diagnostics, p-value-histogram]

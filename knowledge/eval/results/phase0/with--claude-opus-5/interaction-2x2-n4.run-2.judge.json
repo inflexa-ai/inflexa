@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan targets the interaction directly with ~ genotype + treatment + genotype:treatment, explicitly relevels WT and vehicle (correctly flagging that alphabetical defaults would invert signs), tests the single interaction coefficient by Wald, decomposes it into all four simple effects with list contrasts, and adds an edgeR QL refit as a matched-filter robustness check with intersection rather than union reporting. QC is thorough and pre-model: blind VST, PCA on 500 most variable genes coloured by genotype/treatment/condition, distance heatmap, library sizes, ID concordance, and an explicit keep/drop policy for outliers. Filtering is minimal and justified (>=10 counts in >=4 samples, the smallest group size), with size factors/TMM inside the model and no pre-scaling; BH at alpha=0.05 with alpha passed to results(), ashr shrinkage chosen correctly over apeglm for contrasts, and lfcThreshold used inside the test rather than post hoc. Enrichment is preranked fgsea on the interaction Wald stat with a stated size window, tested-gene universe for any ORA, human sets only, and honest handling if no collection is available — slightly weakened only by the unresolved MSigDB version at plan time. The final report covers versions, formula, reference levels, contrasts, thresholds, tested/significant counts, Cook's vs independent-filtering NAs, method overlap, and an explicit n=4 interaction power caveat."
+}

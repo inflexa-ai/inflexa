@@ -1,0 +1,59 @@
+id: R-0076
+title: "Total RNA library: QC of the rRNA fraction, the mitochondrial fraction, and the intronic share per sample"
+assertion: >-
+  With a library from rRNA depletion, add three per-sample metrics to the
+  sample structure QC: the share of reads on rRNA, the share on mitochondrial
+  genes, and the share in introns. Ribosomal depletion can leave a residual
+  rRNA share that varies among samples, and it keeps pre-mRNA and other RNA
+  without a poly(A) tail. Thus the intronic share is higher than in a poly(A)
+  library, and it can differ among samples. A sample
+  whose metrics stand apart from the others is a candidate outlier, and the
+  metrics go into the report beside the library size. State the counting
+  mode, exon or gene body, because the intronic reads change the count of a
+  gene by that choice.
+modality: bulk_rna_seq
+conditions:
+  - field: library_type
+    op: eq
+    value: total
+action:
+  step_type: qc_sample_structure
+  parameters:
+    - name: total_rna_qc
+      value: [rrna_fraction, mito_fraction, intronic_share]
+      default_source: "doi:10.1186/1471-2164-15-419"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0051
+    paraphrase: >-
+      The comparison of poly(A) capture and rRNA depletion finds that the
+      rRNA-depleted libraries map a much smaller share of their reads to the
+      transcriptome, with many reads in intronic regions, that the rRNA
+      removal is as efficient as with poly(A) capture, and that the protocols
+      agree on the transcript quantification.
+    anchor: "Abstract; Results; Read distribution"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0072
+    paraphrase: >-
+      The ribo-minus library has a larger share of reads in intronic and in
+      intergenic regions than the poly(A) library, it detects transcripts
+      without a poly(A) tail, and the two preparations give different
+      expression profiles.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [qc, library-type, total-rna]

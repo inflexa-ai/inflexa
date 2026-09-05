@@ -1,0 +1,225 @@
+{
+  "campaign": "sonnet-r3",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "batch-balanced-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T08:59:44.146Z",
+  "elapsedMs": 26772,
+  "outcome": "plan_submitted",
+  "planId": "pln-206e2f4f",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, sample-metadata concordance, and batch-balance check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "counts.csv is described as 12000 x 13 while metadata.csv is 12 x 3 — resolve this discrepancy explicitly (e.g. a gene-symbol/index column counted as a data column) before proceeding; do not silently drop a sample",
+          "Confirm gene symbols are unique (deduplicate or aggregate duplicates) before using them as the count matrix row index"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the 12 kidney samples in counts.csv match the 12 rows in metadata.csv on condition (treated/control) and batch, and is batch balanced with respect to condition (3 treated + 3 control per batch, or equivalent balanced split across the 2 known batches)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv columns are matched 1:1 to metadata.csv rows; any mismatch (e.g. the extra 13th column noted in the counts file vs 12 metadata rows) is explicitly resolved and reported",
+          "A condition x batch cross-tabulation is produced confirming balance (or reporting the actual imbalance if not perfectly balanced)",
+          "Genes with near-zero counts across all samples are flagged for filtering (e.g. rowSums(counts) > 0 or a low-count filter appropriate for 12000 genes x 12 samples) prior to DE modeling",
+          "Library size and count distribution per sample are reported to catch outlier samples"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, treated vs control, batch as covariate",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group and only 2 batches, ~ batch + condition uses 1 df for batch — verify the design matrix is full rank before fitting",
+          "Do not use batch-corrected (e.g. ComBat-adjusted) counts as DESeq2 input; model batch as a covariate in the GLM instead of pre-correcting counts, which would distort the count distribution DESeq2 assumes"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr"
+        ],
+        "question": "Which genes are differentially expressed between treated and control kidney samples when modeling batch (the two known, condition-balanced processing batches) as a covariate: ~ batch + condition?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 is run on raw integer counts (not pre-normalized) with design formula ~ batch + condition, condition releveled so control is the reference",
+          "Independent filtering and Benjamini-Hochberg FDR correction applied; results table reports baseMean, log2FoldChange, lfcSE, stat, pvalue, padj for every tested gene",
+          "Shrunken log2 fold changes reported via apeglm or ashr for effect-size ranking",
+          "A summary of significant genes (padj < 0.05) is produced, plus diagnostic plots (PCA colored by condition and batch, dispersion plot) to confirm batch is not aliased with condition",
+          "Full results table exported for downstream enrichment"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on treated vs control DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The reference WikiPathways human GMT uses HGNC gene symbols with a '%'-delimited descriptor as the pathway name field — parse it (split on '%') to recover a readable pathway name before reporting results",
+          "Confirm gene symbol casing/format in the DE results matches HGNC symbols in the GMT before matching"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control kidney samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Over-representation analysis (or GSEA using the full ranked gene list by shrunken log2FoldChange/stat) run against WikiPathways human gene sets",
+          "Input significant gene list uses the padj < 0.05 threshold from T1S2 for ORA, and/or the full ranked list for GSEA",
+          "Output includes pathway name, WikiPathways ID, enrichment p-value, adjusted p-value (FDR), gene overlap/leading-edge genes",
+          "If WikiPathways human gmt is unavailable at run time, this is explicitly reported and the step falls back to reporting only the DE gene list without invented enrichment results"
+        ]
+      }
+    ],
+    "title": "Kidney treated vs control DE with batch correction",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq raw gene-level counts (12000 genes x 13 samples file, 12 samples in metadata: 6 treated vs 6 control, kidney tissue) with two known processing batches balanced across condition. Because batch is balanced with respect to condition, batch can be included as a covariate in the differential expression model without confounding the treatment effect. Plan: (1) QC and filter the count matrix, confirm sample-metadata concordance and batch balance, (2) run DESeq2 with a design that includes batch as a covariate to test treated vs control, producing a full DE gene list with shrunken log fold changes, (3) run pathway enrichment on the DE results using WikiPathways human gene sets, which are available in the reference store. No translational/PK/safety/immune context is present in the research question, so no additional translational tracks are added."
+  },
+  "usage": {
+    "inputTokens": 87177,
+    "outputTokens": 2260,
+    "cacheCreationInputTokens": 68869,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with batch correction",
+          "analytical_narrative": "The dataset is bulk RNA-seq raw gene-level counts (12000 genes x 13 samples file, 12 samples in metadata: 6 treated vs 6 control, kidney tissue) with two known processing batches balanced across condition. Because batch is balanced with respect to condition, batch can be included as a covariate in the differential expression model without confounding the treatment effect. Plan: (1) QC and filter the count matrix, confirm sample-metadata concordance and batch balance, (2) run DESeq2 with a design that includes batch as a covariate to test treated vs control, producing a full DE gene list with shrunken log fold changes, (3) run pathway enrichment on the DE results using WikiPathways human gene sets, which are available in the reference store. No translational/PK/safety/immune context is present in the research question, so no additional translational tracks are added.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, sample-metadata concordance, and batch-balance check",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 kidney samples in counts.csv match the 12 rows in metadata.csv on condition (treated/control) and batch, and is batch balanced with respect to condition (3 treated + 3 control per batch, or equivalent balanced split across the 2 known batches)?",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv columns are matched 1:1 to metadata.csv rows; any mismatch (e.g. the extra 13th column noted in the counts file vs 12 metadata rows) is explicitly resolved and reported",
+                "A condition x batch cross-tabulation is produced confirming balance (or reporting the actual imbalance if not perfectly balanced)",
+                "Genes with near-zero counts across all samples are flagged for filtering (e.g. rowSums(counts) > 0 or a low-count filter appropriate for 12000 genes x 12 samples) prior to DE modeling",
+                "Library size and count distribution per sample are reported to catch outlier samples"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "counts.csv is described as 12000 x 13 while metadata.csv is 12 x 3 — resolve this discrepancy explicitly (e.g. a gene-symbol/index column counted as a data column) before proceeding; do not silently drop a sample",
+                "Confirm gene symbols are unique (deduplicate or aggregate duplicates) before using them as the count matrix row index"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, treated vs control, batch as covariate",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between treated and control kidney samples when modeling batch (the two known, condition-balanced processing batches) as a covariate: ~ batch + condition?",
+              "acceptance_criteria": [
+                "DESeq2 is run on raw integer counts (not pre-normalized) with design formula ~ batch + condition, condition releveled so control is the reference",
+                "Independent filtering and Benjamini-Hochberg FDR correction applied; results table reports baseMean, log2FoldChange, lfcSE, stat, pvalue, padj for every tested gene",
+                "Shrunken log2 fold changes reported via apeglm or ashr for effect-size ranking",
+                "A summary of significant genes (padj < 0.05) is produced, plus diagnostic plots (PCA colored by condition and batch, dispersion plot) to confirm batch is not aliased with condition",
+                "Full results table exported for downstream enrichment"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=6 per group and only 2 batches, ~ batch + condition uses 1 df for batch — verify the design matrix is full rank before fitting",
+                "Do not use batch-corrected (e.g. ComBat-adjusted) counts as DESeq2 input; model batch as a covariate in the GLM instead of pre-correcting counts, which would distort the count distribution DESeq2 assumes"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on treated vs control DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control kidney samples?",
+              "acceptance_criteria": [
+                "Over-representation analysis (or GSEA using the full ranked gene list by shrunken log2FoldChange/stat) run against WikiPathways human gene sets",
+                "Input significant gene list uses the padj < 0.05 threshold from T1S2 for ORA, and/or the full ranked list for GSEA",
+                "Output includes pathway name, WikiPathways ID, enrichment p-value, adjusted p-value (FDR), gene overlap/leading-edge genes",
+                "If WikiPathways human gmt is unavailable at run time, this is explicitly reported and the step falls back to reporting only the DE gene list without invented enrichment results"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "The reference WikiPathways human GMT uses HGNC gene symbols with a '%'-delimited descriptor as the pathway name field — parse it (split on '%') to recover a readable pathway name before reporting results",
+                "Confirm gene symbol casing/format in the DE results matches HGNC symbols in the GMT before matching"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

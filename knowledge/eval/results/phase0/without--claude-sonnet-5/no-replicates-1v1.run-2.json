@@ -1,0 +1,314 @@
+{
+  "campaign": "phase0",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "no-replicates-1v1",
+  "run": 2,
+  "startedAt": "2026-09-05T04:59:05.927Z",
+  "elapsedMs": 49134,
+  "outcome": "plan_submitted",
+  "planId": "pln-609b961f",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, QC, normalize counts and compute fold-change ranking",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With one sample per condition there is no within-group variance to estimate — do not report a classical p-value from a variance model as if it were validly estimated",
+          "Genes with very low counts in one or both samples can show extreme, unstable fold-changes purely from Poisson noise; flag rather than silently rank these at the top"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "For the single treated sample vs the single control sample in counts.csv (12000 genes x 2 samples, matched to metadata.csv), what is each gene's normalized expression change, and which genes show the largest, most reliable log2 fold-changes given zero replication?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Confirm the availability of a normalization package (e.g. edgeR for TMM factors) before using it; if unavailable, use library-size (CPM) normalization instead and state the substitution"
+        ],
+        "acceptance_criteria": [
+          "Counts.csv (12000 genes x 2 samples) and metadata.csv (2 samples x condition) are loaded and sample-to-condition mapping is verified against metadata before any comparison is made",
+          "Library-size normalization (CPM or TMM-based scaling, whichever library is available) is applied to both samples before computing fold-change",
+          "A per-gene table is produced with raw counts, normalized counts, log2 fold-change (treated vs control), and a low-count/zero-count flag for genes near the detection floor in either sample",
+          "Genes with low counts in both samples (e.g. below a stated minimum count threshold) are flagged or filtered separately from the ranked list, since fold-change is unstable at low counts",
+          "Output explicitly states this is a two-sample fold-change ranking with no statistical replication and is not a substitute for a p-value-based DE call"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "No-replicate differential expression via NOISeq (or documented fallback)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "NOISeq (the non-replicate mode) is a heuristic noise model, not a validated inferential test with formal type-I error control at n=1 vs n=1 — do not describe its output as a p-value or FDR",
+          "Do not attempt DESeq2 or edgeR standard workflows here: both require replicate-based dispersion estimation that this design cannot supply"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "NOISeq"
+        ],
+        "question": "Using the NOISeq framework designed for RNA-seq without biological replicates, which of the 12000 genes show a probability of differential expression between the treated and control liver samples that clears a stated threshold?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Explicitly check for NOISeq's availability before writing code that imports it; do not assume presence"
+        ],
+        "acceptance_criteria": [
+          "NOISeq package availability is probed first (requireNamespace/import check) and the outcome is explicitly reported",
+          "If NOISeq is available: NOISeq (not NOISeqBIO, which requires replicates) is run on the normalized two-sample count matrix using its noise-distribution model based on count and M/D (fold-change/absolute difference) values, producing a probability-of-differential-expression score per gene",
+          "A results table lists gene, normalized counts in each sample, log2 fold-change, and the NOISeq differential-expression probability, sorted by that probability",
+          "If NOISeq is unavailable, the step reports this plainly and falls back to reporting the top-ranked genes from the T1S1 fold-change table with an explicit statement that no formal no-replicate statistical model was applied",
+          "Final output states the probability score from NOISeq is not equivalent to a replicate-based FDR-corrected p-value and should be treated as hypothesis-generating"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Functional enrichment of top candidate genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Confirm a Homo sapiens gene-set collection (GO/Reactome/KEGG/Hallmark) is actually present in the environment before committing to a specific database; report and stop gracefully if none is found",
+          "Enrichment run on a fold-change-ranked list without replicate support inherits that list's fragility — treat convergent pathway signal as suggestive, not confirmatory"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy"
+        ],
+        "question": "Do the genes ranked as most differentially expressed (from T1S1 fold-change ranking and/or T1S2 NOISeq probability) converge on specific biological pathways or processes in liver, providing pathway-level support that individual-gene calls (unreliable at n=1 vs n=1) cannot provide alone?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Do not present enrichment p-values as validating the upstream gene calls' statistical significance; they characterize the gene set's coherence, not the underlying DE test's validity"
+        ],
+        "acceptance_criteria": [
+          "Enrichment analysis (e.g. ORA against GO/Reactome/KEGG or hallmark gene sets, whichever gene-set reference is available for Homo sapiens) is run on the top candidate gene list from T1S2 (or T1S1 fallback)",
+          "If no human gene-set reference is available in the environment, the step reports this explicitly rather than fabricating pathway terms",
+          "Enriched terms are reported with adjusted p-values and the contributing gene list per term",
+          "The report notes that pathway-level enrichment from a single-pair comparison is itself exploratory, since the underlying gene ranking has no replicate-based statistical support"
+        ]
+      }
+    ],
+    "title": "1v1 liver DE: fold-change + NOISeq no-replicate analysis",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is a single treated vs single control liver RNA-seq comparison (12000 genes x 2 samples in counts.csv, 2x2 metadata.csv), with explicit caveat of no biological replication. This design has no within-group variance, so replicate-dependent dispersion estimators (DESeq2's per-gene dispersion, edgeR's tagwise/trended dispersion) cannot be fit from the data itself — any p-value from those tools on n=1 vs n=1 would rest entirely on an assumed dispersion, not an estimated one. The literature for exactly this design (Tarazona et al. 2011 Genome Research; Tarazona et al. 2015 NAR) is the NOISeq/NOISeqBIO framework, built for RNA-seq differential expression without replicates via a non-parametric noise model derived from the data's own count and fold-change distributions, plus simple normalization-and-fold-change ranking as a transparent baseline. The plan therefore: (1) loads and QC's the two-sample count matrix, applies standard library-size normalization (CPM/TMM), and computes a straightforward log2 fold-change and rank-based differential call as an interpretable baseline that makes no false replication claims; (2) runs NOISeq (probability-of-differential-expression, not a classical p-value) as the more principled no-replicate method, explicitly checking package availability first and falling back to the fold-change ranking with a stated caveat if NOISeq is unavailable; (3) hands the resulting candidate gene list to functional enrichment for biological interpretation, since with n=1 per group individual gene calls are inherently fragile and pathway-level convergence is the more defensible signal. Every step and the final report must state plainly that results are exploratory/hypothesis-generating only, given zero degrees of freedom for classical variance estimation."
+  },
+  "usage": {
+    "inputTokens": 196989,
+    "outputTokens": 3722,
+    "cacheCreationInputTokens": 24766,
+    "cacheReadInputTokens": 172103,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "NOISeq"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression no replicates single sample comparison method",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 edgeR no replicate dispersion estimate fixed dispersion RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "edgeR without replicates fixed biological coefficient of variation",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "edgeR bcv no replicates",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "NOISeq differential expression no replicates RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "26184878",
+          "21903743"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "liver human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "1v1 liver DE: fold-change + NOISeq no-replicate analysis",
+          "analytical_narrative": "The dataset is a single treated vs single control liver RNA-seq comparison (12000 genes x 2 samples in counts.csv, 2x2 metadata.csv), with explicit caveat of no biological replication. This design has no within-group variance, so replicate-dependent dispersion estimators (DESeq2's per-gene dispersion, edgeR's tagwise/trended dispersion) cannot be fit from the data itself — any p-value from those tools on n=1 vs n=1 would rest entirely on an assumed dispersion, not an estimated one. The literature for exactly this design (Tarazona et al. 2011 Genome Research; Tarazona et al. 2015 NAR) is the NOISeq/NOISeqBIO framework, built for RNA-seq differential expression without replicates via a non-parametric noise model derived from the data's own count and fold-change distributions, plus simple normalization-and-fold-change ranking as a transparent baseline. The plan therefore: (1) loads and QC's the two-sample count matrix, applies standard library-size normalization (CPM/TMM), and computes a straightforward log2 fold-change and rank-based differential call as an interpretable baseline that makes no false replication claims; (2) runs NOISeq (probability-of-differential-expression, not a classical p-value) as the more principled no-replicate method, explicitly checking package availability first and falling back to the fold-change ranking with a stated caveat if NOISeq is unavailable; (3) hands the resulting candidate gene list to functional enrichment for biological interpretation, since with n=1 per group individual gene calls are inherently fragile and pathway-level convergence is the more defensible signal. Every step and the final report must state plainly that results are exploratory/hypothesis-generating only, given zero degrees of freedom for classical variance estimation.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, QC, normalize counts and compute fold-change ranking",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "For the single treated sample vs the single control sample in counts.csv (12000 genes x 2 samples, matched to metadata.csv), what is each gene's normalized expression change, and which genes show the largest, most reliable log2 fold-changes given zero replication?",
+              "acceptance_criteria": [
+                "Counts.csv (12000 genes x 2 samples) and metadata.csv (2 samples x condition) are loaded and sample-to-condition mapping is verified against metadata before any comparison is made",
+                "Library-size normalization (CPM or TMM-based scaling, whichever library is available) is applied to both samples before computing fold-change",
+                "A per-gene table is produced with raw counts, normalized counts, log2 fold-change (treated vs control), and a low-count/zero-count flag for genes near the detection floor in either sample",
+                "Genes with low counts in both samples (e.g. below a stated minimum count threshold) are flagged or filtered separately from the ranked list, since fold-change is unstable at low counts",
+                "Output explicitly states this is a two-sample fold-change ranking with no statistical replication and is not a substitute for a p-value-based DE call"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With one sample per condition there is no within-group variance to estimate — do not report a classical p-value from a variance model as if it were validly estimated",
+                "Genes with very low counts in one or both samples can show extreme, unstable fold-changes purely from Poisson noise; flag rather than silently rank these at the top"
+              ],
+              "constraints": [
+                "Confirm the availability of a normalization package (e.g. edgeR for TMM factors) before using it; if unavailable, use library-size (CPM) normalization instead and state the substitution"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "No-replicate differential expression via NOISeq (or documented fallback)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Using the NOISeq framework designed for RNA-seq without biological replicates, which of the 12000 genes show a probability of differential expression between the treated and control liver samples that clears a stated threshold?",
+              "acceptance_criteria": [
+                "NOISeq package availability is probed first (requireNamespace/import check) and the outcome is explicitly reported",
+                "If NOISeq is available: NOISeq (not NOISeqBIO, which requires replicates) is run on the normalized two-sample count matrix using its noise-distribution model based on count and M/D (fold-change/absolute difference) values, producing a probability-of-differential-expression score per gene",
+                "A results table lists gene, normalized counts in each sample, log2 fold-change, and the NOISeq differential-expression probability, sorted by that probability",
+                "If NOISeq is unavailable, the step reports this plainly and falls back to reporting the top-ranked genes from the T1S1 fold-change table with an explicit statement that no formal no-replicate statistical model was applied",
+                "Final output states the probability score from NOISeq is not equivalent to a replicate-based FDR-corrected p-value and should be treated as hypothesis-generating"
+              ],
+              "packages": [
+                "NOISeq"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "NOISeq (the non-replicate mode) is a heuristic noise model, not a validated inferential test with formal type-I error control at n=1 vs n=1 — do not describe its output as a p-value or FDR",
+                "Do not attempt DESeq2 or edgeR standard workflows here: both require replicate-based dispersion estimation that this design cannot supply"
+              ],
+              "constraints": [
+                "Explicitly check for NOISeq's availability before writing code that imports it; do not assume presence"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Functional enrichment of top candidate genes",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do the genes ranked as most differentially expressed (from T1S1 fold-change ranking and/or T1S2 NOISeq probability) converge on specific biological pathways or processes in liver, providing pathway-level support that individual-gene calls (unreliable at n=1 vs n=1) cannot provide alone?",
+              "acceptance_criteria": [
+                "Enrichment analysis (e.g. ORA against GO/Reactome/KEGG or hallmark gene sets, whichever gene-set reference is available for Homo sapiens) is run on the top candidate gene list from T1S2 (or T1S1 fallback)",
+                "If no human gene-set reference is available in the environment, the step reports this explicitly rather than fabricating pathway terms",
+                "Enriched terms are reported with adjusted p-values and the contributing gene list per term",
+                "The report notes that pathway-level enrichment from a single-pair comparison is itself exploratory, since the underlying gene ranking has no replicate-based statistical support"
+              ],
+              "packages": [
+                "gseapy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Confirm a Homo sapiens gene-set collection (GO/Reactome/KEGG/Hallmark) is actually present in the environment before committing to a specific database; report and stop gracefully if none is found",
+                "Enrichment run on a fold-change-ranked list without replicate support inherits that list's fragility — treat convergent pathway signal as suggestive, not confirmatory"
+              ],
+              "constraints": [
+                "Do not present enrichment p-values as validating the upstream gene calls' statistical significance; they characterize the gene set's coherence, not the underlying DE test's validity"
+              ]
+            }
+          ],
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan uses DESeq2 Wald with apeglm as primary and edgeR QLF as a cross-check, matching the reference method for a single-batch, unpaired 3v3 raw-count design, and explicitly refuses to lower alpha to compensate for low power. QC precedes testing with blind VST PCA, sample distance heatmap, library sizes, and a stated report-only policy for outliers; the filter (>=10 counts in >=3 samples, tied to the smaller group size) is minimal and justified, with independent filtering left to do the rest. Normalization is inside each model (median-of-ratios; TMM on the edgeR path) with no pre-normalized input, and the design formula ~condition with control explicitly releveled and the contrast treated vs control is stated. BH at alpha=0.05 with independent filtering on, apeglm shrinkage for reported/ranked LFC, and Cook's-distance NA accounting are all specified. GSEA is not strictly warranted by the question but is well-specified (full ranked list by Wald stat, Hallmark, minSize/maxSize, BH, universe = tested genes, availability check); the ORA universe note is slightly vestigial and collection version is deferred rather than named, a minor deduction."
+}

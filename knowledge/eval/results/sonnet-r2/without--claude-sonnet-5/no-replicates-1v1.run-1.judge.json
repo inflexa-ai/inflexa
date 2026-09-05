@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 3,
+    "qc_present": 4,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 2,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses the 1-vs-1 design and states that dispersion cannot be estimated, but then proceeds to manufacture inference anyway via an arbitrary fixed BCV=0.4 exact test, emitting p-values and BH-adjusted FDR that the reference explicitly rules out; the caveat text does not undo the fact that the deliverable is a p-value table. QC is thin and mostly library-size bookkeeping with no sample-structure diagnostic or outlier policy (understandable at n=2, but nothing is stated beyond totals), while filtering (>=1 count in at least one sample) and in-model TMM/median-of-ratios normalization are appropriate. The design formula is only a two-level condition factor with no stated reference level or contrast direction, and no LFC shrinkage is applied. Enrichment is not warranted from an unreplicated screen, yet the plan runs ORA/GSEA gated on nominal p<0.05 with no explicit universe, no stated ranking metric, no collection version, and no gene-set size window, compounding the invalid upstream call."
+}

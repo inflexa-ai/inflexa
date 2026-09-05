@@ -1,0 +1,70 @@
+id: R-0077
+title: "Poly(A) library: QC of the 3' coverage bias per sample as the sign of RNA degradation"
+assertion: >-
+  With a poly(A) library, compute the gene body coverage per sample and report
+  the 3' bias beside the RNA integrity number when it is known. Poly(A)
+  capture starts at the 3' end. Thus a degraded RNA gives a read distribution
+  that shifts toward the 3' end, and the shift changes the count of a gene by
+  its length. A sample with a 3' bias apart from the others is a candidate
+  outlier. When the RNA integrity number is known, it varies among the
+  samples, and it is not confounded with the condition, add it as a
+  covariate in the design.
+modality: bulk_rna_seq
+conditions:
+  - field: library_type
+    op: eq
+    value: polyA
+action:
+  step_type: qc_sample_structure
+  parameters:
+    - name: polya_qc
+      value: [three_prime_bias, rin]
+      default_source: "doi:10.1186/1741-7007-12-42"
+    - name: degradation_covariate
+      value: rin_if_known
+      default_source: "doi:10.1186/1741-7007-12-42"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0071
+    paraphrase: >-
+      The study lets tissue samples decay for different times before the RNA
+      extraction, finds widespread effects of the RNA integrity number on the
+      expression estimates that a standard normalization does not remove, and
+      corrects most of them with the RNA integrity number as a term in a
+      linear model, when it is not associated with the effect of interest.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0051
+    paraphrase: >-
+      Poly(A) capture misses a partially degraded mRNA, and the rRNA-depleted
+      library gave an equal or less biased coverage of the 3' ends of the
+      genes. The authors find rRNA depletion fit for the degraded RNA of a
+      fixed sample.
+    anchor: "Abstract; Results; Gene body coverage"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0063
+    paraphrase: >-
+      RSeQC gives a gene body coverage module that reports the read
+      distribution along the transcript body per sample, which is the measure
+      of a 3' bias.
+    anchor: "Modules; geneBody_coverage"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [qc, library-type, polya, degradation]
