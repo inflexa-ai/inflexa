@@ -3,7 +3,16 @@
  * the test runner ignores it; imported by the knowledge tool unit tests.
  */
 
-import type { CheckResponse, DraftedStep, FarmPackage, KnowledgeClient, KnowledgeSituation, RecommendResponse, RenderResponse } from "../client.js";
+import type {
+    CheckResponse,
+    DraftedStep,
+    FarmPackage,
+    KnowledgeClient,
+    KnowledgeSituation,
+    RecommendResponse,
+    RenderResponse,
+    KnowledgePreferences,
+} from "../client.js";
 
 export const SNAPSHOT = { date: "2026-09-04", digest: "sha256:71ac0000000000000000000000000000000000000000000000000000000000ab" };
 
@@ -16,9 +25,20 @@ export function recommendAnswer(): RecommendResponse {
             {
                 step: "differential_expression",
                 method: { id: "M-0001", label: "DESeq2 Wald test with apeglm log fold change shrinkage" },
+                package: { name: "DESeq2", track: "bioconductor" },
                 template: "tpl-deseq2-two-group@1.0.0",
                 rules: ["R-0001@e7d0"],
+                parameters: [{ name: "alpha", value: 0.05, default_source: "doi:10.1186/s13059-014-0550-8" }],
                 alternatives: [{ method: "M-0003", label: "edgeR quasi-likelihood F-test", when: "robustness" }],
+            },
+            {
+                step: "enrichment",
+                method: { id: "M-0010", label: "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark" },
+                package: { name: "fgsea", track: "bioconductor" },
+                template: "tpl-fgsea-preranked@1.0.0",
+                rules: ["R-0107@0a1b"],
+                parameters: [{ name: "gene_set_collection", value: "msigdb_hallmark_human" }],
+                flags: [{ rule: "R-0103@c0de", severity: "warn", message: "Few DE genes: ORA has no power." }],
             },
         ],
         uncovered: ["report"],
@@ -55,7 +75,7 @@ export function renderAnswer(): RenderResponse {
 }
 
 export interface FakeCalls {
-    readonly recommend: { situation: KnowledgeSituation }[];
+    readonly recommend: { situation: KnowledgeSituation; preferences?: KnowledgePreferences }[];
     readonly check: { situation: KnowledgeSituation; steps: readonly DraftedStep[] }[];
     readonly render: { template: string; slots: Readonly<Record<string, unknown>>; farm?: readonly FarmPackage[] }[];
 }
@@ -70,8 +90,8 @@ export function fakeKnowledgeClient(
     const calls: FakeCalls = { recommend: [], check: [], render: [] };
     const checkAnswer: CheckResponse = { ok: true, snapshot: SNAPSHOT, violations: [], warnings: [] };
     const client: KnowledgeClient = {
-        async recommend(situation) {
-            calls.recommend.push({ situation });
+        async recommend(situation, _responseFormat, preferences) {
+            calls.recommend.push({ situation, ...(preferences ? { preferences } : {}) });
             return answers.recommend ?? recommendAnswer();
         },
         async check(situation, steps) {

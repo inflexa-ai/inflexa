@@ -48,6 +48,32 @@ Each operation of the client MUST answer a typed value and MUST NOT throw on a s
 - **WHEN** the planner drafts a differential expression step with `outcome: "descriptive_only"`, or with a method text that says the step is descriptive
 - **THEN** the check reports no violation for that step
 
+### Requirement: The recommend answer carries the environment and a plan skeleton
+
+When the host binds a farm lock or a reference store, `knowledge_recommend` MUST join each step of the procedure with the environment: whether the farm holds the package of the step and at which version, and whether the reference store holds the collection the step names and at which path. The tool MUST NOT fill a gap and MUST NOT name a path it did not read. The answer MUST carry a `plan_skeleton`: the procedure folded into plan steps with the id, the name, the track, the agent, the packages, the dependencies, the constraints, the caveats, and the grounding filled. The situation MUST accept an optional `enrichment_input` field, and the answer MUST list in `dropped` the steps a flag removed.
+
+#### Scenario: The farm holds the package and the store holds the collection
+
+- **GIVEN** a farm lock that lists DESeq2 and a reference store that holds the human Hallmark collection
+- **WHEN** the planner calls `knowledge_recommend` for a two-group design
+- **THEN** the differential expression step reads `environment.package.present: true` with the version, and the enrichment step reads `environment.collection.present: true` with its path
+
+#### Scenario: No store is bound
+
+- **GIVEN** a host that binds no farm lock and no reference store
+- **WHEN** the planner calls `knowledge_recommend`
+- **THEN** no step carries an environment, and `environment_source` reads unknown for both
+
+### Requirement: A language preference selects the template, never the method
+
+The recommend tool MUST accept an optional `preferred_language` of `R` or `python`. The client MUST send it beside the situation as a preference, never as a situation field. The service MUST select, among the templates of a method whose applicability holds, the first template in the preferred language, and MUST fall back to the first template that holds. A preference MUST NOT change a rule or a method.
+
+#### Scenario: The user asks for Python
+
+- **GIVEN** a two-group design and a user constraint that names Python
+- **WHEN** the planner calls `knowledge_recommend` with `preferred_language: python`
+- **THEN** the differential expression step names the same method and the Python template of that method
+
 ### Requirement: The situation is typed and carries no data
 
 The input of `knowledge_recommend` and `knowledge_check` MUST be the flat situation schema: enumerated fields for the question, the modality, the data state, the count source, the organism, the batch structure, the library type, the strandedness, and the quality flags, plus the group and replicate counts, the pairing, the blocking factor, the covariates, the time points, and the interaction flag. The tool MUST NOT accept a sample identifier, a file path, or free text.

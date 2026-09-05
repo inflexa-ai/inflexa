@@ -54,6 +54,15 @@ describe("knowledge_recommend", () => {
         expect(Object.keys(calls.recommend[0]!.situation)).not.toContain("covariates");
     });
 
+    it("sends the preferred language beside the situation, not inside it", async () => {
+        const { client, calls } = fakeKnowledgeClient();
+        const tool = createKnowledgeRecommendTool({ client });
+        const { ctx } = makeToolContext();
+        await tool.execute(tool.inputSchema.parse({ ...SITUATION, preferred_language: "python" }), ctx);
+        expect(calls.recommend[0]?.preferences).toEqual({ language: "python" });
+        expect(Object.keys(calls.recommend[0]!.situation)).not.toContain("preferred_language");
+    });
+
     it("passes an unavailable answer through as data, never as an error", async () => {
         const { client } = fakeKnowledgeClient({ recommend: { match: "unavailable", reason: "Request timed out after 30000ms" } });
         const tool = createKnowledgeRecommendTool({ client });
@@ -67,6 +76,74 @@ describe("knowledge_recommend", () => {
         const tool = createKnowledgeRecommendTool({ client });
         expect(tool.describeCall?.(tool.inputSchema.parse(SITUATION))).toBe("differential_expression: 6-6 per group, batch none");
         expect(tool.describeResult?.(tool.inputSchema.parse(SITUATION), { match: "unavailable", reason: "x" })).toBe("unavailable");
+    });
+});
+
+describe("knowledge_recommend — the environment and the skeleton", () => {
+    let base: string;
+    beforeEach(() => {
+        base = mkdtempSync(join(tmpdir(), "kt-env-"));
+    });
+    afterEach(() => {
+        rmSync(base, { recursive: true, force: true });
+    });
+
+    it("joins the farm lock and the reference store into each step, and folds the procedure into a plan skeleton", async () => {
+        const lockPath = join(base, "inflexa.lock");
+        await Bun.write(
+            lockPath,
+            JSON.stringify({
+                schema: 1,
+                arch: "arm64",
+                languages: {},
+                merge_conflicts: [],
+                packages: [{ name: "DESeq2", version: "1.52.0", track: "bioconductor", store_dir: "x", hash: "y", requested: true }],
+            }),
+        );
+        const store = join(base, "refs");
+        await Bun.write(join(store, "managed", "msigdb-hallmark-human", "2026.1", "h.all.v2026.1.Hs.symbols.gmt"), "HALLMARK_X\tna\tA\tB\n");
+        const { client } = fakeKnowledgeClient();
+        const tool = createKnowledgeRecommendTool({ client, farmLockFile: lockPath, refStorePath: store });
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
+        if (out.match !== "applicable") throw new Error(out.match);
+        const de = out.procedure.find((step) => step.step === "differential_expression")!;
+        expect(de.environment?.package).toEqual({ name: "DESeq2", present: true, version: "1.52.0" });
+        const enrichment = out.procedure.find((step) => step.step === "enrichment")!;
+        expect(enrichment.environment?.package).toEqual({ name: "fgsea", present: false });
+        expect(enrichment.environment?.collection?.present).toBe(true);
+        expect(enrichment.environment?.collection?.path).toContain("msigdb-hallmark-human");
+        expect(out.environment_source).toEqual({ farm: "lock", references: "store" });
+
+        const skeleton = out.plan_skeleton!;
+        expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S2", "T2S1"]);
+        const analysis = skeleton[1]!;
+        expect(analysis.agent).toBe("bulk-transcriptomics-agent");
+        expect(analysis.packages).toEqual(["DESeq2"]);
+        expect(analysis.depends_on).toEqual(["T1S1"]);
+        expect(analysis.constraints).toEqual(["differential_expression: alpha = 0.05 (doi:10.1186/s13059-014-0550-8)"]);
+        expect(analysis.grounding).toEqual({
+            status: "grounded",
+            snapshot: SNAPSHOT.digest,
+            claims: ["R-0001@e7d0"],
+            template: "tpl-deseq2-two-group@1.0.0",
+            reason: "DESeq2 Wald test with apeglm log fold change shrinkage per R-0001@e7d0",
+        });
+        const gsea = skeleton[2]!;
+        expect(gsea.agent).toBe("enrichment-agent");
+        expect(gsea.depends_on).toEqual(["T1S2"]);
+        expect(gsea.caveats).toEqual(["Few DE genes: ORA has no power."]);
+    });
+
+    it("carries no environment when no store is bound, and still folds the skeleton", async () => {
+        const { client } = fakeKnowledgeClient();
+        const tool = createKnowledgeRecommendTool({ client });
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
+        if (out.match !== "applicable") throw new Error(out.match);
+        expect(out.procedure.every((step) => step.environment === undefined)).toBe(true);
+        expect(out.environment_source).toEqual({ farm: "unknown", references: "unknown" });
+        expect(out.plan_skeleton?.length).toBe(3);
     });
 });
 

@@ -952,7 +952,11 @@ export function buildPlannerSearchTools(deps: GeneratePlanDeps): Tool[] {
         }),
         // The knowledge plane: one cited procedure per situation, and one check
         // of the draft. Both attach only when the embedder binds a client.
-        ...createKnowledgeTools({ ...(deps.knowledge === undefined ? {} : { client: deps.knowledge }) }),
+        ...createKnowledgeTools({
+            ...(deps.knowledge === undefined ? {} : { client: deps.knowledge }),
+            ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
+            ...(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath }),
+        }),
     ];
 }
 

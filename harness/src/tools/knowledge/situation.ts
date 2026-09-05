@@ -7,7 +7,7 @@
 
 import { z } from "zod";
 
-import type { KnowledgeSituation } from "./client.js";
+import type { KnowledgeSituation, KnowledgePreferences } from "./client.js";
 
 export const SituationFieldsSchema = z.object({
     question: z
@@ -52,6 +52,18 @@ export const SituationFieldsSchema = z.object({
         .optional()
         .describe("Whether the strandedness was verified against the quantification, declared but not verified, or unknown."),
     interaction: z.boolean().optional().describe("True when the question is the interaction of two factors (for example genotype by treatment)."),
+    preferred_language: z
+        .enum(["R", "python"])
+        .optional()
+        .describe(
+            "The script language the user asked for, when the user constraints name one. The answer then names the template in that language when the method has one. Omit otherwise.",
+        ),
+    enrichment_input: z
+        .enum(["ranked_list", "gene_list", "sample_scores"])
+        .optional()
+        .describe(
+            "What the enrichment step takes: `ranked_list` for every tested gene ranked by a statistic (the default), `gene_list` for a discrete list such as the significant genes, `sample_scores` for a pathway score per sample. Omit when the question has no enrichment.",
+        ),
     quality_flags: z
         .array(z.enum(["low_depth_sample", "outlier_sample", "sample_identity_doubt", "high_duplication"]))
         .optional()
@@ -66,10 +78,16 @@ export type SituationFields = z.infer<typeof SituationFieldsSchema>;
 export function toSituation(fields: SituationFields): KnowledgeSituation {
     const situation: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(fields)) {
+        if (key === "preferred_language") continue;
         if (value !== undefined) situation[key] = value;
     }
     // The schema above validated every field, thus the record has the shape of the client type.
     return situation as unknown as KnowledgeSituation;
+}
+
+/** The preferences of the caller, beside the situation: the language of the template. */
+export function toPreferences(fields: SituationFields): KnowledgePreferences | undefined {
+    return fields.preferred_language ? { language: fields.preferred_language } : undefined;
 }
 
 /** One worked example, in the descriptions of the two planner tools. Examples raise complex-parameter accuracy. */

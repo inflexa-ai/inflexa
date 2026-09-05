@@ -68,7 +68,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
             "Render a tested analysis script from a knowledge template and write it into your working directory. " +
             "Use it for a step whose briefing names a template in its Grounding (for example `tpl-deseq2-two-group@1.0.0`). " +
             "Send the template id and the slot values only: the file paths of your inputs (absolute `/<analysisId>/...` paths), the column names, the levels of the contrast, and the design. " +
-            "Do not write the script yourself. The tool writes `scripts/<template>.R` and `output/decision_record.json` (the template, the snapshot, each slot with its source, the environment match, and the citations), then you run the script with `execute_command` (`Rscript scripts/<template>.R`). " +
+            "Do not write the script yourself. The tool writes `scripts/<template>.R` or `scripts/<template>.py` and `output/decision_record.json` (the template, the snapshot, each slot with its source, the environment match, and the citations), then you run the script with `execute_command` using the command in `run_with`. " +
             "A slot value the template refuses comes back as `match: rejected` with the slot and the permitted values; correct it and call again. " +
             "A change the slots do not cover: use `edit_file` on a line marked `# [adaptable: ...]` in the rendered script, and keep the edit small. " +
             "`match: unavailable` means the service did not answer; then write the script yourself as you would without this tool.",
@@ -86,7 +86,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
                 .string()
                 .regex(/^[A-Za-z0-9_.-]+$/)
                 .optional()
-                .describe("The file name under `scripts/`. Defaults to `<template id>.R`."),
+                .describe("The file name under `scripts/`. Defaults to `<template id>.R` or `<template id>.py` by the language of the template."),
         }),
         describeCall: ({ template }) => template,
         describeResult: (_input, result: KnowledgeTemplateOutput) =>
@@ -123,7 +123,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
                 environment_match: answer.environment.match,
                 syntax: answer.syntax.status,
                 expected_outputs: answer.outputs,
-                run_with: `${answer.template.language === "R" ? "Rscript" : "python"} ${scriptPath}`,
+                run_with: `${answer.template.language === "R" ? "Rscript" : "python3"} ${scriptPath}`,
             });
         },
     });

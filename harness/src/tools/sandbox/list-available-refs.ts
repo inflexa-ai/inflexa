@@ -575,6 +575,18 @@ function renderContent(path: string, scan: RawScan, entries: readonly ReferenceI
 }
 
 /** Create reference discovery over the host-visible reference store. */
+/**
+ * The whole enriched inventory of the store, for a host-side join: which
+ * collection a procedure names is present, and where. No envelope bound,
+ * because the caller keeps the join and drops the listing.
+ */
+export async function readReferenceInventory(
+    storeRoot: string,
+): Promise<{ readonly available: boolean; readonly entries: readonly ReferenceInventoryEntry[] }> {
+    const raw = await scanStore(storeRoot, ".", true);
+    return { available: raw.state !== "unavailable", entries: enrichEntries(raw.entries, raw) };
+}
+
 export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
     const storeRoot = deps.refStorePath ?? REFS_ROOT;
     return defineTool({
