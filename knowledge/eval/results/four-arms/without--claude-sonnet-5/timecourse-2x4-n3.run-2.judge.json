@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The core statistics are exactly right for this design: time kept as a 4-level factor, DESeq2 LRT of ~condition+time+condition:time against an explicitly stated reduced ~condition+time, with per-timepoint Wald contrasts to describe the pattern and a sensible t0-imbalance red flag. QC is concrete (VST PCA colored by condition and shaped by time, sample-distance heatmap, dispersion plot) though it omits library-size inspection and states only a vague 'note outliers' policy rather than an action rule. Filtering is minimal and reported; normalization is implicitly DESeq2's internal size factors with VST used only for visualization, but the plan never says so explicitly. BH at stated alphas (0.05 and 0.10) is good, but no lfcShrink or equivalent shrinkage is specified for the reported per-timepoint fold changes. Enrichment names collections but omits versions, size windows, and any ORA universe, and preranking on the unsigned LRT statistic is a questionable metric for fgsea; the report specification lacks package versions and an explicit count of genes tested."
+}

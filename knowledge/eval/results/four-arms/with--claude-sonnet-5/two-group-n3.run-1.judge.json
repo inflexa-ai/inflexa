@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan uses the correct negative binomial framework for raw counts with n=3/group (DESeq2 Wald as primary, edgeR QL as a stated robustness cross-check appropriate at low replication), with an explicit ~condition design, control as reference level, and a named treated-vs-control contrast; it correctly avoids batch correction in a single-batch design and explicitly refuses to loosen alpha to compensate for low power. QC precedes testing with VST-based PCA, sample-distance heatmap, library sizes, and an explicit flag-or-rule-out policy for outliers. Filtering (>=10 counts in >=3 samples, justified by smallest group size) is minimal and justified; normalization is inside the model (TMM stated for edgeR, DESeq2 size factors only implied rather than named, a minor gap), and BH at alpha=0.05 with apeglm shrinkage and independent filtering is correct, including the useful distinction between Cook's-distance NAs and filtering NAs. Enrichment is preranked fgsea on the full tested-gene list with the Wald statistic as the stated metric, a 15-500 size window, named collections with versions, and an explicit rationale for avoiding ORA on a short list, though the human species assumption (org.Hs.eg.db) is asserted rather than verified. The final report specifies method, versions, design, contrast, thresholds, tested and significant gene counts, session info, and an explicit n=3 power caveat."
+}

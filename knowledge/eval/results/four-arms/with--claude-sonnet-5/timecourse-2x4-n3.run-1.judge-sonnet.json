@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies and executes the DESeq2 LRT of full (~condition+time+condition:time) vs reduced (~condition+time) model as the interaction test, matching the reference exactly, with explicit reference levels, per-timepoint shrunken effects, and trajectory clustering appropriate for a multi-timepoint interaction. QC (blind VST PCA, sample-distance heatmap, library sizes) precedes the model with a clear no-drop-without-justification policy. The count filter (>=10 in >=3, the smallest group) is minimal and justified; normalization is implicit via DESeq2's internal size factors but never stated explicitly as a step, slightly weakening that criterion. BH/independent filtering at alpha=0.05 with apeglm/ashr shrinkage for reporting (not for the significance call) is well handled, and enrichment correctly pivots to ORA with an explicit tested-gene universe, named collections/versions, and a size window, with power caveats stated. The final report is comprehensive, naming versions, design, thresholds, gene counts, and design caveats (n=3 power limitation) as required."
+}

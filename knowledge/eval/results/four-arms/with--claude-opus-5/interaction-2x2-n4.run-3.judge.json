@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan treats the question correctly as an interaction on a 2x2 factorial, fits ~ genotype + treatment + genotype:treatment with explicitly releveled references (WT, vehicle), tests the interaction coefficient by Wald, and extracts both simple effects — the KO one correctly as a list contrast requiring ashr rather than apeglm — and explicitly forbids collapsing to a four-level factor or substituting a difference-in-significance for the interaction test. QC precedes the fit with blind VST, PCA on the top 500 variable genes colored by both factors and the four-cell condition, sample-distance heatmap, library sizes and detected genes, with a stated flag-only policy justified by the cost of dropping one of four replicates; it stops slightly short of a concrete rule for what would trigger removal. The filter (>=10 counts in >=4 samples, tied to the smallest cell) is minimal and justified, normalization stays inside the model with median-of-ratios and pre-normalization is explicitly banned, and BH at alpha=0.05 with alpha passed to results(), ashr shrinkage alongside unshrunken estimates and lfcSE, plus separate accounting of Cook's-flag NAs versus independent filtering, is exemplary. Enrichment is not strictly required by the question but is executed well — full ranked list by Wald stat with the choice defended, named collection and version, 15-500 window after intersection, seed, unmatched-symbol share, per-contrast separation and collapsing of redundant sets. The report step names methods, versions, design, contrasts, thresholds, tested and significant counts, and the right caveats (interaction power at n=4, per-contrast FDR, missing salmon length offset, bulk brain composition, single method)."
+}

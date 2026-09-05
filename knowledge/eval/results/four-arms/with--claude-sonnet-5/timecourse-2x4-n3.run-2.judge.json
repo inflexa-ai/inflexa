@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan identifies the condition-by-time interaction as the target and tests it with a DESeq2 LRT of ~condition+time+condition:time against ~condition+time, with explicit reference levels (t0), per-timepoint simple-effect Wald contrasts, and a correct justification for ashr over apeglm for composite contrasts — exactly the reference approach for a 2x4 time course with n=3, plus an honest power caveat. QC is design-specific (vst blind PCA on top 500 variable genes, sample distances, library sizes colored by condition and time) with a stated outlier-naming policy, though the outlier handling rule is more a promise to report than a decision rule. The filter (≥10 counts in ≥3 samples, tied to the smallest cell size) is minimal and justified, normalization is internal median-of-ratios with no pre-normalized input, and multiple testing is BH at alpha=0.05 passed into results() with independent filtering, a p-value histogram check, and shrinkage on the reported effects. Enrichment is ORA with the tested-gene set as universe, Hallmark plus Reactome, a 15–500 size window and within-collection BH, which is defensible for an LRT gene set, though the stated rationale (a tool 'rejected' ranked GSEA) is a procedural rather than statistical argument and a ranked interaction-statistic GSEA would have been an equally valid complement. Reporting is complete: design, formula, thresholds, tested/significant counts, diagnostics, trajectory clustering, versions/sessionInfo, and an explicit refusal to read absence as evidence of no effect."
+}

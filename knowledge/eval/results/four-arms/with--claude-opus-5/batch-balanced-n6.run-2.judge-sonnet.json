@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly places the balanced batch as a covariate (~ batch + condition) with control as reference, uses DESeq2 Wald with apeglm shrinkage and edgeR QL as an independent cross-check on the identical design/filter, and explicitly forbids pre-adjusting counts (ComBat-seq restricted to visualization only). QC precedes testing with PCA/heatmap/library size colored by both batch and condition and a stated outlier policy. The low-count filter is minimal and justified by smallest group size, normalization is size-factor/TMM inside the model, and BH/alpha/shrinkage are all explicit and pre-specified rather than post hoc. Enrichment is well-justified given the research question, using the full ranked list by Wald statistic, explicit universe, named collections with size windows, and leading-edge reporting. The final report includes all required elements: methods, versions, design, thresholds, counts, diagnostics, robustness overlap, enrichment details, and design caveats."
+}

@@ -1,0 +1,820 @@
+{
+  "campaign": "tasks-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "population-n60",
+  "run": 1,
+  "startedAt": "2026-09-05T16:04:20.911Z",
+  "elapsedMs": 91369,
+  "outcome": "plan_submitted",
+  "planId": "pln-f27a40ac",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Resolve the 121-vs-120 sample count discrepancy between the counts and metadata files before any downstream step; do not silently drop or duplicate a sample."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 60 case and 60 control whole-blood samples separate on the top variable genes, and are there outlier samples or library-size issues before testing for differential expression?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC via blind VST, top-variance PCA, and sample-distance heatmap per R-0033; template tpl-qc-eda@1.0.0",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500",
+          "transform = vst_blind"
+        ],
+        "description": "Load counts.csv (12000 genes x 121 samples) and metadata.csv (120 x 2, condition), align sample IDs, apply DESeq2 vst(blind=TRUE), compute PCA on the top 500 most-variable genes, draw a sample-to-sample Euclidean distance heatmap, and plot per-sample library sizes. Color all plots by case/control condition. Flag any sample count mismatch between the two files (counts has 121 sample columns, metadata has 120 rows) and reconcile before proceeding.",
+        "acceptance_criteria": [
+          "PCA plot and sample distance heatmap produced, colored by condition",
+          "Library size bar plot produced with any low-depth outliers flagged",
+          "Sample ID mismatch between counts (121 cols) and metadata (120 rows) is explicitly resolved and reported"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Filter, normalize, and fit limma-voom differential expression with Wilcoxon control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This dataset lacks confirmed transcript-level Salmon quantification files (only gene-level counts.csv is available), so tximport length-offset correction (R-0018) cannot be applied — state this limitation in the report rather than fabricating an offset.",
+          "Report the caution from R-0015 explicitly: limma-voom controls FDR better than NB count models in population cohorts but not universally; the Wilcoxon control is the check, not a guarantee."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "DESeq2"
+        ],
+        "question": "Which of the ~12000 genes differ in expression between the 60 cases and 60 controls, using a test appropriate for this sample size, with a distribution-free control to guard against inflated false positives?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0058@99e1",
+            "R-0002@087b",
+            "R-0057@31cc",
+            "R-0026@762e",
+            "R-0036@9786",
+            "R-0015@65aa",
+            "R-0038@a5e0"
+          ],
+          "reason": "n=60/group triggers R-0015: use limma-voom fixed-effects as primary test with Wilcoxon/permutation control stated in report; filterByExpr + TMM per R-0058/R-0057; DESeq2 companion fit retained only for apeglm shrinkage per R-0038 default outlier handling",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+          "template": "tpl-limma-voom-fixed@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count=10, min_samples=smallest_group_size (60) for filterByExpr",
+          "TMM normalization via edgeR::calcNormFactors before voom",
+          "explicit reference level = control",
+          "DESeq2 default Cook's distance outlier replacement left on, count of replaced genes reported"
+        ],
+        "description": "Filter genes with filterByExpr (edgeR) requiring at least 10 counts in at least the smallest group size (60), then TMM-normalize with edgeR::calcNormFactors. Build design matrix ~condition with control as the explicit reference level. Run limma-voom with precision weights as the primary fixed-effects test (this is the primary model, chosen over DESeq2/edgeR NB models because population-cohort sample variation departs from the negative-binomial assumption at n>=50/group, causing exaggerated false positives even under permuted labels). In parallel, run a Wilcoxon rank-sum test per gene on normalized log-CPM values as a non-parametric robustness control and report the overlap between the two gene lists. Separately, also fit a DESeq2 NB model (median-of-ratios normalization, default outlier replacement via Cook's distance since n>=7/group) purely to obtain a coefficient for apeglm shrinkage in the next step — this DESeq2 fit is not the inferential test, only the shrinkage input.",
+        "acceptance_criteria": [
+          "Number of genes retained after filterByExpr reported",
+          "limma-voom moderated t-statistics, unshrunken log2FC, and p-values produced for every tested gene",
+          "Wilcoxon rank-sum p-values produced per gene and overlap with limma-voom significant set (FDR<0.05) reported",
+          "DESeq2 companion fit produces a named coefficient usable for apeglm shrinkage",
+          "Reference level of condition factor (control) stated explicitly"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Effect-size shrinkage, FDR, and fold-change threshold testing",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The 0.5 log2FC threshold is an analyst-stated default for 'meaningful' effect size in whole blood; state this explicitly as a choice, not a biological ground truth, and report sensitivity to at least one alternative threshold (e.g. 0.25) if time permits."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "limma"
+        ],
+        "question": "Of the genes statistically significant between cases and controls, which show a shrunken effect size large enough to be biologically meaningful, not merely detectable at this sample size?",
+        "grounding": {
+          "claims": [
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "apeglm shrinkage per R-0009; BH+independent filtering at alpha 0.05 per R-0010/R-0043; fold-change-matters question answered as a formal threshold test (TREAT/lfcThreshold) per R-0037, not a post-hoc filter; p-value histogram diagnostic per R-0083",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+          "template": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "multiple_testing",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "alpha=0.05 for BH-FDR, independent filtering on",
+          "lfc_threshold=0.5 log2FC tested formally via TREAT/lfcThreshold, not post-hoc"
+        ],
+        "description": "Apply apeglm log2 fold-change shrinkage to the companion DESeq2 fit from T1S2 to obtain a noise-reduced effect size per gene, reported alongside the unshrunken limma-voom log2FC and its standard error. Apply Benjamini-Hochberg FDR adjustment (alpha=0.05) to the limma-voom moderated-t p-values with independent filtering, and separately run a TREAT-style test (limma::treat / DESeq2 lfcThreshold with apeglm shrinkage for the posterior) against an explicitly stated log2 fold-change threshold (0.5, i.e. ~1.4-fold) so that the 'large enough to matter' claim is a formal test against a threshold rather than a post-hoc filter on the point estimate. Produce and inspect the raw p-value histogram before adjustment as a model-fit diagnostic. Report gene counts at each stage: tested, FDR<0.05, FDR<0.05 AND |shrunken log2FC|>=0.5.",
+        "acceptance_criteria": [
+          "p-value histogram produced and its shape (flat/monotone vs irregular) assessed as a QC diagnostic",
+          "BH-adjusted p-values reported for every tested gene, independent filtering applied",
+          "apeglm shrunken log2FC and SE reported beside unshrunken log2FC for every gene",
+          "TREAT/lfcThreshold test against a stated 0.5 log2FC threshold reported with gene counts passing both FDR and effect-size criteria",
+          "Final gene table sorted by effect size within the significant set, not by p-value alone"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on the ranked gene list",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment method choice changes results (R-0055) — present camera and fgsea as complementary, not as a single ground truth.",
+          "The Reactome GMT covers all species in one file; must filter to Homo sapiens using ReactomePathways.txt before running enrichment, or gene sets will include non-human members."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which biological pathways or processes are coordinately shifted between cases and controls, beyond what individual significant genes show?",
+        "grounding": {
+          "claims": [
+            "R-0088@8b80",
+            "R-0098@d01b",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "n=60/group: camera on the limma-voom fit plus fgsea preranked on the moderated t-statistic per R-0088; Hallmark first then Reactome per R-0048/R-0098, both present as local reference files; ORA explicitly avoided per R-0103 unless significant list exceeds ~50 genes",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+          "template": "tpl-camera-hallmark@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "description": "Rank all tested genes (post-filter, from T1S2) by the limma-voom moderated t-statistic. Run camera (accounts for inter-gene correlation, appropriate given n=60/group) on the limma fit against the MSigDB Hallmark human gene set collection (50 sets, local reference file), restricting to sets with 15-500 member genes among the tested genes. Run fgsea preranked on the same ranked list as a second method for comparison, reporting the overlap and disagreement between camera and fgsea results. Repeat both tests against the Reactome human pathway collection (filtered to Homo sapiens from the multi-species Reactome GMT) as the confirmatory second collection. Map gene symbols to Entrez IDs via org.Hs.eg.db where required for a given test, reporting the unmapped share. Collapse redundant significant gene sets (high member overlap) to one representative per group before reporting; report the leading-edge genes of each significant set. Do NOT run an over-representation test — if T1S3 reports fewer than ~50 genes at FDR<0.05, state this explicitly and rely on the ranked-list methods only.",
+        "acceptance_criteria": [
+          "camera and fgsea results reported against MSigDB Hallmark (local reference, 50 sets) with min/max set size 15/500 applied",
+          "camera and fgsea results reported against Reactome human pathways (local reference, filtered to Homo sapiens) as second collection",
+          "Overlap/disagreement between camera and fgsea stated explicitly",
+          "Leading-edge genes listed for each significant gene set",
+          "Redundant significant sets collapsed to representatives with full table kept as supplement",
+          "Gene set collection versions (MSigDB 2026.1, Reactome current release) stated in output"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Consolidated report: DE genes, effect sizes, and enrichment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the final, reproducible summary of genes that differ between cases and controls, which of those differences are large enough to be biologically meaningful, and what pathways do they implicate?",
+        "grounding": {
+          "claims": [
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0089@69f0",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report structure follows the full reporting rule set: shrunken+unshrunken effect sizes, fit diagnostics, effect-size-sorted significant table, method/version/threshold disclosure, enrichment method-dependence caveat, leading-edge genes, and full reproducibility record",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+          "template": "none"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S3",
+          "T2S1"
+        ],
+        "description": "Assemble the final report: state the design (60 cases vs 60 controls, whole blood, single batch, unpaired), the reference level, the primary method (limma-voom fixed-effects) with its population-cohort caveat and the Wilcoxon-control overlap, package versions, and gene-set collection versions. Present the MA/mean-difference plot and voom mean-variance trend as fit diagnostics before the gene tables. Present the gene table with columns: gene symbol, unshrunken log2FC, shrunken (apeglm) log2FC, lfcSE, moderated t p-value, BH-adjusted p-value, TREAT/lfcThreshold test result at 0.5 log2FC. Sort the significant-gene table by shrunken effect size, not by p-value alone, and separately report counts of genes significant by FDR alone vs FDR AND effect-size threshold together — this is the direct answer to 'which differences are large enough to matter, not only significant.' Include the enrichment summary from T2S1 with leading-edge genes and the stated caveat that enrichment method choice affects the result. Attach full session info, random seeds, and all package/collection versions for reproducibility.",
+        "acceptance_criteria": [
+          "Report explicitly separates 'statistically significant' (FDR<0.05) from 'significant AND large effect' (FDR<0.05 AND |shrunken log2FC|>=0.5) gene counts and lists",
+          "MA/mean-difference plot and voom mean-variance trend included as fit diagnostics",
+          "Full session info, package versions, seeds, and gene-set collection versions included",
+          "Enrichment results and their method-dependence caveat included",
+          "Wilcoxon-control overlap with the primary limma-voom result stated"
+        ]
+      }
+    ],
+    "title": "Whole-blood case vs control DE (n=60/60) with effect-size focus",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "This is a large population-scale bulk RNA-seq cohort (60 cases vs 60 controls, whole blood, single batch, unpaired, 12000 genes x 121 samples from raw Salmon gene-level counts). At n=60/group the knowledge base flags that count-based negative binomial models (DESeq2/edgeR) exaggerate false positives in population cohorts because sample-to-sample variation departs from the NB assumption even under permuted labels (Mishra et al. 2022, doi:10.1186/s13059-022-02648-4). The primary inferential test is therefore limma-voom with TMM normalization and a fixed-effects linear model, with a Wilcoxon rank-sum test run in parallel as a distribution-free robustness check. Because the research question explicitly separates statistical significance from effect-size magnitude ('large enough to matter, not only significant'), the plan reports shrunken log2 fold changes (apeglm, run on a companion DESeq2 fit since limma has no shrinkage estimator) alongside the limma moderated-t results, and applies a TREAT/lfcThreshold test against a stated fold-change threshold rather than a post-hoc filter on the point estimate. Multiple testing uses BH-FDR with independent filtering at alpha=0.05. Enrichment runs on the full ranked gene list (moderated t-statistic) with camera (accounts for inter-gene correlation, appropriate at this sample size) and fgsea preranked, against the locally available MSigDB Hallmark set first, then Reactome as the confirmatory second collection; over-representation analysis is explicitly avoided unless the significant gene list exceeds ~50 genes. The report step consolidates diagnostics (p-value histogram, MA/mean-difference plot), lists genes passing both FDR and effect-size thresholds, reports the DE-model vs Wilcoxon-control overlap, and states all thresholds, package versions, and gene-set collection versions for reproducibility."
+  },
+  "usage": {
+    "inputTokens": 536211,
+    "outputTokens": 9142,
+    "cacheCreationInputTokens": 140348,
+    "cacheReadInputTokens": 395779,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifiers human entrez org.Hs"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "apeglm",
+          "fgsea",
+          "clusterProfiler",
+          "tximport",
+          "GSVA"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA + sample distance heatmap + library size QC",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM",
+            "package": "edgeR"
+          },
+          {
+            "step_type": "model_design",
+            "method": "design matrix ~condition, explicit reference level = control",
+            "package": "limma"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom fixed-effects linear model with Wilcoxon rank-sum control",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "control_test",
+                "value": "wilcoxon_rank_sum"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm-style effect size reporting via limma logFC + CI (limma has no apeglm; report unshrunken logFC with SE)",
+            "package": "limma"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with TREAT (treat) fold-change threshold test",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "lfc_threshold",
+                "value": "stated_in_report, e.g. 0.5 log2FC via treat"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "camera on limma fit + fgsea preranked on moderated t-statistic, Hallmark then Reactome",
+            "package": "limma, fgsea",
+            "parameters": [
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "second_collection",
+                "value": "reactome"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "effect size + p-value report with diagnostics",
+            "package": "NA"
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA + sample distance heatmap + library size QC",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM",
+            "package": "edgeR"
+          },
+          {
+            "step_type": "model_design",
+            "method": "design matrix ~condition, explicit reference level = control",
+            "package": "limma"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom fixed-effects linear model, DESeq2 Wald test with apeglm shrinkage for effect-size reporting, Wilcoxon rank-sum as robustness control",
+            "package": "limma, DESeq2",
+            "parameters": [
+              {
+                "name": "control_test",
+                "value": "wilcoxon_rank_sum"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage on DESeq2 fit (parallel run for effect-size reporting/ranking)",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering (DESeq2 results) and TREAT fold-change threshold test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "lfc_threshold",
+                "value": "stated_in_report, e.g. 0.5 log2FC via treat/lfcThreshold"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "camera on limma fit + fgsea preranked on moderated t-statistic, Hallmark then Reactome",
+            "package": "limma, fgsea",
+            "parameters": [
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "second_collection",
+                "value": "reactome"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "effect size + p-value report with diagnostics",
+            "package": "NA"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood case vs control DE (n=60/60) with effect-size focus",
+          "analytical_narrative": "This is a large population-scale bulk RNA-seq cohort (60 cases vs 60 controls, whole blood, single batch, unpaired, 12000 genes x 121 samples from raw Salmon gene-level counts). At n=60/group the knowledge base flags that count-based negative binomial models (DESeq2/edgeR) exaggerate false positives in population cohorts because sample-to-sample variation departs from the NB assumption even under permuted labels (Mishra et al. 2022, doi:10.1186/s13059-022-02648-4). The primary inferential test is therefore limma-voom with TMM normalization and a fixed-effects linear model, with a Wilcoxon rank-sum test run in parallel as a distribution-free robustness check. Because the research question explicitly separates statistical significance from effect-size magnitude ('large enough to matter, not only significant'), the plan reports shrunken log2 fold changes (apeglm, run on a companion DESeq2 fit since limma has no shrinkage estimator) alongside the limma moderated-t results, and applies a TREAT/lfcThreshold test against a stated fold-change threshold rather than a post-hoc filter on the point estimate. Multiple testing uses BH-FDR with independent filtering at alpha=0.05. Enrichment runs on the full ranked gene list (moderated t-statistic) with camera (accounts for inter-gene correlation, appropriate at this sample size) and fgsea preranked, against the locally available MSigDB Hallmark set first, then Reactome as the confirmatory second collection; over-representation analysis is explicitly avoided unless the significant gene list exceeds ~50 genes. The report step consolidates diagnostics (p-value histogram, MA/mean-difference plot), lists genes passing both FDR and effect-size thresholds, reports the DE-model vs Wilcoxon-control overlap, and states all thresholds, package versions, and gene-set collection versions for reproducibility.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 60 case and 60 control whole-blood samples separate on the top variable genes, and are there outlier samples or library-size issues before testing for differential expression?",
+              "description": "Load counts.csv (12000 genes x 121 samples) and metadata.csv (120 x 2, condition), align sample IDs, apply DESeq2 vst(blind=TRUE), compute PCA on the top 500 most-variable genes, draw a sample-to-sample Euclidean distance heatmap, and plot per-sample library sizes. Color all plots by case/control condition. Flag any sample count mismatch between the two files (counts has 121 sample columns, metadata has 120 rows) and reconcile before proceeding.",
+              "acceptance_criteria": [
+                "PCA plot and sample distance heatmap produced, colored by condition",
+                "Library size bar plot produced with any low-depth outliers flagged",
+                "Sample ID mismatch between counts (121 cols) and metadata (120 rows) is explicitly resolved and reported"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC via blind VST, top-variance PCA, and sample-distance heatmap per R-0033; template tpl-qc-eda@1.0.0",
+                "template": "tpl-qc-eda@1.0.0"
+              },
+              "caveats": [
+                "Resolve the 121-vs-120 sample count discrepancy between the counts and metadata files before any downstream step; do not silently drop or duplicate a sample."
+              ],
+              "constraints": [
+                "n_top_genes = 500",
+                "transform = vst_blind"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Filter, normalize, and fit limma-voom differential expression with Wilcoxon control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the ~12000 genes differ in expression between the 60 cases and 60 controls, using a test appropriate for this sample size, with a distribution-free control to guard against inflated false positives?",
+              "description": "Filter genes with filterByExpr (edgeR) requiring at least 10 counts in at least the smallest group size (60), then TMM-normalize with edgeR::calcNormFactors. Build design matrix ~condition with control as the explicit reference level. Run limma-voom with precision weights as the primary fixed-effects test (this is the primary model, chosen over DESeq2/edgeR NB models because population-cohort sample variation departs from the negative-binomial assumption at n>=50/group, causing exaggerated false positives even under permuted labels). In parallel, run a Wilcoxon rank-sum test per gene on normalized log-CPM values as a non-parametric robustness control and report the overlap between the two gene lists. Separately, also fit a DESeq2 NB model (median-of-ratios normalization, default outlier replacement via Cook's distance since n>=7/group) purely to obtain a coefficient for apeglm shrinkage in the next step — this DESeq2 fit is not the inferential test, only the shrinkage input.",
+              "acceptance_criteria": [
+                "Number of genes retained after filterByExpr reported",
+                "limma-voom moderated t-statistics, unshrunken log2FC, and p-values produced for every tested gene",
+                "Wilcoxon rank-sum p-values produced per gene and overlap with limma-voom significant set (FDR<0.05) reported",
+                "DESeq2 companion fit produces a named coefficient usable for apeglm shrinkage",
+                "Reference level of condition factor (control) stated explicitly"
+              ],
+              "packages": [
+                "edgeR",
+                "limma",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0058@99e1",
+                  "R-0002@087b",
+                  "R-0057@31cc",
+                  "R-0026@762e",
+                  "R-0036@9786",
+                  "R-0015@65aa",
+                  "R-0038@a5e0"
+                ],
+                "reason": "n=60/group triggers R-0015: use limma-voom fixed-effects as primary test with Wilcoxon/permutation control stated in report; filterByExpr + TMM per R-0058/R-0057; DESeq2 companion fit retained only for apeglm shrinkage per R-0038 default outlier handling",
+                "template": "tpl-limma-voom-fixed@1.0.0"
+              },
+              "caveats": [
+                "This dataset lacks confirmed transcript-level Salmon quantification files (only gene-level counts.csv is available), so tximport length-offset correction (R-0018) cannot be applied — state this limitation in the report rather than fabricating an offset.",
+                "Report the caution from R-0015 explicitly: limma-voom controls FDR better than NB count models in population cohorts but not universally; the Wilcoxon control is the check, not a guarantee."
+              ],
+              "constraints": [
+                "min_count=10, min_samples=smallest_group_size (60) for filterByExpr",
+                "TMM normalization via edgeR::calcNormFactors before voom",
+                "explicit reference level = control",
+                "DESeq2 default Cook's distance outlier replacement left on, count of replaced genes reported"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Effect-size shrinkage, FDR, and fold-change threshold testing",
+              "track": "T1",
+              "step_type": "multiple_testing",
+              "question": "Of the genes statistically significant between cases and controls, which show a shrunken effect size large enough to be biologically meaningful, not merely detectable at this sample size?",
+              "description": "Apply apeglm log2 fold-change shrinkage to the companion DESeq2 fit from T1S2 to obtain a noise-reduced effect size per gene, reported alongside the unshrunken limma-voom log2FC and its standard error. Apply Benjamini-Hochberg FDR adjustment (alpha=0.05) to the limma-voom moderated-t p-values with independent filtering, and separately run a TREAT-style test (limma::treat / DESeq2 lfcThreshold with apeglm shrinkage for the posterior) against an explicitly stated log2 fold-change threshold (0.5, i.e. ~1.4-fold) so that the 'large enough to matter' claim is a formal test against a threshold rather than a post-hoc filter on the point estimate. Produce and inspect the raw p-value histogram before adjustment as a model-fit diagnostic. Report gene counts at each stage: tested, FDR<0.05, FDR<0.05 AND |shrunken log2FC|>=0.5.",
+              "acceptance_criteria": [
+                "p-value histogram produced and its shape (flat/monotone vs irregular) assessed as a QC diagnostic",
+                "BH-adjusted p-values reported for every tested gene, independent filtering applied",
+                "apeglm shrunken log2FC and SE reported beside unshrunken log2FC for every gene",
+                "TREAT/lfcThreshold test against a stated 0.5 log2FC threshold reported with gene counts passing both FDR and effect-size criteria",
+                "Final gene table sorted by effect size within the significant set, not by p-value alone"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "reason": "apeglm shrinkage per R-0009; BH+independent filtering at alpha 0.05 per R-0010/R-0043; fold-change-matters question answered as a formal threshold test (TREAT/lfcThreshold) per R-0037, not a post-hoc filter; p-value histogram diagnostic per R-0083",
+                "template": "none"
+              },
+              "caveats": [
+                "The 0.5 log2FC threshold is an analyst-stated default for 'meaningful' effect size in whole blood; state this explicitly as a choice, not a biological ground truth, and report sensitivity to at least one alternative threshold (e.g. 0.25) if time permits."
+              ],
+              "constraints": [
+                "alpha=0.05 for BH-FDR, independent filtering on",
+                "lfc_threshold=0.5 log2FC tested formally via TREAT/lfcThreshold, not post-hoc"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on the ranked gene list",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways or processes are coordinately shifted between cases and controls, beyond what individual significant genes show?",
+              "description": "Rank all tested genes (post-filter, from T1S2) by the limma-voom moderated t-statistic. Run camera (accounts for inter-gene correlation, appropriate given n=60/group) on the limma fit against the MSigDB Hallmark human gene set collection (50 sets, local reference file), restricting to sets with 15-500 member genes among the tested genes. Run fgsea preranked on the same ranked list as a second method for comparison, reporting the overlap and disagreement between camera and fgsea results. Repeat both tests against the Reactome human pathway collection (filtered to Homo sapiens from the multi-species Reactome GMT) as the confirmatory second collection. Map gene symbols to Entrez IDs via org.Hs.eg.db where required for a given test, reporting the unmapped share. Collapse redundant significant gene sets (high member overlap) to one representative per group before reporting; report the leading-edge genes of each significant set. Do NOT run an over-representation test — if T1S3 reports fewer than ~50 genes at FDR<0.05, state this explicitly and rely on the ranked-list methods only.",
+              "acceptance_criteria": [
+                "camera and fgsea results reported against MSigDB Hallmark (local reference, 50 sets) with min/max set size 15/500 applied",
+                "camera and fgsea results reported against Reactome human pathways (local reference, filtered to Homo sapiens) as second collection",
+                "Overlap/disagreement between camera and fgsea stated explicitly",
+                "Leading-edge genes listed for each significant gene set",
+                "Redundant significant sets collapsed to representatives with full table kept as supplement",
+                "Gene set collection versions (MSigDB 2026.1, Reactome current release) stated in output"
+              ],
+              "packages": [
+                "limma",
+                "fgsea",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0088@8b80",
+                  "R-0098@d01b",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "reason": "n=60/group: camera on the limma-voom fit plus fgsea preranked on the moderated t-statistic per R-0088; Hallmark first then Reactome per R-0048/R-0098, both present as local reference files; ORA explicitly avoided per R-0103 unless significant list exceeds ~50 genes",
+                "template": "tpl-camera-hallmark@1.0.0"
+              },
+              "caveats": [
+                "Enrichment method choice changes results (R-0055) — present camera and fgsea as complementary, not as a single ground truth.",
+                "The Reactome GMT covers all species in one file; must filter to Homo sapiens using ReactomePathways.txt before running enrichment, or gene sets will include non-human members."
+              ]
+            },
+            {
+              "id": "T1S4",
+              "name": "Consolidated report: DE genes, effect sizes, and enrichment",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the final, reproducible summary of genes that differ between cases and controls, which of those differences are large enough to be biologically meaningful, and what pathways do they implicate?",
+              "description": "Assemble the final report: state the design (60 cases vs 60 controls, whole blood, single batch, unpaired), the reference level, the primary method (limma-voom fixed-effects) with its population-cohort caveat and the Wilcoxon-control overlap, package versions, and gene-set collection versions. Present the MA/mean-difference plot and voom mean-variance trend as fit diagnostics before the gene tables. Present the gene table with columns: gene symbol, unshrunken log2FC, shrunken (apeglm) log2FC, lfcSE, moderated t p-value, BH-adjusted p-value, TREAT/lfcThreshold test result at 0.5 log2FC. Sort the significant-gene table by shrunken effect size, not by p-value alone, and separately report counts of genes significant by FDR alone vs FDR AND effect-size threshold together — this is the direct answer to 'which differences are large enough to matter, not only significant.' Include the enrichment summary from T2S1 with leading-edge genes and the stated caveat that enrichment method choice affects the result. Attach full session info, random seeds, and all package/collection versions for reproducibility.",
+              "acceptance_criteria": [
+                "Report explicitly separates 'statistically significant' (FDR<0.05) from 'significant AND large effect' (FDR<0.05 AND |shrunken log2FC|>=0.5) gene counts and lists",
+                "MA/mean-difference plot and voom mean-variance trend included as fit diagnostics",
+                "Full session info, package versions, seeds, and gene-set collection versions included",
+                "Enrichment results and their method-dependence caveat included",
+                "Wilcoxon-control overlap with the primary limma-voom result stated"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S3",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0089@69f0",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report structure follows the full reporting rule set: shrunken+unshrunken effect sizes, fit diagnostics, effect-size-sorted significant table, method/version/threshold disclosure, enrichment method-dependence caveat, leading-edge genes, and full reproducibility record",
+                "template": "none"
+              },
+              "caveats": []
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+  }
+}

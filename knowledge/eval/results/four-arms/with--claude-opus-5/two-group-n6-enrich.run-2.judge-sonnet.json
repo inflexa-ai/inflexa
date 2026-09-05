@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the 6v6 unpaired single-batch design with DESeq2 Wald plus apeglm shrinkage and an edgeR QL cross-check, explicit reference level and contrast direction, minimal justified filter, and normalization strictly inside the model. QC precedes testing with library size, detected genes, size factors, blind VST PCA and distance heatmap, all colored by condition with a stated keep/inspect/report policy for sample_01 and a sensitivity rerun rather than silent deletion. Enrichment is done properly on the full ranked list by the Wald statistic with stated collection/version, 15-500 size window, universe, seed, and leading-edge reporting, with ORA correctly withheld unless the significant set is large. The report step ties everything together with versions, thresholds, counts, plots, and caveats, satisfying report_completeness fully. Minor nit: the reliance on a claimed but unverifiable 2026.1 MSigDB release is a slight speculative flag, but it is explicitly hedged (\"resolve against whatever the environment provides\"), so it doesn't materially hurt scoring."
+}

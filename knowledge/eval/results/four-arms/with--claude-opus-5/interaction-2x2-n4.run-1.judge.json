@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan treats the question as a genotype x treatment interaction and fits ~ genotype + treatment + genotype:treatment with explicitly releveled references, extracting both simple effects and the interaction coefficient, with an edgeR QL cross-check on the identical filtered matrix and design — exactly the reference route, and it repeatedly pre-empts the 'difference in significance is not a significant difference' misreading. QC is concrete and design-aware (blind VST, PCA on top 500 genes colored by genotype, treatment and the four-level cell, distance heatmap, library sizes, flag-not-drop policy, explicit note that no batch column exists); the filter (>=10 counts in >=4 samples, the smallest cell size) is minimal and justified; normalization is stated as median-of-ratios offsets inside the model and TMM for edgeR with no pre-scaling. FDR handling is correct: alpha 0.05 into results(), BH within each contrast with that stated, independent filtering on, p-value histograms inspected, ashr shrinkage justified because the KO simple effect is a contrast rather than a single coefficient, and Cook's-distance NAs separated from filtering NAs. Enrichment is warranted given the underpowered interaction and is well specified (full ranked list, Wald statistic with reasoning, 15-500 window after intersection with tested genes, named collections with version reporting, Reactome absence disclosed, seed recorded), losing a point only for asserting Homo sapiens and org.Hs.eg.db when the species is not established by the brief. The report step names method, versions, design, reference levels, thresholds, genes tested and significant per contrast, the two-method intersection, and an explicit power caveat."
+}

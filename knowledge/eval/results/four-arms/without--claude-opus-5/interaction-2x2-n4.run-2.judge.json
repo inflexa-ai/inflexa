@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan targets the interaction term directly with ~genotype + treatment + genotype:treatment, tests it both by LRT against the additive reduced model and by Wald on the named interaction coefficient, then derives the four simple effects as explicit contrast combinations from the single fit rather than refitting subsets — exactly the reference approach — and it explicitly warns against the Venn-of-two-lists fallacy. QC (size factors, library sizes, dispersion, VST PCA colored by genotype/shaped by treatment, sample distances) precedes the test with a stated keep-and-report outlier policy, reference levels are set explicitly, and raw counts go into the model with size-factor normalization inside DESeq2. Weaknesses: the low-count filter names the rule shape (minimum count in at least 4 samples, the smallest group size) but never states the count threshold, so it is not fully reproducible; FDR is BH at both 0.05 and 0.10 with ashr/apeglm shrinkage stated a priori, though apeglm cannot serve the list-style simple-effect contrasts and this is not resolved. GSEA is well specified (signed Wald statistic, full ranked universe, hallmark and GO BP named, 10–500 size window, mapping fraction reported, no cross-species substitution) but omits the MSigDB version and rests on an unverified human-organism assumption that is unusual for a knockout study. Reporting covers design, thresholds, tested/significant counts, a detectable-effect-size bound and design caveats, but package versions are only implied."
+}

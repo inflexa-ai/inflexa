@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect confounding, explicitly refuses to fit a batch term or apply ComBat-seq/removeBatchEffect/SVA, states the no-batch-effect assumption, and carries a confounded label through every table and plot; it does not request a rebalanced design, but the reference permits proceeding with labeling, so this is acceptable. QC is dataset-specific (blind VST, PCA colored by both condition and batch to show they are the same partition, distance heatmap, library sizes) and is framed as a diagnostic rather than a fix. Filtering (>=10 counts in >=6 samples, tied to group size), DESeq2 internal median-of-ratios size factors with no pre-normalization, ~condition with control releveled as reference, Wald test, apeglm shrinkage, BH at alpha=0.05 with independent filtering and a p-value histogram check are all explicit and appropriate. Enrichment is arguably of limited value on a fully confounded gene list, but it is specified rigorously (tested-gene universe, named collections with versions, 15-500 size window, low-power caveat) and labeled as confounded; the stated rationale for preferring ORA over GSEA (a 'knowledge check') is weak. The report step names versions, design, contrast, thresholds, gene counts, diagnostics, and repeats the confounding caveat up front."
+}

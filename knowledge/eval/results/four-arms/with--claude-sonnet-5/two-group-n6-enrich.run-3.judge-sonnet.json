@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: unpaired 6v6 single-batch design with DESeq2 ~condition, explicit reference level and named contrast; QC retains sample_01 with blind VST/PCA/distance heatmap and a stated non-depth-alone removal policy plus library size reporting; minimal >=10-in-6 filter; normalization is DESeq2 median-of-ratios inside the model with no pre-normalization; BH padj<0.05 with independent filtering and apeglm shrinkage retained alongside unshrunken LFC; enrichment is fgsea preranked on the full tested gene list using the Wald statistic, Hallmark 15-500 window, universe and leading-edge reported, with version stated (though '2026.1 Hallmark' is an invented/unverifiable version tag, a minor fabrication risk). Report step names versions, thresholds, counts, caveats, and sample_01 handling as required. Minor deductions only for the slightly speculative Hallmark version label and the added edgeR/Reactome steps beyond the reference scope, which are handled well but not strictly required."
+}

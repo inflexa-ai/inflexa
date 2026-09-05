@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 2,
+    "low_count_filter": 8,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the paired structure and specifies DESeq2 with ~subject + condition, with the condition releveled so the treated-vs-control contrast is explicit, and it warns against a naive unpaired test — this is the right model for five matched pairs. QC is the weak point: Step 1 is titled 'QC' but the acceptance criteria only cover file loading and sample-name matching; there is no PCA, sample-distance matrix, library-size inspection, or outlier policy. The low-count filter (≥10 counts in ≥5 samples) is minimal and matched to the group size, and normalization is handled inside DESeq2 with size-factor-corrected counts used only for descriptive per-subject fold changes, though the plan never says so explicitly for the model itself. Multiple testing is at padj<0.05 but BH is only implicit and no lfcShrink/apeglm shrinkage is requested for the reported effects; enrichment names WikiPathways human but leaves ORA-vs-GSEA undecided, omits the background universe, the collection version, the gene-set size window, and the ranking metric. Reporting covers design, thresholds, significant-gene counts, and the n=5 power caveat, but not software versions or the number of genes tested after filtering."
+}

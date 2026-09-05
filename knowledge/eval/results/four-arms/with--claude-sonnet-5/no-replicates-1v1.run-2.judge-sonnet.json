@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies that 1-vs-1 with no replicates precludes dispersion estimation and restricts itself to size-factor normalization and descriptive log2FC, explicitly avoiding DESeq2's GLM/Wald test, p-values, and significance calls, and names the replicated design needed for inference. QC is present via library size, count distributions, and vst-based distance, with justified acknowledgment that PCA is degenerate at n=2; a formal sample-swap/outlier policy is not really applicable here but is reasonably substituted. The low-count filter (>=10 counts in >=1 sample) is minimal and stated, though the threshold choice of 10 isn't strongly justified beyond convention. There is no model formula/contrast with a GLM since none is fit, but the plan explicitly states the reference level (control as denominator) and reasoning for omitting a design formula, which is the correct move for this design. Enrichment appropriately uses preranked GSEA on log2FC with stated universe, size window, and named versioned collections, and explicitly downgrades p-values/NES to hypothesis-generating, though the criterion 'enrichment not warranted' would score higher if omitted entirely given no valid ranking statistic exists—this is a reasonable compromise but slightly stretches the descriptive-only discipline. The final report is thorough with versions, design, thresholds, gene counts, and caveats stated up front as required by the reference plan."
+}

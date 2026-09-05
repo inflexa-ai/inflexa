@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses the 1v1 design, states that no within-group variance exists, makes a descriptive log2FC ranking the primary deliverable, and specifies the replication needed to test candidates — all of which matches the reference. It then undercuts that by running edgeR exactTest at three assumed BCVs and reporting the number of genes at FDR<0.05, plus GSEA permutation nominal p and FDR; framing these as sensitivity analysis and 'exploratory' does not make the p-values legitimate, and the reference explicitly rules out an edgeR run with p-values, so method_fits_design and fdr_shrinkage are heavily penalized (no shrinkage of effect sizes either, only a pseudocount). QC is strong and design-appropriate (library sizes, detected genes, size factors, MA trend, log-log scatter, correlations; PCA is meaningless with two samples), the filter (count ≥ 10 in at least one sample, reported against 12,000) is minimal and justified, and normalization is done inside the workflow on raw counts with both CPM and median-of-ratios reported. Enrichment is well specified mechanically (named GMT with version, path check, 15–500 size window, ranking metric, mapping rate) but is not warranted on an unreplicated ranking and adds another layer of permutation statistics; the model/contrast criterion is only partly met since no formula exists, though the treated-vs-control direction and verbatim label capture are explicit."
+}

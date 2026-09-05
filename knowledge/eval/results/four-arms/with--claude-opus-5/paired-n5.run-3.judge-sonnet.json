@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly blocks on subject (~ subject + condition) with an explicit reference level and named contrast, matching the paired design exactly. QC precedes testing with library sizes, blind VST PCA and sample-distance heatmap colored by subject and condition, plus explicit pairing verification and an outlier policy that forbids breaking a pair. The low-count filter (>=10 counts in >=5 samples) is minimal and justified, and DESeq2's internal median-of-ratios normalization is used with no pre-scaling. BH at alpha 0.05 with independent filtering, apeglm shrinkage, and clear NA-category reporting (Cook's outliers vs independent filtering) satisfy the FDR/shrinkage criterion fully. Enrichment is well justified (full ranked list, Wald stat rationale, explicit universe, size window, seed, collapsed redundancy) though version/release specifics for Hallmark/Reactome are only promised rather than fixed at plan time, and the report section is exhaustive, naming versions, thresholds, counts, diagnostics, and design caveats including blood-tissue cell composition and single-method limitation."
+}

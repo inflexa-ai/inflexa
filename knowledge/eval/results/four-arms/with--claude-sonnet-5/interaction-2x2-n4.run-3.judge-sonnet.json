@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies this as an interaction question and fits ~genotype+treatment+genotype:treatment, extracting the interaction coefficient plus two named simple-effect contrasts with explicit reference levels — exactly matching the reference. QC (vst blind PCA, distance heatmap, library size, outlier policy) precedes the model, and normalization is handled entirely inside DESeq2 size factors with no pre-normalized input. The filter (>=10 counts in >=4 samples, tied to smallest cell size) is minimal and justified; BH-FDR at 0.05 with ashr shrinkage on all three contrasts is correctly specified and independent filtering is used properly (thresholds in-test, not post hoc). Enrichment is well justified with stated ranking metric (Wald stat), named collections/versions, size windows, and per-contrast separation, though 'apeglm' listed in packages despite the text disavowing its use for contrasts is a minor inconsistency. The final report is comprehensive, naming versions, design, thresholds, gene counts, and explicitly flags the n=4/cell power caveat for the interaction test."
+}

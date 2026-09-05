@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly uses DESeq2 Wald test (with an edgeR QL cross-check) on raw counts, states the design formula ~condition with control as reference, applies a minimal justified low-count filter, normalizes internally via median-of-ratios/TMM, and uses BH FDR with apeglm shrinkage while explicitly refusing to alter alpha for the n=3 power limitation. QC (blind VST PCA, sample distances, library sizes) precedes testing with an explicit outlier-flagging policy. GSEA is well-specified (full ranked list, stat metric, Hallmark then Reactome, size window, BH, leading-edge) though enrichment wasn't strictly requested, so it's reasonable but adds unrequested scope; the reference only requires this when 'asked or warranted,' and the plan's justification (underpowered per-gene FDR) is plausible but slightly stretches the brief, and running two collections plus an edgeR overlap layer adds complexity beyond the core question. The final report is comprehensive, naming methods, versions, thresholds, gene counts, and caveats, fully satisfying report_completeness."
+}

@@ -1,0 +1,318 @@
+{
+  "campaign": "four-arms",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n6-enrich",
+  "run": 3,
+  "startedAt": "2026-09-05T13:23:07.247Z",
+  "elapsedMs": 37726,
+  "outcome": "plan_submitted",
+  "planId": "pln-9242c7fb",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and library-size assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "What are the library size distribution, count sparsity, and sample clustering patterns across the 12 skin samples (6 AD lesional, 6 control), and how does sample_01's ~4x-below-median library size affect its position in this structure?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports raw library size per sample with sample_01 explicitly flagged and its fold-difference from the median quantified",
+          "Reports number of genes with zero or near-zero counts in sample_01 vs other samples",
+          "Produces a PCA or hierarchical clustering plot on variance-stabilized counts showing whether sample_01 is an outlier",
+          "States explicitly whether sample_01 should be retained with caution, downweighted, or excluded, based on the observed clustering/depth evidence, without pre-deciding the answer"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: AD lesional vs control (DESeq2)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr"
+        ],
+        "question": "Which genes are differentially expressed between AD lesional (n=6) and control (n=6) skin using DESeq2 on the raw gene-level Salmon counts, and how sensitive is the gene list to the low-depth sample_01?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Runs DESeq2 with design ~condition, Wald test, apeglm or ashr log2FC shrinkage, contrast AD_lesional vs Control",
+          "Reports full DE results table (gene, baseMean, log2FoldChange, lfcSE, padj) for all ~12000 genes",
+          "Reports number of genes significant at padj < 0.05 and |log2FC| > 1 (or states the exact thresholds used)",
+          "Re-runs the same DESeq2 model excluding sample_01 and reports the overlap (Jaccard or count) of significant genes between the full and sample_01-excluded runs, so the effect of the shallow sample on the final call is documented rather than assumed",
+          "States which gene list (full n=12 or n=11 excluding sample_01) is carried forward as primary, with justification from the T1S1 QC evidence"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark pathway enrichment (fgsea, ranked gene list)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea"
+        ],
+        "question": "Which of the 50 MSigDB hallmark gene sets are enriched among genes ranked by DESeq2 test statistic between AD lesional and control skin?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "pathway_enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the DESeq2 result table from T1S2 (primary gene list), ranks all genes by Wald statistic (or shrunken log2FC x -log10(padj) if statistic unavailable), and runs fgsea against the human hallmark gene sets",
+          "Reports NES, p-value and adjusted p-value (BH) for all 50 hallmark sets tested",
+          "Flags hallmark sets significant at padj < 0.05 with direction (up in AD lesional vs up in control)",
+          "If the hallmark gene set reference is unavailable in the environment at run time, reports this explicitly rather than substituting a different collection silently"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "WikiPathways enrichment on significant DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler"
+        ],
+        "question": "Which human WikiPathways pathways are over-represented among the significantly differentially expressed genes (padj < 0.05) between AD lesional and control skin?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "pathway_enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the significant gene set (padj < 0.05, |log2FC| > 1) from T1S2 as the query and the ~12000 detected genes as the background universe",
+          "Runs over-representation analysis against the human WikiPathways gene sets",
+          "Reports pathway name, WikiPathways ID, gene ratio, and BH-adjusted p-value for all pathways with padj < 0.05",
+          "If no genes reach the significance threshold, reports this outcome rather than lowering the threshold silently to force a result"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Volcano plot and summary of DE genes and hallmark pathways",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "EnhancedVolcano"
+        ],
+        "question": "What is the consolidated view of top differentially expressed genes and top hallmark/WikiPathways pathways distinguishing AD lesional from control skin?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "visualization",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "acceptance_criteria": [
+          "Produces a volcano plot (log2FC vs -log10(padj)) labeling the top 15-20 DE genes by significance, from the primary DESeq2 result",
+          "Produces a bar or dot plot of the significant hallmark pathways (padj < 0.05) with NES",
+          "Cross-references any WikiPathways hits (T2S2) that overlap thematically with the significant hallmark pathways (T2S1) and reports concordance or discordance explicitly",
+          "Explicitly notes in the summary whether results changed materially when sample_01 was excluded, per T1S2's sensitivity check"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control: DE genes + hallmark pathways",
+    "created_at": "2026-09-05",
+    "analytical_narrative": "The dataset is bulk RNA-seq (Salmon-derived gene-level counts, 12000 genes x 12 samples) comparing atopic dermatitis lesional skin (n=6) vs control skin (n=6), unpaired, single batch. sample_01 has a library size ~4x below the median, which threatens both normalization and the DE model if left unaddressed. The plan therefore (1) performs QC that explicitly quantifies and flags sample_01 and runs a sensitivity DE analysis with and without it, so the final gene list is not driven by one low-depth outlier; (2) runs a standard DESeq2 Wald test AD_lesional vs Control with shrunken log2FC (apeglm) as the primary gene-level result; (3) feeds the ranked gene list into fgsea against the MSigDB human hallmark gene sets (the reference asked for by the research question) to identify hallmark pathways changing between conditions; (4) supplements with a WikiPathways human pathway enrichment on the significant DE gene set as a second, independent pathway resource, since it is staged for human and gives converging or diverging evidence beyond hallmark alone. All steps operate on the actual counts.csv/metadata.csv, the actual AD_lesional vs Control contrast, and the actual n=6/n=6 unpaired design."
+  },
+  "usage": {
+    "inputTokens": 163402,
+    "outputTokens": 2956,
+    "cacheCreationInputTokens": 101831,
+    "cacheReadInputTokens": 61535,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "MSigDB"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano",
+          "apeglm",
+          "ashr"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control: DE genes + hallmark pathways",
+          "analytical_narrative": "The dataset is bulk RNA-seq (Salmon-derived gene-level counts, 12000 genes x 12 samples) comparing atopic dermatitis lesional skin (n=6) vs control skin (n=6), unpaired, single batch. sample_01 has a library size ~4x below the median, which threatens both normalization and the DE model if left unaddressed. The plan therefore (1) performs QC that explicitly quantifies and flags sample_01 and runs a sensitivity DE analysis with and without it, so the final gene list is not driven by one low-depth outlier; (2) runs a standard DESeq2 Wald test AD_lesional vs Control with shrunken log2FC (apeglm) as the primary gene-level result; (3) feeds the ranked gene list into fgsea against the MSigDB human hallmark gene sets (the reference asked for by the research question) to identify hallmark pathways changing between conditions; (4) supplements with a WikiPathways human pathway enrichment on the significant DE gene set as a second, independent pathway resource, since it is staged for human and gives converging or diverging evidence beyond hallmark alone. All steps operate on the actual counts.csv/metadata.csv, the actual AD_lesional vs Control contrast, and the actual n=6/n=6 unpaired design.",
+          "created_at": "2026-09-05",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and library-size assessment",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "What are the library size distribution, count sparsity, and sample clustering patterns across the 12 skin samples (6 AD lesional, 6 control), and how does sample_01's ~4x-below-median library size affect its position in this structure?",
+              "acceptance_criteria": [
+                "Reports raw library size per sample with sample_01 explicitly flagged and its fold-difference from the median quantified",
+                "Reports number of genes with zero or near-zero counts in sample_01 vs other samples",
+                "Produces a PCA or hierarchical clustering plot on variance-stabilized counts showing whether sample_01 is an outlier",
+                "States explicitly whether sample_01 should be retained with caution, downweighted, or excluded, based on the observed clustering/depth evidence, without pre-deciding the answer"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: AD lesional vs control (DESeq2)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between AD lesional (n=6) and control (n=6) skin using DESeq2 on the raw gene-level Salmon counts, and how sensitive is the gene list to the low-depth sample_01?",
+              "acceptance_criteria": [
+                "Runs DESeq2 with design ~condition, Wald test, apeglm or ashr log2FC shrinkage, contrast AD_lesional vs Control",
+                "Reports full DE results table (gene, baseMean, log2FoldChange, lfcSE, padj) for all ~12000 genes",
+                "Reports number of genes significant at padj < 0.05 and |log2FC| > 1 (or states the exact thresholds used)",
+                "Re-runs the same DESeq2 model excluding sample_01 and reports the overlap (Jaccard or count) of significant genes between the full and sample_01-excluded runs, so the effect of the shallow sample on the final call is documented rather than assumed",
+                "States which gene list (full n=12 or n=11 excluding sample_01) is carried forward as primary, with justification from the T1S1 QC evidence"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark pathway enrichment (fgsea, ranked gene list)",
+              "track": "T2",
+              "step_type": "pathway_enrichment",
+              "question": "Which of the 50 MSigDB hallmark gene sets are enriched among genes ranked by DESeq2 test statistic between AD lesional and control skin?",
+              "acceptance_criteria": [
+                "Uses the DESeq2 result table from T1S2 (primary gene list), ranks all genes by Wald statistic (or shrunken log2FC x -log10(padj) if statistic unavailable), and runs fgsea against the human hallmark gene sets",
+                "Reports NES, p-value and adjusted p-value (BH) for all 50 hallmark sets tested",
+                "Flags hallmark sets significant at padj < 0.05 with direction (up in AD lesional vs up in control)",
+                "If the hallmark gene set reference is unavailable in the environment at run time, reports this explicitly rather than substituting a different collection silently"
+              ],
+              "packages": [
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "WikiPathways enrichment on significant DE genes",
+              "track": "T2",
+              "step_type": "pathway_enrichment",
+              "question": "Which human WikiPathways pathways are over-represented among the significantly differentially expressed genes (padj < 0.05) between AD lesional and control skin?",
+              "acceptance_criteria": [
+                "Uses the significant gene set (padj < 0.05, |log2FC| > 1) from T1S2 as the query and the ~12000 detected genes as the background universe",
+                "Runs over-representation analysis against the human WikiPathways gene sets",
+                "Reports pathway name, WikiPathways ID, gene ratio, and BH-adjusted p-value for all pathways with padj < 0.05",
+                "If no genes reach the significance threshold, reports this outcome rather than lowering the threshold silently to force a result"
+              ],
+              "packages": [
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S3",
+              "name": "Volcano plot and summary of DE genes and hallmark pathways",
+              "track": "T2",
+              "step_type": "visualization",
+              "question": "What is the consolidated view of top differentially expressed genes and top hallmark/WikiPathways pathways distinguishing AD lesional from control skin?",
+              "acceptance_criteria": [
+                "Produces a volcano plot (log2FC vs -log10(padj)) labeling the top 15-20 DE genes by significance, from the primary DESeq2 result",
+                "Produces a bar or dot plot of the significant hallmark pathways (padj < 0.05) with NES",
+                "Cross-references any WikiPathways hits (T2S2) that overlap thematically with the significant hallmark pathways (T2S1) and reports concordance or discordance explicitly",
+                "Explicitly notes in the summary whether results changed materially when sample_01 was excluded, per T1S2's sensitivity check"
+              ],
+              "packages": [
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

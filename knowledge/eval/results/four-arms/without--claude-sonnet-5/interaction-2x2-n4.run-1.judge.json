@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 6,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly frames the question as a genotype:treatment interaction, fits a single NB model with ~ genotype + treatment + genotype:treatment, fixes reference levels to WT/vehicle, tests the interaction by LRT against an explicit reduced model, and adds the two simple effects with a clear warning that a significant simple effect is not an interaction and that n=4 gives modest power — this is design-specific and well reasoned (though apeglm cannot shrink an arbitrary interaction contrast; ashr is the right choice there). QC includes balance verification, VST PCA/MDS colored by genotype and treatment, and a correlation heatmap, but library sizes and an explicit outlier/shallow-sample policy are absent. Filtering names filterByExpr or a CPM rule but only as an 'e.g.' without justification; normalization is left implicit in DESeq2 rather than stated as size-factor estimation inside the model, though raw counts are correctly fed in. BH-FDR at 0.05 and shrunken LFCs are specified; enrichment names human collections and preranked statistics but omits collection versions, the ORA universe, and gene-set size windows, and the report section lacks software versions and counts of genes tested versus significant."
+}

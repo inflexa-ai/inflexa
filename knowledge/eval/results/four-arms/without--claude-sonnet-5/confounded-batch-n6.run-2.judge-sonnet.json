@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 0,
+    "normalization": 5,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the perfect confound, refuses to fit batch or apply ComBat/SVA, and runs the only estimable model (~condition) with explicit, repeated caveats labeling results as confounded—matching the reference's core requirement. QC (PCA, clustering, variance attribution) is well specified though it lacks an explicit outlier/shallow-sample handling policy. DESeq2's internal normalization (size factors) is used correctly on raw counts, but no low-count filtering step is mentioned at all (DESeq2 default independent filtering is only applied post-hoc for FDR, not as a stated pre-filter), so that criterion is unmet. BH FDR is applied via DESeq2 defaults but no LFC shrinkage (apeglm/ashr) or explicit alpha is stated. Enrichment step names the collection (WikiPathways human) and checks organism match, but omits a stated version-independent size window and doesn't specify a universe for ORA or a ranking metric choice logic clearly enough. Overall the plan is honest, well-caveated, and structurally sound, losing points mainly on filtering, shrinkage, and enrichment rigor rather than on the core confound handling."
+}

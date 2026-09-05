@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly matches DESeq2 Wald (plus an edgeR QL cross-check) to a 6v6 unpaired single-batch design, uses ~condition with control as explicit reference and a named contrast, and handles the shallow sample_01 as a QC/judgement issue (PCA, distance heatmap, library size/detected genes reported, sensitivity refit) rather than default removal. Filtering (>=10 counts in >=6 samples) is minimal and justified, normalization is strictly inside DESeq2/edgeR (median-of-ratios, TMM) with no pre-normalization, and BH at 0.05 with apeglm shrinkage plus in-test thresholds are all explicit. Enrichment is exemplary: full ranked list, stat as rank metric with rationale, named Hallmark 2026.1 collection with version, tested-gene universe, 15-500 size window, seed, leading-edge reporting, and explicit substitution note for the missing Reactome collection. Reporting is comprehensive (versions, thresholds, counts, caveats, sessionInfo), so the plan meets or exceeds the reference on nearly every axis; minor deduction only for the added second collection (GO BP) slightly diluting the hallmark-only focus, though it is clearly labeled as a substitution."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan identifies the perfect confounding as the central fact, refuses to fit a batch term (correctly noting rank deficiency), explicitly rejects ComBat-seq/removeBatchEffect/SVA because they would strip the condition effect, proceeds with ~condition alone under a stated untestable assumption, and propagates a confounding label into every gene-level, method-comparison and pathway output plus the report's headline limitation and the concrete remedy (batches containing both conditions or a bridging technical replicate). QC is design-specific rather than generic: blind VST PCA and distance heatmap annotated by both labels with the explicit note that the two partitions are identical so PC1 cannot be attributed to treatment, plus library-size and detected-gene checks with a flag-don't-drop policy at n=6. Filtering (>=10 counts in >=6 samples, tied to smallest group size, with before/after counts) is minimal and justified; size factors and TMM are estimated inside the models with no pre-normalization; the contrast, reference level and sign convention are explicit; BH at alpha 0.05 with independent filtering, apeglm shrinkage of the reported effect, and a p-value histogram inspected before trusting adjustment. Enrichment is preranked on the full tested list with the Wald statistic named as the chosen metric, a 15-500 size window, symbol-space matching, seed and collection version recorded, and the confounding caveat carried through — it is somewhat optional given the question, but it is correctly specified rather than mis-specified. The only quibbles are that the plan proceeds rather than pausing to request a rebalanced design (permitted by the reference) and the intersection-as-high-confidence framing adds little beyond the DESeq2 result."
+}

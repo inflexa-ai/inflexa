@@ -1,0 +1,331 @@
+{
+  "campaign": "four-arms",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "no-replicates-1v1",
+  "run": 1,
+  "startedAt": "2026-09-05T13:57:11.398Z",
+  "elapsedMs": 75390,
+  "outcome": "plan_submitted",
+  "planId": "pln-e8bc3697",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, QC and normalize the two liver libraries",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 2 samples, no dispersion, no variance, and no outlier detection across replicates is possible — QC here is descriptive only.",
+          "A single dominant transcript can shift CPM for every other gene; check the top-fraction genes before trusting fold changes.",
+          "12000 genes is a pre-filtered matrix relative to a full human transcriptome; state that filtering upstream is unknown."
+        ],
+        "context": "Human liver bulk RNA-seq, salmon gene-level raw integer counts, 12000 genes, exactly 2 samples: 1 treated, 1 control. No biological replication. Because there is one sample per arm, any global composition difference is perfectly confounded with the treatment effect — normalization cannot be validated here, only described.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "How comparable are the single treated and single control liver libraries in depth, detection rate and count distribution, and what normalized expression matrix should downstream comparison use?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_normalization",
+        "depends_on": [],
+        "constraints": [
+          "Use the literal sample ids and condition labels found in metadata.csv; do not invent or reorder them.",
+          "Treat the first column of counts.csv as gene symbols, not as a sample.",
+          "Do not impute, do not drop samples, do not attempt batch correction — there is nothing to correct against.",
+          "Report TMM normalization factors numerically in the output and state explicitly that they are estimated from a single sample pair.",
+          "Save the normalized log2(CPM+1) matrix and the per-sample QC table as CSV artifacts for T1S2."
+        ],
+        "description": "Read /eval-four-arms-without-no-replicates-1v1-1/data/inputs/counts/counts.csv (12000 rows x 3 columns: first column gene symbol, then one column per sample) and /eval-four-arms-without-no-replicates-1v1-1/data/inputs/metadata/metadata.csv (2 rows, sample id + condition). Verify the two count-matrix sample columns match the two metadata sample ids exactly and record which is treated and which is control using the literal condition labels present in metadata.csv. Handle duplicated gene symbols by summing counts per symbol and report how many were collapsed. Report per-sample: total library size, number of genes with count > 0, number with count >= 10, median and quartiles of nonzero counts, and the top 10 genes by fraction of the library (to expose any single-transcript domination that would distort global scaling). Compute CPM and log2(CPM+1) using edgeR TMM normalization factors (report the TMM factors; note that with n=2 TMM is estimated from a single pairwise comparison and is itself uncertain). Also compute simple total-count-scaled CPM and report the correlation between the two normalizations so a reader can see whether the normalization choice matters. Produce a scatter plot of log2(CPM+1) treated vs control with the identity line, and an MA plot (mean expression vs log2 ratio) so the mean-variance trend and any depth-driven skew are visible. Write out the normalized matrix as CSV for downstream steps.",
+        "acceptance_criteria": [
+          "Sample-to-condition mapping printed using the exact labels from metadata.csv, with treated and control unambiguously identified.",
+          "Per-sample QC table with library size, detected-gene counts at >0 and >=10, and count quantiles.",
+          "TMM factors reported; both TMM-CPM and total-count CPM computed and their agreement quantified.",
+          "Scatter plot and MA plot written to disk.",
+          "Normalized log2(CPM+1) matrix written as CSV.",
+          "Number of duplicate gene symbols collapsed is reported (zero is an acceptable answer)."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Descriptive fold-change ranking + BCV sensitivity (no valid FDR)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Fold changes for genes near the detection limit are unstable even after filtering; a 4-fold change from 2 to 8 counts is noise.",
+          "At BCV 0.4 the n=1 vs 1 exact test will likely call almost nothing — that is the honest result, not a failure of the step.",
+          "Technical artifacts (RNA degradation, library prep, sequencing run) are indistinguishable from treatment effect here."
+        ],
+        "context": "1 treated vs 1 control human liver sample, raw counts from salmon. Depends on the TMM-normalized matrix and QC from T1S1. The research question as posed ('which genes are differentially expressed') cannot be answered with statistical support at this sample size; the deliverable is an honest ranked candidate list plus a clear statement of the design's limit.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which genes show the largest treated-vs-control expression differences in this single-pair liver comparison, and how completely does any apparent significance depend on an assumed dispersion the data cannot estimate?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do NOT run DESeq2 or edgeR in a mode that silently invents a dispersion estimate from the two samples and present the resulting p-values as findings.",
+          "Every p-value or FDR reported must be accompanied by the fixed BCV value it assumed, in the same table/plot.",
+          "The primary ranked table must be fold-change based and must carry the raw and normalized counts for both samples so magnitude can be judged against depth.",
+          "Apply and report the CPM >= 1 in at least one sample expression filter before ranking.",
+          "Include a written limitations statement in the step output stating that no FDR is computable from n=1 vs n=1 and specifying the replication needed.",
+          "Use the actual treated/control labels from metadata.csv for the direction of the fold change and state the direction convention explicitly."
+        ],
+        "description": "Primary output: a descriptive ranked table of all genes with columns gene symbol, treated normalized count, control normalized count, average log2(CPM+1) expression, and log2 fold change (treated vs control) computed on TMM-CPM with a pseudocount. Apply an expression filter — require CPM >= 1 in at least one sample (report how many genes pass) — because at low counts the ratio is dominated by sampling noise and produces spuriously huge fold changes. Rank by log2FC among the passing genes and report the top 50 up and top 50 down with their absolute counts alongside, so the reader can see whether a large ratio rests on 3 reads or 3000. Secondary, explicitly-labelled sensitivity analysis: run edgeR exactTest with a FIXED, user-supplied BCV at three values (0.1 = clean isogenic/technical, 0.2 = typical inbred model, 0.4 = typical human tissue) and report, for each BCV, how many genes reach FDR < 0.05 and how the top-gene ranking changes. Present this as a demonstration that the significance call is an assumption, not a measurement — human liver samples plausibly sit at BCV >= 0.4, where power at n=1 vs 1 is near zero. Produce a volcano-style plot ONLY if it is annotated with the BCV used, and state the BCV in the axis label. The step must NOT report any single gene list as 'the differentially expressed genes' without the qualifier that no false-discovery rate is estimable from this design. Write an explicit limitations paragraph naming what is needed to answer the question properly: at minimum 3 biological replicates per arm (preferably >=5 for human tissue), or independent validation of the top candidates by qPCR/targeted assay.",
+        "acceptance_criteria": [
+          "Full ranked fold-change table written as CSV, including raw counts, normalized counts, mean expression and log2FC for every gene passing the expression filter.",
+          "Number of genes passing the CPM>=1 filter reported.",
+          "Top 50 up and top 50 down genes tabulated with their underlying counts.",
+          "Sensitivity analysis reports gene counts at FDR<0.05 for each of BCV = 0.1, 0.2, 0.4, showing the dependence on the assumption.",
+          "Output contains an explicit statement that no valid FDR exists for this design and names the replication required.",
+          "Any volcano plot is labelled with the BCV assumed."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Rank-based pathway enrichment on the log2FC ranking",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A pathway can score highly because two or three high-magnitude, low-count genes sit at the top of the ranking — check the leading edge before believing it.",
+          "WikiPathways coverage of liver-specific metabolic biology is uneven; absence of a pathway is not evidence of absence of the biology.",
+          "No replicate-derived null exists; FDR here refers only to the gene-permutation null of the ranking."
+        ],
+        "context": "Downstream of T1S2's ranked fold-change table. Human (taxon 9606) liver, HGNC gene symbols. The environment's reference store carries a human WikiPathways GMT keyed on HGNC symbols, which matches the counts matrix identifier space directly with no ID conversion needed. Rank-based enrichment aggregates across many genes and is somewhat more robust than per-gene calls at n=1, but it does not restore the missing replication.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Do the treated-vs-control liver fold changes concentrate in coherent human pathways, or are the largest changes scattered — i.e. is there any aggregate signal that survives the absence of per-gene statistics?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the human pathway gene sets; do not fall back to mouse or rat sets under any circumstance.",
+          "Input must be the full ranked log2FC vector, not a thresholded significant-gene list.",
+          "Report the fraction of counts-matrix gene symbols that map into the gene-set universe.",
+          "Use a fixed random seed and report it, since permutation-based NES/p vary between runs.",
+          "State in the output that permutation p-values here test rank clustering only and do not confer reproducibility on the underlying single-pair fold changes.",
+          "Set gene-set size bounds min 15, max 500 and report how many sets were tested after filtering."
+        ],
+        "description": "Take the full gene-level log2 fold-change ranking from T1S2 (all filtered genes, NOT a thresholded gene list — a threshold has no defensible cutoff here) and run a pre-ranked GSEA against human pathway gene sets. Use the human WikiPathways gene-set collection available in the environment's reference store (HGNC gene symbols, matching the counts matrix identifier space); confirm the resource is present and the organism is human before using it, and report the symbol overlap between the counts matrix and the gene-set universe. If the human pathway collection cannot be resolved at run time, report that plainly and stop this step rather than substituting a different organism's sets. Report normalized enrichment scores, nominal p, and FDR from the permutation null, but state clearly in the output that the gene-level ranking itself carries no replicate-derived error, so the permutation p-value tests only whether pathway members cluster in the ranking — it does NOT establish that the underlying fold changes are reproducible. Set a minimum gene-set size of 15 and a maximum of 500. Additionally report, for the top 10 pathways in each direction, the leading-edge genes with their log2FC and their raw counts in both samples, so any pathway driven by a handful of low-count genes is visible. Produce a bar plot of the top pathways by NES with FDR annotated. Frame every conclusion as hypothesis-generating.",
+        "acceptance_criteria": [
+          "GSEA result table (pathway, size, NES, nominal p, FDR, leading edge) written as CSV.",
+          "Symbol-to-gene-set-universe overlap fraction reported.",
+          "Top 10 up and top 10 down pathways with leading-edge genes annotated by log2FC and raw counts in both samples.",
+          "Bar plot of top pathways by NES with FDR annotated, written to disk.",
+          "Random seed and number of tested gene sets reported.",
+          "Output explicitly frames results as hypothesis-generating and restates the n=1-per-arm limitation."
+        ]
+      }
+    ],
+    "title": "Treated vs control liver RNA-seq, n=1 per arm",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single bulk RNA-seq count matrix (/data/inputs/counts/counts.csv, 12000 gene symbols x 3 columns = gene-symbol column + 2 sample columns) with a 2-row metadata table assigning one sample to 'treated' and one to 'control' (human liver). The design has NO biological replication, so within-condition variance is unestimable and no valid p-value or FDR for differential expression exists. Any tool that appears to produce one (DESeq2 with blind dispersion, edgeR with a guessed BCV) is producing a number whose error rate is undefined, and reporting it as a discovery would be fabrication. The plan therefore does what the data can support and refuses what it cannot. T1S1 loads and QC-checks the two libraries (library sizes, detection rates, count distributions, duplicate/zero gene handling) and produces CPM/log-CPM normalized values — the only defensible normalization at n=1 per arm is a global scaling factor, and the step reports how strongly the two libraries differ in depth and composition, since composition bias is fully confounded with treatment here. T1S2 computes a descriptive ranked fold-change table (log2 ratio of normalized counts with a pseudocount, plus an expression-level filter to suppress the low-count genes that dominate raw ratios), and additionally runs edgeR exactCT with a set of FIXED, explicitly-stated BCV values (0.1, 0.2, 0.4) purely as a sensitivity illustration of how completely the significance call depends on an assumption the data cannot check — labelled as such, never as a discovery list. Its primary deliverable is the ranked candidate table with fold changes and a plain statement that no FDR is computable. T2S1 takes that full ranked list (not a thresholded set) into GSEA-style enrichment against human WikiPathways, since a rank-based pathway readout aggregates over many genes and is less fragile to single-gene noise than a per-gene call — but it too is exploratory, has no null derived from replicates, and is reported as hypothesis-generating. The final deliverable is an honest ranked candidate list plus an explicit statement of what this design cannot answer and what replication would be required."
+  },
+  "usage": {
+    "inputTokens": 88181,
+    "outputTokens": 5268,
+    "cacheCreationInputTokens": 35945,
+    "cacheReadInputTokens": 52212,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pydeseq2",
+          "gseapy",
+          "decoupler",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "differential expression without replicates RNA-seq single sample per condition",
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control liver RNA-seq, n=1 per arm",
+          "analytical_narrative": "The input is a single bulk RNA-seq count matrix (/data/inputs/counts/counts.csv, 12000 gene symbols x 3 columns = gene-symbol column + 2 sample columns) with a 2-row metadata table assigning one sample to 'treated' and one to 'control' (human liver). The design has NO biological replication, so within-condition variance is unestimable and no valid p-value or FDR for differential expression exists. Any tool that appears to produce one (DESeq2 with blind dispersion, edgeR with a guessed BCV) is producing a number whose error rate is undefined, and reporting it as a discovery would be fabrication. The plan therefore does what the data can support and refuses what it cannot. T1S1 loads and QC-checks the two libraries (library sizes, detection rates, count distributions, duplicate/zero gene handling) and produces CPM/log-CPM normalized values — the only defensible normalization at n=1 per arm is a global scaling factor, and the step reports how strongly the two libraries differ in depth and composition, since composition bias is fully confounded with treatment here. T1S2 computes a descriptive ranked fold-change table (log2 ratio of normalized counts with a pseudocount, plus an expression-level filter to suppress the low-count genes that dominate raw ratios), and additionally runs edgeR exactCT with a set of FIXED, explicitly-stated BCV values (0.1, 0.2, 0.4) purely as a sensitivity illustration of how completely the significance call depends on an assumption the data cannot check — labelled as such, never as a discovery list. Its primary deliverable is the ranked candidate table with fold changes and a plain statement that no FDR is computable. T2S1 takes that full ranked list (not a thresholded set) into GSEA-style enrichment against human WikiPathways, since a rank-based pathway readout aggregates over many genes and is less fragile to single-gene noise than a per-gene call — but it too is exploratory, has no null derived from replicates, and is reported as hypothesis-generating. The final deliverable is an honest ranked candidate list plus an explicit statement of what this design cannot answer and what replication would be required.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, QC and normalize the two liver libraries",
+              "track": "T1",
+              "step_type": "qc_normalization",
+              "question": "How comparable are the single treated and single control liver libraries in depth, detection rate and count distribution, and what normalized expression matrix should downstream comparison use?",
+              "description": "Read /eval-four-arms-without-no-replicates-1v1-1/data/inputs/counts/counts.csv (12000 rows x 3 columns: first column gene symbol, then one column per sample) and /eval-four-arms-without-no-replicates-1v1-1/data/inputs/metadata/metadata.csv (2 rows, sample id + condition). Verify the two count-matrix sample columns match the two metadata sample ids exactly and record which is treated and which is control using the literal condition labels present in metadata.csv. Handle duplicated gene symbols by summing counts per symbol and report how many were collapsed. Report per-sample: total library size, number of genes with count > 0, number with count >= 10, median and quartiles of nonzero counts, and the top 10 genes by fraction of the library (to expose any single-transcript domination that would distort global scaling). Compute CPM and log2(CPM+1) using edgeR TMM normalization factors (report the TMM factors; note that with n=2 TMM is estimated from a single pairwise comparison and is itself uncertain). Also compute simple total-count-scaled CPM and report the correlation between the two normalizations so a reader can see whether the normalization choice matters. Produce a scatter plot of log2(CPM+1) treated vs control with the identity line, and an MA plot (mean expression vs log2 ratio) so the mean-variance trend and any depth-driven skew are visible. Write out the normalized matrix as CSV for downstream steps.",
+              "question_context": "",
+              "context": "Human liver bulk RNA-seq, salmon gene-level raw integer counts, 12000 genes, exactly 2 samples: 1 treated, 1 control. No biological replication. Because there is one sample per arm, any global composition difference is perfectly confounded with the treatment effect — normalization cannot be validated here, only described.",
+              "constraints": [
+                "Use the literal sample ids and condition labels found in metadata.csv; do not invent or reorder them.",
+                "Treat the first column of counts.csv as gene symbols, not as a sample.",
+                "Do not impute, do not drop samples, do not attempt batch correction — there is nothing to correct against.",
+                "Report TMM normalization factors numerically in the output and state explicitly that they are estimated from a single sample pair.",
+                "Save the normalized log2(CPM+1) matrix and the per-sample QC table as CSV artifacts for T1S2."
+              ],
+              "acceptance_criteria": [
+                "Sample-to-condition mapping printed using the exact labels from metadata.csv, with treated and control unambiguously identified.",
+                "Per-sample QC table with library size, detected-gene counts at >0 and >=10, and count quantiles.",
+                "TMM factors reported; both TMM-CPM and total-count CPM computed and their agreement quantified.",
+                "Scatter plot and MA plot written to disk.",
+                "Normalized log2(CPM+1) matrix written as CSV.",
+                "Number of duplicate gene symbols collapsed is reported (zero is an acceptable answer)."
+              ],
+              "caveats": [
+                "With 2 samples, no dispersion, no variance, and no outlier detection across replicates is possible — QC here is descriptive only.",
+                "A single dominant transcript can shift CPM for every other gene; check the top-fraction genes before trusting fold changes.",
+                "12000 genes is a pre-filtered matrix relative to a full human transcriptome; state that filtering upstream is unknown."
+              ],
+              "packages": [
+                "edgeR",
+                "limma",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Descriptive fold-change ranking + BCV sensitivity (no valid FDR)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes show the largest treated-vs-control expression differences in this single-pair liver comparison, and how completely does any apparent significance depend on an assumed dispersion the data cannot estimate?",
+              "description": "Primary output: a descriptive ranked table of all genes with columns gene symbol, treated normalized count, control normalized count, average log2(CPM+1) expression, and log2 fold change (treated vs control) computed on TMM-CPM with a pseudocount. Apply an expression filter — require CPM >= 1 in at least one sample (report how many genes pass) — because at low counts the ratio is dominated by sampling noise and produces spuriously huge fold changes. Rank by log2FC among the passing genes and report the top 50 up and top 50 down with their absolute counts alongside, so the reader can see whether a large ratio rests on 3 reads or 3000. Secondary, explicitly-labelled sensitivity analysis: run edgeR exactTest with a FIXED, user-supplied BCV at three values (0.1 = clean isogenic/technical, 0.2 = typical inbred model, 0.4 = typical human tissue) and report, for each BCV, how many genes reach FDR < 0.05 and how the top-gene ranking changes. Present this as a demonstration that the significance call is an assumption, not a measurement — human liver samples plausibly sit at BCV >= 0.4, where power at n=1 vs 1 is near zero. Produce a volcano-style plot ONLY if it is annotated with the BCV used, and state the BCV in the axis label. The step must NOT report any single gene list as 'the differentially expressed genes' without the qualifier that no false-discovery rate is estimable from this design. Write an explicit limitations paragraph naming what is needed to answer the question properly: at minimum 3 biological replicates per arm (preferably >=5 for human tissue), or independent validation of the top candidates by qPCR/targeted assay.",
+              "question_context": "",
+              "context": "1 treated vs 1 control human liver sample, raw counts from salmon. Depends on the TMM-normalized matrix and QC from T1S1. The research question as posed ('which genes are differentially expressed') cannot be answered with statistical support at this sample size; the deliverable is an honest ranked candidate list plus a clear statement of the design's limit.",
+              "constraints": [
+                "Do NOT run DESeq2 or edgeR in a mode that silently invents a dispersion estimate from the two samples and present the resulting p-values as findings.",
+                "Every p-value or FDR reported must be accompanied by the fixed BCV value it assumed, in the same table/plot.",
+                "The primary ranked table must be fold-change based and must carry the raw and normalized counts for both samples so magnitude can be judged against depth.",
+                "Apply and report the CPM >= 1 in at least one sample expression filter before ranking.",
+                "Include a written limitations statement in the step output stating that no FDR is computable from n=1 vs n=1 and specifying the replication needed.",
+                "Use the actual treated/control labels from metadata.csv for the direction of the fold change and state the direction convention explicitly."
+              ],
+              "acceptance_criteria": [
+                "Full ranked fold-change table written as CSV, including raw counts, normalized counts, mean expression and log2FC for every gene passing the expression filter.",
+                "Number of genes passing the CPM>=1 filter reported.",
+                "Top 50 up and top 50 down genes tabulated with their underlying counts.",
+                "Sensitivity analysis reports gene counts at FDR<0.05 for each of BCV = 0.1, 0.2, 0.4, showing the dependence on the assumption.",
+                "Output contains an explicit statement that no valid FDR exists for this design and names the replication required.",
+                "Any volcano plot is labelled with the BCV assumed."
+              ],
+              "caveats": [
+                "Fold changes for genes near the detection limit are unstable even after filtering; a 4-fold change from 2 to 8 counts is noise.",
+                "At BCV 0.4 the n=1 vs 1 exact test will likely call almost nothing — that is the honest result, not a failure of the step.",
+                "Technical artifacts (RNA degradation, library prep, sequencing run) are indistinguishable from treatment effect here."
+              ],
+              "packages": [
+                "edgeR",
+                "limma",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Rank-based pathway enrichment on the log2FC ranking",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Do the treated-vs-control liver fold changes concentrate in coherent human pathways, or are the largest changes scattered — i.e. is there any aggregate signal that survives the absence of per-gene statistics?",
+              "description": "Take the full gene-level log2 fold-change ranking from T1S2 (all filtered genes, NOT a thresholded gene list — a threshold has no defensible cutoff here) and run a pre-ranked GSEA against human pathway gene sets. Use the human WikiPathways gene-set collection available in the environment's reference store (HGNC gene symbols, matching the counts matrix identifier space); confirm the resource is present and the organism is human before using it, and report the symbol overlap between the counts matrix and the gene-set universe. If the human pathway collection cannot be resolved at run time, report that plainly and stop this step rather than substituting a different organism's sets. Report normalized enrichment scores, nominal p, and FDR from the permutation null, but state clearly in the output that the gene-level ranking itself carries no replicate-derived error, so the permutation p-value tests only whether pathway members cluster in the ranking — it does NOT establish that the underlying fold changes are reproducible. Set a minimum gene-set size of 15 and a maximum of 500. Additionally report, for the top 10 pathways in each direction, the leading-edge genes with their log2FC and their raw counts in both samples, so any pathway driven by a handful of low-count genes is visible. Produce a bar plot of the top pathways by NES with FDR annotated. Frame every conclusion as hypothesis-generating.",
+              "question_context": "",
+              "context": "Downstream of T1S2's ranked fold-change table. Human (taxon 9606) liver, HGNC gene symbols. The environment's reference store carries a human WikiPathways GMT keyed on HGNC symbols, which matches the counts matrix identifier space directly with no ID conversion needed. Rank-based enrichment aggregates across many genes and is somewhat more robust than per-gene calls at n=1, but it does not restore the missing replication.",
+              "constraints": [
+                "Use the human pathway gene sets; do not fall back to mouse or rat sets under any circumstance.",
+                "Input must be the full ranked log2FC vector, not a thresholded significant-gene list.",
+                "Report the fraction of counts-matrix gene symbols that map into the gene-set universe.",
+                "Use a fixed random seed and report it, since permutation-based NES/p vary between runs.",
+                "State in the output that permutation p-values here test rank clustering only and do not confer reproducibility on the underlying single-pair fold changes.",
+                "Set gene-set size bounds min 15, max 500 and report how many sets were tested after filtering."
+              ],
+              "acceptance_criteria": [
+                "GSEA result table (pathway, size, NES, nominal p, FDR, leading edge) written as CSV.",
+                "Symbol-to-gene-set-universe overlap fraction reported.",
+                "Top 10 up and top 10 down pathways with leading-edge genes annotated by log2FC and raw counts in both samples.",
+                "Bar plot of top pathways by NES with FDR annotated, written to disk.",
+                "Random seed and number of tested gene sets reported.",
+                "Output explicitly frames results as hypothesis-generating and restates the n=1-per-arm limitation."
+              ],
+              "caveats": [
+                "A pathway can score highly because two or three high-magnitude, low-count genes sit at the top of the ranking — check the leading edge before believing it.",
+                "WikiPathways coverage of liver-specific metabolic biology is uneven; absence of a pathway is not evidence of absence of the biology.",
+                "No replicate-derived null exists; FDR here refers only to the gene-permutation null of the ranking."
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

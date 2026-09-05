@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly matches the design: raw Salmon counts into a negative binomial model (DESeq2 Wald on ~condition with control releveled as reference and the treated-over-control direction stated), with edgeR-QLF and limma-voom as concordance checks rather than substitutes, no batch term because none exists, and an explicit refusal to correct or pre-normalize. QC precedes testing with library sizes, detected genes, VST PCA with percent variance, sample correlation and Cook's distance, and a stated policy that at n=3 outliers are reported, not removed. The low-count filter (>=10 counts in >=3 samples, the smallest group size) is minimal and justified, normalization is inside the model via size factors and TMM, and multiple testing is BH at a stated alpha 0.05 with apeglm shrinkage used for ranking and reporting, with secondary thresholds reported separately rather than relaxed. Enrichment is well specified: full ranked list, stated metric, human symbol-keyed hallmark and GO-BP with a size window, permutation count, BH, redundancy collapsing, and a caution against conflating set-level and gene-level claims. The power audit is dispersion-based rather than circular and the n=3 limitations are stated plainly; the only real gaps are that software versions are not named for the report and the 3v3 permutation exercise adds little beyond the acknowledged 1/10 floor."
+}

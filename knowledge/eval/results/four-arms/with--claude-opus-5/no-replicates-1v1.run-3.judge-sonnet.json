@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies that n=1 per group precludes dispersion estimation and inference, delivering only descriptive log2FC on DESeq2 median-of-ratios normalized counts with no p-values, matching the reference exactly. QC is thoughtfully adapted to n=2 (library size, detection, composition skew, blind VST scatter/MA) with an explicit, justified rationale for omitting PCA/sample-distance heatmaps rather than a silent absence. The filter (>=10 counts in >=1 sample) is minimal and justified given group size 1; normalization is done inside DESeq2 with no pre-normalization; reference level and contrast are explicit. No FDR/shrinkage is applied, correctly, with clear rationale (shrinkage needs dispersion), satisfying the spirit of that criterion for a descriptive-only design. Enrichment is optional here but done carefully as hypothesis-generating preranked fgsea with stated universe, size window, named collection/version and substitution policy, and explicit labeling of p-values as non-inferential, though a strict reading of the reference ('correctly omits enrichment') means this thorough but non-mandated addition is very good but not a perfect match to the minimal reference. The report is comprehensive, stating design, versions, thresholds, gene counts, and caveats as required."
+}

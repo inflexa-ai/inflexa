@@ -11,6 +11,12 @@ assertion: >-
   The ranked test on the full list stays the first enrichment method.
 modality: bulk_rna_seq
 conditions:
+  - field: question
+    op: in
+    value: [enrichment, full_plan]
+  - field: enrichment_input
+    op: eq
+    value: gene_list
   - field: organism
     op: in
     value: [human, mouse]

@@ -21,7 +21,7 @@
 
 import { z } from "zod";
 
-import { SituationSchema, StepTypeEnum } from "../model.js";
+import { SituationSchema, StepTypeEnum, PreferencesSchema } from "../model.js";
 import type { Situation, StepType, TemplateParameter } from "../model.js";
 import type { CheckFinding } from "../engine/check.js";
 import type { ProcedureFlag, ProcedureStep } from "../engine/procedure.js";
@@ -35,6 +35,7 @@ export const ResponseFormatEnum = z.enum(["concise", "detailed"]);
 export const RecommendRequestSchema = z.object({
     situation: SituationSchema,
     response_format: ResponseFormatEnum.optional(),
+    preferences: PreferencesSchema.optional(),
 });
 export type RecommendRequest = z.infer<typeof RecommendRequestSchema>;
 
@@ -105,6 +106,8 @@ export interface RecommendResponse {
     readonly situation: Situation;
     readonly procedure: readonly ProcedureStep[];
     readonly uncovered: readonly StepType[];
+    /** Step types the procedure dropped because a flag removed inference. Absent when none. */
+    readonly dropped?: readonly StepType[];
     readonly flags: readonly ProcedureFlag[];
     readonly claims: readonly ClaimView[];
     readonly nearest?: readonly NearMiss[];

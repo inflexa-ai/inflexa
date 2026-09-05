@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies that a 1-vs-1 design supports no inferential test, refuses Wald/LRT/edgeR-with-guessed-BCV/voom, emits no p-values or FDR, declines shrinkage with a correct justification, and names the design (>=3 biological replicates per condition) that would support inference. QC is sensibly adapted to n=2: library sizes, detection at two thresholds, a blind VST scatter and MA plot, with an explicit statement that PCA and distance heatmaps are degenerate; the only gap is that with no replicates there is no meaningful outlier policy, which the plan acknowledges rather than resolves. The filter (>=10 counts in >=1 sample, tied to the smallest group size) and median-of-ratios normalization inside DESeq2 with reported size factors and an explicitly releveled reference and named contrast direction are all correct and stated. The main deduction is the enrichment step: preranked fgsea on an uncertainty-free 1-vs-1 ranking is not really warranted here, and although the plan specifies universe, size window, collection, seed and identifier mapping and repeatedly demotes the set-level p-values to a 'ranking device', it still generates permutation p-values that a reader can mistake for evidence. Reporting is thorough and leads with the limitation rather than the gene list."
+}

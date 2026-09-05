@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly specifies ~ batch + condition in DESeq2/pydeseq2 for a balanced batch design, with size factors handled internally and no pre-model count adjustment, matching the reference well. QC includes balance checks and PCA colored by condition/batch but lacks explicit library-size inspection or an outlier/shallow-sample policy. Low-count filtering is mentioned but only vaguely ('e.g., minimum total or per-group threshold') without a stated justified rule. FDR control via BH padj<0.05 is present but log2FC shrinkage (e.g., apeglm/ashr) is never explicitly invoked, only implied by 'moderated'. Enrichment ORA specifies a proper universe (filtered tested genes) and named collection (WikiPathways) but omits version, ranking metric for GSEA-style option, and gene-set size window. The report plan covers method, design, and DE counts but doesn't explicitly commit to reporting design caveats or versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly on the design point that matters: the known balanced batch enters the DESeq2 formula as ~batch + condition with control set as the reference and the contrast named, counts are never adjusted before the model, and ComBat-seq is explicitly excluded from the test. QC precedes the model with blind VST, PCA on the top 500 variable genes, a distance heatmap, and library sizes all colored by both condition and batch, though the outlier policy is only 'note with rationale' rather than a stated action rule. Filtering (>=10 counts in >=6 samples, justified as the smallest group size), median-of-ratios inside the model, Wald with apeglm shrinkage, BH at alpha=0.05 passed to results() with independent filtering and a p-value histogram, and separate accounting of Cook's-distance vs independent-filter NAs are all correct and explicit. Enrichment was not requested by the question, so including it is an unnecessary extension, but it is specified well (tested-gene universe, named collections with versions, 15-500 size window, fgsea fallback on the Wald statistic). The report section names design, contrast, package and gene-set versions, gene counts tested and significant, diagnostics, and design caveats; the passing reference to 'salmon-quantified' and strandedness is a minor unsupported detail."
+}

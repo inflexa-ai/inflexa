@@ -80,7 +80,8 @@ evidence:
       be stated.
     anchor: "Results; Recommendations"
     retrieved: "2026-09-03"
-status: active
+status: deprecated
+replaced_by: R-0107
 license: CC-BY-4.0
 curator: "radu@geneguard.bio"
 llm_drafted: true

@@ -15,3 +15,4 @@ templates:
   - tpl-deseq2-blocked
   - tpl-deseq2-interaction
   - tpl-deseq2-lrt-timecourse
+  - tpl-pydeseq2-two-group

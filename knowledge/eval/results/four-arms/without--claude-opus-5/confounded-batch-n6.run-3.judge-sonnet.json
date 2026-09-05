@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect confound, refuses to fit batch (avoiding rank-deficiency), and explicitly labels every downstream result as treated(B2) vs control(B1) rather than a treatment effect, matching the reference exactly. QC (PCA on log2 CPM colored by condition/batch, library size, contingency table) precedes testing, though it uses CPM rather than DESeq2 size factors for the PCA and doesn't explicitly state an outlier policy beyond noting collinearity. Filtering is minimal and justified (count in >=6 samples), normalization is done inside DESeq2/edgeR (size factors/TMM) for the actual test, with CPM only for exploratory PCA. BH FDR and apeglm/ashr shrinkage are correctly specified with explicit thresholds in the test. Enrichment is appropriately caveated as non-causal and uses proper pre-ranked GSEA with stated universe fraction, collection names, and size windows, consistent with the reference's implicit tolerance for a labeled, non-explanatory enrichment pass. Reporting is thorough, naming methods, versions (packages), thresholds, gene counts, and design caveats throughout."
+}

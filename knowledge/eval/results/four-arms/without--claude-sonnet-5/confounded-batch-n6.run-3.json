@@ -1,0 +1,247 @@
+{
+  "campaign": "four-arms",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "confounded-batch-n6",
+  "run": 3,
+  "startedAt": "2026-09-05T13:42:20.067Z",
+  "elapsedMs": 30528,
+  "outcome": "plan_submitted",
+  "planId": "pln-c4c3f007",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and confounding diagnostic on counts/metadata",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A PCA that shows separation by condition cannot distinguish it from separation by batch given this design — say so explicitly rather than attributing the separation to treatment"
+        ],
+        "context": "Raw integer gene-level counts (12000 x 12, excluding gene-symbol column) from salmon, with a 12x3 metadata table giving condition (treated/control) and batch (B1/B2). This step establishes and documents the confound quantitatively before any DE modeling.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "Do the 12 lung samples (6 treated in batch B2, 6 control in batch B1) show the expected perfect collinearity between condition and batch, and what does the count matrix (12000 genes x 12 samples) look like in library size, PCA, and dispersion terms before DE testing?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not attempt any batch-correction or covariate adjustment for batch in this step — the goal is diagnosis only",
+          "Use raw counts as provided; do not re-derive counts from any other source"
+        ],
+        "acceptance_criteria": [
+          "Cross-tabulation of condition x batch confirms 100% confounding (6/6 in each cell, zero mixed cells)",
+          "Library size, gene detection rate per sample reported for all 12 samples",
+          "PCA on variance-stabilized counts computed and PC1/PC2 coordinates reported alongside condition and batch labels to show they separate identically",
+          "Report explicitly states the design matrix for ~batch+condition would be rank-deficient/aliased and batch cannot be included as a covariate"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, treated vs control (confounded)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Any gene called 'significant' here could equally be a B1-vs-B2 processing artifact (RNA extraction day, reagent lot, sequencing run) rather than a treatment effect — this cannot be resolved with this dataset alone",
+          "Do not describe this list in causal treatment-response language in any output; use 'treated/B2 vs control/B1' framing throughout"
+        ],
+        "context": "Same raw counts and metadata as T1S1. This is the primary requested contrast (treated vs control), run with the only model the confounded design permits — condition alone, since ~batch+condition is rank-deficient.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "EnhancedVolcano"
+        ],
+        "question": "Using DESeq2 with design ~condition on the 12000 x 12 raw count matrix, which genes are differentially expressed between the 6 treated (batch B2) and 6 control (batch B1) samples, understanding that condition cannot be separated from batch?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Must not include batch as a covariate in the DESeq2 design formula — it is perfectly aliased with condition per T1S1 and would make the model matrix singular",
+          "Use apeglm or equivalent shrinkage for log2FC estimates rather than raw MLE fold changes",
+          "State the caveat that this gene list is indistinguishable from a batch-effect signature in every output artifact (table header/footer, plot captions)"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run with design ~condition (batch omitted because it is aliased with condition, confirmed in T1S1)",
+          "Full results table (log2FC, p-value, BH-adjusted p-value) reported for all ~12000 genes",
+          "Significant gene list at padj < 0.05 (and |log2FC| > 1 as secondary filter) reported with counts up/down",
+          "MA plot and volcano plot produced",
+          "Results explicitly labeled as a 'treatment OR batch B2-vs-B1' signature, not attributable to treatment alone, given the perfect confound documented in T1S1"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment on the DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Pathway enrichment inherits the treatment/batch confound from the input gene list in full; an enriched pathway is evidence about the B2-vs-B1 contrast, not proof of a treatment mechanism"
+        ],
+        "context": "Gene-level DE results (log2FC, padj) for ~12000 human lung genes from T1S2. WikiPathways human gene sets (HGNC symbols) are available in the reference store at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt and should be resolved by the executing agent rather than hardcoded.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between the treated/B2 and control/B1 groups from T1S2?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use gene symbols matching the count matrix's gene-symbol column to join against the WikiPathways HGNC gene sets",
+          "If the WikiPathways human reference is unavailable at run time, report that pathway context could not be generated rather than substituting another organism's gene sets"
+        ],
+        "acceptance_criteria": [
+          "Enrichment (e.g. hypergeometric/ORA or GSEA-style ranked test) run on the full DESeq2 ranked gene list and/or the padj<0.05 significant subset from T1S2 against WikiPathways human gene sets",
+          "Enriched pathways reported with adjusted p-values and leading-edge/member genes",
+          "Report explicitly reiterates that any enriched pathway reflects the confounded treatment/batch signature and cannot be attributed to treatment biology alone without further validation"
+        ]
+      }
+    ],
+    "title": "Confounded lung treated vs control DE (caveat-flagged)",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The metadata shows a 6-vs-6 lung RNA-seq design where batch B1 = all controls and B2 = all treated — condition and batch are perfectly confounded (aliased design matrix columns). No statistical method, including batch-correction tools like ComBat or limma's removeBatchEffect, can separate a condition effect from a batch effect when they are 100% collinear: any 'batch-corrected' result is mathematically identical to the raw condition effect, so it would create false confidence rather than fix the problem. The only honest path is: (1) run standard DESeq2 differential expression on raw counts as specified, (2) explicitly and quantitatively document that the batch~condition design matrix is singular/aliased so batch cannot be modeled as a covariate, (3) report the resulting gene list as a treatment-OR-batch signature, not a treatment-specific signature, (4) run pathway enrichment on the resulting gene list for biological context, while (5) flagging in every downstream output that the DE list cannot distinguish treatment biology from batch/technical artifact (e.g. reagent lot, processing day, sequencing run) without additional data (e.g. a partially-crossed design or technical replicates). No step attempts a spurious deconfounding."
+  },
+  "usage": {
+    "inputTokens": 43266,
+    "outputTokens": 2591,
+    "cacheCreationInputTokens": 34112,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Confounded lung treated vs control DE (caveat-flagged)",
+          "analytical_narrative": "The metadata shows a 6-vs-6 lung RNA-seq design where batch B1 = all controls and B2 = all treated — condition and batch are perfectly confounded (aliased design matrix columns). No statistical method, including batch-correction tools like ComBat or limma's removeBatchEffect, can separate a condition effect from a batch effect when they are 100% collinear: any 'batch-corrected' result is mathematically identical to the raw condition effect, so it would create false confidence rather than fix the problem. The only honest path is: (1) run standard DESeq2 differential expression on raw counts as specified, (2) explicitly and quantitatively document that the batch~condition design matrix is singular/aliased so batch cannot be modeled as a covariate, (3) report the resulting gene list as a treatment-OR-batch signature, not a treatment-specific signature, (4) run pathway enrichment on the resulting gene list for biological context, while (5) flagging in every downstream output that the DE list cannot distinguish treatment biology from batch/technical artifact (e.g. reagent lot, processing day, sequencing run) without additional data (e.g. a partially-crossed design or technical replicates). No step attempts a spurious deconfounding.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and confounding diagnostic on counts/metadata",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 lung samples (6 treated in batch B2, 6 control in batch B1) show the expected perfect collinearity between condition and batch, and what does the count matrix (12000 genes x 12 samples) look like in library size, PCA, and dispersion terms before DE testing?",
+              "acceptance_criteria": [
+                "Cross-tabulation of condition x batch confirms 100% confounding (6/6 in each cell, zero mixed cells)",
+                "Library size, gene detection rate per sample reported for all 12 samples",
+                "PCA on variance-stabilized counts computed and PC1/PC2 coordinates reported alongside condition and batch labels to show they separate identically",
+                "Report explicitly states the design matrix for ~batch+condition would be rank-deficient/aliased and batch cannot be included as a covariate"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level counts (12000 x 12, excluding gene-symbol column) from salmon, with a 12x3 metadata table giving condition (treated/control) and batch (B1/B2). This step establishes and documents the confound quantitatively before any DE modeling.",
+              "constraints": [
+                "Do not attempt any batch-correction or covariate adjustment for batch in this step — the goal is diagnosis only",
+                "Use raw counts as provided; do not re-derive counts from any other source"
+              ],
+              "caveats": [
+                "A PCA that shows separation by condition cannot distinguish it from separation by batch given this design — say so explicitly rather than attributing the separation to treatment"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, treated vs control (confounded)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using DESeq2 with design ~condition on the 12000 x 12 raw count matrix, which genes are differentially expressed between the 6 treated (batch B2) and 6 control (batch B1) samples, understanding that condition cannot be separated from batch?",
+              "acceptance_criteria": [
+                "DESeq2 run with design ~condition (batch omitted because it is aliased with condition, confirmed in T1S1)",
+                "Full results table (log2FC, p-value, BH-adjusted p-value) reported for all ~12000 genes",
+                "Significant gene list at padj < 0.05 (and |log2FC| > 1 as secondary filter) reported with counts up/down",
+                "MA plot and volcano plot produced",
+                "Results explicitly labeled as a 'treatment OR batch B2-vs-B1' signature, not attributable to treatment alone, given the perfect confound documented in T1S1"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same raw counts and metadata as T1S1. This is the primary requested contrast (treated vs control), run with the only model the confounded design permits — condition alone, since ~batch+condition is rank-deficient.",
+              "constraints": [
+                "Must not include batch as a covariate in the DESeq2 design formula — it is perfectly aliased with condition per T1S1 and would make the model matrix singular",
+                "Use apeglm or equivalent shrinkage for log2FC estimates rather than raw MLE fold changes",
+                "State the caveat that this gene list is indistinguishable from a batch-effect signature in every output artifact (table header/footer, plot captions)"
+              ],
+              "caveats": [
+                "Any gene called 'significant' here could equally be a B1-vs-B2 processing artifact (RNA extraction day, reagent lot, sequencing run) rather than a treatment effect — this cannot be resolved with this dataset alone",
+                "Do not describe this list in causal treatment-response language in any output; use 'treated/B2 vs control/B1' framing throughout"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment on the DE gene list",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between the treated/B2 and control/B1 groups from T1S2?",
+              "acceptance_criteria": [
+                "Enrichment (e.g. hypergeometric/ORA or GSEA-style ranked test) run on the full DESeq2 ranked gene list and/or the padj<0.05 significant subset from T1S2 against WikiPathways human gene sets",
+                "Enriched pathways reported with adjusted p-values and leading-edge/member genes",
+                "Report explicitly reiterates that any enriched pathway reflects the confounded treatment/batch signature and cannot be attributed to treatment biology alone without further validation"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Gene-level DE results (log2FC, padj) for ~12000 human lung genes from T1S2. WikiPathways human gene sets (HGNC symbols) are available in the reference store at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt and should be resolved by the executing agent rather than hardcoded.",
+              "constraints": [
+                "Use gene symbols matching the count matrix's gene-symbol column to join against the WikiPathways HGNC gene sets",
+                "If the WikiPathways human reference is unavailable at run time, report that pathway context could not be generated rather than substituting another organism's gene sets"
+              ],
+              "caveats": [
+                "Pathway enrichment inherits the treatment/batch confound from the input gene list in full; an enriched pathway is evidence about the B2-vs-B1 contrast, not proof of a treatment mechanism"
+              ]
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

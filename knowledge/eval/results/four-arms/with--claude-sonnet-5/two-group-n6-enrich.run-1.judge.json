@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on a 6v6 unpaired single-batch design with apeglm shrinkage and BH at alpha=0.05, with independent filtering and Cook's-distance NA reporting explicitly handled for the small replicate count. QC precedes testing with blind VST PCA (top 500 genes), Euclidean sample-distance heatmap, per-sample library size and detected-gene table, and an explicit no-silent-removal policy for sample_01 that is propagated into the DE step. The low-count filter (>=10 counts in >=6 samples) is minimal and justified by the smallest group size, and normalization is median-of-ratios inside the model with no pre-scaling. The contrast is named with an explicit Control reference level and sign interpretation, though the design formula (~ condition) is only implied rather than written out; PCA/heatmap coloring by batch is moot since the study is single-batch. Enrichment uses the full tested-gene ranked list by Wald stat, fgsea preranked against named/versioned MSigDB Hallmark with a 15-500 size window and BH, and the final report specifies versions, thresholds, tested/significant gene counts, and design caveats."
+}

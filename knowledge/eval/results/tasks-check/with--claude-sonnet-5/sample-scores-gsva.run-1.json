@@ -1,0 +1,556 @@
+{
+  "campaign": "tasks-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "sample-scores-gsva",
+  "run": 1,
+  "startedAt": "2026-09-05T15:50:10.855Z",
+  "elapsedMs": 61441,
+  "outcome": "plan_submitted",
+  "planId": "pln-e90896cb",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "sample_01 is ~4x below median library size — keep it through QC, inspect it on PCA/distance heatmap, and only remove it later with an explicit, stated reason, not by default"
+        ],
+        "context": "Input: /eval-tasks-check-with-sample-scores-gsva-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw Salmon gene-level counts) and metadata.csv (condition column, 6 vs 6, unpaired, single batch).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do UC-inflamed and control colon samples separate on the top variable genes, and how does the low-depth sample sample_01 behave relative to the other 11 samples?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC (vst blind, PCA on top 500 genes, sample-distance heatmap) is the consensus pre-model QC step for raw counts (R-0033), and a library size far below median must be kept, inspected and reported rather than dropped by default (R-0008).",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use vst(blind=TRUE) prior to any group-aware step",
+          "PCA on the 500 highest-variance genes per standard practice",
+          "Report sample_01's library size and detected gene count alongside all other samples, do not exclude it without a stated reason"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the full 12000x12 count matrix",
+          "PCA plot on top 500 variance genes colored by condition (UC-inflamed vs control)",
+          "Sample-distance heatmap (Euclidean, all 12 samples) produced",
+          "Library size and detected-gene count reported per sample, with sample_01 explicitly annotated as ~4x below median",
+          "No sample silently dropped; any exclusion decision deferred to explicit review, not automated"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: UC-inflamed vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 replicates per group, DESeq2 outlier handling sets padj=NA via Cook's distance for count outliers rather than replacing counts (behavior differs from designs with >=7 replicates per cell) — report these separately from low-count NAs"
+        ],
+        "context": "Raw integer gene-level counts from Salmon, 12000 genes x 12 samples, 6 UC-inflamed vs 6 control, unpaired, single batch. This DE result supplies the ranked statistic (Wald stat) used to rank genes in the report, and confirms overall signal strength before pathway-level scoring.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes are differentially expressed between UC-inflamed and control colon samples, after minimal low-count filtering and median-of-ratios normalization?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@762e",
+            "R-0030@2248",
+            "R-0036@9786",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with apeglm shrinkage is the consensus method for a 6-vs-6 unpaired design with raw counts (R-0001), with minimal pre-filter (R-0002/R-0029), in-model normalization (R-0026), explicit reference level and named contrast (R-0036), and BH/alpha=0.05 with independent filtering (R-0010).",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count=10, min_samples=smallest group size (6)",
+          "Do not normalize/scale counts before DESeq()",
+          "Set contrast as condition, UC_inflamed vs control (name the reference level explicitly in code and report)",
+          "Use lfcShrink with apeglm for the reported/ranked log2FoldChange",
+          "results() alpha=0.05 matching the reporting cutoff; independent filtering on"
+        ],
+        "acceptance_criteria": [
+          "Pre-filter keeps genes with >=10 counts in >= 6 samples (smallest group size)",
+          "DESeq2 median-of-ratios size factors computed inside the model, no pre-normalization of counts",
+          "Explicit reference level set so condition is coded control (reference) vs UC-inflamed",
+          "Wald test run, apeglm shrinkage applied to log2FoldChange, unshrunken LFC/SE and shrunken LFC both retained in the results table",
+          "BH-adjusted p-values (padj) at alpha 0.05 with independent filtering left on; p-value histogram inspected before adjustment",
+          "MA plot and dispersion plot produced as fit diagnostics",
+          "Genes flagged as Cook's-distance count outliers (padj=NA) reported separately from independent-filtering NAs"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GSVA hallmark pathway scores per sample + limma group test + heatmap",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GSVA on only 12 samples has limited power to resolve subtle pathway differences; treat significant hits as hypotheses for follow-up, not definitive mechanistic findings",
+          "sample_01's low depth may produce a noisier per-sample score for lowly-expressed-gene-dependent pathways; flag it visually in the heatmap rather than excluding it silently",
+          "If gene symbols in counts.csv do not fully match Hallmark HGNC symbols, report the unmapped fraction explicitly"
+        ],
+        "context": "MSigDB human Hallmark gene sets (50 sets, HGNC symbols) are available at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt. Input is the same 12000x12 gene-level count matrix (or its VST transform from T1S1) for colon UC-inflamed vs control samples. This step directly answers the research question: a per-sample pathway activity score plus a heatmap of hallmark activity distinguishing the two groups.",
+        "maxSteps": 200,
+        "packages": [
+          "GSVA",
+          "limma"
+        ],
+        "question": "What is the per-sample activity score for each of the 50 MSigDB Hallmark pathways across all 12 colon samples, and which hallmark pathways significantly separate UC-inflamed from control samples?",
+        "grounding": {
+          "claims": [
+            "R-0102@c84c",
+            "R-0048@500d",
+            "R-0047@fd9d",
+            "R-0101@06c8",
+            "R-0054@801e"
+          ],
+          "reason": "Per-sample pathway scores requested by the research question map directly to GSVA-then-limma (R-0102), using MSigDB Hallmark as the first human collection (R-0048) with the standard 15-500 gene set size window (R-0047).",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+          "template": "tpl-gsva-hallmark@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the MSigDB Hallmark human gene set collection as the primary reference; state its version (2026.1) in the output",
+          "Do not threshold genes before computing GSVA — GSVA takes the full expression matrix, not a DE-filtered gene list",
+          "limma design must match the condition factor and reference level used in T1S2",
+          "min_size=15, max_size=500 for the gene set size window"
+        ],
+        "acceptance_criteria": [
+          "GSVA scores computed for all 12 samples against the 50 MSigDB Hallmark gene sets (Homo sapiens), Poisson kernel used on the count-derived expression matrix (or Gaussian kernel on the VST/log matrix from T1S1, stated explicitly which is used)",
+          "Gene sets restricted to the 15-500 member window after intersecting with tested genes; window and resulting set count reported",
+          "Output: a samples x pathways GSVA score matrix (12 x 50) saved as the deliverable pathway-activity-score table",
+          "limma fit on the GSVA score matrix with the same condition design (UC-inflamed vs control) as T1S2, producing per-pathway moderated t-stat, p-value, and BH-adjusted p-value",
+          "Clustered heatmap of the 12x50 GSVA score matrix (or the subset of significant pathways) with column annotation for condition and a marker for sample_01 (the low-depth sample)",
+          "Report which hallmark pathways pass padj<0.05 in the limma test, ranked by significance",
+          "State gene identifier mapping/matching approach (HGNC symbols, as counts.csv already uses gene symbols) and the share of Hallmark set members not found in the expression matrix"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Consolidated report: DE + hallmark pathway activity",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are method-dependent; note this rather than treating the GSVA/limma hallmark list as a definitive finding"
+        ],
+        "context": "Consolidates outputs from the QC, DE, and GSVA/heatmap steps into one decision-ready report for the UC-inflamed vs control colon comparison.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the reproducible summary of the DE analysis and the hallmark GSVA pathway-activity findings for UC-inflamed vs control colon samples, including all methodological caveats?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0086@becf"
+          ],
+          "reason": "Reporting-standard rules apply generically (session info, package versions, thresholds, method-dependence caveat) but no single rule targets 'report' as a step type distinctly from the constituent DE/enrichment rules already cited.",
+          "status": "ungrounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Report must name every threshold and package version used upstream",
+          "Must not present GSVA/limma pathway hits as proven mechanism — state them as hypothesis-generating, consistent with enrichment method-dependence"
+        ],
+        "acceptance_criteria": [
+          "Report states design (6 vs 6, unpaired, single batch), package versions (DESeq2, apeglm, GSVA, limma), Hallmark collection version (2026.1), and all thresholds (padj<0.05, min_count=10, gene set size 15-500)",
+          "Report includes MA plot and dispersion plot from T1S2, PCA/sample-distance plots from T1S1, and the hallmark heatmap plus limma results table from T2S1",
+          "Report explicitly documents the sample_01 low-depth caveat and how it was handled at each step",
+          "Number of genes tested, number DE (padj<0.05), and number of hallmark pathways significant (padj<0.05) stated",
+          "Session info / seed / reproducibility record attached"
+        ]
+      }
+    ],
+    "title": "UC inflamed vs control: GSVA hallmark pathway scores + heatmap",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is 12 colon samples (6 UC-inflamed vs 6 control, unpaired, single batch), raw Salmon gene-level counts for 12000 genes, with sample_01 flagged at ~4x below median library size. To answer 'a pathway activity score for every sample, and a heatmap of hallmark activity separating treated from control', the plan first runs sample-structure QC (blind VST, PCA, sample-distance heatmap, library sizes) so the low-depth sample is inspected rather than silently dropped, then a standard DESeq2 differential expression pass (minimal pre-filter, median-of-ratios normalization, Wald test with apeglm shrinkage, BH-adjusted results) to establish the gene-level baseline and give a ranked statistic. The core deliverable is GSVA: per-sample enrichment scores for the 50 MSigDB Hallmark gene sets computed directly on the normalized/VST expression matrix (Poisson kernel appropriate for count-derived data), giving one score per sample per pathway as requested. Those 50 x 12 GSVA scores are then tested with limma using the same UC-inflamed vs control design to identify which hallmark pathways significantly separate the two groups, and visualized as a clustered heatmap (samples x hallmark pathways, annotated by condition and by the flagged low-depth sample) so the separating pathways are visible directly. A brief report step consolidates thresholds, versions, and the low-depth-sample caveat."
+  },
+  "usage": {
+    "inputTokens": 295441,
+    "outputTokens": 5854,
+    "cacheCreationInputTokens": 139998,
+    "cacheReadInputTokens": 155395,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "sample_scores"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "sample_scores",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA + sample distance heatmap + library size QC",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep gene with >=10 counts in >= smallest group size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2",
+            "parameters": []
+          },
+          {
+            "step_type": "enrichment",
+            "method": "GSVA per-sample pathway scores (Poisson kernel on counts) on MSigDB Hallmark, then limma on scores for group comparison, plus heatmap",
+            "package": "GSVA",
+            "parameters": [
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "pathway_scores",
+                "value": "gsva_then_limma"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "pathway score heatmap + limma results summary",
+            "package": "ComplexHeatmap",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "UC inflamed vs control: GSVA hallmark pathway scores + heatmap",
+          "analytical_narrative": "The dataset is 12 colon samples (6 UC-inflamed vs 6 control, unpaired, single batch), raw Salmon gene-level counts for 12000 genes, with sample_01 flagged at ~4x below median library size. To answer 'a pathway activity score for every sample, and a heatmap of hallmark activity separating treated from control', the plan first runs sample-structure QC (blind VST, PCA, sample-distance heatmap, library sizes) so the low-depth sample is inspected rather than silently dropped, then a standard DESeq2 differential expression pass (minimal pre-filter, median-of-ratios normalization, Wald test with apeglm shrinkage, BH-adjusted results) to establish the gene-level baseline and give a ranked statistic. The core deliverable is GSVA: per-sample enrichment scores for the 50 MSigDB Hallmark gene sets computed directly on the normalized/VST expression matrix (Poisson kernel appropriate for count-derived data), giving one score per sample per pathway as requested. Those 50 x 12 GSVA scores are then tested with limma using the same UC-inflamed vs control design to identify which hallmark pathways significantly separate the two groups, and visualized as a clustered heatmap (samples x hallmark pathways, annotated by condition and by the flagged low-depth sample) so the separating pathways are visible directly. A brief report step consolidates thresholds, versions, and the low-depth-sample caveat.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do UC-inflamed and control colon samples separate on the top variable genes, and how does the low-depth sample sample_01 behave relative to the other 11 samples?",
+              "acceptance_criteria": [
+                "Blind VST computed on the full 12000x12 count matrix",
+                "PCA plot on top 500 variance genes colored by condition (UC-inflamed vs control)",
+                "Sample-distance heatmap (Euclidean, all 12 samples) produced",
+                "Library size and detected-gene count reported per sample, with sample_01 explicitly annotated as ~4x below median",
+                "No sample silently dropped; any exclusion decision deferred to explicit review, not automated"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: /eval-tasks-check-with-sample-scores-gsva-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw Salmon gene-level counts) and metadata.csv (condition column, 6 vs 6, unpaired, single batch).",
+              "constraints": [
+                "Use vst(blind=TRUE) prior to any group-aware step",
+                "PCA on the 500 highest-variance genes per standard practice",
+                "Report sample_01's library size and detected gene count alongside all other samples, do not exclude it without a stated reason"
+              ],
+              "caveats": [
+                "sample_01 is ~4x below median library size — keep it through QC, inspect it on PCA/distance heatmap, and only remove it later with an explicit, stated reason, not by default"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC (vst blind, PCA on top 500 genes, sample-distance heatmap) is the consensus pre-model QC step for raw counts (R-0033), and a library size far below median must be kept, inspected and reported rather than dropped by default (R-0008)."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: UC-inflamed vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between UC-inflamed and control colon samples, after minimal low-count filtering and median-of-ratios normalization?",
+              "acceptance_criteria": [
+                "Pre-filter keeps genes with >=10 counts in >= 6 samples (smallest group size)",
+                "DESeq2 median-of-ratios size factors computed inside the model, no pre-normalization of counts",
+                "Explicit reference level set so condition is coded control (reference) vs UC-inflamed",
+                "Wald test run, apeglm shrinkage applied to log2FoldChange, unshrunken LFC/SE and shrunken LFC both retained in the results table",
+                "BH-adjusted p-values (padj) at alpha 0.05 with independent filtering left on; p-value histogram inspected before adjustment",
+                "MA plot and dispersion plot produced as fit diagnostics",
+                "Genes flagged as Cook's-distance count outliers (padj=NA) reported separately from independent-filtering NAs"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level counts from Salmon, 12000 genes x 12 samples, 6 UC-inflamed vs 6 control, unpaired, single batch. This DE result supplies the ranked statistic (Wald stat) used to rank genes in the report, and confirms overall signal strength before pathway-level scoring.",
+              "constraints": [
+                "min_count=10, min_samples=smallest group size (6)",
+                "Do not normalize/scale counts before DESeq()",
+                "Set contrast as condition, UC_inflamed vs control (name the reference level explicitly in code and report)",
+                "Use lfcShrink with apeglm for the reported/ranked log2FoldChange",
+                "results() alpha=0.05 matching the reporting cutoff; independent filtering on"
+              ],
+              "caveats": [
+                "With 6 replicates per group, DESeq2 outlier handling sets padj=NA via Cook's distance for count outliers rather than replacing counts (behavior differs from designs with >=7 replicates per cell) — report these separately from low-count NAs"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@762e",
+                  "R-0030@2248",
+                  "R-0036@9786",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "DESeq2 Wald test with apeglm shrinkage is the consensus method for a 6-vs-6 unpaired design with raw counts (R-0001), with minimal pre-filter (R-0002/R-0029), in-model normalization (R-0026), explicit reference level and named contrast (R-0036), and BH/alpha=0.05 with independent filtering (R-0010)."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "GSVA hallmark pathway scores per sample + limma group test + heatmap",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "What is the per-sample activity score for each of the 50 MSigDB Hallmark pathways across all 12 colon samples, and which hallmark pathways significantly separate UC-inflamed from control samples?",
+              "acceptance_criteria": [
+                "GSVA scores computed for all 12 samples against the 50 MSigDB Hallmark gene sets (Homo sapiens), Poisson kernel used on the count-derived expression matrix (or Gaussian kernel on the VST/log matrix from T1S1, stated explicitly which is used)",
+                "Gene sets restricted to the 15-500 member window after intersecting with tested genes; window and resulting set count reported",
+                "Output: a samples x pathways GSVA score matrix (12 x 50) saved as the deliverable pathway-activity-score table",
+                "limma fit on the GSVA score matrix with the same condition design (UC-inflamed vs control) as T1S2, producing per-pathway moderated t-stat, p-value, and BH-adjusted p-value",
+                "Clustered heatmap of the 12x50 GSVA score matrix (or the subset of significant pathways) with column annotation for condition and a marker for sample_01 (the low-depth sample)",
+                "Report which hallmark pathways pass padj<0.05 in the limma test, ranked by significance",
+                "State gene identifier mapping/matching approach (HGNC symbols, as counts.csv already uses gene symbols) and the share of Hallmark set members not found in the expression matrix"
+              ],
+              "packages": [
+                "GSVA",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "MSigDB human Hallmark gene sets (50 sets, HGNC symbols) are available at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt. Input is the same 12000x12 gene-level count matrix (or its VST transform from T1S1) for colon UC-inflamed vs control samples. This step directly answers the research question: a per-sample pathway activity score plus a heatmap of hallmark activity distinguishing the two groups.",
+              "constraints": [
+                "Use the MSigDB Hallmark human gene set collection as the primary reference; state its version (2026.1) in the output",
+                "Do not threshold genes before computing GSVA — GSVA takes the full expression matrix, not a DE-filtered gene list",
+                "limma design must match the condition factor and reference level used in T1S2",
+                "min_size=15, max_size=500 for the gene set size window"
+              ],
+              "caveats": [
+                "GSVA on only 12 samples has limited power to resolve subtle pathway differences; treat significant hits as hypotheses for follow-up, not definitive mechanistic findings",
+                "sample_01's low depth may produce a noisier per-sample score for lowly-expressed-gene-dependent pathways; flag it visually in the heatmap rather than excluding it silently",
+                "If gene symbols in counts.csv do not fully match Hallmark HGNC symbols, report the unmapped fraction explicitly"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0102@c84c",
+                  "R-0048@500d",
+                  "R-0047@fd9d",
+                  "R-0101@06c8",
+                  "R-0054@801e"
+                ],
+                "template": "tpl-gsva-hallmark@1.0.0",
+                "reason": "Per-sample pathway scores requested by the research question map directly to GSVA-then-limma (R-0102), using MSigDB Hallmark as the first human collection (R-0048) with the standard 15-500 gene set size window (R-0047)."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Consolidated report: DE + hallmark pathway activity",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the reproducible summary of the DE analysis and the hallmark GSVA pathway-activity findings for UC-inflamed vs control colon samples, including all methodological caveats?",
+              "acceptance_criteria": [
+                "Report states design (6 vs 6, unpaired, single batch), package versions (DESeq2, apeglm, GSVA, limma), Hallmark collection version (2026.1), and all thresholds (padj<0.05, min_count=10, gene set size 15-500)",
+                "Report includes MA plot and dispersion plot from T1S2, PCA/sample-distance plots from T1S1, and the hallmark heatmap plus limma results table from T2S1",
+                "Report explicitly documents the sample_01 low-depth caveat and how it was handled at each step",
+                "Number of genes tested, number DE (padj<0.05), and number of hallmark pathways significant (padj<0.05) stated",
+                "Session info / seed / reproducibility record attached"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Consolidates outputs from the QC, DE, and GSVA/heatmap steps into one decision-ready report for the UC-inflamed vs control colon comparison.",
+              "constraints": [
+                "Report must name every threshold and package version used upstream",
+                "Must not present GSVA/limma pathway hits as proven mechanism — state them as hypothesis-generating, consistent with enrichment method-dependence"
+              ],
+              "caveats": [
+                "Enrichment results are method-dependent; note this rather than treating the GSVA/limma hallmark list as a definitive finding"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0086@becf"
+                ],
+                "reason": "Reporting-standard rules apply generically (session info, package versions, thresholds, method-dependence caveat) but no single rule targets 'report' as a step type distinctly from the constituent DE/enrichment rules already cited."
+              }
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+  }
+}

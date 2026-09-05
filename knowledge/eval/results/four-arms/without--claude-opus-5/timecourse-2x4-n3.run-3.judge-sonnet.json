@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the interaction test as ~condition+time+condition:time vs ~condition+time via LRT, uses time as a 4-level factor, sets explicit reference levels, and avoids adding an unsupported batch term. QC (library size, VST-PCA, sample-distance heatmap, dispersion) precedes the test with a stated outlier policy. Filtering (>=10 counts in >=3 samples) is standard and justified; normalization is handled inside DESeq2 with raw counts preserved, and lfcShrink is used where applicable with explicit fallback noted. Enrichment appropriately separates ORA (correct background), unsigned GSEA on LRT stat, and a time-only contrast, with collections and match rates specified. Reporting is thorough on counts, thresholds, and caveats, though effect-size shrinkage limitations for interaction coefficients and minor ambiguity in exact filter threshold justification slightly cap the top scores."
+}

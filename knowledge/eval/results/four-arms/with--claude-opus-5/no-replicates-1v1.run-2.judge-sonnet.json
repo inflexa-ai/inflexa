@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the n=1/1 design as unable to support inference, drops DESeq2/edgeR testing, dispersion estimation, shrinkage and FDR entirely, and instead reports median-of-ratios normalized counts with descriptive log2FC, explicit reference level/contrast, and a stated pseudocount — matching the reference almost exactly. QC is handled well for n=2 (library size, blind VST, sample distance) and explicitly rejects a misleading two-point PCA. The low-count filter (>=10 counts in >=1 sample) is minimal and justified given the group size of 1. The optional fgsea step, while carefully caveated as non-inferential and using a full ranked list with a stated universe, size window and named collections, is an addition beyond what the question or reference plan required (which recommends omitting enrichment for this design), so it is not scored as ideal despite being executed responsibly. The final report is exemplary in completeness, naming versions, thresholds, counts, and the design needed for valid inference, and it scrupulously avoids the words 'significant' or 'differentially expressed'."
+}

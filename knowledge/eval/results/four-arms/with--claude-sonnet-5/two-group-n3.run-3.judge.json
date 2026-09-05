@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan chooses the correct negative binomial framework for raw Salmon gene-level counts with 3v3 unpaired samples in a single batch: DESeq2 Wald with an explicit ~condition design, control set as reference, apeglm shrinkage, BH at alpha 0.05, and an edgeR QL cross-check on the identical filtered matrix and design; no batch or blocking term is added, correctly matching the stated single-batch unpaired structure. QC precedes testing (blind VST PCA on top 500 genes, sample-distance heatmap, library sizes, colored by condition) with an outlier-flagging rule, though the policy is limited to flagging rather than stating what would be done if a sample failed. The low count filter (>=10 in >=3, tied to the smallest group) is minimal and justified, normalization stays inside both models (median-of-ratios, TMM) with no pre-normalized input, and the plan explicitly refuses to loosen alpha to compensate for n=3 while reporting Cook's-distance vs independent-filtering NAs separately. Enrichment is not strictly demanded by the question but is well-specified when included: full ranked list on the Wald statistic, named and versioned Hallmark/Reactome collections, a 15-500 size window intersected with tested genes, BH across sets, leading-edge genes, and unmatched-symbol counts. The final report covers method, versions, seed, design, contrast direction, thresholds, tested and significant counts, and a power caveat placed before the gene tables."
+}

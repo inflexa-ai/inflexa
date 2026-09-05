@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan uses DESeq2 Wald (with an edgeR QL cross-check) fit to the exact 3v3 unpaired single-batch design, explicit reference level and named contrast, minimal justified filter (>=10 counts in >=3 samples), size factors/TMM estimated inside each model with no pre-normalization, and BH at 0.05 with apeglm shrinkage reported alongside unshrunken LFC. QC (library size, blind VST, PCA on top 500 genes, sample-distance heatmap) gates the analysis with an explicit no-drop-but-flag policy for n=3. The power question is answered quantitatively via edgeR intersection, p-value histogram, leave-one-out stability, and a literature-grounded power statement, explicitly not compensated by alpha changes. GSEA uses the full Wald-ranked list with stated metric, named human MSigDB Hallmark/GO BP collections and versions, 15-500 size window, seed, and honest note about Reactome substitution. The final report consolidates versions, thresholds, tested/DE counts, NA breakdown, diagnostics, and design caveats (no length offset, no batch, underpowered negatives) making it fully complete and correctly scoped to this dataset."
+}

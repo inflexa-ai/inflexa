@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan selects the correct negative binomial framework for a 3v3 unpaired single-batch raw-count design (DESeq2 Wald as primary, edgeR QLF as a cross-check with the intersection reported as high-confidence), and it explicitly states the low-power caveat at n=3 without loosening alpha. QC precedes testing with blind VST, PCA on the top 500 variable genes, a Euclidean sample-distance heatmap, library sizes, and a sensible reconciliation rule for the unmatched seventh count column; the outlier handling is stated mainly as flagging plus DESeq2 Cook's-distance defaults rather than a fully specified exclusion policy. The filter (>=10 counts in >=3 samples, justified as the smallest group size), in-model median-of-ratios/TMM normalization with no pre-normalized input, the explicit ~condition formula with control releveled as reference and the named treated_vs_control contrast, and BH at alpha 0.05 with apeglm shrinkage and a p-value histogram are all correct and stated. Enrichment is well-specified as preranked fgsea on the full tested gene list ranked by the Wald statistic, with named collections and versions, a 15-500 size window, and an explicit rationale for skipping ORA; this exceeds what the question strictly required but is executed correctly. The final report names methods, versions, design, thresholds, tested vs significant counts, diagnostics, and the design caveats."
+}

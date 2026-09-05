@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the question as a genotype x treatment interaction, fits ~ genotype + treatment + genotype:treatment with explicit WT/vehicle reference levels, tests the interaction by Wald and by LRT against the additive reduced model, and derives exact simple effects from a cell-means reparameterisation that is numerically verified against the factorial coefficient; it also names and forbids the difference-of-significance fallacy and flags the low power of an interaction at n=4. QC (library sizes, size factors, VST PCA coloured by both factors, sample-distance heatmap, dispersion plot, per-cell counts, metadata inspection for hidden covariates) is thorough, though no explicit policy for handling an outlier or shallow-library sample is stated. Filtering (>=10 counts in >=4 samples, the smallest group size, with retained gene count reported) and normalization (DESeq2 size factors, TMM for the voom cross-check, VST only for visualisation) are correct and justified. FDR is BH at stated alphas with apeglm/ashr shrinkage for ranking and unshrunken Wald p-values for inference, but the |log2FC| > 0.5 cut is applied post hoc rather than as an lfcThreshold in the test; GSEA is preranked on the full list with a stated metric, named human symbol-keyed collections, a 15-500 size window after universe intersection, and a reported seed, though collection versions are not pinned, and software versions are likewise not required in the report."
+}

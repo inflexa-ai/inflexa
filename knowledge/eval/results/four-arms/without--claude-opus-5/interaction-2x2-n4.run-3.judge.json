@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan targets the interaction directly with a single DESeq2 fit on ~genotype + treatment + genotype:treatment, names the coefficient, sets WT/vehicle as references explicitly, derives both simple effects as contrasts on the same fit (KO as treatment + interaction, not a subset refit), and adds an LRT against the reduced model — precisely the reference design, and it explicitly forbids the four-level condition shortcut and the difference-of-lists fallacy. QC is complete and design-aware (PCA/distance heatmap annotated by both factors, size factors, library sizes, dispersion, named outlier policy with no pre-model dropping), the filter (>=10 counts in >=4 samples, the smallest cell) is minimal and justified with retained-gene reporting, and normalization stays inside DESeq2 with raw counts only. FDR handling is strong: BH at 0.05 primary with 0.1 secondary, apeglm for the shrinkable coefficient and ashr for the composed contrast, shrunken LFCs labeled and restricted to ranking/visualisation. Enrichment is appropriately pre-ranked fgsea on the Wald statistic with named symbol-keyed collections, a 15-500 size window, per-collection BH and symbol-match reporting, but no MSigDB version is pinned. Reporting covers design, thresholds, tested and significant counts (including zero), and the underpowered-interaction caveat with a quantitative power/discordance audit; software versions are not explicitly required in the deliverables, and the plan asserts Homo sapiens without a stated basis, which is a risk for gene-set species matching."
+}

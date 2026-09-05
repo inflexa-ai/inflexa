@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the paired structure and makes subject blocking the central decision, using DESeq2 ~ subject + condition with a Wald test on the condition coefficient, an edgeR QL fit with the same design as a cross-check, and an explicit refusal to treat the unpaired ~condition fit as anything but a design diagnostic; it also handles the 'within each subject' phrasing honestly by tabulating per-subject log ratios and direction consistency while stating that no per-subject p-value exists at n=1 per cell. QC is concrete and design-aware (library sizes, detected genes, VST PCA colored by condition and labeled by subject, correlation heatmap, boxplots) with an outlier policy that names the cost of dropping a sample from a pair. Filtering is filterByExpr with the group argument and a reported retained-gene count; normalization stays inside the models (median-of-ratios, TMM) with raw integers required as input. FDR is BH at stated alphas with apeglm/ashr shrinkage used for ranking only and MLE effect sizes for claims, and enrichment specifies the ranking metric, permutations, size window, named human collections, and the filtered gene list as ORA universe with an explicit skip rule; the main gaps are no stated gene-set or software versions in the reporting requirements."
+}

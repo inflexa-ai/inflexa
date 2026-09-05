@@ -1,0 +1,130 @@
+id: tpl-gseapy-preranked
+version: 1.0.0
+label: "gseapy preranked gene set enrichment on a differential expression results table"
+language: python
+method: M-0010
+step_types: [enrichment]
+edam_operations: [EDAM:operation_3501]
+citations: [S-0024, S-0026, S-0031]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates, two_group_paired, two_group_with_blocking_factor, repeated_measures]
+  min_replicates: 2
+  notes: >-
+    The Python mirror of tpl-fgsea-preranked. A differential expression
+    results table for one contrast, CSV, with the columns gene, stat, pvalue,
+    adjusted_pvalue, and log2_fold_change, plus a gene set collection in GMT
+    format whose gene identifiers match the gene column. The script ranks
+    every gene of the table by the selected metric, thus the table must hold
+    all tested genes, not only the significant ones. The rank metric stat
+    reads the stat column. The metrics signed_log10_p and log2_fold_change
+    read log2_fold_change and pvalue, thus they also serve a table without a
+    signed test statistic. gseapy.prerank estimates the p-values with gene
+    set permutations, thus padj is the permutation FDR q-value of GSEA, not a
+    Benjamini-Hochberg value.
+parameters:
+  - name: results_path
+    type: string
+    description: "Path of the differential expression results CSV with the columns gene, stat, pvalue, adjusted_pvalue, log2_fold_change."
+    adaptable: true
+  - name: rank_metric
+    type: string
+    description: "The ranking statistic: stat (the signed test statistic), signed_log10_p (sign of the log2 fold change times -log10 p-value), or log2_fold_change."
+    adaptable: true
+    default: stat
+    default_source: "doi:10.1101/060012"
+    enum: [stat, signed_log10_p, log2_fold_change]
+  - name: gmt_path
+    type: string
+    description: "Path of the gene set collection in GMT format, one set per line: name, description, then the gene identifiers."
+    adaptable: true
+  - name: min_size
+    type: integer
+    description: "A gene set enters the test when it has at least this many members among the ranked genes."
+    adaptable: true
+    default: 15
+    default_source: "doi:10.1073/pnas.0506580102"
+    minimum: 1
+  - name: max_size
+    type: integer
+    description: "A gene set enters the test when it has at most this many members among the ranked genes."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.1073/pnas.0506580102"
+    minimum: 1
+  - name: permutation_num
+    type: integer
+    description: "The number of gene set permutations behind the p-value and the FDR q-value."
+    adaptable: false
+    default: 1000
+    default_source: "doi:10.1073/pnas.0506580102"
+  - name: seed
+    type: integer
+    description: "The random seed of the tie break and of the permutations."
+    adaptable: true
+    default: 42
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example enrichment or hallmark_treated_vs_control."
+    adaptable: true
+    default: enrichment
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: results
+    path: "{{results_path}}"
+    format: EDAM:format_3752
+    description: "Differential expression results for one contrast, CSV, one row per tested gene."
+  - name: gene_sets
+    path: "{{gmt_path}}"
+    description: "Gene set collection, GMT."
+outputs:
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested gene set: pathway, pvalue, padj, ES, NES, size, leading_edge (semicolon-joined genes)."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The rank metric, the database, the counts of tested and significant sets, the size window, the permutations, the seed, the package versions."
+  - name: dot_plot
+    path: "figures/{prefix}_dot_plot.png"
+    description: "Dot plot of the top 20 sets by adjusted p-value: NES on x, set size as point size, padj as color (and PDF)."
+  - name: nes_bar_plot
+    path: "figures/{prefix}_nes_bar_plot.png"
+    description: "Bar plot of the NES of the significant sets (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "The Python version and the package versions for the record."
+environment:
+  - name: gseapy
+    version: "1.3.1"
+    track: python
+  - name: pandas
+    version: "3.0.5"
+    track: python
+  - name: numpy
+    version: "2.5.2"
+    track: python
+  - name: matplotlib
+    version: "3.11.1"
+    track: python
+bioconductor: "3.23"
+body_file: body.py
+tests:
+  - name: two-group-n6-hallmark
+    dataset: two_group_n6/seed-1
+    slots:
+      results_path: /work/data/de_results.csv
+      gmt_path: /work/refs/hallmark.gmt
+    expect:
+      - "exists output/enrichment_results.csv"
+      - "exists output/enrichment_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/enrichment_dot_plot.png"
+      - "exists figures/enrichment_dot_plot.pdf"
+      - "exists figures/enrichment_nes_bar_plot.png"
+      - "exists figures/enrichment_nes_bar_plot.pdf"
+      - "csv_rows output/enrichment_results.csv >= 40"
+      - "truth_set_recall output/enrichment_results.csv >= 0.66"

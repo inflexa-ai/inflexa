@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan is built exactly around the genotype:treatment interaction, tested via both LRT (full vs reduced) and Wald on the explicit interaction coefficient, with reference levels stated and simple effects derived from the same fit via explicit contrasts rather than refitting subsets. QC (library size, size factors, dispersion, PCA, sample distance) precedes testing with a stated no-drop-without-justification policy, filtering uses a minimal group-size-justified rule, and normalization is correctly left inside DESeq2 on raw/rounded counts. BH FDR at stated 0.05/0.10 thresholds plus apeglm/ashr shrinkage are used correctly, with unshrunk vs shrunk distinction preserved. GSEA is well-justified given the interaction question, using signed Wald stats, named human collections, size windows, and universe-mapping fraction, though running it on three separate rankings adds some scope beyond the core interaction question and slightly dilutes focus. The report is thorough, naming methods, thresholds, gene counts, and design caveats including the added power/robustness audit."
+}

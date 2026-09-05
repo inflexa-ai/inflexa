@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan targets the condition-by-time interaction with a DESeq2 LRT of ~condition + time + condition:time against ~condition + time, plus an edgeR QL joint test as a robustness check, which matches the reference exactly for a 2x4x3 design; it explicitly notes the low power of a difference-of-differences at n=3. QC is thorough and design-specific (blind VST PCA colored by condition and by time, distance heatmap, library sizes, cell-balance check, outlier policy deferred with stated reasoning). Filtering is minimal and justified (>=10 counts in >=3 samples, the smallest cell size), normalization is left inside the model with no pre-transformation, and reference levels, full/reduced formulas and per-timepoint contrasts are explicit. BH at alpha 0.05 with independent filtering, apeglm/ashr shrinkage kept beside unshrunken estimates, p-value histogram inspection and NA accounting are all specified; the only slight tension is ranking GSEA by a per-gene max-magnitude Wald statistic, a defensible but ad hoc metric that is at least stated, with universe, size window, seed, collection versions and substitution documented. The synthesis step covers trajectory clustering, simple effects beside the interaction, diagnostics, method overlap, power and full reproducibility, making the report unusually complete."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 1,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly matches DESeq2 Wald + apeglm shrinkage to the n=6/n=6 unpaired single-batch design, includes a genuine QC step that quantifies sample_01's depth, inspects it via clustering/PCA, and defers a retain/exclude decision to the evidence with a sensitivity re-run. However, it never mentions a low-count gene filter, a clear gap versus the reference's minimal-filter requirement. Normalization via DESeq2 size factors is implied by running DESeq2 on raw counts but never stated explicitly, and the reference level/full formula rationale is only partially explicit. FDR/shrinkage is well specified (BH, apeglm, padj<0.05) though it also folds in a post-hoc |log2FC|>1 cutoff rather than embedding it in the test. Enrichment correctly uses the full ranked list with a stated ranking statistic and an explicit ORA universe, but omits the 15–500 gene-set-size window and gene-set database versions, and adds an untested WikiPathways step not requested by the reference. The report plan covers thresholds, gene/pathway counts, and caveats about sample_01 but does not commit to naming tool/database versions."
+}

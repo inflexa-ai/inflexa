@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan targets exactly the right test — a DESeq2 LRT of ~condition + time + condition:time against ~condition + time with time as a 4-level factor, justified for 4 points at n=3 — and supplements it with per-time-point shrunken Wald contrasts and the three interaction coefficients so significant genes carry direction and timing, matching the reference. QC is design-aware (sample-name verification, condition x time cross-tab, VST PCA coloured by condition and shaped by time, distance heatmap, library sizes, explicit no-silent-drop policy), the filter (>=10 counts in >=3 samples, retained count reported) is minimal and reported, and raw counts enter the model with size factors handled internally and VST reserved for QC/clustering. Reference levels are explicitly set and printed, the reduced model is stated, BH is applied at stated alphas with apeglm/ashr shrinkage and the two testing families kept separate, and a null result is pre-committed as reportable. Enrichment is appropriately anchored to interaction-derived rankings with a documented ranking metric, the filtered gene set as ORA universe, named human collections with versions and a seed, though no explicit gene-set size window is given; reporting covers design, thresholds, tested/significant counts and power caveats but never states that software versions will be recorded."
+}

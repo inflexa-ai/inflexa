@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 2,
+    "qc_present": 4,
+    "low_count_filter": 0,
+    "normalization": 2,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 2,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses that no dispersion can be estimated from 1 vs 1, but then proceeds to manufacture inference anyway via a fixed BCV exactTest, producing p-values and BH-FDR and a 'significant at FDR<0.05' count — exactly the failure mode the reference rules out; hedging the numbers as 'exploratory' does not make them valid, and the plan never states that the fix is more replicates (two, preferably three or more per group). QC is limited to library sizes and count distributions, which is defensible for n=2 but the plan does not say why PCA/sample distances are omitted or give any outlier/shallow-sample policy. There is no low-count filter at all, and no statement that normalization (TMM/size factors) occurs inside the model; contrast direction and reference level are never made explicit. Enrichment is not warranted downstream of a non-inferential comparison, yet the plan runs both ORA on an invalid nominal threshold and preranked GSEA on an assumption-driven statistic, with no explicit ORA universe. Reporting is the strongest element — method, assumed BCV, thresholds, saved tables, and design caveats — though software versions are not named."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 2,
+    "qc_present": 3,
+    "low_count_filter": 6,
+    "normalization": 3,
+    "model_formula_contrasts": 2,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 5
+  },
+  "rationale": "The plan explicitly runs edgeR's exactTest with an arbitrary fixed dispersion (BCV=0.4) to produce PValue/FDR outputs, which is exactly the invalid inferential approach the reference forbids — no amount of caveat text changes that p-values and BH-FDR are reported as if statistically meaningful. Normalization is done pre-model via TMM/CPM outside a count-based GLM framework rather than as size factors inside a model, and there is no true QC step (no PCA, sample distance, or outlier policy, since only two samples exist) beyond library size checks. Low-count filtering is reasonable and minimal. The design formula/contrast is not properly specified as a model (no reference level or GLM design matrix, just exactTest group labels), and enrichment is run on the invalid fixed-dispersion ranking rather than clearly stated descriptive log2FC, though the collections/versions and universe matching are reasonably described. Report completeness is good on versions/thresholds/caveats but undermined by including significance testing that should not exist."
+}

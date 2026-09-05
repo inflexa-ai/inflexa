@@ -11,5 +11,10 @@ packages:
     biotools: fgsea
     version_range: ">=1.30"
     bioconductor: "3.23"
+  - name: gseapy
+    track: python
+    biotools: gseapy
+    version_range: ">=1.1"
 templates:
   - tpl-fgsea-preranked
+  - tpl-gseapy-preranked

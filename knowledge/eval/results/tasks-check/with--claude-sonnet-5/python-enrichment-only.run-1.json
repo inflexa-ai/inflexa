@@ -1,0 +1,473 @@
+{
+  "campaign": "tasks-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "python-enrichment-only",
+  "run": 1,
+  "startedAt": "2026-09-05T15:54:51.883Z",
+  "elapsedMs": 71855,
+  "outcome": "plan_submitted",
+  "planId": "pln-bb8bef32",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Prepare ranked gene list from DESeq2 results",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "From the DESeq2 treated-vs-control results table (de_results.csv, 12000 genes x 8 columns), build the full ranked list of tested genes (by the Wald statistic) required as input for preranked GSEA, and document the identifier space and coverage.",
+        "grounding": {
+          "claims": [
+            "R-0045@f652",
+            "R-0099@0a77",
+            "R-0101@06c8"
+          ],
+          "reason": "Full ranked list (no threshold) built from the Wald statistic per R-0045/R-0099; identifier-space check per R-0101",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [],
+        "description": "Load de_results.csv, verify it carries gene symbol, base_mean, log2_fold_change, and a Wald statistic (stat) column plus padj; drop only genes with NA statistic (e.g. DESeq2 outlier-flagged or independent-filtering-excluded rows) and report how many were dropped and why. Confirm gene identifiers are HGNC symbols (matching the Hallmark and Reactome gene set files) with no case/alias mismatches; report the fraction of tested genes that fail to match either gene set collection's identifier space. Produce a two-column ranked list (gene symbol, stat) covering all remaining tested genes, sorted descending by stat — this is the full, unthresholded input GSEA preranked analysis requires (no filtering by padj or log2FC). Note in the output that sample_01's ~4x-below-median library size was a QC flag on the original DESeq2 run (already reflected in that table's size-factor normalization) and is not a reason to exclude any gene here.",
+        "acceptance_criteria": [
+          "Ranked list contains every gene from de_results.csv that has a non-NA stat value, with count of any NA/dropped genes reported",
+          "Ranked list is sorted descending by the DESeq2 Wald statistic (stat), matching the rank_metric='stat' choice stated in the plan",
+          "Report states the identifier space (HGNC symbols) and the fraction of ranked genes that will fail to map onto the Hallmark and Reactome gene symbol sets"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA against MSigDB Hallmark gene sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 50 MSigDB Hallmark gene sets are significantly enriched (up or down) in the AD lesional vs control ranked gene list?",
+        "grounding": {
+          "claims": [
+            "R-0048@500d",
+            "R-0107@976c",
+            "R-0108@409f",
+            "R-0047@fd9d",
+            "R-0099@0a77"
+          ],
+          "reason": "fgsea/gseapy preranked GSEA on Hallmark first, per R-0048/R-0107; rank_metric=stat is the stated disputed choice per R-0108; size window 15-500 per R-0047",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+          "template": "tpl-gseapy-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Run gseapy.prerank on the ranked list from T1S1 against the MSigDB human Hallmark gene sets (staged reference: 50 HALLMARK_* sets, HGNC symbols, MSigDB 2026.1 release). Use gene set size window 15-500 genes (post-intersection with tested genes), permutation_num=1000, seed=42 for reproducibility, BH-adjusted FDR q-value for significance (report at FDR<0.25, the standard GSEA convention, and separately flag any set also passing FDR<0.05). Report NES, p-value, FDR q-value, and the leading-edge gene list for every significant set. State explicitly in the output that the ranking metric used is the DESeq2 Wald statistic (a stated, disputed choice among stat / signed -log10(p) / shrunken log2FC).",
+        "acceptance_criteria": [
+          "Enrichment run completes against all 50 Hallmark sets with sets outside the 15-500 gene window after intersection excluded and that exclusion count reported",
+          "Output table includes NES, p-value, FDR q-value, and leading-edge genes for each tested Hallmark set",
+          "Seed (42), permutation count, ranking metric, and gene set collection version (2026.1) are recorded in the output for reproducibility"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Preranked GSEA against Reactome pathways (follow-up collection)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which Reactome pathways are enriched in the AD lesional vs control ranked gene list, as a mechanistic follow-up to the Hallmark result?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0107@976c",
+            "R-0047@fd9d"
+          ],
+          "reason": "Reactome as the second collection after Hallmark per R-0098",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Run gseapy.prerank with the same ranked list (T1S1), same parameters (15-500 gene window, permutation_num=1000, seed=42, rank_metric=stat) against the Reactome human pathway gene sets from the staged reference GMT (ReactomePathways.gmt, filtered to Homo sapiens using the accompanying ReactomePathways.txt index, current Reactome release). Report NES, p-value, FDR q-value, and leading-edge genes for significant pathways (FDR<0.25). This is the curated second-collection pass that resolves a Hallmark hit to a specific pathway.",
+        "acceptance_criteria": [
+          "ReactomePathways.gmt is filtered to Homo sapiens pathways only (using ReactomePathways.txt), and the number of human pathway sets tested is reported",
+          "Output table includes NES, p-value, FDR q-value, and leading-edge genes for each significant Reactome pathway (FDR<0.25)",
+          "Reactome release/version is recorded in the output alongside the same seed and rank metric used for the Hallmark run"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Synthesize Hallmark and Reactome enrichment report",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "What is the consolidated, decision-ready summary of hallmark (and supporting Reactome) pathway enrichment in AD lesional vs control skin, with appropriate caveats?",
+        "grounding": {
+          "claims": [
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf",
+            "R-0052@620a"
+          ],
+          "reason": "Report must state database/version/rank metric/universe/size window (R-0051), method-dependence caveat (R-0055), leading edge per set (R-0105), reproducibility record (R-0086), and collapse redundant sets (R-0052)",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "description": "Combine the Hallmark (T2S1) and Reactome (T2S2) GSEA outputs into one report. Collapse redundant/overlapping significant gene sets into representative groups with shared leading-edge genes noted (keep the full table as supplement). List leading-edge genes per significant set. State the enrichment method-dependence caveat (a different ranking metric or method could give a different set list) and that this is a single-method result, not the only defensible one. State the size of the DE result table used (12000 genes), how many were ranked, the identifier mapping coverage, and note the sample_01 low-depth caveat as inherited from the upstream DESeq2 run. Include the full reproducibility record: gseapy version, seed (42), permutation count, Hallmark collection version (2026.1), Reactome release, and rank metric (DESeq2 Wald statistic).",
+        "acceptance_criteria": [
+          "Report lists all significant Hallmark sets and significant Reactome pathways with NES, FDR, and leading-edge genes",
+          "Report explicitly states the ranking-metric choice, the gene-set collection versions, the seed, and the enrichment method-dependence caveat",
+          "Report notes the sample_01 low library size QC caveat inherited from the upstream DE analysis"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control: Hallmark GSEA from existing DE",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The DESeq2 results table (de_results.csv, 12000 genes) for the AD lesional vs control contrast already exists, so this plan starts from it rather than re-running differential expression. Step 1 validates and prepares the DE table (checks columns, gene identifier space, the stat/log2FC/padj fields, and the presence of the low-depth sample_01 caveat as a documented QC note rather than a reason to exclude any gene) and builds the full ranked gene list required for preranked GSEA — the Wald statistic (stat) is used as the ranking metric per the disputed-rule choice, since it is signed and scaled by standard error and avoids the noise of unshrunken log2FC or p-value ties. Step 2 runs fgsea-style preranked GSEA (gseapy.prerank, Python per user constraint) against the MSigDB Hallmark human gene sets staged in the reference store, with the standard 15-500 gene set size window, on the full ranked list (no pre-thresholding, per R-0045/R-0107). Step 3 runs the same preranked GSEA against Reactome pathways as the follow-up curated collection (R-0098), to see whether Hallmark hits resolve to specific mechanisms. Step 4 synthesizes both results into a single report: significant Hallmark and Reactome pathways (BH-adjusted FDR < 0.25 per standard GSEA convention, consistent with the ranking-metric disputed choice stated explicitly), leading-edge genes per significant set, redundancy collapsing across overlapping sets, the enrichment method-dependence caveat, and the full reproducibility record (package versions, seed, gene-set collection versions)."
+  },
+  "usage": {
+    "inputTokens": 675956,
+    "outputTokens": 5346,
+    "cacheCreationInputTokens": 173763,
+    "cacheReadInputTokens": 502085,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "preferred_language": "python",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome wikipathways human curated c2"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gseapy",
+          "fgsea",
+          "org.Hs.eg.db",
+          "clusterProfiler",
+          "blitzgsea",
+          "decoupler"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/kanglcn/decoupler",
+        "query": "gsea preranked run gsea function parameters fgsea equivalent"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "gseapy",
+        "query": "prerank function parameters gene sets ranked list"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/zqfang/gseapy",
+        "query": "prerank function parameters rnk gene_sets min_size max_size permutation_num seed outdir"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "preferred_language": "python",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "enrichment",
+            "method": "GSEA preranked (gseapy.prerank) on the DESeq2 Wald statistic against MSigDB Hallmark, then Reactome",
+            "package": "gseapy",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "permutation_num",
+                "value": 1000
+              },
+              {
+                "name": "seed",
+                "value": 42
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Enrichment summary report with leading edge genes and reproducibility record",
+            "package": "pandas"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control: Hallmark GSEA from existing DE",
+          "analytical_narrative": "The DESeq2 results table (de_results.csv, 12000 genes) for the AD lesional vs control contrast already exists, so this plan starts from it rather than re-running differential expression. Step 1 validates and prepares the DE table (checks columns, gene identifier space, the stat/log2FC/padj fields, and the presence of the low-depth sample_01 caveat as a documented QC note rather than a reason to exclude any gene) and builds the full ranked gene list required for preranked GSEA — the Wald statistic (stat) is used as the ranking metric per the disputed-rule choice, since it is signed and scaled by standard error and avoids the noise of unshrunken log2FC or p-value ties. Step 2 runs fgsea-style preranked GSEA (gseapy.prerank, Python per user constraint) against the MSigDB Hallmark human gene sets staged in the reference store, with the standard 15-500 gene set size window, on the full ranked list (no pre-thresholding, per R-0045/R-0107). Step 3 runs the same preranked GSEA against Reactome pathways as the follow-up curated collection (R-0098), to see whether Hallmark hits resolve to specific mechanisms. Step 4 synthesizes both results into a single report: significant Hallmark and Reactome pathways (BH-adjusted FDR < 0.25 per standard GSEA convention, consistent with the ranking-metric disputed choice stated explicitly), leading-edge genes per significant set, redundancy collapsing across overlapping sets, the enrichment method-dependence caveat, and the full reproducibility record (package versions, seed, gene-set collection versions).",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Prepare ranked gene list from DESeq2 results",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "From the DESeq2 treated-vs-control results table (de_results.csv, 12000 genes x 8 columns), build the full ranked list of tested genes (by the Wald statistic) required as input for preranked GSEA, and document the identifier space and coverage.",
+              "description": "Load de_results.csv, verify it carries gene symbol, base_mean, log2_fold_change, and a Wald statistic (stat) column plus padj; drop only genes with NA statistic (e.g. DESeq2 outlier-flagged or independent-filtering-excluded rows) and report how many were dropped and why. Confirm gene identifiers are HGNC symbols (matching the Hallmark and Reactome gene set files) with no case/alias mismatches; report the fraction of tested genes that fail to match either gene set collection's identifier space. Produce a two-column ranked list (gene symbol, stat) covering all remaining tested genes, sorted descending by stat — this is the full, unthresholded input GSEA preranked analysis requires (no filtering by padj or log2FC). Note in the output that sample_01's ~4x-below-median library size was a QC flag on the original DESeq2 run (already reflected in that table's size-factor normalization) and is not a reason to exclude any gene here.",
+              "acceptance_criteria": [
+                "Ranked list contains every gene from de_results.csv that has a non-NA stat value, with count of any NA/dropped genes reported",
+                "Ranked list is sorted descending by the DESeq2 Wald statistic (stat), matching the rank_metric='stat' choice stated in the plan",
+                "Report states the identifier space (HGNC symbols) and the fraction of ranked genes that will fail to map onto the Hallmark and Reactome gene symbol sets"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0045@f652",
+                  "R-0099@0a77",
+                  "R-0101@06c8"
+                ],
+                "reason": "Full ranked list (no threshold) built from the Wald statistic per R-0045/R-0099; identifier-space check per R-0101"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA against MSigDB Hallmark gene sets",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB Hallmark gene sets are significantly enriched (up or down) in the AD lesional vs control ranked gene list?",
+              "description": "Run gseapy.prerank on the ranked list from T1S1 against the MSigDB human Hallmark gene sets (staged reference: 50 HALLMARK_* sets, HGNC symbols, MSigDB 2026.1 release). Use gene set size window 15-500 genes (post-intersection with tested genes), permutation_num=1000, seed=42 for reproducibility, BH-adjusted FDR q-value for significance (report at FDR<0.25, the standard GSEA convention, and separately flag any set also passing FDR<0.05). Report NES, p-value, FDR q-value, and the leading-edge gene list for every significant set. State explicitly in the output that the ranking metric used is the DESeq2 Wald statistic (a stated, disputed choice among stat / signed -log10(p) / shrunken log2FC).",
+              "acceptance_criteria": [
+                "Enrichment run completes against all 50 Hallmark sets with sets outside the 15-500 gene window after intersection excluded and that exclusion count reported",
+                "Output table includes NES, p-value, FDR q-value, and leading-edge genes for each tested Hallmark set",
+                "Seed (42), permutation count, ranking metric, and gene set collection version (2026.1) are recorded in the output for reproducibility"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0048@500d",
+                  "R-0107@976c",
+                  "R-0108@409f",
+                  "R-0047@fd9d",
+                  "R-0099@0a77"
+                ],
+                "reason": "fgsea/gseapy preranked GSEA on Hallmark first, per R-0048/R-0107; rank_metric=stat is the stated disputed choice per R-0108; size window 15-500 per R-0047",
+                "template": "tpl-gseapy-preranked@1.0.0"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Preranked GSEA against Reactome pathways (follow-up collection)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which Reactome pathways are enriched in the AD lesional vs control ranked gene list, as a mechanistic follow-up to the Hallmark result?",
+              "description": "Run gseapy.prerank with the same ranked list (T1S1), same parameters (15-500 gene window, permutation_num=1000, seed=42, rank_metric=stat) against the Reactome human pathway gene sets from the staged reference GMT (ReactomePathways.gmt, filtered to Homo sapiens using the accompanying ReactomePathways.txt index, current Reactome release). Report NES, p-value, FDR q-value, and leading-edge genes for significant pathways (FDR<0.25). This is the curated second-collection pass that resolves a Hallmark hit to a specific pathway.",
+              "acceptance_criteria": [
+                "ReactomePathways.gmt is filtered to Homo sapiens pathways only (using ReactomePathways.txt), and the number of human pathway sets tested is reported",
+                "Output table includes NES, p-value, FDR q-value, and leading-edge genes for each significant Reactome pathway (FDR<0.25)",
+                "Reactome release/version is recorded in the output alongside the same seed and rank metric used for the Hallmark run"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0107@976c",
+                  "R-0047@fd9d"
+                ],
+                "reason": "Reactome as the second collection after Hallmark per R-0098"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Synthesize Hallmark and Reactome enrichment report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the consolidated, decision-ready summary of hallmark (and supporting Reactome) pathway enrichment in AD lesional vs control skin, with appropriate caveats?",
+              "description": "Combine the Hallmark (T2S1) and Reactome (T2S2) GSEA outputs into one report. Collapse redundant/overlapping significant gene sets into representative groups with shared leading-edge genes noted (keep the full table as supplement). List leading-edge genes per significant set. State the enrichment method-dependence caveat (a different ranking metric or method could give a different set list) and that this is a single-method result, not the only defensible one. State the size of the DE result table used (12000 genes), how many were ranked, the identifier mapping coverage, and note the sample_01 low-depth caveat as inherited from the upstream DESeq2 run. Include the full reproducibility record: gseapy version, seed (42), permutation count, Hallmark collection version (2026.1), Reactome release, and rank metric (DESeq2 Wald statistic).",
+              "acceptance_criteria": [
+                "Report lists all significant Hallmark sets and significant Reactome pathways with NES, FDR, and leading-edge genes",
+                "Report explicitly states the ranking-metric choice, the gene-set collection versions, the seed, and the enrichment method-dependence caveat",
+                "Report notes the sample_01 low library size QC caveat inherited from the upstream DE analysis"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf",
+                  "R-0052@620a"
+                ],
+                "reason": "Report must state database/version/rank metric/universe/size window (R-0051), method-dependence caveat (R-0055), leading edge per set (R-0105), reproducibility record (R-0086), and collapse redundant sets (R-0052)"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+  }
+}

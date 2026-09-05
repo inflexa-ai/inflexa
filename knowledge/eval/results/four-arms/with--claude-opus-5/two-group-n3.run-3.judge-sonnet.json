@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly fits a negative-binomial DESeq2 Wald test to raw gene-level counts with an explicit ~condition design, control as reference, and a stated 3-vs-3 unpaired single-batch structure, plus an independent edgeR QL cross-check and honest power statement rather than lowering alpha. QC (blind VST, PCA on top 500 genes, sample distance heatmap, library sizes) with an explicit non-removal outlier policy precedes the model. The low-count filter (>=10 counts in >=3 samples) is minimal and justified by the smallest group size, and normalization is left entirely inside DESeq2/edgeR (size factors, TMM) with no pre-normalization. BH at 0.05 with apeglm shrinkage is applied correctly, thresholds are set in the model (alpha, lfcThreshold option) rather than post hoc, and Cook's/independent-filtering NAs are distinguished. Enrichment via fgsea on the full Wald-ranked list with named collections/versions, size window, and unmapped-gene reporting is well justified given the low-power design, though ORA universe handling is only implicitly covered since ORA is explicitly skipped. The final report is comprehensive: methods, versions, formula, contrast, thresholds, gene counts, DE counts, overlap, enrichment details, and design caveats are all present."
+}

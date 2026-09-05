@@ -9,5 +9,9 @@ packages:
     biotools: deseq2
     version_range: ">=1.50"
     bioconductor: "3.23"
+  - name: numpy
+    track: python
+    version_range: ">=2"
 templates:
   - tpl-descriptive-no-replicates
+  - tpl-descriptive-python

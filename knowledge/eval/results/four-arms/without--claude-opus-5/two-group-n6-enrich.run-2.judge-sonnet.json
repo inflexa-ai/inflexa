@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan uses DESeq2 ~condition on raw counts with median-of-ratios normalization fit for a 6v6 unpaired single-batch design, explicitly setting control as reference and stating LFC direction. QC is thorough: library sizes, detected-gene counts, size factors, VST PCA and correlation heatmap, with an explicit keep/keep-with-sensitivity policy for sample_01 rather than silent removal, plus a leave-one-out sensitivity run. Filtering rule is stated (rowSums>=10 or >=6 samples with count>=1) though the exact final rule choice is left slightly ambiguous. BH FDR at 0.05 with apeglm shrinkage is correctly separated from unshrunken Wald significance calls. GSEA is preranked on the full gene list using the Wald statistic, hallmark v0-unspecified-version collection with size 10-500 (slightly below reference's 15 minimum) and correct universe statement; ORA fallback is not needed since GSEA is primary. Report completeness is strong (versions of tools named generically but not exact version numbers, thresholds, gene counts, caveats) though exact package versions and hallmark database version are not pinned, slightly reducing full traceability."
+}

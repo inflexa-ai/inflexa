@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 1,
+    "normalization": 5,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The design handling is solid and dataset-specific: DESeq2 Wald with ~condition on raw Salmon counts for an unpaired 6v6 single-batch comparison, with the AD_lesional vs Control contrast named explicitly, though the reference level is never stated outright. QC is a genuine strength — per-sample library sizes with sample_01's fold-difference quantified, zero/near-zero counts, VST-based PCA/clustering, an explicit retain-versus-exclude decision rule, and a with/without sensitivity DE run with overlap reporting — although sample distances and coloring by condition are not spelled out. The plan never mentions any low-count/independent filtering step at all, and normalization is only implicit in the choice of DESeq2 (median-of-ratios size factors are never named), so both score poorly on stated content. Shrinkage (apeglm/ashr) and padj < 0.05 are stated, but the |log2FC| > 1 cut is applied post hoc rather than via lfcThreshold in the test. Enrichment is well-constructed — fgsea preranked on the full list by Wald statistic, all 50 hallmark sets reported with NES and BH padj, and ORA with the ~12000 detected genes as an explicit universe — but no gene-set size window (15–500) and no MSigDB/WikiPathways version; the report likewise names thresholds, counts and the sample_01 caveat but no software or database versions."
+}

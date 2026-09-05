@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly uses ~ subject + condition with subject as blocking factor and DESeq2 Wald test on the condition coefficient, exactly matching the paired reference design, and adds a limma-voom duplicate sensitivity check. QC is thorough (library sizes, VST PCA colored by subject/condition, distance heatmap, outlier policy stated explicitly). Filtering uses filterByExpr or a stated count>=10 in >=5 samples rule with reporting of genes retained, and normalization is handled internally via DESeq2 size factors/voom TMM with no pre-normalization leakage into the count model. BH-adjusted significance with apeglm/ashr shrinkage is correctly separated from raw testing, and thresholds are pre-specified with underpowered-case handling. Enrichment is well-justified for this context (GSEA primary, ORA conditional with explicit universe, named collections, redundancy collapsing) though version pinning for gene-set releases is not stated. Report completeness is strong with explicit counts, caveats, and design details, missing only explicit software version numbers."
+}

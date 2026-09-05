@@ -50,8 +50,8 @@ afterAll(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-function answer(situation: Situation): RecommendResponse {
-    const result = recommend(snapshot, { situation });
+function answer(situation: Situation, preferences?: { language: "R" | "python" }): RecommendResponse {
+    const result = recommend(snapshot, { situation, ...(preferences ? { preferences } : {}) });
     if ("error" in result) throw new Error(result.message);
     return result;
 }
@@ -262,7 +262,29 @@ describe("the curated tree on the evaluation situations", () => {
         expect(parameter(total, "qc_sample_structure", "total_rna_qc")).toEqual(["rrna_fraction", "mito_fraction", "intronic_share"]);
         expect(parameter(total, "qc_sample_structure", "duplicate_policy")).toBe("keep_without_umi_report_rate");
         const alternatives = step(total, "enrichment").alternatives?.map((a) => a.method) ?? [];
-        expect(alternatives).toEqual(expect.arrayContaining(["M-0032", "M-0033", "M-0034"]));
+        expect(alternatives).toEqual(expect.arrayContaining(["M-0011", "M-0021"]));
+    });
+
+    it("the enrichment input selects the method: a gene list gets goseq or GO ORA, sample scores get GSVA, the default is the ranked list", () => {
+        const list = answer({ ...BASE, enrichment_input: "gene_list" });
+        expect(step(list, "enrichment").method?.id).toBe("M-0032");
+        expect(step(list, "enrichment").alternatives?.map((a) => a.method)).toEqual(expect.arrayContaining(["M-0033", "M-0010"]));
+        const star = answer({ ...BASE, count_source: "star_featurecounts", enrichment_input: "gene_list" });
+        expect(step(star, "enrichment").method?.id).toBe("M-0032");
+        expect(step(star, "enrichment").template).toBe("tpl-ora-go@1.0.0");
+        const scores = answer({ ...BASE, enrichment_input: "sample_scores" });
+        expect(step(scores, "enrichment").method?.id).toBe("M-0034");
+        const ranked = answer({ ...BASE, enrichment_input: "ranked_list" });
+        expect(step(ranked, "enrichment").method?.id).toBe("M-0010");
+        expect(step(ranked, "enrichment").disputed?.sides.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("no replicates: the procedure drops the shrinkage and the multiple testing, and the enrichment is descriptive", () => {
+        const response = answer({ ...BASE, n_per_group_min: 1, n_per_group_max: 1 });
+        expect(response.dropped).toEqual(expect.arrayContaining(["shrink_lfc", "multiple_testing"]));
+        expect(response.procedure.some((entry) => entry.step === "shrink_lfc")).toBe(false);
+        expect(step(response, "enrichment").flags?.some((flag) => flag.outcome === "descriptive_only")).toBe(true);
+        expect(parameter(response, "enrichment", "rank_metric")).toBe("descriptive_log2_fold_change");
     });
 
     it("no replicates: a stated descriptive outcome passes the check, an inferential draft does not, and the fourth check is the host's to refuse", () => {
@@ -273,5 +295,20 @@ describe("the curated tree on the evaluation situations", () => {
         const stated = check(snapshot, { situation, steps: [{ step_type: "differential_expression", method: "Descriptive log2 fold change of normalized counts, no test", package: "DESeq2", outcome: "descriptive_only" }] });
         if ("error" in stated) throw new Error(stated.message);
         expect(stated.violations).toEqual([]);
+    });
+
+    it("a Python preference selects the Python template of the same method, and no preference keeps the R one", () => {
+        const python = answer(BASE, { language: "python" });
+        expect(step(python, "differential_expression").method?.id).toBe("M-0001");
+        expect(step(python, "differential_expression").template).toBe("tpl-pydeseq2-two-group@1.0.0");
+        expect(step(python, "qc_sample_structure").template).toBe("tpl-qc-python@1.0.0");
+        expect(step(python, "enrichment").template).toBe("tpl-gseapy-preranked@1.0.0");
+        const r = answer(BASE, { language: "R" });
+        expect(step(r, "differential_expression").template).toBe("tpl-deseq2-two-group@1.0.0");
+        expect(step(answer(BASE), "enrichment").template).toBe("tpl-fgsea-preranked@1.0.0");
+        const paired = answer({ ...BASE, paired: true }, { language: "python" });
+        expect(step(paired, "differential_expression").template).toBe("tpl-deseq2-blocked@1.0.0");
+        const none = answer({ ...BASE, n_per_group_min: 1, n_per_group_max: 1 }, { language: "python" });
+        expect(step(none, "differential_expression").template).toBe("tpl-descriptive-python@1.0.0");
     });
 });

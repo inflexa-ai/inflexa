@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan identifies the condition:time interaction as the target and tests it correctly with a DESeq2 LRT of ~condition+time+condition:time against ~condition+time, corroborated by an edgeR QL F-test on the three interaction coefficients jointly, with per-time-point simple effects and trajectory clustering to describe the patterns — exactly what a 2x4xn3 time course requires, and the low power of the interaction at n=3 is stated repeatedly rather than papered over. QC is concrete and design-aware (name-based sample-to-metadata matching, cell balance check, blind VST PCA colored by condition and by time, distance heatmap, library sizes, outliers named not dropped); it only loses a point for having no stated policy for what would actually be done with an outlier beyond deferring it. The filter (>=10 counts in >=3 samples, justified as the smallest cell size, with independent filtering doing the rest) and normalization (median-of-ratios and TMM estimated inside the models, explicit prohibition on pre-scaling) are correct and explicit. FDR is BH at a stated alpha 0.05 with independent filtering, p-value histogram inspection, NA/Cook's accounting, and apeglm/ashr shrinkage reported beside unshrunken values; shrinkage of interaction coefficients is somewhat awkward to interpret but is handled transparently. Enrichment is preranked on the full tested list with a stated ranking metric, explicit universe, named collection and version, 15-500 size window applied after intersection, mapping loss reported and Reactome substitution declared; the single signed-t3 metric is a real limitation the plan itself flags. The final report covers method, versions, design and reduced model, reference levels, thresholds, tested/significant counts, diagnostics, and design caveats."
+}

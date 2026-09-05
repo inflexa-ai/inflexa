@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames the question as an interaction, fits ~genotype+treatment+genotype:treatment with explicitly stated reference levels (WT, vehicle), tests the interaction coefficient by Wald, and adds the two simple effects via named contrasts — exactly the reference approach, not a four-group one-factor recoding. QC is design-specific (blind VST, PCA and sample-distance heatmap colored by genotype and treatment, library sizes, plus reconciliation of the 17-vs-16 sample mismatch), though the outlier policy is only 'flag for review' rather than a stated exclusion/re-fit rule. Filtering (>=10 counts in >=4 samples, tied to the smallest group size) is minimal and justified; normalization is explicitly internal median-of-ratios with no pre-normalized input; BH within contrast at 0.05 with ashr shrinkage and p-value histograms is sound, though the alpha passed to independent filtering is not stated. Enrichment is well specified (Wald-stat ranking, tested-gene universe, 15-500 size window, leading edge, collection versions), but it assumes human HGNC/Hallmark/Reactome for what is plausibly a mouse knockout brain study with no species check or orthology mapping. The report step is complete on versions, design, counts, thresholds, and the n=4 interaction-power caveat."
+}

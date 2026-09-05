@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every design-critical point: a negative binomial Wald test in DESeq2 with an edgeR quasi-likelihood cross-check on the same filtered genes and design, a minimal filter (>=10 counts in >=3 samples, justified as the smallest group size), size factors and TMM estimated inside the models with an explicit prohibition on pre-normalised or scaled input, ~condition with control explicitly releveled and the contrast written as (condition, treated, control), and BH at alpha 0.05 with apeglm shrinkage for reporting and ranking. It correctly refuses to loosen alpha for low power, requires any fold-change cut to enter via lfcThreshold rather than post hoc, and distinguishes Cook's-distance NAs from independent-filtering NAs — a detail that matters specifically at n=3. QC precedes the test with VST-based PCA on the top 500 variable genes, a distance heatmap and library sizes, with a stated flag-don't-drop policy grounded in the fact that removal would leave n=2. Enrichment is not strictly requested but is justified by the likely short significant list, and it is well specified (full ranked list by Wald statistic, named collections with versions, 15-500 window applied after intersection with tested genes, seed recorded, no ORA on a short list); a point is withheld only because it slightly expands scope beyond the question. The report step names versions, design, thresholds, tested and significant counts, the power caveat placed before the gene table, and the refusal to overclaim on a null result."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses to estimate dispersion or call significance from n=1 per group, foregrounds the no-replication limitation, and delivers a properly normalized (TMM/median-of-ratios) descriptive log2FC ranking with an explicit pseudocount and expression floor — this matches the reference's core intent well. It slightly deviates from the reference's 'no p-values at all' stance by still emitting nominal p-values from fixed, assumed BCVs (even though clearly labelled as non-inferential sensitivity outputs and never adjusted or thresholded), which weakens the fdr_shrinkage score since no BH/shrinkage is applied and any p-value output is arguably out of scope. QC is present (library sizes, scatter/MA plots) but no PCA/sample-distance view is offered, which is a reasonable adaptation to n=1 but limits the qc_present score. The enrichment step is technically well-specified (human-only gene sets, expressed universe, 15-500 size window, overlap reporting) but is not requested by the task and not part of the reference plan, making it scope creep that a strict grader would mark down. Report completeness is strong: versions, thresholds, gene counts, and caveats are all explicit."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 3,
+    "low_count_filter": 0,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the paired design and uses ~subject+condition in DESeq2 with proper releveling and contrast specification, and keeps raw counts for DESeq2's internal normalization. However, QC is only vaguely mentioned ('loads and QCs') without PCA, library size, or outlier policy specifics, and there is no low-count filtering step at all. Fold-change shrinkage (e.g., lfcShrink) is never mentioned, only raw log2FoldChange, and BH/alpha are implied rather than explicitly stated as a pre-set threshold. Enrichment step lacks an explicit background/universe definition, collection version, and size-window constraints, though it does specify organism-matched GMT and significance reporting. The per-subject consistency check is a nice addition that respects the paired design without overclaiming inferential validity, and the report includes counts, caveats, and design description reasonably well."
+}

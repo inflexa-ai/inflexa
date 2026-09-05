@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the interaction test as ~condition+time+condition:time vs ~condition+time via LRT, matching the reference exactly, with explicit reference levels and time treated as a 4-level factor. QC (PCA, sample distances, dispersion) precedes testing with a sensible outlier policy, and a minimal rowSums>=10 filter is stated and justified. Normalization is implicit via DESeq2's internal size factors (VST used only for QC/visualization, not fed into the count model), which is appropriate but not explicitly narrated as 'normalization inside the model'. BH correction is used with padj thresholds stated (0.05/0.10), but log2FC shrinkage (e.g., lfcShrink/apeglm) for reported effects is not mentioned, weakening the fdr_shrinkage score. Enrichment is reasonably justified as exploratory given the interaction-focused question, uses a stated ranking metric and named collections, but omits an explicit ORA universe definition and version/size-window details for the gene sets, and enrichment itself is arguably not strongly warranted for this specific question. The report is comprehensive, naming methods, versions (packages), design, thresholds, and caveats about power given n=3/group across 8 cells."
+}

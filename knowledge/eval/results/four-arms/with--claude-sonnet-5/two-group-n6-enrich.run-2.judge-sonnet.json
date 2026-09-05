@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the unpaired 6v6 single-batch design with DESeq2 Wald + apeglm as primary and edgeR QLF as a cross-check, explicit reference level and contrast. QC is thorough and correctly avoids default removal of sample_01, requiring a plot-grounded reason. Filtering (>=10 counts in >=6 samples) is minimal and justified, normalization is model-internal (median-of-ratios/TMM), and BH-FDR at 0.05 with independent filtering plus apeglm shrinkage is properly specified. Enrichment uses fgsea preranked on the Wald statistic against Hallmark (versioned) with correct size window and universe stated, with Reactome as sensible secondary evidence; minor deduction for added complexity (edgeR intersection, Reactome) beyond the reference's minimal scope, slightly raising execution risk without adding required rigor. Report step is complete: versions, thresholds, gene counts, diagnostics, and sample_01 caveats are all covered."
+}

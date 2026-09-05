@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference exactly on the core design decision: a balanced, known two-batch structure enters the negative-binomial GLM as an additive covariate (~ batch + condition) on raw counts, with control set as the explicit reference and the treated-vs-control Wald contrast and direction convention stated; batch-corrected matrices are explicitly restricted to visualisation. QC precedes the test with VST PCA coloured separately by condition and by batch, a sample-distance heatmap annotated by both factors, library sizes and an explicit written verdict on whether batch or condition dominates PC1/PC2 and whether any sample is an outlier, though it stops just short of stating what would be done with an outlier if found. The low-count filter (count >= 10 in at least 6 samples) is minimal and tied to the n=6 group size, and multiple testing is BH at a stated alpha with apeglm shrinkage, threshold sensitivity reported rather than fold-change pre-filtering. Enrichment is well specified (full ranked list, stated ranking metric, 15-500 size window, tested-gene universe for the ORA arm, seed set) but does not pin collection versions, and the report section names methods, design, thresholds, gene counts and power caveats but likewise omits explicit software versions."
+}

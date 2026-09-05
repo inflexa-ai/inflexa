@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly uses ~ subject + condition with DESeq2, explicitly framing subject as the blocking term for the within-subject contrast, matching the reference exactly. QC precedes testing with library sizes, blind VST, PCA by condition and subject, pairing verification, and an explicit no-silent-outlier-removal policy. Filtering (>=10 counts in >=5 samples) is minimal and justified by the smallest group size. Normalization is strictly internal to DESeq2 (median-of-ratios), with no pre-normalized values entering the model. The reference level, contrast, and reduced-model logic are stated explicitly. BH at alpha 0.05 with apeglm shrinkage, independent filtering, and separate accounting of Cook's-distance NAs versus filtering NAs are all specified. Enrichment is thorough and well-justified (Hallmark then GO BP substitution for Reactome, stated ranking metric, size window, universe, seed, collapsePathways) even though not strictly required, and the report consolidates all methodological, threshold, and reproducibility details along with per-subject consistency and explicit power caveats."
+}

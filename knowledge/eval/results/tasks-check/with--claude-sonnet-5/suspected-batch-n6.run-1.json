@@ -1,0 +1,705 @@
+{
+  "campaign": "tasks-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "suspected-batch-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T16:10:44.713Z",
+  "elapsedMs": 106981,
+  "outcome": "plan_submitted",
+  "planId": "pln-48631e8d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and cluster investigation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A clean-looking PCA-cluster split with no metadata explanation is the setup this plan's later SVA step is meant to address, not a reason to drop samples",
+          "Only one metadata column (condition) exists in this dataset, so 'no explanatory variable found' is an expected, not a failure, outcome"
+        ],
+        "context": "12000 x 13 raw Salmon gene counts (12 samples + gene symbol column), 6 treated vs 6 control, no recorded batch; PCA already shows two 6-sample clusters cross-cutting the condition.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap"
+        ],
+        "question": "Do the two six-sample PCA clusters seen in the 12 kidney samples correspond to a discoverable technical variable (library size, detected-gene count, or any recorded metadata column), and do they align with or cross-cut the treated/control condition?",
+        "grounding": {
+          "claims": [
+            "R-0022@6ba4",
+            "R-0033@40bf",
+            "R-0034@39e2"
+          ],
+          "reason": "Sample structure QC per R-0033; suspected-batch PCA coloring and outlier investigation per R-0022 and R-0034",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use blind (design-independent) VST for PCA, per DESeq2 vignette convention",
+          "Do not adjust or remove anything from the counts at this step"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the raw count matrix and a PCA on the top 500 variable genes reproduces/confirms the two six-sample clusters",
+          "PCA and a sample-distance heatmap are colored by condition and by cluster membership; library size and number of detected genes are reported per sample",
+          "Report states explicitly whether any recorded metadata column (there is only condition) explains the clustering, and confirms the clusters do not align with condition (per the data context caveat)",
+          "No sample is removed at this step; any candidate outlier sample is flagged with a stated numeric criterion (e.g., library size or gene-detection outlier), not silently dropped"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Filter, SVA-augmented design, DESeq2 Wald test with apeglm shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only one blocking dimension available (no recorded covariate), the surrogate variables are the only handle on the confound; if they turn out uncorrelated with the PCA clusters, that itself is a finding worth reporting, not a failure",
+          "An outlier sample, if flagged in T1S1, should be down-weighted via robust methods or kept with DESeq2's Cook's-distance handling rather than removed outright, unless T1S1 established a concrete technical cause",
+          "A suspected but unmodeled batch inflates apparent significance; the p-value histogram diagnostic exists specifically to catch this even after adding SVs"
+        ],
+        "context": "6 treated vs 6 control kidney samples, raw Salmon gene counts, no recorded batch but two PCA clusters cross-cutting condition (n=6 per group meets the >=4-per-group threshold for stable SVA estimation).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "sva",
+          "apeglm",
+          "edgeR",
+          "fdrtool"
+        ],
+        "question": "Which of the ~12000 kidney genes are differentially expressed between treated and control samples once surrogate variables estimated from the count structure (standing in for the unrecorded variable behind the two PCA clusters) are included as covariates?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@762e",
+            "R-0068@eb3c",
+            "R-0036@9786",
+            "R-0025@1e65",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0067@e082",
+            "R-0009@f54e",
+            "R-0084@2a4e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "Suspected batch with no recorded variable and n=6/group: estimate SVs with sva and add as covariates (R-0025/R-0068); DESeq2 Wald + apeglm shrinkage is the primary test with edgeR QL as the robustness cross-check (R-0001); BH/independent filtering at alpha 0.05 (R-0010/R-0043); p-value histogram must be inspected given the suspected-batch flag (R-0084/R-0083)",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not subtract or regress the surrogate variables out of the counts themselves — they enter only as design covariates for the GLM",
+          "Keep the number of surrogate variables small relative to 12 samples; state the number and the rationale",
+          "Set the reference level of condition explicitly to control before fitting; do not rely on alphabetical default",
+          "Use apeglm for LFC shrinkage of the treated-vs-control coefficient",
+          "Apply BH adjustment with DESeq2 independent filtering at alpha=0.05; do not filter results by raw p-value or fold-change alone"
+        ],
+        "acceptance_criteria": [
+          "Genes pre-filtered to >=10 counts in at least 6 samples (the smaller group size) before modeling",
+          "Number of surrogate variables (n.sv) estimated by sva::num.sv (or svaseq) is reported explicitly along with each SV's correlation to condition and to the PCA cluster label from T1S1",
+          "DESeq2 design is ~SV1+...+SVn+condition with condition releveled so control is the reference; contrast is treated vs control",
+          "Wald test results include unshrunken log2FoldChange, apeglm-shrunk log2FoldChange, lfcSE, p-value and BH-adjusted p-value (padj) for every tested gene",
+          "edgeR quasi-likelihood F-test is run on the same filtered counts and the same ~SV+condition design as a robustness cross-check; overlap and per-method-only gene counts are reported",
+          "p-value histogram is plotted and its shape (uniform/anti-conservative/irregular) is reported explicitly; if irregular after including SVs, fdrtool is used to re-estimate the empirical null and that result is reported alongside BH",
+          "Number of genes tested after filtering and number significant at padj<0.05 stated for both methods"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "fgsea preranked enrichment (Hallmark, then Reactome)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are method- and ranking-metric-dependent; report them as hypotheses for follow-up, not as proven pathway effects",
+          "If the DE step's p-value histogram was irregular even after SVA correction, note that pathway-level results inherit the same uncertainty"
+        ],
+        "context": "Ranked list derived from ~12000-gene DESeq2 Wald statistics for treated vs control kidney comparison; human gene symbols map directly to the HGNC-symbol MSigDB Hallmark and Reactome GMT files available in the reference store.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "org.Hs.eg.db",
+          "AnnotationDbi"
+        ],
+        "question": "Which biological pathways or hallmark processes are coordinately shifted between treated and control kidney samples, using the full ranked gene list from the SVA-adjusted DESeq2 test rather than only the significant genes?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0045@f652",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "Preranked fgsea on the Wald statistic against Hallmark then Reactome per R-0098/R-0107/R-0048; ranking metric choice (Wald stat) stated per disputed rule R-0108; size window and redundancy collapse per R-0047/R-0052",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Rank by the DESeq2 Wald statistic (stat), not by unshrunken log2FC alone and not by a signed p-value with ties",
+          "Use the tested-gene set (post-filter) as the universe, never the whole genome/annotation",
+          "State the Hallmark and Reactome collection versions used in the output"
+        ],
+        "acceptance_criteria": [
+          "Every tested gene (post-filtering) ranked by the DESeq2 Wald statistic (stat column) from the treated-vs-control contrast, ties handled explicitly",
+          "fgsea run against MSigDB Hallmark human gene sets (50 sets) as the primary collection, then Reactome human gene sets as a second pass",
+          "Gene sets restricted to 15-500 genes after intersecting with the tested-gene universe",
+          "BH-adjusted enrichment p-values reported; redundant/overlapping significant sets collapsed and one representative per group flagged, full table kept as supplement",
+          "Leading-edge genes reported for every significant gene set",
+          "If fewer than ~50 genes are padj<0.05 significant in T1S2, over-representation analysis is explicitly NOT run and the ranked fgsea result is treated as primary"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Integrated report: QC, DE, SVA rationale, enrichment, sensitivity",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This is an exploratory bulk RNA-seq contrast with an unresolved confound (unrecorded technical or biological covariate underlying the two clusters); treat any pathway-level narrative as hypothesis-generating, not confirmatory, until the confound is identified or the experiment is repeated with matched blocking"
+        ],
+        "context": "Consolidates the QC, DE (with SVA-adjusted design), and enrichment outputs for the 6 vs 6 human kidney treated/control comparison into one decision-ready report.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "EnhancedVolcano",
+          "pheatmap"
+        ],
+        "question": "What is the final, reproducible summary of treated-vs-control differential expression in this kidney cohort, given the unmodeled two-cluster structure, including diagnostics that let a reader judge how much of the result depends on the SVA correction and on any flagged outlier sample?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0090@be6e",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report-step rules apply generically but the step itself composites prior outputs rather than being independently grounded to one method choice",
+          "status": "ungrounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Do not present the union of DESeq2 and edgeR gene sets as the finding; the intersection is the high-confidence set",
+          "State explicitly if the p-value histogram remained irregular after SVA correction and what that implies for trusting the padj values"
+        ],
+        "acceptance_criteria": [
+          "Report states: design formula used (~SVs+condition), number of surrogate variables and their correlation with the PCA clusters, reference level (control), contrast (treated vs control), alpha=0.05, number of genes tested after filtering, number of DE genes at padj<0.05",
+          "MA plot and dispersion plot included as fit diagnostics; p-value histogram included with its shape stated",
+          "DE gene table includes both unshrunken and apeglm-shrunken log2FoldChange with lfcSE; genes ranked/plotted on the shrunken value",
+          "DESeq2-vs-edgeR overlap reported as the high-confidence gene set, with method-specific-only genes listed separately",
+          "Enrichment section states the gene set database and version, ranking metric, universe, and size window; leading-edge genes listed per significant set",
+          "If T1S1 flagged any outlier sample, report both the primary fit (sample retained/down-weighted) and a sensitivity fit excluding it, with the size of the gene-list intersection and what changes",
+          "Full session info (package versions), random seeds, and reference gene-set collection versions recorded"
+        ]
+      }
+    ],
+    "title": "Kidney treated vs control DE with SVA for suspected batch",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is 6 treated vs 6 control human kidney bulk RNA-seq samples (12000 genes, Salmon gene-level counts), with no recorded processing batch, but the PCA shows two clusters of six that cross-cut condition rather than follow it — a signature of an unrecorded technical or biological covariate (extraction date, dissection batch, RIN, etc.) rather than of the treatment itself. Ignoring this structure risks two failure modes: if the two clusters are ignored, the batch axis inflates test statistics and the differential expression call becomes a battery of false positives; if the clusters are naively 'corrected out' by subtracting them from the counts before testing, any component of the true treated-vs-control effect that happens to correlate with the cluster split is removed along with the noise, and the downstream test reports confidence the data does not support. The correct path (per grounded rule R-0025/R-0068) is: first look for a stated technical explanation for the two clusters using library size, mapping metrics and metadata; if none exists, estimate surrogate variables directly from the counts with sva (leaving the counts themselves untouched) and add those surrogate variables into the DESeq2 design formula alongside the condition term. The differential expression test then runs on the raw counts under design ~SV1+...+condition, so it estimates the treatment effect adjusted for the confounding axis instead of laundering it away first. Outputs are the Wald test with apeglm-shrunk log2 fold changes, BH-adjusted p-values with a p-value-histogram diagnostic (since a suspected, unmodeled batch is exactly the situation where a clean-looking histogram is not trustworthy), a robustness cross-check against edgeR quasi-likelihood, and fgsea preranked enrichment against MSigDB Hallmark and Reactome gene sets, with all findings tied back to the actual gene identifiers, adjusted p-value cutoff (0.05) and the number of surrogate variables used."
+  },
+  "usage": {
+    "inputTokens": 1011382,
+    "outputTokens": 7833,
+    "cacheCreationInputTokens": 158269,
+    "cacheReadInputTokens": 852969,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "suspected",
+        "quality_flags": [
+          "outlier_sample"
+        ],
+        "enrichment_input": "ranked_list"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db entrez human annotation"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "sva",
+          "apeglm",
+          "fgsea",
+          "org.Hs.eg.db",
+          "clusterProfiler",
+          "AnnotationDbi",
+          "EnhancedVolcano",
+          "pheatmap",
+          "edgeR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fdrtool"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "suspected",
+        "quality_flags": [
+          "outlier_sample"
+        ],
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA + sample distance heatmap + library size, colored by condition and by the two PCA clusters as a candidate surrogate/batch axis",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in at least 6 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "sva-estimated surrogate variables added as covariates to ~SV1+...+condition, condition releveled to control as reference",
+            "package": "sva",
+            "parameters": [
+              {
+                "name": "surrogate_variables",
+                "value": "as_covariates"
+              },
+              {
+                "name": "reference_level",
+                "value": "control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test on design ~SVs+condition, treated vs control; also fit edgeR QL as a second method for robustness overlap; keep flagged outlier sample and rely on DESeq2 Cook's-distance handling rather than silent removal",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "outlier_sample_policy",
+                "value": "down_weight_not_remove"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage of the treated-vs-control coefficient",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg on Wald p-values with independent filtering, alpha=0.05; inspect p-value histogram pre- and post-SV-adjustment, re-estimate null with fdrtool if histogram remains irregular",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the DESeq2 Wald statistic against MSigDB Hallmark, then Reactome as a second collection",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Report with QC diagnostics, design rationale (SVA to address the two suspected clusters), DE tables (shrunken + unshrunken LFC), MA/dispersion plots, enrichment tables with leading edges, DESeq2 vs edgeR overlap, sensitivity note on outlier sample",
+            "package": "DESeq2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "kidney transplant biopsy RNA-seq PCA two clusters batch effect surrogate variable",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "kidney tissue treatment RNA-seq control",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with SVA for suspected batch",
+          "analytical_narrative": "The dataset is 6 treated vs 6 control human kidney bulk RNA-seq samples (12000 genes, Salmon gene-level counts), with no recorded processing batch, but the PCA shows two clusters of six that cross-cut condition rather than follow it — a signature of an unrecorded technical or biological covariate (extraction date, dissection batch, RIN, etc.) rather than of the treatment itself. Ignoring this structure risks two failure modes: if the two clusters are ignored, the batch axis inflates test statistics and the differential expression call becomes a battery of false positives; if the clusters are naively 'corrected out' by subtracting them from the counts before testing, any component of the true treated-vs-control effect that happens to correlate with the cluster split is removed along with the noise, and the downstream test reports confidence the data does not support. The correct path (per grounded rule R-0025/R-0068) is: first look for a stated technical explanation for the two clusters using library size, mapping metrics and metadata; if none exists, estimate surrogate variables directly from the counts with sva (leaving the counts themselves untouched) and add those surrogate variables into the DESeq2 design formula alongside the condition term. The differential expression test then runs on the raw counts under design ~SV1+...+condition, so it estimates the treatment effect adjusted for the confounding axis instead of laundering it away first. Outputs are the Wald test with apeglm-shrunk log2 fold changes, BH-adjusted p-values with a p-value-histogram diagnostic (since a suspected, unmodeled batch is exactly the situation where a clean-looking histogram is not trustworthy), a robustness cross-check against edgeR quasi-likelihood, and fgsea preranked enrichment against MSigDB Hallmark and Reactome gene sets, with all findings tied back to the actual gene identifiers, adjusted p-value cutoff (0.05) and the number of surrogate variables used.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and cluster investigation",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the two six-sample PCA clusters seen in the 12 kidney samples correspond to a discoverable technical variable (library size, detected-gene count, or any recorded metadata column), and do they align with or cross-cut the treated/control condition?",
+              "acceptance_criteria": [
+                "Blind VST computed on the raw count matrix and a PCA on the top 500 variable genes reproduces/confirms the two six-sample clusters",
+                "PCA and a sample-distance heatmap are colored by condition and by cluster membership; library size and number of detected genes are reported per sample",
+                "Report states explicitly whether any recorded metadata column (there is only condition) explains the clustering, and confirms the clusters do not align with condition (per the data context caveat)",
+                "No sample is removed at this step; any candidate outlier sample is flagged with a stated numeric criterion (e.g., library size or gene-detection outlier), not silently dropped"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 x 13 raw Salmon gene counts (12 samples + gene symbol column), 6 treated vs 6 control, no recorded batch; PCA already shows two 6-sample clusters cross-cutting the condition.",
+              "constraints": [
+                "Use blind (design-independent) VST for PCA, per DESeq2 vignette convention",
+                "Do not adjust or remove anything from the counts at this step"
+              ],
+              "caveats": [
+                "A clean-looking PCA-cluster split with no metadata explanation is the setup this plan's later SVA step is meant to address, not a reason to drop samples",
+                "Only one metadata column (condition) exists in this dataset, so 'no explanatory variable found' is an expected, not a failure, outcome"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0022@6ba4",
+                  "R-0033@40bf",
+                  "R-0034@39e2"
+                ],
+                "reason": "Sample structure QC per R-0033; suspected-batch PCA coloring and outlier investigation per R-0022 and R-0034"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Filter, SVA-augmented design, DESeq2 Wald test with apeglm shrinkage",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the ~12000 kidney genes are differentially expressed between treated and control samples once surrogate variables estimated from the count structure (standing in for the unrecorded variable behind the two PCA clusters) are included as covariates?",
+              "acceptance_criteria": [
+                "Genes pre-filtered to >=10 counts in at least 6 samples (the smaller group size) before modeling",
+                "Number of surrogate variables (n.sv) estimated by sva::num.sv (or svaseq) is reported explicitly along with each SV's correlation to condition and to the PCA cluster label from T1S1",
+                "DESeq2 design is ~SV1+...+SVn+condition with condition releveled so control is the reference; contrast is treated vs control",
+                "Wald test results include unshrunken log2FoldChange, apeglm-shrunk log2FoldChange, lfcSE, p-value and BH-adjusted p-value (padj) for every tested gene",
+                "edgeR quasi-likelihood F-test is run on the same filtered counts and the same ~SV+condition design as a robustness cross-check; overlap and per-method-only gene counts are reported",
+                "p-value histogram is plotted and its shape (uniform/anti-conservative/irregular) is reported explicitly; if irregular after including SVs, fdrtool is used to re-estimate the empirical null and that result is reported alongside BH",
+                "Number of genes tested after filtering and number significant at padj<0.05 stated for both methods"
+              ],
+              "packages": [
+                "DESeq2",
+                "sva",
+                "apeglm",
+                "edgeR",
+                "fdrtool"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "6 treated vs 6 control kidney samples, raw Salmon gene counts, no recorded batch but two PCA clusters cross-cutting condition (n=6 per group meets the >=4-per-group threshold for stable SVA estimation).",
+              "constraints": [
+                "Do not subtract or regress the surrogate variables out of the counts themselves — they enter only as design covariates for the GLM",
+                "Keep the number of surrogate variables small relative to 12 samples; state the number and the rationale",
+                "Set the reference level of condition explicitly to control before fitting; do not rely on alphabetical default",
+                "Use apeglm for LFC shrinkage of the treated-vs-control coefficient",
+                "Apply BH adjustment with DESeq2 independent filtering at alpha=0.05; do not filter results by raw p-value or fold-change alone"
+              ],
+              "caveats": [
+                "With only one blocking dimension available (no recorded covariate), the surrogate variables are the only handle on the confound; if they turn out uncorrelated with the PCA clusters, that itself is a finding worth reporting, not a failure",
+                "An outlier sample, if flagged in T1S1, should be down-weighted via robust methods or kept with DESeq2's Cook's-distance handling rather than removed outright, unless T1S1 established a concrete technical cause",
+                "A suspected but unmodeled batch inflates apparent significance; the p-value histogram diagnostic exists specifically to catch this even after adding SVs"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@762e",
+                  "R-0068@eb3c",
+                  "R-0036@9786",
+                  "R-0025@1e65",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0067@e082",
+                  "R-0009@f54e",
+                  "R-0084@2a4e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "reason": "Suspected batch with no recorded variable and n=6/group: estimate SVs with sva and add as covariates (R-0025/R-0068); DESeq2 Wald + apeglm shrinkage is the primary test with edgeR QL as the robustness cross-check (R-0001); BH/independent filtering at alpha 0.05 (R-0010/R-0043); p-value histogram must be inspected given the suspected-batch flag (R-0084/R-0083)"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "fgsea preranked enrichment (Hallmark, then Reactome)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways or hallmark processes are coordinately shifted between treated and control kidney samples, using the full ranked gene list from the SVA-adjusted DESeq2 test rather than only the significant genes?",
+              "acceptance_criteria": [
+                "Every tested gene (post-filtering) ranked by the DESeq2 Wald statistic (stat column) from the treated-vs-control contrast, ties handled explicitly",
+                "fgsea run against MSigDB Hallmark human gene sets (50 sets) as the primary collection, then Reactome human gene sets as a second pass",
+                "Gene sets restricted to 15-500 genes after intersecting with the tested-gene universe",
+                "BH-adjusted enrichment p-values reported; redundant/overlapping significant sets collapsed and one representative per group flagged, full table kept as supplement",
+                "Leading-edge genes reported for every significant gene set",
+                "If fewer than ~50 genes are padj<0.05 significant in T1S2, over-representation analysis is explicitly NOT run and the ranked fgsea result is treated as primary"
+              ],
+              "packages": [
+                "fgsea",
+                "org.Hs.eg.db",
+                "AnnotationDbi"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Ranked list derived from ~12000-gene DESeq2 Wald statistics for treated vs control kidney comparison; human gene symbols map directly to the HGNC-symbol MSigDB Hallmark and Reactome GMT files available in the reference store.",
+              "constraints": [
+                "Rank by the DESeq2 Wald statistic (stat), not by unshrunken log2FC alone and not by a signed p-value with ties",
+                "Use the tested-gene set (post-filter) as the universe, never the whole genome/annotation",
+                "State the Hallmark and Reactome collection versions used in the output"
+              ],
+              "caveats": [
+                "Enrichment results are method- and ranking-metric-dependent; report them as hypotheses for follow-up, not as proven pathway effects",
+                "If the DE step's p-value histogram was irregular even after SVA correction, note that pathway-level results inherit the same uncertainty"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0045@f652",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "reason": "Preranked fgsea on the Wald statistic against Hallmark then Reactome per R-0098/R-0107/R-0048; ranking metric choice (Wald stat) stated per disputed rule R-0108; size window and redundancy collapse per R-0047/R-0052"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Integrated report: QC, DE, SVA rationale, enrichment, sensitivity",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the final, reproducible summary of treated-vs-control differential expression in this kidney cohort, given the unmodeled two-cluster structure, including diagnostics that let a reader judge how much of the result depends on the SVA correction and on any flagged outlier sample?",
+              "acceptance_criteria": [
+                "Report states: design formula used (~SVs+condition), number of surrogate variables and their correlation with the PCA clusters, reference level (control), contrast (treated vs control), alpha=0.05, number of genes tested after filtering, number of DE genes at padj<0.05",
+                "MA plot and dispersion plot included as fit diagnostics; p-value histogram included with its shape stated",
+                "DE gene table includes both unshrunken and apeglm-shrunken log2FoldChange with lfcSE; genes ranked/plotted on the shrunken value",
+                "DESeq2-vs-edgeR overlap reported as the high-confidence gene set, with method-specific-only genes listed separately",
+                "Enrichment section states the gene set database and version, ranking metric, universe, and size window; leading-edge genes listed per significant set",
+                "If T1S1 flagged any outlier sample, report both the primary fit (sample retained/down-weighted) and a sensitivity fit excluding it, with the size of the gene-list intersection and what changes",
+                "Full session info (package versions), random seeds, and reference gene-set collection versions recorded"
+              ],
+              "packages": [
+                "DESeq2",
+                "EnhancedVolcano",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Consolidates the QC, DE (with SVA-adjusted design), and enrichment outputs for the 6 vs 6 human kidney treated/control comparison into one decision-ready report.",
+              "constraints": [
+                "Do not present the union of DESeq2 and edgeR gene sets as the finding; the intersection is the high-confidence set",
+                "State explicitly if the p-value histogram remained irregular after SVA correction and what that implies for trusting the padj values"
+              ],
+              "caveats": [
+                "This is an exploratory bulk RNA-seq contrast with an unresolved confound (unrecorded technical or biological covariate underlying the two clusters); treat any pathway-level narrative as hypothesis-generating, not confirmatory, until the confound is identified or the experiment is repeated with matched blocking"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0090@be6e",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report-step rules apply generically but the step itself composites prior outputs rather than being independently grounded to one method choice"
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+  }
+}

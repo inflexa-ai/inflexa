@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames this as an interaction question, fits ~genotype+treatment+genotype:treatment with explicit WT/vehicle reference levels, tests the interaction coefficient, and derives both simple effects as named contrasts with ashr shrinkage and per-contrast BH at alpha 0.05, exactly matching the reference. QC is a blind VST PCA/heatmap/library-size check with explicit factor-of-dominance and outlier reporting, and the low-count filter (>=10 counts in >=4 samples) is minimal and tied to the smallest cell size with retained-gene counts reported. Normalization stays inside DESeq2 (median-of-ratios), and the report is unusually complete on versions, thresholds, counts, caveats (power, per-contrast FDR, missing length offset, cell-composition confound), and reproducibility. Enrichment is well justified with stated ranking metric, collections/versions, size window, and per-contrast separation, though it uses human MSigDB collections for a plan whose only stated taxon context is somewhat ambiguous (brain, likely mouse KO) — a minor mismatch flagged nowhere, slightly denting the enrichment score; everything else is essentially reference-quality."
+}

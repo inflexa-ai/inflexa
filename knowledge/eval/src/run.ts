@@ -116,7 +116,7 @@ async function runOne(options: {
     let error: string | undefined;
     try {
         const result = await tool.execute(
-            { researchQuestion: task.question },
+            { researchQuestion: task.question, ...(task.constraints ? { userConstraints: task.constraints } : {}) },
             {
                 invocationId: `eval-${analysisId}`,
                 session,

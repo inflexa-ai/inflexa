@@ -18,5 +18,9 @@ packages:
     biotools: limma
     version_range: ">=3.60"
     bioconductor: "3.23"
+  - name: decoupler
+    track: python
+    version_range: ">=2.0"
 templates:
   - tpl-gsva-hallmark
+  - tpl-decoupler-scores

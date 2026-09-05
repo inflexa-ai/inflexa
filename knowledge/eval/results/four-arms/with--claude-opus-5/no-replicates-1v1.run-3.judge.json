@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly diagnoses the 1v1 design, refuses any inferential test, and explicitly forbids DESeq()/nbinomWaldTest/exactTest/eBayes, emitting only median-of-ratios normalized counts and descriptive log2 fold changes with explicit zero-handling and unbounded-ratio flagging — exactly the reference behaviour. QC is tailored to n=2: library sizes, detection breadth, composition skew, blind VST scatter/MA, with an explicit statement that PCA and sample-distance clustering are uninformative rather than a degenerate plot. The filter (>=10 counts in >=1 sample, smallest group size) is minimal and justified, normalization is inside the model on raw counts, and the reference level and treated-vs-control contrast direction are stated explicitly; the absence of p-values, FDR, and lfcShrink is justified by the lack of estimable dispersion. The main weakness is the fgsea step: with a single-replicate ranking, enrichment is not warranted and the reference expects it omitted; the plan runs it anyway and, despite heavy caveats and correct universe/size-window/collection/leading-edge mechanics, invites the reader to treat a noise-driven ranking as a result. The report step is thorough, leading with the no-replication verdict and naming the >=3 (preferably 5+) replicates-per-condition design needed for inference."
+}

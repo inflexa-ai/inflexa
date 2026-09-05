@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect confounding, refuses to fit a batch term or use ComBat-seq/SVA/removeBatchEffect, uses ~condition only with an explicit control-referenced contrast, and labels every output as confounded, exactly matching the reference. QC precedes testing with blind VST/PCA/distance heatmap colored by both condition and batch, explicitly confirming inseparability. Filtering (>=10 counts in >=6 samples) is reasonable though slightly more specific/stricter than a minimal 'a few samples' rule, and normalization is correctly left to DESeq2 median-of-ratios with no pre-normalization. BH FDR at 0.05 with apeglm shrinkage and independent filtering is well specified. Enrichment is arguably not fully warranted given the confounding, but the plan proceeds with a clearly justified ORA (explicit universe, named collections/versions, size window) and repeats the caveat, which is defensible though a stricter reading might favor omitting enrichment entirely. Reporting is thorough: methods, versions, design, thresholds, gene counts, and caveats are all stated up front and repeated."
+}

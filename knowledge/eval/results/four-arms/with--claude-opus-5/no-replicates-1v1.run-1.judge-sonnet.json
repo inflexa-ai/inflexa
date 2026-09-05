@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the 1v1 design as unable to support inference, refuses any p-value/dispersion-based test, and reports only median-of-ratios normalized counts and descriptive log2FC with a pseudocount, matching the reference exactly. QC is present and appropriately adapted for n=2 (VST scatter, MA plot, single distance scalar) rather than fabricating PCA/clustering that would be meaningless. The low-count filter (>=10 in >=1 sample) is minimal and justified for the smallest group size of 1. Normalization is done inside DESeq2 via size factors, not pre-scaled. The design formula and reference level (control) and contrast direction are explicit. No FDR/p-values are produced, consistent with the design, and shrinkage is explicitly and correctly withheld with justification. Enrichment is well-justified as descriptive-only with full ranked list, stated ranking metric, explicit universe and size window, named collection/version, though it stretches the reference's implicit preference to omit enrichment entirely by still running fgsea (justified but a slight departure). The final report leads with the limitation, states required replicate design, and includes full reproducibility details, fulfilling report_completeness fully."
+}

@@ -10,7 +10,7 @@ import { matchRules, type StoredRule } from "../engine/rules.js";
 import type { Situation, Template } from "../model.js";
 import { matchEnvironment } from "../render/environment.js";
 import { renderTemplate } from "../render/render.js";
-import { checkRSyntax } from "../render/syntax.js";
+import { checkSyntax } from "../render/syntax.js";
 import type { LoadedSnapshot } from "../store.js";
 import type {
     CheckRequest,
@@ -107,8 +107,19 @@ export function recommend(snapshot: LoadedSnapshot, request: RecommendRequest): 
     }
     const detailed = request.response_format === "detailed";
     const { applicable, nearest } = matchRules(snapshot.rules, situation);
-    const procedure = assembleProcedure(applicable, situation, modality, catalogOf(snapshot));
-    const flags = procedure.steps.flatMap((step) => step.flags ?? []).filter((flag) => flag.severity === "flag");
+    const procedure = assembleProcedure(applicable, situation, modality, catalogOf(snapshot), request.preferences);
+    // One rule reaches the answer once, even when its flag rides on more than one step
+    // (a flag that removes inference marks the enrichment step as descriptive as well).
+    const seenFlags = new Set<string>();
+    const flags = procedure.steps
+        .flatMap((step) => step.flags ?? [])
+        .filter((flag) => flag.severity === "flag")
+        .filter((flag) => {
+            const key = `${flag.rule}:${flag.outcome ?? ""}`;
+            if (seenFlags.has(key)) return false;
+            seenFlags.add(key);
+            return true;
+        });
     const match: RecommendResponse["match"] = procedure.flagged ? "flag" : procedure.central_covered ? "applicable" : "none";
     const claims = applicable.map((stored) => claimView(snapshot, stored, detailed));
     return {
@@ -117,6 +128,7 @@ export function recommend(snapshot: LoadedSnapshot, request: RecommendRequest): 
         situation,
         procedure: procedure.steps,
         uncovered: procedure.uncovered,
+        ...(procedure.dropped.length > 0 ? { dropped: procedure.dropped } : {}),
         flags,
         claims,
         ...(match === "none" ? { nearest, reason: "no rule selects a method for the central step of this question; the nearest rules and their failed conditions are listed" } : {}),
@@ -177,7 +189,7 @@ export async function render(snapshot: LoadedSnapshot, request: RenderRequest): 
         return { error: "validation", message: "one or more slot values are not valid for this template", issues: rendered.issues };
     }
     const environment = matchEnvironment(template.environment, request.farm);
-    const syntax = template.language === "R" ? await checkRSyntax(rendered.script) : { status: "unchecked" as const, reason: "no syntax checker for this language" };
+    const syntax = await checkSyntax(template.language, rendered.script);
     const citations: EvidenceView[] = (template.citations ?? []).flatMap((id) => {
         const source = snapshot.sources.get(id);
         if (!source) return [];

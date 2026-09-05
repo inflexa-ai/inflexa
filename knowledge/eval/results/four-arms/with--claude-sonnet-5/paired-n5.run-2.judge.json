@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject with DESeq2 (~ subject + condition), testing the condition coefficient within subject, with the reference level and contrast made explicit. QC precedes the test (blind VST, PCA on top-500 variable genes, sample-distance heatmap, library sizes, colored by subject and condition) and commits to flagging pairing anomalies or aberrant depth, though the remedial policy for a flagged sample is left unspecified. The low-count filter (>=10 counts in >=5 samples, justified as the smallest group size) is minimal and reasoned, and inference is sound: Wald test, BH at alpha=0.05 with independent filtering, apeglm shrinkage retained alongside unshrunken LFC, plus p-value histogram, MA, dispersion, and Cook's-vs-filtering NA accounting. Normalization is only implicit — raw counts go into DESeq2 and nothing is pre-normalized, but the plan never states that size factors are estimated within the model. Enrichment is well specified (fgsea preranked on the full tested list, Wald statistic as the stated metric, Hallmark with version, 15–500 size window, collapsePathways, leading edge), and the report step covers versions, design, thresholds, gene counts, and the n=5 power caveat."
+}

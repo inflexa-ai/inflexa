@@ -11,5 +11,10 @@ packages:
     biotools: clusterprofiler
     version_range: ">=4.10"
     bioconductor: "3.23"
+  - name: gseapy
+    track: python
+    biotools: gseapy
+    version_range: ">=1.3"
 templates:
   - tpl-ora-universe
+  - tpl-gseapy-ora

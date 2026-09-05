@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly diagnoses the perfect confounding, refuses to add a batch term (rank deficiency named), explicitly forbids ComBat-seq/SVA/removeBatchEffect, and labels every gene and pathway result as equally consistent with a batch artifact, with a recommendation for a rebalanced replication — this matches the reference behavior, though it proceeds rather than pausing to request a better design. QC is design-specific (blind VST, PCA on top 500 colored by both condition and batch, distance heatmap, library sizes) and states the confound cannot be visually resolved, but it only asks about outliers without stating a policy for handling one. Filtering (>=10 counts in >=6, tied to the smallest group), the explicit ~condition design with control releveled as reference, the named contrast, apeglm shrinkage, alpha=0.05 with BH and independent filtering, and the reproducibility/report section are all correct and concrete. Normalization is implicit in DESeq2 and no pre-normalized or batch-adjusted counts enter the model, but size factor estimation is never named. Enrichment uses the tested-gene universe, named collections, a 15-500 size window and BH adjustment with inherited caveats; its justification for choosing ORA over preranked GSEA is arbitrary rather than statistical, and arguably enrichment on a confounded list adds little."
+}

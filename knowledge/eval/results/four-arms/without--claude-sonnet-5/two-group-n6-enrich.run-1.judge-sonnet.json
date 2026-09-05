@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 2,
+    "normalization": 9,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly uses DESeq2 for a 6v6 unpaired single-batch design and explicitly defers normalization to DESeq2's internal size factors, avoiding pre-normalization. QC is present with library size reporting and a pre-registered decision rule, but it only proposes a PCA 'or' bar plot rather than both PCA and a sample-distance heatmap, and doesn't mention coloring by batch. No low-count gene filtering step is specified anywhere before DESeq2, a notable gap versus the reference's minimal, justified filter. The design formula and contrast (reference level, direction of comparison) are never made explicit, only 'condition as sole factor.' Shrinkage (apeglm/ashr) and BH padj<0.05 are correctly specified. Enrichment correctly uses full ranked list, states hallmark 50-set collection and HGNC matching, but omits the 15-500 gene-set size window and specific MSigDB/tool versions, which also weakens overall report completeness alongside missing software version numbers."
+}

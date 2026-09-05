@@ -1,0 +1,241 @@
+{
+  "campaign": "four-arms",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n6-enrich",
+  "run": 1,
+  "startedAt": "2026-09-05T13:22:05.635Z",
+  "elapsedMs": 30836,
+  "outcome": "plan_submitted",
+  "planId": "pln-32f7ed0b",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and outlier assessment for sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Raw integer gene-level counts (12000 x 13 CSV incl. gene symbol column) and a 12x2 metadata CSV assigning condition (lesional vs control, 6 vs 6, unpaired, single batch). No reference data needed for this step.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Is sample_01's library size (flagged as ~4x below median in the data profile) a technical artifact severe enough to compromise DESeq2 size-factor estimation and dispersion fitting for the 6 lesional vs 6 control comparison, and should it be excluded or retained with documented caveats?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not silently drop or silently retain sample_01 — the decision and its rationale must be explicit output consumed by the DE step",
+          "Do not perform any normalization intended for final DE modeling here beyond what is needed for QC visualization (e.g., CPM/log for PCA is fine, but DESeq2 size factors are computed fresh in T1S2)"
+        ],
+        "acceptance_criteria": [
+          "Reports total library size per sample from counts.csv (12000 genes x 12 samples, excluding the gene symbol column) and confirms sample_01's rank/magnitude relative to the median",
+          "Reports number of genes with zero or near-zero counts in sample_01 versus other samples",
+          "Applies a pre-registered decision rule (e.g., exclude if library size falls below a defined multiple of the median AND detected-gene count is materially reduced) and states the outcome explicitly",
+          "Produces a diagnostic PCA or library-size bar plot flagging sample_01",
+          "Documents the final sample set (12 or 11 samples, condition breakdown) to be passed to the DE step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: AD lesional vs control (DESeq2)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Raw Salmon-derived gene-level integer counts, 6 vs 6 unpaired single-batch design, condition = AD lesional vs control. No external reference data required.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes are significantly differentially expressed between AD-lesional and control skin samples, accounting for the QC decision made on sample_01?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use raw integer counts as DESeq2 input, not pre-normalized values",
+          "Do not adjust for batch — data profile states single batch",
+          "Carry forward the exact sample set decided in T1S1"
+        ],
+        "acceptance_criteria": [
+          "Uses the sample set finalized in T1S1 (with sample_01 either excluded or retained per that decision) and raw integer counts from counts.csv joined to condition labels from metadata.csv",
+          "Runs DESeq2 (or pyDESeq2) with condition as the sole factor (single batch, unpaired design; no covariates to adjust for)",
+          "Reports a full results table with log2FoldChange, p-value, and BH-adjusted p-value for all ~12000 genes",
+          "Applies apeglm or ashr shrinkage to log2FoldChange estimates for reporting stability",
+          "Explicitly flags genes significant at padj < 0.05 and separately reports the top up- and down-regulated genes by shrunken log2FC",
+          "If sample_01 was retained, reports a sensitivity comparison (concordance of top DE genes/hits) with and without sample_01 to characterize its influence"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark pathway enrichment on the lesional vs control signature",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "context": "Input is the DESeq2 differential expression results table (gene symbol, log2FoldChange, p-value, padj) from T1S2. Reference: the human MSigDB hallmark gene set collection (50 curated pathways, HGNC gene symbols, GMT format) available in the environment's reference store.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "gseapy"
+        ],
+        "question": "Which of the 50 MSigDB hallmark pathways are enriched among genes changing between AD-lesional and control skin?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use gene symbols matching HGNC as used in the hallmark GMT — verify identifier overlap before running and report the match rate",
+          "Do not restrict the ranked list to only significant genes — GSEA requires the full ranked gene universe"
+        ],
+        "acceptance_criteria": [
+          "Confirms availability of the human MSigDB hallmark gene set collection (50 HALLMARK_* sets, HGNC symbols) before running; if absent, reports the gap and falls back to WikiPathways human sets",
+          "Ranks all tested genes by the DESeq2 shrunken log2FoldChange (or signed -log10(p) x sign(LFC)) from T1S2 and runs pre-ranked GSEA (fgsea)",
+          "Reports normalized enrichment score, p-value, and BH-adjusted p-value per hallmark pathway",
+          "Separately lists pathways enriched in up- and down-regulated directions",
+          "Cross-references leading-edge genes of top pathways against the significant DE gene list from T1S2"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control: DE genes + hallmark pathways",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (salmon-derived raw gene-level counts, 12000 genes x 13 samples/columns with 12 samples per metadata: 6 atopic-dermatitis-lesional vs 6 control, unpaired, single batch). The metadata profile flags sample_01 as having a library size ~4x below the median, which risks distorting size-factor normalization and inflating dispersion estimates if left unaddressed. The plan therefore front-loads a QC step that quantifies the outlier's severity and decides (with an explicit, reported rule) whether to exclude it or retain it with cautionary weighting, before any DE modeling runs. DE is then run with DESeq2 (standard for raw integer counts from Salmon-derived gene-level quantification) comparing lesional vs control, followed by hallmark pathway enrichment (fgsea-style GSEA on the ranked DE statistic, using the 50-set MSigDB human hallmark collection confirmed present in refs) to answer both halves of the research question: which genes and which hallmark pathways differ."
+  },
+  "usage": {
+    "inputTokens": 90703,
+    "outputTokens": 2586,
+    "cacheCreationInputTokens": 72395,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control: DE genes + hallmark pathways",
+          "analytical_narrative": "The dataset is bulk RNA-seq (salmon-derived raw gene-level counts, 12000 genes x 13 samples/columns with 12 samples per metadata: 6 atopic-dermatitis-lesional vs 6 control, unpaired, single batch). The metadata profile flags sample_01 as having a library size ~4x below the median, which risks distorting size-factor normalization and inflating dispersion estimates if left unaddressed. The plan therefore front-loads a QC step that quantifies the outlier's severity and decides (with an explicit, reported rule) whether to exclude it or retain it with cautionary weighting, before any DE modeling runs. DE is then run with DESeq2 (standard for raw integer counts from Salmon-derived gene-level quantification) comparing lesional vs control, followed by hallmark pathway enrichment (fgsea-style GSEA on the ranked DE statistic, using the 50-set MSigDB human hallmark collection confirmed present in refs) to answer both halves of the research question: which genes and which hallmark pathways differ.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and outlier assessment for sample_01",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Is sample_01's library size (flagged as ~4x below median in the data profile) a technical artifact severe enough to compromise DESeq2 size-factor estimation and dispersion fitting for the 6 lesional vs 6 control comparison, and should it be excluded or retained with documented caveats?",
+              "acceptance_criteria": [
+                "Reports total library size per sample from counts.csv (12000 genes x 12 samples, excluding the gene symbol column) and confirms sample_01's rank/magnitude relative to the median",
+                "Reports number of genes with zero or near-zero counts in sample_01 versus other samples",
+                "Applies a pre-registered decision rule (e.g., exclude if library size falls below a defined multiple of the median AND detected-gene count is materially reduced) and states the outcome explicitly",
+                "Produces a diagnostic PCA or library-size bar plot flagging sample_01",
+                "Documents the final sample set (12 or 11 samples, condition breakdown) to be passed to the DE step"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level counts (12000 x 13 CSV incl. gene symbol column) and a 12x2 metadata CSV assigning condition (lesional vs control, 6 vs 6, unpaired, single batch). No reference data needed for this step.",
+              "constraints": [
+                "Do not silently drop or silently retain sample_01 — the decision and its rationale must be explicit output consumed by the DE step",
+                "Do not perform any normalization intended for final DE modeling here beyond what is needed for QC visualization (e.g., CPM/log for PCA is fine, but DESeq2 size factors are computed fresh in T1S2)"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: AD lesional vs control (DESeq2)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are significantly differentially expressed between AD-lesional and control skin samples, accounting for the QC decision made on sample_01?",
+              "acceptance_criteria": [
+                "Uses the sample set finalized in T1S1 (with sample_01 either excluded or retained per that decision) and raw integer counts from counts.csv joined to condition labels from metadata.csv",
+                "Runs DESeq2 (or pyDESeq2) with condition as the sole factor (single batch, unpaired design; no covariates to adjust for)",
+                "Reports a full results table with log2FoldChange, p-value, and BH-adjusted p-value for all ~12000 genes",
+                "Applies apeglm or ashr shrinkage to log2FoldChange estimates for reporting stability",
+                "Explicitly flags genes significant at padj < 0.05 and separately reports the top up- and down-regulated genes by shrunken log2FC",
+                "If sample_01 was retained, reports a sensitivity comparison (concordance of top DE genes/hits) with and without sample_01 to characterize its influence"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw Salmon-derived gene-level integer counts, 6 vs 6 unpaired single-batch design, condition = AD lesional vs control. No external reference data required.",
+              "constraints": [
+                "Use raw integer counts as DESeq2 input, not pre-normalized values",
+                "Do not adjust for batch — data profile states single batch",
+                "Carry forward the exact sample set decided in T1S1"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark pathway enrichment on the lesional vs control signature",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark pathways are enriched among genes changing between AD-lesional and control skin?",
+              "acceptance_criteria": [
+                "Confirms availability of the human MSigDB hallmark gene set collection (50 HALLMARK_* sets, HGNC symbols) before running; if absent, reports the gap and falls back to WikiPathways human sets",
+                "Ranks all tested genes by the DESeq2 shrunken log2FoldChange (or signed -log10(p) x sign(LFC)) from T1S2 and runs pre-ranked GSEA (fgsea)",
+                "Reports normalized enrichment score, p-value, and BH-adjusted p-value per hallmark pathway",
+                "Separately lists pathways enriched in up- and down-regulated directions",
+                "Cross-references leading-edge genes of top pathways against the significant DE gene list from T1S2"
+              ],
+              "packages": [
+                "fgsea",
+                "gseapy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Input is the DESeq2 differential expression results table (gene symbol, log2FoldChange, p-value, padj) from T1S2. Reference: the human MSigDB hallmark gene set collection (50 curated pathways, HGNC gene symbols, GMT format) available in the environment's reference store.",
+              "constraints": [
+                "Use gene symbols matching HGNC as used in the hallmark GMT — verify identifier overlap before running and report the match rate",
+                "Do not restrict the ranked list to only significant genes — GSEA requires the full ranked gene universe"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

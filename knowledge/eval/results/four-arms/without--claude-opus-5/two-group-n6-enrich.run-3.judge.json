@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the design precisely: DESeq2 Wald on raw counts with ~condition, control set as the explicit reference level, direction of the LFC stated, no batch or pairing term (correctly justified as unavailable and unneeded for a single-batch unpaired 6v6), plus a pre-specified leave-sample_01-out sensitivity cohort. QC is exemplary and dataset-specific: library sizes, detected genes, size factors, top-10-gene fraction, VST PCA and inter-sample correlation, with a keep/drop rule declared before the numbers are seen and a stated power cost of dropping 1 of 6. Normalization is median-of-ratios inside the model with an explicit ban on TPM/CPM input; BH at 0.05, independent filtering, apeglm shrinkage for reporting and ranking, and no post hoc fold-change filter before correction. Weaknesses: the low-count filter is only loosely specified (\"a minimum count in at least the size of the smaller group\" leaves the count threshold undefined, though the group-size logic is sound); the GSEA lacks an explicit set-size window (15–500) and an MSigDB version, and leaves the ranking metric as shrunken LFC \"or\" Wald statistic; and the report requirements name thresholds, gene counts and caveats but never require software/database version reporting."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly uses DESeq2 Wald/apeglm as primary NB model fitting the 3v3 unpaired single-batch design, adds edgeR QL as a sensible robustness cross-check (not required but not wrong, and clearly labeled secondary), with an explicit low-power caveat that is not compensated by threshold loosening. QC (PCA, distances, library size, outlier policy) precedes testing, normalization is handled inside both models (size factors/TMM) with no pre-normalized inputs, and the filter (>=10 counts in >=3 samples) is minimal and justified. Design formula, reference level, and contrast are explicit though no blocking/interaction term is needed given the simple design. BH FDR at 0.05 and apeglm shrinkage are correctly used as the reported effect size, and enrichment is well-justified as preranked fgsea (not ORA) given expected short DE list, with universe, ranking metric, collection versions, and size window all stated. The final report is thorough, naming methods, versions, thresholds, gene counts, and design caveats."
+}

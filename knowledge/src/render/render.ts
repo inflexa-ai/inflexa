@@ -41,7 +41,9 @@ export type RenderResult =
 
 export const ADAPTABLE_MARKER = /#\s*\[adaptable:\s*([a-z][a-z0-9_]*)\]/g;
 
-function rLiteral(parameter: TemplateParameter, value: SlotValue): string {
+/** A slot value as a literal of the language of the template: R gives `TRUE` and `c(...)`, Python gives `True` and `[...]`. */
+function literal(language: Template["language"], parameter: TemplateParameter, value: SlotValue): string {
+    const python = language === "python";
     switch (parameter.type) {
         case "string":
             return JSON.stringify(String(value));
@@ -51,10 +53,11 @@ function rLiteral(parameter: TemplateParameter, value: SlotValue): string {
         case "integer":
             return String(value);
         case "boolean":
-            return value ? "TRUE" : "FALSE";
+            return python ? (value ? "True" : "False") : value ? "TRUE" : "FALSE";
         case "string_list": {
             const items = Array.isArray(value) ? value : [String(value)];
-            return `c(${items.map((item) => JSON.stringify(String(item))).join(", ")})`;
+            const rendered = items.map((item) => JSON.stringify(String(item))).join(", ");
+            return python ? `[${rendered}]` : `c(${rendered})`;
         }
         default: {
             const unreachable: never = parameter.type;
@@ -188,7 +191,7 @@ export function renderTemplate(template: Template, body: string, callerSlots: Re
         const parameter = byName.get(name);
         const value = values.get(name);
         if (!parameter || value === undefined) return "NULL";
-        return rLiteral(parameter, value);
+        return literal(template.language, parameter, value);
     });
 
     const lines = script.split("\n");

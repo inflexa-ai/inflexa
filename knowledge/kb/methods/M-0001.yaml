@@ -17,7 +17,11 @@ packages:
     biotools: apeglm
     version_range: ">=1.30"
     bioconductor: "3.23"
+  - name: pydeseq2
+    track: python
+    version_range: ">=0.5"
 templates:
   - tpl-deseq2-two-group
   - tpl-deseq2-blocked
   - tpl-deseq2-interaction
+  - tpl-pydeseq2-two-group

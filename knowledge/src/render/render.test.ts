@@ -96,3 +96,18 @@ describe("matchEnvironment", () => {
         expect(matchEnvironment(pins, undefined).match).toBe("unknown");
     });
 });
+
+describe("renderTemplate — Python literals", () => {
+    it("writes a boolean as True or False and a list as a Python list when the template is Python", () => {
+        const python = { ...TEMPLATE, language: "python" as const, body_file: "body.py" };
+        const withBoolean = { ...python, parameters: [...python.parameters, { name: "py_flag", type: "boolean" as const, description: "b", adaptable: true }] };
+        const body = `${BODY}\nPY_FLAG = {{py_flag}}  # [adaptable: py_flag]\n`;
+        const slots: Record<string, unknown> = {};
+        for (const parameter of withBoolean.parameters) if (parameter.adaptable && parameter.default === undefined) slots[parameter.name] = parameter.type === "string_list" ? ["a", "b"] : parameter.type === "boolean" ? true : parameter.type === "string" ? "x" : parameter.type === "formula" ? "~ condition" : 1;
+        const rendered = renderTemplate(withBoolean, body, slots);
+        if (!rendered.ok) throw new Error(JSON.stringify(rendered.issues));
+        expect(rendered.script).toContain('["a", "b"]');
+        expect(rendered.script).not.toContain("c(");
+        expect(rendered.script).toContain("PY_FLAG = True");
+    });
+});

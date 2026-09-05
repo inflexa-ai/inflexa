@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 2,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the paired structure and specifies DESeq2 with ~subject + condition, control as reference, with shrunken LFCs and BH-adjusted p-values at alpha 0.05, and it sensibly handles the literal 'within each subject' phrasing by producing descriptive per-subject fold-changes and concordance while explicitly refusing per-subject p-values. Normalization discipline is exemplary: raw counts into DESeq2, size factors reused for the per-subject descriptive fold-changes. The main gap is QC: there is no PCA, sample-distance, or library-size inspection and no outlier or shallow-sample policy, only a check that count columns match metadata rows. The low-count filter is named but left arbitrary ('near-zero, e.g. rowSum or rowMean') with no threshold or justification, and the enrichment step names a collection but no version, no size window, no explicit ORA universe, and wavers between ORA and preranked fgsea without fixing the ranking metric. Reporting covers design, thresholds, significant counts, and power caveats but omits software versions and the number of genes tested after filtering."
+}

@@ -1,0 +1,592 @@
+{
+  "campaign": "four-arms",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "two-group-n6-enrich",
+  "run": 3,
+  "startedAt": "2026-09-05T13:30:43.076Z",
+  "elapsedMs": 152249,
+  "outcome": "plan_submitted",
+  "planId": "pln-3755e730",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and shallow-sample adjudication",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Detected-gene count is depth-dependent by construction, so a low value for a 4x-shallow sample is expected and is not on its own evidence of poor sample quality",
+          "With n=6 per group, PCA is easily dominated by a single sample's depth; check whether sample_01's PCA separation collapses after VST, which would indicate a depth artefact rather than a biological outlier",
+          "Counts are gene-symbol-keyed from Salmon and may contain duplicate symbols; deduplicate by summing or by keeping the highest-expressed entry, and report which was done"
+        ],
+        "context": "Design is 6 treated (atopic dermatitis lesional) vs 6 control, unpaired, single batch. The data profile flags one caveat only: sample_01 has a library size about 4x below the median. Note which condition group sample_01 belongs to — losing it makes that arm n=5 and the design unbalanced, which matters for how the result is caveated.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Is sample_01, whose library size is ~4x below the median, merely shallow or a genuine expression outlier that must be excluded from the 6 lesional vs 6 control comparison?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Do NOT drop sample_01 on low library size alone — median-of-ratios normalisation is designed to absorb depth differences, and dropping 1 of 6 in this design is a real power cost",
+          "Recommend dropping only if sample_01 is BOTH shallow AND a clear multivariate outlier (separating from its own condition group on PCA and having a markedly low median inter-sample correlation), or if its size factor is so extreme that the negative-binomial fit is unstable",
+          "Report the numbers regardless of the decision; the downstream sensitivity analysis runs both with and without sample_01 no matter what is recommended here",
+          "Do not filter genes for this QC step beyond removing all-zero rows; the detected-gene count is part of the evidence"
+        ],
+        "description": "Load /eval-four-arms-without-two-group-n6-enrich-3/data/inputs/counts/counts.csv (12,000 gene symbols x 12 sample columns, raw integer Salmon counts) and /eval-four-arms-without-two-group-n6-enrich-3/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample ids match between the two files and record the condition group sizes. Compute and report per sample: total library size, number of genes with count > 0, DESeq2 median-of-ratios size factor, and the fraction of counts taken by the top 10 genes. Build a VST (or rlog, given n=12) matrix, plot PC1/PC2 coloured by condition and labelled by sample, and compute the sample-sample Spearman correlation matrix plus each sample's median correlation to all others. Explicitly locate sample_01 in every one of these views. Then emit a written keep/drop decision for sample_01 with the numbers that justify it, plus a machine-readable flag that T1S2 and T2S1 read.",
+        "acceptance_criteria": [
+          "A per-sample QC table is written with library size, detected genes, median-of-ratios size factor, top-10-gene count fraction, and median inter-sample Spearman correlation",
+          "Sample_01's condition group membership is stated explicitly, and the resulting group sizes under a hypothetical drop are stated",
+          "A PCA on variance-stabilised counts is produced with samples labelled, and sample_01's position relative to its condition group is described in words",
+          "An explicit keep or drop recommendation for sample_01 is written with the specific numeric evidence behind it, and the decision is persisted in a form downstream steps can read",
+          "The decision rule used is stated up front rather than chosen after seeing which answer is convenient"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 lesional vs control, with and without sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group (n=5 in one arm if sample_01 is dropped) is modest; a gene passing padj < 0.05 in only one of the two cohorts is a depth-sensitive call and must not be presented as a robust finding",
+          "If the p-value histogram is not roughly uniform with a left spike, note it — a hump near 1 or a skewed shape indicates a model or filtering problem rather than a biological result",
+          "Skin biopsies vary in keratin and immunoglobulin content; a handful of very high-count genes can dominate the library and distort size factors, so cross-check the top-10-gene fraction from T1S1 before trusting the normalisation"
+        ],
+        "context": "Primary cohort composition follows the keep/drop recommendation from T1S1. Regardless of that recommendation, both the full-12-sample and the leave-sample_01-out analyses must be run, since the sensitivity comparison is the whole point. 12,000 genes, 12 samples, unpaired, single batch — no covariates or batch terms are available or needed in the model.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "ashr"
+        ],
+        "question": "Which genes are differentially expressed between atopic dermatitis lesional skin and control skin, and which of those calls survive removal of the shallow sample_01?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use DESeq2's median-of-ratios normalisation on raw integer counts — do not feed pre-normalised, TPM, or CPM values into DESeq2",
+          "Run BOTH cohorts (all 12 samples; and 11 samples with sample_01 removed) with identical filtering and model settings so the two result tables are directly comparable",
+          "Use apeglm shrinkage for the reported effect sizes and for the ranking passed downstream; keep the unshrunken estimates in the table as well",
+          "Export the FULL ranked result table for every tested gene, not only the significant subset — the hallmark enrichment step needs the complete ranking",
+          "Do not apply an additional fold-change filter before multiple-testing correction"
+        ],
+        "description": "Run the primary differential expression analysis with DESeq2 on the raw counts, design ~ condition, contrast lesional vs control (set control as the reference level explicitly and state the direction of the log2 fold change in the output header). Pre-filter to genes with a minimum count in at least the size of the smaller group. Use the Wald test with independent filtering and Benjamini-Hochberg adjustment; produce apeglm-shrunken log2 fold changes for ranking and effect-size reporting alongside the unshrunken MLE estimates. Then run the exact same pipeline a second time on the cohort with sample_01 removed. Write both full result tables (all tested genes: baseMean, unshrunken LFC, shrunken LFC, stat, pvalue, padj) — the full ranked tables, not just significant hits, because the enrichment track consumes the complete ranking. Also write the normalised and VST count matrices for the retained cohort.",
+        "acceptance_criteria": [
+          "Two complete DESeq2 result tables are written: full 12-sample cohort and sample_01-excluded cohort, each covering all tested genes with baseMean, LFC (MLE and apeglm-shrunken), pvalue and padj",
+          "The reference level is set so that a positive log2 fold change means higher in lesional than in control, and this is stated in the output",
+          "Counts of genes at padj < 0.05 (and separately padj < 0.05 with |shrunken LFC| > 1) are reported for both cohorts",
+          "Dispersion-estimate and p-value-histogram diagnostic plots are produced for the primary cohort and the p-value histogram shape is commented on",
+          "The number of genes removed by pre-filtering and by independent filtering is reported"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DE sensitivity reconciliation and reporting",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Overlap counts between two nested cohorts are inherently correlated (11 of 12 samples are shared) and will look reassuring by construction; the LFC-correlation and the named discordant genes are the more informative readout",
+          "A gene significant only in the reduced cohort may reflect either removal of noise or loss of a real observation — do not assert which without inspecting its per-sample normalised counts"
+        ],
+        "context": "This step turns the two parallel DE runs into a defensible single answer for 'which genes change'. The consolidated table is what the pathway track and any summary should quote from.",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexUpset",
+          "dplyr",
+          "data.table"
+        ],
+        "question": "Which differentially expressed genes are stable to the exclusion of the shallow sample_01, and which are driven by it?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Compare only genes tested in both cohorts; report how many genes were tested in one but not the other and why (pre-filtering or independent filtering)",
+          "Do not silently pick whichever cohort yields the larger significant list — report both and label the discrepancy",
+          "Direction of effect must be checked, not just significance; a gene significant in both but with flipped sign is a discordant call"
+        ],
+        "description": "Compare the two DESeq2 result tables from T1S2 gene by gene. Report: the overlap of significant sets (padj < 0.05) as counts and as a Venn/UpSet figure; the Spearman and Pearson correlation of the shrunken log2 fold changes across all commonly tested genes; a scatter of LFC-with-sample_01 against LFC-without, with genes significant in only one cohort highlighted and named. Produce a single consolidated gene-level table flagging each significant gene as robust (significant in both cohorts, same LFC direction), full-cohort-only, or reduced-cohort-only. Produce a volcano plot for the primary cohort with the top genes by significance and by |shrunken LFC| labelled, and a heatmap of VST values for the top ~40 robust genes with samples annotated by condition and sample_01 marked.",
+        "acceptance_criteria": [
+          "A consolidated gene table is written where each significant gene carries a robustness label: robust, full-cohort-only, or reduced-cohort-only",
+          "Concordance of shrunken log2 fold changes between the two cohorts is reported as a correlation coefficient over all commonly tested genes",
+          "A labelled volcano plot for the primary cohort and a VST heatmap of the top robust genes (samples annotated by condition, sample_01 visually marked) are produced",
+          "The count of discordant calls is stated in plain terms, and the top such genes are named rather than only counted",
+          "If concordance is high (LFC correlation above ~0.9 and most significant genes shared), that is stated as evidence the shallow sample did not drive the result; if it is low, the primary result is explicitly downgraded"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark GSEA on the ranked lesional-vs-control statistic",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Hallmark sets overlap in membership (inflammatory response, TNFA signalling via NFKB, interferon gamma response, IL6/JAK/STAT3 share many genes), so several significant hits can reflect one underlying inflammatory programme rather than independent findings — inspect leading-edge overlap before reporting a count of pathways",
+          "With 12,000 genes rather than a full transcriptome, some hallmark sets will be only partially represented; report set size after intersection with the tested universe and treat sets with very few represented genes as unreliable",
+          "GSEA NES is sensitive to the tail of the ranking, which is where low-count genes sit — exactly where a shallow library can matter, which is why the two-cohort comparison is required rather than optional",
+          "A significant hallmark is a statement about coordinated shift in a gene set, not evidence of pathway activation at the protein or signalling level"
+        ],
+        "context": "Human data (taxon 9606), gene symbols already in HGNC space, so the human hallmark GMT can be joined directly with no ID mapping. Confirm the reference resolves to the HUMAN hallmark collection, not the mouse one — a mouse GMT will silently produce near-empty set intersections. Report the number of ranked genes that intersect the hallmark universe before running.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "ggplot2",
+          "data.table",
+          "dplyr"
+        ],
+        "question": "Which of the 50 MSigDB hallmark pathways are coordinately up- or down-regulated in atopic dermatitis lesional skin versus control, and are those calls stable to removal of sample_01?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the FULL ranked gene list from T1S2 — every tested gene — not a padj-thresholded subset; GSEA on the full ranking is preferred here because n=6 per group may leave too few significant genes for a stable overrepresentation test",
+          "Use the human hallmark gene sets (HALLMARK_* names, HGNC symbols); if the resolved reference is not human, stop and report rather than proceeding with a cross-species mapping",
+          "Break ties in the ranking deterministically and set a random seed so the permutation p-values are reproducible",
+          "Do not run enrichment on the mouse hallmark collection or on GO/oncogenic collections as a substitute for hallmark — the question names hallmark specifically; GO may be added as a clearly labelled secondary annotation only if hallmark yields nothing significant",
+          "If the hallmark reference cannot be resolved at run time, report that plainly as the blocking reason and do not substitute an internally hard-coded gene set list"
+        ],
+        "description": "Run gene-set enrichment on the complete ranked DESeq2 result from T1S2 against the human hallmark gene set collection — the 50 HALLMARK_* sets, HGNC gene symbols, which are present in this environment's reference store as a human MSigDB hallmark GMT. Rank all tested genes by the shrunken log2 fold change (or by the Wald statistic; state which and be consistent), and run fgsea with an adequate permutation/eps setting and BH adjustment across the 50 sets. Report normalised enrichment score, p-value, padj, set size, and the leading-edge genes for every significant set. Repeat the identical enrichment on the leave-sample_01-out ranking from T1S2 and report the two NES vectors side by side with their correlation, flagging any hallmark whose significance or sign changes between the two. Produce a bar/dot plot of significant hallmarks ordered by NES with direction indicated, and an enrichment curve for the top two or three sets. Restrict the gene universe used for any complementary overrepresentation test to genes actually tested after independent filtering.",
+        "acceptance_criteria": [
+          "A hallmark enrichment table is written for the primary cohort covering all 50 sets with NES, pvalue, padj, set size and leading-edge genes",
+          "The same enrichment is run on the sample_01-excluded ranking and the two NES vectors are compared, with any sign or significance flips named explicitly",
+          "The number of ranked genes overlapping the hallmark gene universe is reported, and the human (not mouse) hallmark collection is confirmed by set-name prefix and by the overlap size",
+          "A plot of significant hallmarks ordered by NES with up/down direction is produced",
+          "Ranking metric (shrunken LFC or Wald statistic) is stated explicitly and used identically for both cohorts",
+          "Leading-edge genes for the top hallmarks are cross-referenced against the robust gene list from T1S3"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark GSEA",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch, unpaired bulk RNA-seq count matrix from Salmon (12,000 gene symbols x 12 samples) with a 6 vs 6 design (atopic dermatitis lesional vs control) plus a 12x2 metadata table. The research question has two parts — which genes change, and which hallmark pathways change — and one explicit data problem: sample_01 has a library size about 4x below the median.\n\nThe plan therefore starts with an explicit QC/outlier adjudication step (T1S1) rather than assuming the shallow sample is either fine or discardable. A 4x-low library is not automatically an outlier: DESeq2's median-of-ratios size factors handle depth differences by design, and dropping 1 of 6 in a small design costs real power. So T1S1 quantifies the damage — library size, detected-gene count, median-of-ratios size factor, VST PCA position, and sample-sample correlation — and emits a documented keep/drop decision that downstream steps consume. Only a sample that is both shallow AND a multivariate outlier (or has a size factor far outside the range where the NB fit is stable) gets dropped.\n\nT1S2 runs the DESeq2 Wald test for lesional vs control on the retained samples with independent filtering and shrunken LFCs (apeglm), and — the key robustness move given n=6 — repeats the identical contrast on the leave-sample_01-out cohort so the two gene lists can be compared directly. A DE result that only exists in one of the two cohorts is reported as depth-sensitive, not as a finding. T1S3 is the sensitivity reconciliation and volcano/heatmap reporting.\n\nT2S1 takes the full DESeq2 shrunken-LFC ranking (all tested genes, not a thresholded list) into fgsea against the 50 MSigDB human hallmark sets, which are confirmed present in this environment. GSEA on the ranked statistic is the right tool here rather than ORA: with 12,000 genes and n=6/group, a hard FDR cutoff may leave too few genes for a stable overrepresentation test, and the ranked approach uses the whole signal. The universe is restricted to genes actually tested (post-independent-filtering) so the null is honest. T2S1 also repeats the enrichment on the leave-sample_01-out ranking, so pathway calls carry the same sensitivity annotation as the gene calls.\n\nEverything is human (taxon 9606) and gene-symbol-keyed, matching the HGNC-symbol hallmark GMT — no ID mapping is needed, which removes a common failure mode. Only ~12,000 genes and 12 samples, so all steps are small and cheap."
+  },
+  "usage": {
+    "inputTokens": 147934,
+    "outputTokens": 13030,
+    "cacheCreationInputTokens": 80789,
+    "cacheReadInputTokens": 67109,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "fgsea",
+          "msigdbr",
+          "clusterProfiler",
+          "gseapy",
+          "decoupler",
+          "pydeseq2",
+          "EnhancedVolcano",
+          "apeglm",
+          "ashr"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark GSEA",
+          "analytical_narrative": "The input is a single-batch, unpaired bulk RNA-seq count matrix from Salmon (12,000 gene symbols x 12 samples) with a 6 vs 6 design (atopic dermatitis lesional vs control) plus a 12x2 metadata table. The research question has two parts — which genes change, and which hallmark pathways change — and one explicit data problem: sample_01 has a library size about 4x below the median.\n\nThe plan therefore starts with an explicit QC/outlier adjudication step (T1S1) rather than assuming the shallow sample is either fine or discardable. A 4x-low library is not automatically an outlier: DESeq2's median-of-ratios size factors handle depth differences by design, and dropping 1 of 6 in a small design costs real power. So T1S1 quantifies the damage — library size, detected-gene count, median-of-ratios size factor, VST PCA position, and sample-sample correlation/Cook's-style leverage — and emits a documented keep/drop decision that downstream steps consume. Only a sample that is both shallow AND a multivariate outlier (or has a size factor far outside the range where the NB fit is stable) gets dropped.\n\nT1S2 runs the DESeq2 Wald test for lesional vs control on the retained samples with independent filtering and shrunken LFCs (apeglm), and — this is the key robustness move given n=6 — repeats the identical contrast on the leave-sample_01-out cohort so the two gene lists can be compared directly. A DE result that only exists in one of the two cohorts is reported as depth-sensitive, not as a finding. T1S3 is the sensitivity reconciliation and volcano/heatmap reporting.\n\nT2S1 takes the full DESeq2 shrunken-LFC ranking (all tested genes, not a thresholded list) into fgsea against the 50 MSigDB human hallmark sets, which are confirmed present in this environment at msigdb-hallmark-human. GSEA on the ranked statistic is the right tool here rather than ORA: with 12,000 genes and n=6/group, a hard FDR cutoff may leave too few genes for a stable overrepresentation test, and the ranked approach uses the whole signal. The universe is restricted to genes actually tested (post-independent-filtering) so the null is honest. T2S1 also repeats the enrichment on the leave-sample_01-out ranking, so pathway calls carry the same sensitivity annotation as the gene calls.\n\nEverything is human (taxon 9606) and gene-symbol-keyed, matching the HGNC-symbol hallmark GMT — no ID mapping is needed, which removes a common failure mode. Only ~12,000 genes and 12 samples, so all steps are small and cheap.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and shallow-sample adjudication",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Is sample_01, whose library size is ~4x below the median, merely shallow or a genuine expression outlier that must be excluded from the 6 lesional vs 6 control comparison?",
+              "description": "Load /eval-four-arms-without-two-group-n6-enrich-3/data/inputs/counts/counts.csv (12,000 gene symbols x 12 sample columns, raw integer Salmon counts) and /eval-four-arms-without-two-group-n6-enrich-3/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample ids match between the two files and record the condition group sizes. Compute and report per sample: total library size, number of genes with count > 0, DESeq2 median-of-ratios size factor, and the fraction of counts taken by the top 10 genes. Build a VST (or rlog, given n=12) matrix, plot PC1/PC2 coloured by condition and labelled by sample, and compute the sample-sample Spearman correlation matrix plus each sample's median correlation to all others. Explicitly locate sample_01 in every one of these views. Then emit a written keep/drop decision for sample_01 with the numbers that justify it, plus a machine-readable flag that T1S2 and T2S1 read.",
+              "context": "Design is 6 treated (atopic dermatitis lesional) vs 6 control, unpaired, single batch. The data profile flags one caveat only: sample_01 has a library size about 4x below the median. Note which condition group sample_01 belongs to — losing it makes that arm n=5 and the design unbalanced, which matters for how the result is caveated.",
+              "question_note": null,
+              "acceptance_criteria": [
+                "A per-sample QC table is written with library size, detected genes, median-of-ratios size factor, top-10-gene count fraction, and median inter-sample Spearman correlation",
+                "Sample_01's condition group membership is stated explicitly, and the resulting group sizes under a hypothetical drop are stated",
+                "A PCA on variance-stabilised counts is produced with samples labelled, and sample_01's position relative to its condition group is described in words",
+                "An explicit keep or drop recommendation for sample_01 is written with the specific numeric evidence behind it, and the decision is persisted in a form downstream steps can read",
+                "The decision rule used is stated up front rather than chosen after seeing which answer is convenient"
+              ],
+              "constraints": [
+                "Do NOT drop sample_01 on low library size alone — median-of-ratios normalisation is designed to absorb depth differences, and dropping 1 of 6 in this design is a real power cost",
+                "Recommend dropping only if sample_01 is BOTH shallow AND a clear multivariate outlier (separating from its own condition group on PCA and having a markedly low median inter-sample correlation), or if its size factor is so extreme that the negative-binomial fit is unstable",
+                "Report the numbers regardless of the decision; the downstream sensitivity analysis runs both with and without sample_01 no matter what is recommended here",
+                "Do not filter genes for this QC step beyond removing all-zero rows; the detected-gene count is part of the evidence"
+              ],
+              "caveats": [
+                "Detected-gene count is depth-dependent by construction, so a low value for a 4x-shallow sample is expected and is not on its own evidence of poor sample quality",
+                "With n=6 per group, PCA is easily dominated by a single sample's depth; check whether sample_01's PCA separation collapses after VST, which would indicate a depth artefact rather than a biological outlier",
+                "Counts are gene-symbol-keyed from Salmon and may contain duplicate symbols; deduplicate by summing or by keeping the highest-expressed entry, and report which was done"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 lesional vs control, with and without sample_01",
+              "question": "Which genes are differentially expressed between atopic dermatitis lesional skin and control skin, and which of those calls survive removal of the shallow sample_01?",
+              "description": "Run the primary differential expression analysis with DESeq2 on the raw counts, design ~ condition, contrast lesional vs control (set control as the reference level explicitly and state the direction of the log2 fold change in the output header). Pre-filter to genes with a minimum count in at least the size of the smaller group. Use the Wald test with independent filtering and Benjamini-Hochberg adjustment; produce apeglm-shrunken log2 fold changes for ranking and effect-size reporting alongside the unshrunken MLE estimates. Then run the exact same pipeline a second time on the cohort with sample_01 removed. Write both full result tables (all tested genes: baseMean, unshrunken LFC, shrunken LFC, stat, pvalue, padj) — the full ranked tables, not just significant hits, because the enrichment track consumes the complete ranking. Also write the normalised and VST count matrices for the retained cohort.",
+              "context": "Primary cohort composition follows the keep/drop recommendation from T1S1. Regardless of that recommendation, both the full-12-sample and the leave-sample_01-out analyses must be run, since the sensitivity comparison is the whole point. 12,000 genes, 12 samples, unpaired, single batch — no covariates or batch terms are available or needed in the model.",
+              "acceptance_criteria": [
+                "Two complete DESeq2 result tables are written: full 12-sample cohort and sample_01-excluded cohort, each covering all tested genes with baseMean, LFC (MLE and apeglm-shrunken), pvalue and padj",
+                "The reference level is set so that a positive log2 fold change means higher in lesional than in control, and this is stated in the output",
+                "Counts of genes at padj < 0.05 (and separately padj < 0.05 with |shrunken LFC| > 1) are reported for both cohorts",
+                "Dispersion-estimate and p-value-histogram diagnostic plots are produced for the primary cohort and the p-value histogram shape is commented on",
+                "The number of genes removed by pre-filtering and by independent filtering is reported"
+              ],
+              "constraints": [
+                "Use DESeq2's median-of-ratios normalisation on raw integer counts — do not feed pre-normalised, TPM, or CPM values into DESeq2",
+                "Run BOTH cohorts (all 12 samples; and 11 samples with sample_01 removed) with identical filtering and model settings so the two result tables are directly comparable",
+                "Use apeglm shrinkage for the reported effect sizes and for the ranking passed downstream; keep the unshrunken estimates in the table as well",
+                "Export the FULL ranked result table for every tested gene, not only the significant subset — the hallmark enrichment step needs the complete ranking",
+                "Do not apply an additional fold-change filter before multiple-testing correction"
+              ],
+              "caveats": [
+                "n=6 per group (n=5 in one arm if sample_01 is dropped) is modest; a gene passing padj < 0.05 in only one of the two cohorts is a depth-sensitive call and must not be presented as a robust finding",
+                "If the p-value histogram is not roughly uniform with a left spike, note it — a hump near 1 or a skewed shape indicates a model or filtering problem rather than a biological result",
+                "Skin biopsies vary in keratin and immunoglobulin content; a handful of very high-count genes can dominate the library and distort size factors, so cross-check the top-10-gene fraction from T1S1 before trusting the normalisation"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "DE sensitivity reconciliation and reporting",
+              "question": "Which differentially expressed genes are stable to the exclusion of the shallow sample_01, and which are driven by it?",
+              "description": "Compare the two DESeq2 result tables from T1S2 gene by gene. Report: the overlap of significant sets (padj < 0.05) as counts and as a Venn/UpSet figure; the Spearman and Pearson correlation of the shrunken log2 fold changes across all commonly tested genes; a scatter of LFC-with-sample_01 against LFC-without, with genes significant in only one cohort highlighted and named. Produce a single consolidated gene-level table flagging each significant gene as robust (significant in both cohorts, same LFC direction), full-cohort-only, or reduced-cohort-only. Produce a volcano plot for the primary cohort with the top genes by significance and by |shrunken LFC| labelled, and a heatmap of VST values for the top ~40 robust genes with samples annotated by condition and sample_01 marked.",
+              "context": "This step turns the two parallel DE runs into a defensible single answer for 'which genes change'. The consolidated table is what the pathway track and any summary should quote from.",
+              "acceptance_criteria": [
+                "A consolidated gene table is written where each significant gene carries a robustness label: robust, full-cohort-only, or reduced-cohort-only",
+                "Concordance of shrunken log2 fold changes between the two cohorts is reported as a correlation coefficient over all commonly tested genes",
+                "A labelled volcano plot for the primary cohort and a VST heatmap of the top robust genes (samples annotated by condition, sample_01 visually marked) are produced",
+                "The count of discordant calls is stated in plain terms, and the top such genes are named rather than only counted",
+                "If concordance is high (LFC correlation above ~0.9 and most significant genes shared), that is stated as evidence the shallow sample did not drive the result; if it is low, the primary result is explicitly downgraded"
+              ],
+              "constraints": [
+                "Compare only genes tested in both cohorts; report how many genes were tested in one but not the other and why (pre-filtering or independent filtering)",
+                "Do not silently pick whichever cohort yields the larger significant list — report both and label the discrepancy",
+                "Direction of effect must be checked, not just significance; a gene significant in both but with flipped sign is a discordant call"
+              ],
+              "caveats": [
+                "Overlap counts between two nested cohorts are inherently correlated (11 of 12 samples are shared) and will look reassuring by construction; the LFC-correlation and the named discordant genes are the more informative readout",
+                "A gene significant only in the reduced cohort may reflect either removal of noise or loss of a real observation — do not assert which without inspecting its per-sample normalised counts"
+              ],
+              "packages": [
+                "ggplot2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ComplexUpset",
+                "dplyr",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark GSEA on the ranked lesional-vs-control statistic",
+              "question": "Which of the 50 MSigDB hallmark pathways are coordinately up- or down-regulated in atopic dermatitis lesional skin versus control, and are those calls stable to removal of sample_01?",
+              "description": "Run gene-set enrichment on the complete ranked DESeq2 result from T1S2 against the human hallmark gene set collection — the 50 HALLMARK_* sets, HGNC gene symbols, which are present in this environment's reference store as a human MSigDB hallmark GMT. Rank all tested genes by the shrunken log2 fold change (or by the Wald statistic; state which and be consistent), and run fgsea with an adequate permutation/eps setting and BH adjustment across the 50 sets. Report normalised enrichment score, p-value, padj, set size, and the leading-edge genes for every significant set. Repeat the identical enrichment on the leave-sample_01-out ranking from T1S2 and report the two NES vectors side by side with their correlation, flagging any hallmark whose significance or sign changes between the two. Produce a bar/dot plot of significant hallmarks ordered by NES with direction indicated, and an enrichment curve for the top two or three sets. Additionally, restrict the gene universe used for any complementary overrepresentation test to genes actually tested after independent filtering.",
+              "context": "Human data (taxon 9606), gene symbols already in HGNC space, so the human hallmark GMT can be joined directly with no ID mapping. Confirm the reference resolves to the HUMAN hallmark collection, not the mouse one — a mouse GMT will silently produce near-empty set intersections. Report the number of ranked genes that intersect the hallmark universe before running.",
+              "acceptance_criteria": [
+                "A hallmark enrichment table is written for the primary cohort covering all 50 sets with NES, pvalue, padj, set size and leading-edge genes",
+                "The same enrichment is run on the sample_01-excluded ranking and the two NES vectors are compared, with any sign or significance flips named explicitly",
+                "The number of ranked genes overlapping the hallmark gene universe is reported, and the human (not mouse) hallmark collection is confirmed by set-name prefix and by the overlap size",
+                "A plot of significant hallmarks ordered by NES with up/down direction is produced",
+                "Ranking metric (shrunken LFC or Wald statistic) is stated explicitly and used identically for both cohorts",
+                "Leading-edge genes for the top hallmarks are cross-referenced against the robust gene list from T1S3"
+              ],
+              "constraints": [
+                "Use the FULL ranked gene list from T1S2 — every tested gene — not a padj-thresholded subset; GSEA on the full ranking is preferred here because n=6 per group may leave too few significant genes for a stable overrepresentation test",
+                "Use the human hallmark gene sets (HALLMARK_* names, HGNC symbols); if the resolved reference is not human, stop and report rather than proceeding with a cross-species mapping",
+                "Break ties in the ranking deterministically and set a random seed so the permutation p-values are reproducible",
+                "Do not run enrichment on the mouse hallmark collection or on GO/oncogenic collections as a substitute for hallmark — the question names hallmark specifically; GO may be added as a clearly labelled secondary annotation only if hallmark yields nothing significant",
+                "If the hallmark reference cannot be resolved at run time, report that plainly as the blocking reason and do not substitute an internally hard-coded gene set list"
+              ],
+              "caveats": [
+                "Hallmark sets overlap in membership (inflammatory response, TNFA signalling via NFKB, interferon gamma response, IL6/JAK/STAT3 share many genes), so several significant hits can reflect one underlying inflammatory programme rather than independent findings — inspect leading-edge overlap before reporting a count of pathways",
+                "With 12,000 genes rather than a full transcriptome, some hallmark sets will be only partially represented; report set size after intersection with the tested universe and treat sets with very few represented genes as unreliable",
+                "GSEA NES is sensitive to the tail of the ranking, which is where low-count genes sit — this is exactly where a shallow library can matter, which is why the two-cohort comparison is required rather than optional",
+                "A significant hallmark is a statement about coordinated shift in a gene set, not evidence of pathway activation at the protein or signalling level"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "ggplot2",
+                "data.table",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark GSEA",
+          "analytical_narrative": "The input is a single-batch, unpaired bulk RNA-seq count matrix from Salmon (12,000 gene symbols x 12 samples) with a 6 vs 6 design (atopic dermatitis lesional vs control) plus a 12x2 metadata table. The research question has two parts — which genes change, and which hallmark pathways change — and one explicit data problem: sample_01 has a library size about 4x below the median.\n\nThe plan therefore starts with an explicit QC/outlier adjudication step (T1S1) rather than assuming the shallow sample is either fine or discardable. A 4x-low library is not automatically an outlier: DESeq2's median-of-ratios size factors handle depth differences by design, and dropping 1 of 6 in a small design costs real power. So T1S1 quantifies the damage — library size, detected-gene count, median-of-ratios size factor, VST PCA position, and sample-sample correlation — and emits a documented keep/drop decision that downstream steps consume. Only a sample that is both shallow AND a multivariate outlier (or has a size factor far outside the range where the NB fit is stable) gets dropped.\n\nT1S2 runs the DESeq2 Wald test for lesional vs control on the retained samples with independent filtering and shrunken LFCs (apeglm), and — the key robustness move given n=6 — repeats the identical contrast on the leave-sample_01-out cohort so the two gene lists can be compared directly. A DE result that only exists in one of the two cohorts is reported as depth-sensitive, not as a finding. T1S3 is the sensitivity reconciliation and volcano/heatmap reporting.\n\nT2S1 takes the full DESeq2 shrunken-LFC ranking (all tested genes, not a thresholded list) into fgsea against the 50 MSigDB human hallmark sets, which are confirmed present in this environment. GSEA on the ranked statistic is the right tool here rather than ORA: with 12,000 genes and n=6/group, a hard FDR cutoff may leave too few genes for a stable overrepresentation test, and the ranked approach uses the whole signal. The universe is restricted to genes actually tested (post-independent-filtering) so the null is honest. T2S1 also repeats the enrichment on the leave-sample_01-out ranking, so pathway calls carry the same sensitivity annotation as the gene calls.\n\nEverything is human (taxon 9606) and gene-symbol-keyed, matching the HGNC-symbol hallmark GMT — no ID mapping is needed, which removes a common failure mode. Only ~12,000 genes and 12 samples, so all steps are small and cheap.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and shallow-sample adjudication",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Is sample_01, whose library size is ~4x below the median, merely shallow or a genuine expression outlier that must be excluded from the 6 lesional vs 6 control comparison?",
+              "description": "Load /eval-four-arms-without-two-group-n6-enrich-3/data/inputs/counts/counts.csv (12,000 gene symbols x 12 sample columns, raw integer Salmon counts) and /eval-four-arms-without-two-group-n6-enrich-3/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample ids match between the two files and record the condition group sizes. Compute and report per sample: total library size, number of genes with count > 0, DESeq2 median-of-ratios size factor, and the fraction of counts taken by the top 10 genes. Build a VST (or rlog, given n=12) matrix, plot PC1/PC2 coloured by condition and labelled by sample, and compute the sample-sample Spearman correlation matrix plus each sample's median correlation to all others. Explicitly locate sample_01 in every one of these views. Then emit a written keep/drop decision for sample_01 with the numbers that justify it, plus a machine-readable flag that T1S2 and T2S1 read.",
+              "context": "Design is 6 treated (atopic dermatitis lesional) vs 6 control, unpaired, single batch. The data profile flags one caveat only: sample_01 has a library size about 4x below the median. Note which condition group sample_01 belongs to — losing it makes that arm n=5 and the design unbalanced, which matters for how the result is caveated.",
+              "acceptance_criteria": [
+                "A per-sample QC table is written with library size, detected genes, median-of-ratios size factor, top-10-gene count fraction, and median inter-sample Spearman correlation",
+                "Sample_01's condition group membership is stated explicitly, and the resulting group sizes under a hypothetical drop are stated",
+                "A PCA on variance-stabilised counts is produced with samples labelled, and sample_01's position relative to its condition group is described in words",
+                "An explicit keep or drop recommendation for sample_01 is written with the specific numeric evidence behind it, and the decision is persisted in a form downstream steps can read",
+                "The decision rule used is stated up front rather than chosen after seeing which answer is convenient"
+              ],
+              "constraints": [
+                "Do NOT drop sample_01 on low library size alone — median-of-ratios normalisation is designed to absorb depth differences, and dropping 1 of 6 in this design is a real power cost",
+                "Recommend dropping only if sample_01 is BOTH shallow AND a clear multivariate outlier (separating from its own condition group on PCA and having a markedly low median inter-sample correlation), or if its size factor is so extreme that the negative-binomial fit is unstable",
+                "Report the numbers regardless of the decision; the downstream sensitivity analysis runs both with and without sample_01 no matter what is recommended here",
+                "Do not filter genes for this QC step beyond removing all-zero rows; the detected-gene count is part of the evidence"
+              ],
+              "caveats": [
+                "Detected-gene count is depth-dependent by construction, so a low value for a 4x-shallow sample is expected and is not on its own evidence of poor sample quality",
+                "With n=6 per group, PCA is easily dominated by a single sample's depth; check whether sample_01's PCA separation collapses after VST, which would indicate a depth artefact rather than a biological outlier",
+                "Counts are gene-symbol-keyed from Salmon and may contain duplicate symbols; deduplicate by summing or by keeping the highest-expressed entry, and report which was done"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 lesional vs control, with and without sample_01",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between atopic dermatitis lesional skin and control skin, and which of those calls survive removal of the shallow sample_01?",
+              "description": "Run the primary differential expression analysis with DESeq2 on the raw counts, design ~ condition, contrast lesional vs control (set control as the reference level explicitly and state the direction of the log2 fold change in the output header). Pre-filter to genes with a minimum count in at least the size of the smaller group. Use the Wald test with independent filtering and Benjamini-Hochberg adjustment; produce apeglm-shrunken log2 fold changes for ranking and effect-size reporting alongside the unshrunken MLE estimates. Then run the exact same pipeline a second time on the cohort with sample_01 removed. Write both full result tables (all tested genes: baseMean, unshrunken LFC, shrunken LFC, stat, pvalue, padj) — the full ranked tables, not just significant hits, because the enrichment track consumes the complete ranking. Also write the normalised and VST count matrices for the retained cohort.",
+              "context": "Primary cohort composition follows the keep/drop recommendation from T1S1. Regardless of that recommendation, both the full-12-sample and the leave-sample_01-out analyses must be run, since the sensitivity comparison is the whole point. 12,000 genes, 12 samples, unpaired, single batch — no covariates or batch terms are available or needed in the model.",
+              "acceptance_criteria": [
+                "Two complete DESeq2 result tables are written: full 12-sample cohort and sample_01-excluded cohort, each covering all tested genes with baseMean, LFC (MLE and apeglm-shrunken), pvalue and padj",
+                "The reference level is set so that a positive log2 fold change means higher in lesional than in control, and this is stated in the output",
+                "Counts of genes at padj < 0.05 (and separately padj < 0.05 with |shrunken LFC| > 1) are reported for both cohorts",
+                "Dispersion-estimate and p-value-histogram diagnostic plots are produced for the primary cohort and the p-value histogram shape is commented on",
+                "The number of genes removed by pre-filtering and by independent filtering is reported"
+              ],
+              "constraints": [
+                "Use DESeq2's median-of-ratios normalisation on raw integer counts — do not feed pre-normalised, TPM, or CPM values into DESeq2",
+                "Run BOTH cohorts (all 12 samples; and 11 samples with sample_01 removed) with identical filtering and model settings so the two result tables are directly comparable",
+                "Use apeglm shrinkage for the reported effect sizes and for the ranking passed downstream; keep the unshrunken estimates in the table as well",
+                "Export the FULL ranked result table for every tested gene, not only the significant subset — the hallmark enrichment step needs the complete ranking",
+                "Do not apply an additional fold-change filter before multiple-testing correction"
+              ],
+              "caveats": [
+                "n=6 per group (n=5 in one arm if sample_01 is dropped) is modest; a gene passing padj < 0.05 in only one of the two cohorts is a depth-sensitive call and must not be presented as a robust finding",
+                "If the p-value histogram is not roughly uniform with a left spike, note it — a hump near 1 or a skewed shape indicates a model or filtering problem rather than a biological result",
+                "Skin biopsies vary in keratin and immunoglobulin content; a handful of very high-count genes can dominate the library and distort size factors, so cross-check the top-10-gene fraction from T1S1 before trusting the normalisation"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "DE sensitivity reconciliation and reporting",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which differentially expressed genes are stable to the exclusion of the shallow sample_01, and which are driven by it?",
+              "description": "Compare the two DESeq2 result tables from T1S2 gene by gene. Report: the overlap of significant sets (padj < 0.05) as counts and as a Venn/UpSet figure; the Spearman and Pearson correlation of the shrunken log2 fold changes across all commonly tested genes; a scatter of LFC-with-sample_01 against LFC-without, with genes significant in only one cohort highlighted and named. Produce a single consolidated gene-level table flagging each significant gene as robust (significant in both cohorts, same LFC direction), full-cohort-only, or reduced-cohort-only. Produce a volcano plot for the primary cohort with the top genes by significance and by |shrunken LFC| labelled, and a heatmap of VST values for the top ~40 robust genes with samples annotated by condition and sample_01 marked.",
+              "context": "This step turns the two parallel DE runs into a defensible single answer for 'which genes change'. The consolidated table is what the pathway track and any summary should quote from.",
+              "acceptance_criteria": [
+                "A consolidated gene table is written where each significant gene carries a robustness label: robust, full-cohort-only, or reduced-cohort-only",
+                "Concordance of shrunken log2 fold changes between the two cohorts is reported as a correlation coefficient over all commonly tested genes",
+                "A labelled volcano plot for the primary cohort and a VST heatmap of the top robust genes (samples annotated by condition, sample_01 visually marked) are produced",
+                "The count of discordant calls is stated in plain terms, and the top such genes are named rather than only counted",
+                "If concordance is high (LFC correlation above ~0.9 and most significant genes shared), that is stated as evidence the shallow sample did not drive the result; if it is low, the primary result is explicitly downgraded"
+              ],
+              "constraints": [
+                "Compare only genes tested in both cohorts; report how many genes were tested in one but not the other and why (pre-filtering or independent filtering)",
+                "Do not silently pick whichever cohort yields the larger significant list — report both and label the discrepancy",
+                "Direction of effect must be checked, not just significance; a gene significant in both but with flipped sign is a discordant call"
+              ],
+              "caveats": [
+                "Overlap counts between two nested cohorts are inherently correlated (11 of 12 samples are shared) and will look reassuring by construction; the LFC-correlation and the named discordant genes are the more informative readout",
+                "A gene significant only in the reduced cohort may reflect either removal of noise or loss of a real observation — do not assert which without inspecting its per-sample normalised counts"
+              ],
+              "packages": [
+                "ggplot2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ComplexUpset",
+                "dplyr",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark GSEA on the ranked lesional-vs-control statistic",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark pathways are coordinately up- or down-regulated in atopic dermatitis lesional skin versus control, and are those calls stable to removal of sample_01?",
+              "description": "Run gene-set enrichment on the complete ranked DESeq2 result from T1S2 against the human hallmark gene set collection — the 50 HALLMARK_* sets, HGNC gene symbols, which are present in this environment's reference store as a human MSigDB hallmark GMT. Rank all tested genes by the shrunken log2 fold change (or by the Wald statistic; state which and be consistent), and run fgsea with an adequate permutation/eps setting and BH adjustment across the 50 sets. Report normalised enrichment score, p-value, padj, set size, and the leading-edge genes for every significant set. Repeat the identical enrichment on the leave-sample_01-out ranking from T1S2 and report the two NES vectors side by side with their correlation, flagging any hallmark whose significance or sign changes between the two. Produce a bar/dot plot of significant hallmarks ordered by NES with direction indicated, and an enrichment curve for the top two or three sets. Restrict the gene universe used for any complementary overrepresentation test to genes actually tested after independent filtering.",
+              "context": "Human data (taxon 9606), gene symbols already in HGNC space, so the human hallmark GMT can be joined directly with no ID mapping. Confirm the reference resolves to the HUMAN hallmark collection, not the mouse one — a mouse GMT will silently produce near-empty set intersections. Report the number of ranked genes that intersect the hallmark universe before running.",
+              "acceptance_criteria": [
+                "A hallmark enrichment table is written for the primary cohort covering all 50 sets with NES, pvalue, padj, set size and leading-edge genes",
+                "The same enrichment is run on the sample_01-excluded ranking and the two NES vectors are compared, with any sign or significance flips named explicitly",
+                "The number of ranked genes overlapping the hallmark gene universe is reported, and the human (not mouse) hallmark collection is confirmed by set-name prefix and by the overlap size",
+                "A plot of significant hallmarks ordered by NES with up/down direction is produced",
+                "Ranking metric (shrunken LFC or Wald statistic) is stated explicitly and used identically for both cohorts",
+                "Leading-edge genes for the top hallmarks are cross-referenced against the robust gene list from T1S3"
+              ],
+              "constraints": [
+                "Use the FULL ranked gene list from T1S2 — every tested gene — not a padj-thresholded subset; GSEA on the full ranking is preferred here because n=6 per group may leave too few significant genes for a stable overrepresentation test",
+                "Use the human hallmark gene sets (HALLMARK_* names, HGNC symbols); if the resolved reference is not human, stop and report rather than proceeding with a cross-species mapping",
+                "Break ties in the ranking deterministically and set a random seed so the permutation p-values are reproducible",
+                "Do not run enrichment on the mouse hallmark collection or on GO/oncogenic collections as a substitute for hallmark — the question names hallmark specifically; GO may be added as a clearly labelled secondary annotation only if hallmark yields nothing significant",
+                "If the hallmark reference cannot be resolved at run time, report that plainly as the blocking reason and do not substitute an internally hard-coded gene set list"
+              ],
+              "caveats": [
+                "Hallmark sets overlap in membership (inflammatory response, TNFA signalling via NFKB, interferon gamma response, IL6/JAK/STAT3 share many genes), so several significant hits can reflect one underlying inflammatory programme rather than independent findings — inspect leading-edge overlap before reporting a count of pathways",
+                "With 12,000 genes rather than a full transcriptome, some hallmark sets will be only partially represented; report set size after intersection with the tested universe and treat sets with very few represented genes as unreliable",
+                "GSEA NES is sensitive to the tail of the ranking, which is where low-count genes sit — exactly where a shallow library can matter, which is why the two-cohort comparison is required rather than optional",
+                "A significant hallmark is a statement about coordinated shift in a gene set, not evidence of pathway activation at the protein or signalling level"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "ggplot2",
+                "data.table",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

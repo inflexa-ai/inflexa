@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan directly targets the interaction with ~genotype+treatment+genotype:treatment, explicit reference levels, ashr shrinkage for the composite KO simple effect, and an edgeR QL cross-check, exactly matching the reference's logic. QC is blind-VST PCA/heatmap/library size with an explicit no-silent-drop policy, and filtering (10 counts in 4 samples) is minimal and justified. Normalization is correctly kept inside DESeq2/edgeR (size factors/TMM), and BH/alpha with per-contrast FDR statements plus interaction-specific power caveats are all explicit. Enrichment is well-justified (interaction underpowered at gene level), uses full ranked lists per contrast with stated ranking metric, size window, and named collections including the Reactome substitution, though it is somewhat more elaborate than the question strictly warrants. The final report ties simple effects, interaction, shrinkage, thresholds, overlap, and caveats together comprehensively."
+}

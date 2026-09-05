@@ -9,6 +9,12 @@
 import { join } from "node:path";
 import { z } from "zod";
 
+const ORGANISMS = {
+    human: { scientificName: "Homo sapiens", taxonId: "9606" },
+    mouse: { scientificName: "Mus musculus", taxonId: "10090" },
+    zebrafish: { scientificName: "Danio rerio", taxonId: "7955" },
+} as const;
+
 export const TaskSchema = z.object({
     id: z.string().regex(/^[a-z0-9-]+$/),
     pattern: z.string(),
@@ -21,6 +27,18 @@ export const TaskSchema = z.object({
     reference: z.string(),
     must_match: z.array(z.string()),
     must_not_match: z.array(z.string()),
+    /** The organism of the profile. Default human. */
+    organism: z.enum(["human", "mouse", "zebrafish"]).default("human"),
+    /** The state of the primary matrix the profile describes. `fastq` describes read files and no matrix. */
+    data_state: z.enum(["counts", "tpm_or_fpkm", "log_normalized", "fastq"]).default("counts"),
+    /** Extra inputs beside the matrix: a DESeq2 results table for an enrichment-only question. */
+    extra_inputs: z.array(z.enum(["de_results"])).default([]),
+    /** Metadata columns the profile does not describe, for example a batch column the analyst did not record. */
+    hide_columns: z.array(z.string()).default([]),
+    /** A user constraint the planner receives as it is, for example a language. */
+    constraints: z.string().optional(),
+    /** The terminal outcome a correct planner reaches. Default a submitted plan. */
+    expected_outcome: z.enum(["plan_submitted", "clarification_needed"]).default("plan_submitted"),
 });
 export type Task = z.infer<typeof TaskSchema>;
 
@@ -47,35 +65,51 @@ async function csvShape(path: string): Promise<{ rows: number; cols: number; hea
  * gives the input paths their `/{analysisId}/data/inputs/...` form, which the
  * orientation projects into the planner seed.
  */
+const MATRIX: Record<Task["data_state"], { file: string; path: string; describe: (source: string) => string; dataType: string; summary: string }> = {
+    counts: { file: "counts.csv", path: "data/inputs/counts/counts.csv", describe: (source) => `Raw integer gene-level counts from ${source}; first column gene symbol, one column per sample`, dataType: "count-matrix", summary: "raw gene-level count matrix" },
+    tpm_or_fpkm: { file: "tpm.csv", path: "data/inputs/abundance/tpm.csv", describe: (source) => `Gene-level TPM abundances from ${source} (no raw counts were kept); first column gene symbol, one column per sample`, dataType: "abundance-matrix", summary: "gene-level TPM abundance matrix" },
+    log_normalized: { file: "log_expr.csv", path: "data/inputs/expression/log_expr.csv", describe: () => "Log2-scale normalized expression values (log2(TPM + 1)) as delivered by the core facility; first column gene symbol, one column per sample", dataType: "expression-matrix", summary: "log2-scale normalized expression matrix" },
+    fastq: { file: "counts.csv", path: "data/inputs/reads/", describe: () => "Paired-end FASTQ read files, one pair per sample, not yet quantified", dataType: "raw-reads", summary: "set of paired-end FASTQ read files" },
+};
+
 export async function buildProfile(task: Task, seed = 1): Promise<Record<string, unknown>> {
     const dir = datasetDir(task, seed);
-    const counts = await csvShape(join(dir, "counts.csv"));
+    const matrix = MATRIX[task.data_state];
+    const shape = await csvShape(join(dir, matrix.file));
     const metadata = await csvShape(join(dir, "metadata.csv"));
-    const columns = metadata.header.filter((column) => column !== "sample");
+    const columns = metadata.header.filter((column) => column !== "sample" && !task.hide_columns.includes(column));
+    const organism = ORGANISMS[task.organism];
+    const matrixFile =
+        task.data_state === "fastq"
+            ? { path: matrix.path, description: `${matrix.describe(task.count_source)} (${shape.cols - 1} samples)`, dataType: matrix.dataType, format: "FASTQ", rows: 0, cols: shape.cols - 1 }
+            : { path: matrix.path, description: matrix.describe(task.count_source), dataType: matrix.dataType, format: "CSV", rows: shape.rows, cols: shape.cols };
+    const extra = task.extra_inputs.map((kind) => ({
+        path: "data/inputs/results/de_results.csv",
+        description: "DESeq2 results table of the treated vs control contrast: gene, base_mean, log2_fold_change, log2_fold_change_unshrunken, lfc_se, stat, pvalue, adjusted_pvalue (every tested gene, no cutoff applied)",
+        dataType: kind === "de_results" ? "results-table" : kind,
+        format: "CSV",
+        rows: shape.rows,
+        cols: 8,
+    }));
+    const summaryShape = task.data_state === "fastq" ? `${shape.cols - 1} samples` : `${shape.rows} genes x ${shape.cols - 1} samples`;
     return {
-        summary: `Bulk RNA-seq raw gene-level count matrix (${counts.rows} genes x ${counts.cols - 1} samples) with a sample table (${metadata.rows} samples; columns: ${metadata.header.join(", ")}).`,
+        summary: `Bulk RNA-seq ${matrix.summary} (${summaryShape}) with a sample table (${metadata.rows} samples; columns: ${["sample", ...columns].join(", ")}).${extra.length > 0 ? " A DESeq2 results table of the primary contrast is included." : ""}`,
         files: [
-            {
-                path: "data/inputs/counts/counts.csv",
-                description: `Raw integer gene-level counts from ${task.count_source}; first column gene symbol, one column per sample`,
-                dataType: "count-matrix",
-                format: "CSV",
-                rows: counts.rows,
-                cols: counts.cols,
-            },
+            matrixFile,
             {
                 path: "data/inputs/metadata/metadata.csv",
                 description: `Sample table: one row per sample with ${columns.join(", ")}`,
                 dataType: "clinical-metadata",
                 format: "CSV",
                 rows: metadata.rows,
-                cols: metadata.cols,
+                cols: columns.length + 1,
             },
+            ...extra,
         ],
         profiledAt: "2026-09-04T12:00:00.000Z",
         domain: "transcriptomics",
         subtype: "bulk-rna-seq",
-        organism: { scientificName: "Homo sapiens", taxonId: "9606", source: "metadata", confidence: "high" },
+        organism: { ...organism, source: "metadata", confidence: "high" },
         tissue: task.tissue,
         condition: task.condition,
         experimentalDesign: task.experimental_design,

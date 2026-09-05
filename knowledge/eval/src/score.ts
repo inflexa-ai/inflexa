@@ -77,7 +77,8 @@ export interface DeterministicScore {
 
 export function scoreRun(record: RunRecord, task: Task): DeterministicScore {
     const plan = record.plan as PlanLike | undefined;
-    const text = planText(plan);
+    // A clarification request has no plan; its question is the text the task judges.
+    const text = plan ? planText(plan) : (record.question ?? "");
     const checks: { readonly label: string; readonly ok: boolean }[] = [
         ...task.must_match.map((pattern) => ({ label: `must match /${pattern}/`, ok: new RegExp(pattern, "i").test(text) })),
         ...task.must_not_match.map((pattern) => ({ label: `must not match /${pattern}/`, ok: !new RegExp(pattern, "i").test(text) })),
@@ -91,7 +92,7 @@ export function scoreRun(record: RunRecord, task: Task): DeterministicScore {
     const snapshotPinned = record.snapshot !== undefined && steps.some((step) => step.grounding?.snapshot === record.snapshot?.digest);
     return {
         outcome: record.outcome,
-        planned: record.outcome === "plan_submitted",
+        planned: record.outcome === task.expected_outcome,
         steps: steps.length,
         method_steps: methodSteps.length,
         expectations_met: checks.filter((check) => check.ok).length,

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies this as an interaction question, fits ~genotype*treatment, extracts the interaction coefficient as the primary test, and follows with simple effects within genotype using apeglm for single-coefficient contrasts and ashr for the interaction — matching the reference closely. QC (PCA, sample-distance heatmap, vst/rlog) precedes modeling with an outlier/mismatch check policy stated. Low-count filtering is mentioned but only vaguely ('e.g. rowSums or DESeq2 default') without a concrete minimal threshold or justification tied to n=4/cell. Normalization is implicit via DESeq2/vst but not explicitly stated as size-factor-based inside the model. FDR/BH and shrinkage are explicit and correctly assigned per contrast type. Enrichment is warranted here but adds two extra unrequested tracks (WikiPathways ORA/fgsea and STRING network) beyond what was asked, and while it specifies ranking metric, universe, and version for WikiPathways, the STRING network step is scope creep not tied to the core interaction question, slightly diluting focus; report completeness is strong but caveats about human vs brain-tissue context and power limitations could be more tightly tied to the reported gene counts."
+}

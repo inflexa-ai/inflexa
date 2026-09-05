@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan targets exactly the right test for this design: a DESeq2 LRT of ~condition+time+condition:time against ~condition+time, with explicit reference levels for both factors, and it correctly notes the n=3-per-cell power limit rather than loosening alpha. QC (blind VST, PCA on top 500, distance heatmap, library sizes, colored by condition and time) precedes modelling with an explicit no-drop-without-justification policy, and the filter (>=10 counts in >=3 samples, smallest group size, explicitly minimal) is well justified. Normalization is handled implicitly by feeding raw integer counts to DESeq2 and using normalized counts only for plots, but median-of-ratios size factor estimation is never named, which is the one gap; per-timepoint refits on subsets also lose the shared dispersion estimate, a minor statistical cost. FDR is BH at a stated alpha 0.05 with independent filtering and p-value histogram inspection, with apeglm/ashr shrinkage used for effect ranking rather than for the significance call, and the trajectory clustering appropriately acknowledges that no single fold change describes an interaction gene. Enrichment correctly rejects a signed preranked GSEA for a non-directional LRT statistic and specifies ORA with the pre-filtered tested genes as universe, named collections with versions, a 15-500 size window, mapping-loss reporting, and a small-list power caveat; the report step names method, versions, design, contrasts with direction, thresholds, n_tested/n_de, diagnostics, and caveats."
+}
