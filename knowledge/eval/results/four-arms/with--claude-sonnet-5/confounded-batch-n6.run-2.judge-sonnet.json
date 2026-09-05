@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect confound, refuses to fit a batch term or apply ComBat-seq/SVA/removeBatchEffect, and labels every result as confounded throughout, matching the reference exactly. QC is thorough (blind VST, PCA by condition and batch, sample distances, library sizes) with an explicit statement that condition and batch cannot be disentangled. Filtering (>=10 counts in >=6 samples) is minimal and justified by group size; normalization is left to DESeq2's internal size factors with no pre-adjustment. The design formula (~condition), explicit releveling, named contrast, apeglm shrinkage, BH at alpha=0.05, and independent filtering are all explicit and correct. Enrichment sensibly downgrades to ORA with a stated tested-gene universe, named collections (Hallmark, Reactome human-restricted), and a 15-500 size window, with power caveats for small lists. The final report is complete with versions, design, thresholds, gene/pathway counts, and a prominent, pre-table confound caveat recommending replication."
+}

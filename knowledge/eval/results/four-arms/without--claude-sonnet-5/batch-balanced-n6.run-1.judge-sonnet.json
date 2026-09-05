@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly specifies ~ batch + condition with control as reference and an explicit treated_vs_control contrast, matching the balanced two-batch design, and it explicitly forbids pre-normalizing counts, letting DESeq2 size factors handle it. QC is present (PCA colored by batch and condition, library size/dispersion checks) but lacks an explicit outlier/shallow-sample policy. The low-count filter (sum<10) is reasonable and stated as minimal. A major gap is the absence of log2FC shrinkage (e.g., apeglm/lfcShrink) despite BH/independent filtering being handled correctly. Enrichment was not strictly warranted by the question but is included with a defined universe, named/versioned GMT, and stated GSEA ranking metric, so it is well-specified even if arguably out of scope. The report states thresholds, gene counts, and design caveats (n=6 power) but omits explicit software version numbers."
+}

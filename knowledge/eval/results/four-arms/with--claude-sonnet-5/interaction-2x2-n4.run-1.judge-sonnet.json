@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the interaction design, fits ~genotype+treatment+genotype:treatment with explicit reference levels, tests the interaction Wald coefficient, and follows with simple effects within each genotype exactly as the reference expects. QC (blind VST, PCA, sample-distance heatmap, library size) precedes modeling and includes a sensible policy for the count/metadata mismatch and outlier flags. Filtering (>=10 counts in >=4 samples) is minimal and justified by smallest group size; normalization is correctly left to DESeq2 internal size factors with no pre-normalization. BH-FDR is applied per contrast with independent filtering and ashr shrinkage, though applying ashr uniformly to all three including a main-effect-like coefficient is a minor deviation from standard practice (ashr is typically for contrasts, not necessarily forced on every coefficient). GSEA is appropriately scoped with ranking metric, universe, and gene set version stated, though pathway version numbers for Hallmark/Reactome are not explicitly pinned. The final report is thorough, stating design, thresholds, counts, caveats, and reproducibility metadata as required."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference exactly on the core design question: batch enters the DESeq2 formula as ~ batch + condition with control set as reference, counts are used raw with size-factor/TMM normalization inside the model, and the plan explicitly forbids testing on a ComBat- or removeBatchEffect-corrected matrix (correction reserved for visualization only). QC precedes testing with library sizes, condition x batch cross-tab, VST PCA coloured by condition and shaped by batch, sample-distance heatmap, per-PC association tests, and an explicit no-drop policy for outliers at n=6. Filtering uses edgeR filterByExpr with the model design (minimal, justified, count reported), and inference is Wald + BH with alpha stated at 0.05 and 0.10 plus apeglm shrinkage for ranking and plots, with unshrunken LFC and stat also retained. Enrichment is well specified (fgsea preranked, universe restricted to tested genes, coverage reported, ORA cross-check) but the ranking metric is left as an either/or, no MSigDB version is pinned, and no minSize/maxSize window is given. Reporting covers method, design, thresholds, tested/significant counts and design caveats, but never commits to recording package or reference versions/sessionInfo."
+}

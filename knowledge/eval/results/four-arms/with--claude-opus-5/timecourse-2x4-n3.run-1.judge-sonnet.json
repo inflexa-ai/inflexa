@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the condition:time interaction as the LRT of full (~condition+time+condition:time) vs reduced (~condition+time), names both reference levels, and justifies the LRT over a single-coefficient Wald test given time has four levels; edgeR QL F-test on the joint interaction coefficients is used as a concordant second method. QC precedes modelling with blind VST, PCA colored by condition and time, sample-distance heatmap, library sizes, and an explicit outlier-naming (not silent-drop) policy. The 10-count-in-3-samples filter is minimal and tied to the smallest cell size, with independent filtering left to do the rest. Normalization is strictly inside the model (median-of-ratios in DESeq2, TMM in edgeR), with an explicit statement that raw counts are not pre-scaled. BH at alpha 0.05 is held throughout with no post hoc loosening, apeglm/ashr shrinkage is correctly assigned to single coefficients vs contrasts, and per-time-point simple effects plus trajectory clustering appropriately unpack the interaction. Enrichment is correctly run preranked on the full list (since the significant set is expected to be small) with universe, size window, collection versions, substitution rationale for Reactome, and leading-edge reporting all stated; the report step consolidates versions, thresholds, counts, diagnostics, and an honest power caveat for n=3 per cell."
+}

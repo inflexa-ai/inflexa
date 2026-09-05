@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly on design: DESeq2 Wald on raw counts with ~condition, an edgeR QL cross-check on the same filter and design, no batch or pairing term invented for a single-batch unpaired 3v3, and an explicit low-power statement with alpha held at 0.05 plus leave-one-out fragility refits. QC precedes the test (library sizes, blind VST, PCA on top 500 variable genes, distance heatmap, colored by condition, with a no-removal-only-flag policy), the >=10 counts in >=3 samples filter is minimal and justified by smallest group size, and normalization is inside the model (median-of-ratios and TMM) with an explicit prohibition on pre-scaling. Contrast handling is exemplary: relevel to control, named contrast, stated direction, apeglm shrinkage with unshrunken estimates retained, BH at 0.05 with independent filtering, lfcThreshold inside results() rather than post hoc, and separate reporting of Cook's-flagged NAs. Enrichment is warranted here given the likely tiny gene list and is correctly run as preranked fgsea on the full tested-gene universe with a stated ranking metric, size window, seed, collection version, and an honest note on the Reactome substitution — slightly beyond the reference's minimum but well specified. The report step names methods, versions, formula, contrast, thresholds, tested and significant counts, and the design caveats, and puts the power statement ahead of the gene tables."
+}

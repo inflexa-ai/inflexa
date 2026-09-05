@@ -1,7 +1,9 @@
-# The Phase 0 task set: the eight design patterns of the evaluation, one
-# simulated dataset each. Each task names the pattern, the research question,
-# the facts of the profile that the planner sees, a reference paragraph for
-# the judge, and deterministic expectations over the plan text.
+# The Phase 0 task set: the eight base design patterns of the evaluation, one
+# simulated dataset each, plus the variants that change the organism, the data
+# state, the inputs, the constraint, or the question over the same datasets.
+# Each task names the pattern, the research question, the facts of the profile
+# that the planner sees, a reference paragraph for the judge, and deterministic
+# expectations over the plan text.
 #
 # `must_match` and `must_not_match` are case-insensitive regular expressions
 # over the joined text of the plan (title, narrative, and every step field).
@@ -149,3 +151,593 @@
     change cutoff presented as significance, is wrong.
   must_match: ["(no|without|lack of|absence of) (biological )?replicat", "(descriptive|fold change)"]
   must_not_match: ["adjusted p-value cutoff", "padj < 0\\.05", "FDR < 0\\.05", "Wald test"]
+
+- id: gene-list-ora
+  pattern: two_group_n6
+  question: "Which GO biological processes are over-represented among the genes that came out significant in our treated versus control comparison? The results table is attached."
+  tissue: skin
+  condition: "atopic dermatitis lesional vs control"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw gene-level counts from Salmon, with a DESeq2 results table of the treated vs control contrast"
+  count_source: salmon
+  concerns: ["Sample sample_01 has a library size about 4x below the median"]
+  extra_inputs: [de_results]
+  reference: >-
+    A results table is in hand, so the plan fits no count model a second time.
+    The foreground is the significant genes (adjusted p below 0.05, with any
+    fold change cutoff stated) and the universe is every tested gene of the
+    table, never the whole genome. One ontology is named, GO Biological
+    Process, and the test is the hypergeometric or Fisher test of
+    clusterProfiler enrichGO or gprofiler2, with BH at 0.05 and a set size
+    bound stated. Redundant terms are reduced with simplify (semantic
+    similarity) or rrvgo before the report, and the up and the down genes are
+    tested apart or the pooling is stated. The report gives the term, the gene
+    ratio, the adjusted p-value, and the genes behind each term. A
+    whole-genome background, a second fit of DESeq2, or a GSEA presented as an
+    answer to the over-representation question is wrong.
+  must_match: ["(universe|background)", "(biological process|GO:BP|GOBP|gene ontology)", "(over-representation|ORA|enrichGO|gprofiler|hypergeometric|Fisher)", "(simplify|rrvgo|redundan|semantic similarity|reduce[sd]? (the )?terms)"]
+  must_not_match: ["(use|take|set)s? (the )?(whole|entire|all) (annotated )?(genome|genes) as (the )?(universe|background)", "(rerun|re-run|refit|re-fit|repeat) (the )?DESeq2"]
+
+- id: sample-scores-gsva
+  pattern: two_group_n6
+  question: "Can we get a pathway activity score for every sample, and a heatmap of the hallmark activity across the samples, so that we see which pathways separate treated from control?"
+  tissue: colon
+  condition: "ulcerative colitis inflamed vs control"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: ["Sample sample_01 has a library size about 4x below the median"]
+  reference: >-
+    A per-sample pathway score question, not a gene-level test first. The
+    counts are normalized and log transformed (vst or log2 CPM) before the
+    scoring, or GSVA runs on the counts with the Poisson kernel, because the
+    scoring methods expect a continuous matrix. The score per sample comes from
+    GSVA or ssGSEA, or from a decoupler method such as ULM or AUCell, over the
+    MSigDB Hallmark collection with its version named. A limma moderated
+    t-test or a t-test on the score matrix, treated versus control, with BH at
+    0.05, gives the pathways that separate the groups. The heatmap shows the
+    score per sample, scaled by row, with the condition annotated, and the low
+    depth sample_01 is inspected on the score matrix and kept unless a stated
+    reason removes it. A GSEA on a ranked gene list answers a different
+    question and gives no per-sample score.
+  must_match: ["(GSVA|ssGSEA|decoupler|AUCell|singscore)", "hallmark", "(per[- ]sample|each sample|every sample|sample[- ]level)", "(limma|t-test|moderated)", "heatmap"]
+  must_not_match: ["remove sample_01 (before|prior)"]
+
+- id: fastq-input
+  pattern: two_group_n3
+  question: "Which genes are differentially expressed between the treated and the control samples?"
+  tissue: liver
+  condition: "drug treatment"
+  experimental_design: "3 treated vs 3 control, unpaired, single batch, paired-end FASTQ read files that are not yet quantified"
+  count_source: unknown
+  concerns: ["The inputs are read files; no count matrix or abundance table is present"]
+  data_state: fastq
+  expected_outcome: clarification_needed
+  reference: >-
+    The profile holds paired-end read files and no count matrix. A
+    differential expression plan has no matrix to test, and the planner has no
+    quantifier, no reference transcriptome or genome build, and no annotation
+    version in hand. The correct outcome is a stop with a question: does a
+    count table exist elsewhere, or must the reads be quantified first (Salmon
+    or kallisto against a named reference, or STAR with featureCounts), and
+    which reference and which annotation version apply. A plan that runs
+    DESeq2 on a matrix that does not exist, or that invents a count file, is
+    wrong. Once counts arrive, the two group three replicate plan applies:
+    DESeq2 or edgeR with BH at 0.05 and a note on the low power.
+  must_match: ["(fastq|read files|reads)", "(quantif|salmon|kallisto|STAR|align)", "(ask|clarif|question|confirm|missing|not (yet )?quantified)"]
+  must_not_match: ["run (DESeq2|edgeR) on (the )?counts\\.csv", "inputs/counts/counts\\.csv"]
+
+- id: python-two-group-n6
+  pattern: two_group_n6
+  question: "Which genes and which hallmark pathways change between treated and control? One sample looks shallow; handle it carefully."
+  tissue: skin
+  condition: "atopic dermatitis lesional vs control"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: ["Sample sample_01 has a library size about 4x below the median"]
+  constraints: "Use Python for every script, not R."
+  reference: >-
+    The six versus six design under a language constraint. The count model is
+    PyDESeq2 (Wald test, dispersion shrinkage, BH at 0.05, the fold change
+    shrinkage where the version gives it), with a minimal low count filter
+    before the fit. QC in Python: the library size per sample, a PCA on
+    variance-stabilized or log CPM values with scikit-learn, a sample distance
+    heatmap, and the low depth sample_01 kept and inspected, removed only with
+    a stated reason. Enrichment with gseapy prerank on the full ranked list,
+    the ranking statistic stated, the MSigDB Hallmark collection with its
+    version named, set size 15 to 500, a fixed seed. An R package (DESeq2 in
+    R, edgeR, limma, fgsea, clusterProfiler) or an R script breaks the
+    constraint, and a t-test on counts is wrong.
+  must_match: ["PyDESeq2", "gseapy", "hallmark", "python", "(library size|sequencing depth|low[- ]depth|shallow)"]
+  must_not_match: ["library\\((DESeq2|edgeR|limma|fgsea|clusterProfiler)\\)", "Rscript [^ ]*\\.R\\b|BiocManager::install", "remove sample_01 (before|prior)"]
+
+- id: python-enrichment-only
+  pattern: two_group_n6
+  question: "Which hallmark pathways are enriched in the treated versus control comparison? We already have the differential expression results; start from those."
+  tissue: skin
+  condition: "atopic dermatitis lesional vs control"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw gene-level counts from Salmon, with a DESeq2 results table of the treated vs control contrast"
+  count_source: salmon
+  concerns: ["Sample sample_01 has a library size about 4x below the median"]
+  extra_inputs: [de_results]
+  constraints: "Use Python for every script, not R."
+  reference: >-
+    The differential expression is done, and the results table holds every
+    tested gene with no cutoff. The plan fits no count model again. It ranks
+    every tested gene by the Wald statistic (or by the signed log p-value),
+    with a stated rule for ties and for missing values, and runs gseapy
+    prerank against a local MSigDB Hallmark GMT file whose version is named,
+    with a set size of 15 to 500, at least 1000 permutations, and a fixed
+    seed. A cutoff on the adjusted p-value that precedes the ranking throws
+    away the signal that GSEA uses. The report gives the normalized enrichment
+    score, the adjusted p-value, and the leading edge per set. The enrichr
+    function of gseapy against a web service, an R package, or an
+    over-representation test on the significant genes alone is wrong.
+  must_match: ["gseapy", "prerank", "hallmark", "gmt", "(rank|statistic)"]
+  must_not_match: ["library\\((DESeq2|edgeR|limma|fgsea|clusterProfiler)\\)", "gseapy\\.enrichr|gp\\.enrichr|enrichr\\("]
+
+- id: qc-only-n6
+  pattern: two_group_n6
+  question: "Before we test anything, how do the twelve samples look? We want the library sizes, a PCA, the sample-to-sample distances, and a verdict on the sample that looks shallow."
+  tissue: skin
+  condition: "atopic dermatitis lesional vs control"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: ["Sample sample_01 has a library size about 4x below the median"]
+  reference: >-
+    A quality control question with no differential test. The plan computes
+    the library size per sample and reports sample_01 at about a quarter of the
+    median, then filters the low count genes and transforms the counts (vst or
+    rlog in DESeq2, or log2 CPM in edgeR) for the multivariate views. A PCA on
+    the top variable genes, colored by condition, and a sample distance
+    heatmap (Euclidean on the transformed values, or Spearman correlation)
+    show whether sample_01 sits with its group or apart from it. The verdict
+    on sample_01 rests on its position in the PCA and the distance matrix, its
+    detected gene count, and its count distribution, not on the library size
+    alone, and the plan keeps the sample unless the views show an outlier,
+    with the reason stated. The output is a QC report and a recommendation
+    for the later test, with no p-values, no fold changes, and no gene list. A
+    plan that fits a DESeq2 or edgeR model and reports differential genes has
+    gone past the question.
+  must_match: ["(library size|sequencing depth|depth)", "(PCA|principal component)", "(distance|correlation)", "sample_01"]
+  must_not_match: ["(run|fit|apply)s? (a |the )?(DESeq2 |edgeR )?(Wald|quasi-likelihood|QL) test", "DESeq\\(|nbinomWaldTest\\(|glmQLFTest\\(", "(report|list|call|select)s? [^.]{0,40}(padj|adjusted p-?value|FDR) (<|below|under|at) ?0\\.[0-9]+", "lfcShrink\\(|(apply|run|use)s? apeglm"]
+
+- id: strandedness-unknown-n3
+  pattern: two_group_n3
+  question: "Which genes differ between the treated and the control samples? The library preparation record does not say whether the library was stranded, and I am not sure that the counts are right."
+  tissue: liver
+  condition: "drug treatment"
+  experimental_design: "3 treated vs 3 control, unpaired, single batch, raw gene-level counts from STAR/featureCounts; the strandedness of the library was not recorded"
+  count_source: star_featurecounts
+  concerns: ["The strandedness of the library was not recorded, so the strand setting used at counting is not known"]
+  reference: >-
+    Raw counts from featureCounts, three per group, and the strandedness of
+    the library is unknown. The plan does not trust the counts before it infers
+    the strandedness: it runs a strandedness check (RSeQC infer_experiment.py on
+    the alignments, or salmon with libType A on the reads) for every sample,
+    compares the inferred protocol with the strand setting used at counting, and
+    re-counts with the correct -s option when the two disagree. Only then does a
+    negative binomial model (DESeq2 Wald or edgeR quasi-likelihood) test treated
+    vs control, with a low count filter, BH at 0.05, and apeglm shrinkage. A
+    sample structure QC (PCA, sample distances) precedes the test. Power is low
+    at three replicates, and the plan says so without lowering alpha. A plan that
+    fits the model on the counts as delivered, with no strandedness check, is
+    wrong.
+  must_match: ["strand", "(infer_experiment|RSeQC|libType|salmon|re-?count|featureCounts)", "DESeq2|edgeR", "(PCA|principal component)"]
+  must_not_match: ["ComBat", "t-test on (the )?counts"]
+
+- id: two-timepoints-n3
+  pattern: timecourse_2x2_n3
+  question: "Does the treatment effect differ between the two time points? Two conditions by two time points, three replicates per cell."
+  tissue: cell line
+  condition: "treatment at two time points"
+  experimental_design: "2 conditions x 2 time points (t0, t1), 3 replicates per cell, single batch, raw counts from Salmon"
+  count_source: salmon
+  concerns: []
+  reference: >-
+    Two time points only, so this is a 2x2 factorial and not a time course:
+    with two levels of time there is no trend to model, and a spline or a time
+    trend model is the wrong tool. Time enters the design as a factor with two
+    levels, not as the continuous time_hours column. The design holds both
+    factors and their interaction (~ condition + time + condition:time), and the
+    test of interest is the interaction coefficient, a Wald test in DESeq2 or
+    an F-test in edgeR QL on that single term. Then the simple effect of the
+    condition at each time point, with ashr shrinkage, describes the pattern for
+    the significant genes. A one-factor model on the four combined groups
+    answers a different question. QC, low count filter, BH at 0.05.
+  must_match: ["interaction", "(2x2|2 x 2|two-by-two|factorial)", "time", "DESeq2|edgeR|limma"]
+  must_not_match: ["fit(s|ted)? (a |the )?(natural )?spline", "(likelihood ratio|LRT) (test )?(against|vs\\.?|versus) (the |a )?reduced"]
+
+- id: paired-3groups-n4
+  pattern: paired_3groups_n4
+  question: "Which genes respond to either treatment within a subject, and do the two treatments differ from each other? Four subjects, each measured under control, treatment A, and treatment B."
+  tissue: blood
+  condition: "two treatments vs control within subject"
+  experimental_design: "4 subjects, each with a control, a treated_a, and a treated_b sample (three conditions within subject), single batch, raw counts from Salmon"
+  count_source: salmon
+  concerns: []
+  reference: >-
+    A repeated-measures design with three conditions within each of four
+    subjects. The subject enters the model as a blocking term in both the full
+    and the reduced model (~ subject + condition against ~ subject), and the
+    first test is a likelihood ratio test in DESeq2, or a joint F-test in edgeR
+    QL or limma, of any condition effect across the three levels. Then the
+    pairwise contrasts (treated_a vs control, treated_b vs control, treated_a vs
+    treated_b) with ashr shrinkage and BH at 0.05 describe which condition
+    drives the effect. A model without the subject term wastes the pairing, and
+    three separate two-group fits, one per pair and each on its own subset, lose
+    the shared dispersion. QC with PCA colored by subject and by condition, a
+    low count filter.
+  must_match: ["subject", "(likelihood ratio|LRT|joint|F-test|ANOVA|any condition)", "(pairwise|contrast)", "DESeq2|edgeR|limma"]
+  must_not_match: ["paired t-test on (the )?(raw )?counts", "subset (the counts|the samples|the data) (to|for) each (pair|contrast|comparison)"]
+
+- id: population-n60
+  pattern: two_group_n60
+  question: "Which genes differ between the 60 cases and the 60 controls, and which of those differences are large enough to matter, not only significant?"
+  tissue: whole blood
+  condition: "case vs control cohort"
+  experimental_design: "60 cases vs 60 controls, unpaired human cohort, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: []
+  organism: human
+  reference: >-
+    A large human cohort, 60 vs 60. At this size the linear model on log-CPM
+    with precision weights, limma-voom with a fixed-effects design (~ condition)
+    and eBayes, is the method of choice, and it scales; a negative binomial
+    model is valid but slower. The plan reports an effect size beside every
+    p-value: the log2 fold change with its confidence interval, or a TREAT test
+    against a minimal fold change, because with 120 samples a tiny shift reaches
+    significance. Enrichment ranks the genes by the moderated t statistic for
+    camera (with the inter-gene correlation) or for fgsea preranked on MSigDB
+    Hallmark; an over-representation test on a cutoff list wastes the ranking.
+    QC: PCA, library sizes, a sex check against XIST and Y-linked genes, and a
+    search for hidden structure with the candidate factors reported, not fitted
+    blind. filterByExpr, TMM normalization, BH at 0.05.
+  must_match: ["limma|voom", "(fixed[- ]effects?|~ ?condition|design)", "(camera|fgsea|preranked|moderated t)", "(effect size|fold change|confidence interval|TREAT)"]
+  must_not_match: ["t-test on (the )?counts", "power is low"]
+
+- id: covariates-n6
+  pattern: covariates_n6
+  question: "Which genes differ between treated and control? The subjects differ in sex and age, and the two groups are not matched on age."
+  tissue: adipose
+  condition: "treatment"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, sex (F/M) and age (years) recorded per sample, raw counts from Salmon"
+  count_source: salmon
+  concerns: []
+  reference: >-
+    Two groups with two recorded covariates. Sex and age enter the design as
+    fixed terms before the condition (~ sex + age + condition): sex as a factor,
+    age centered on its mean so that the intercept is interpretable and the fit
+    is stable. The contrast of interest is the condition coefficient. The plan
+    first tabulates sex and age by group and reports the balance; a covariate
+    that lines up with the condition is confounded and cannot be fitted. The
+    counts are not adjusted for sex or age before the model. DESeq2 Wald or
+    edgeR QL, low count filter, BH at 0.05, apeglm on the condition coefficient.
+    QC: PCA colored by condition, by sex, and by age, and a sex check against
+    XIST and Y-linked genes.
+  must_match: ["sex", "age", "(center|centre|scale)", "(design|formula|covariate|~)", "DESeq2|edgeR|limma"]
+  must_not_match: ["regress(es|ed)? (out )?(the )?(sex|age|covariates?)[^.]* (from|out of) the counts", "ComBat"]
+
+- id: enrichment-only-ranked
+  pattern: two_group_n6
+  question: "Which hallmark pathways change between treated and control? The differential expression is already done; the results table is included."
+  tissue: skin
+  condition: "psoriasis lesional vs control"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw counts from Salmon and a DESeq2 results table of the treated vs control contrast"
+  count_source: salmon
+  concerns: ["Sample sample_01 has a library size about 4x below the median"]
+  extra_inputs: [de_results]
+  reference: >-
+    The differential expression exists, so the plan does not redo it: it reads
+    the results table, confirms that every tested gene is present with no cutoff
+    applied, and maps the symbols to the identifier space of the gene sets. The
+    enrichment is a preranked GSEA on the full ranked list with fgsea (or gseapy
+    prerank) against MSigDB Hallmark, with the ranking metric stated: the Wald
+    statistic (stat), or the sign of the fold change times -log10(p); a heavily
+    shrunken log2 fold change ranks badly, and a padj cutoff before the ranking
+    throws the signal away. Set sizes 15 to 500, a fixed seed, an adaptive
+    permutation count, BH at 0.05 on the pathways, and the leading edge reported
+    per pathway. An over-representation test on the significant genes alone, or
+    one against the whole genome as the universe, is wrong. The report names the
+    fgsea version, the Hallmark collection and its MSigDB version, and the
+    ranking metric.
+  must_match: ["hallmark", "(fgsea|gseapy|preranked|prerank|GSEA)", "rank", "(stat|Wald statistic|signed|-log10|log2 ?fold)", "(no cutoff|full (ranked )?list|every tested gene|all (tested )?genes|without a cutoff)"]
+  must_not_match: ["re-?run (the )?(DESeq2|differential expression)", "filter(s|ed)? (the )?(genes|results|table|list) (to|by|at|on) (padj|adjusted p|FDR)"]
+
+- id: multi-group-3x4
+  pattern: multi_group_3x4
+  question: "Which genes differ across the three groups at all, and which genes does each treatment change relative to control? Three groups of four."
+  tissue: liver
+  condition: "two treatments vs control"
+  experimental_design: "3 groups (control, treated_a, treated_b), 4 replicates each, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: []
+  reference: >-
+    Raw counts, three groups, four replicates each. One model holds the three
+    groups (~ condition), fitted once on all twelve samples so that the
+    dispersion uses every group. The any-difference question is a likelihood
+    ratio test (DESeq2 LRT against the intercept-only reduced model, or an
+    edgeR QL F-test over both group coefficients), BH at 0.05. The pairwise
+    question is two contrasts against control (treated_a vs control, treated_b
+    vs control) from the same fit, with apeglm or ashr shrinkage of each fold
+    change and BH within each contrast. A plan that fits each treatment
+    against control in its own subset of eight samples, or that reports the
+    LRT p-value next to a pairwise fold change as if they were one test, is
+    wrong. QC and the low count filter precede the model.
+  must_match: ["DESeq2|edgeR|limma", "(likelihood ratio|LRT|F-test|any[- ]difference|omnibus|ANOVA-like)", "(contrast|pairwise|treated_a vs control|treated_b vs control)", "(shrink|apeglm|ashr)"]
+  must_not_match: ["subset (the )?(counts|samples|data|matrix) (to|for) each (pair|contrast|comparison)", "(separate|independent) (DESeq2|edgeR) (run|fit|object|model) (per|for each) (pair|contrast|comparison|treatment)"]
+
+- id: outlier-n5
+  pattern: outlier_n5
+  question: "Which genes differ between treated and control? Five per group; one sample looks unlike the rest of its group on the first QC plots."
+  tissue: muscle
+  condition: "treatment"
+  experimental_design: "5 treated vs 5 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: ["Sample sample_03 separates from every other sample on the PCA and on the sample distance heatmap"]
+  reference: >-
+    Raw counts, five per group, one sample that separates from every other
+    sample. The plan first characterizes sample_03: library size, gene
+    detection, the mapping and duplication metrics if present, and its position
+    on the PCA and the distance heatmap. It then takes one of two routes with a
+    stated criterion. The first route keeps sample_03 and lets the model
+    down-weight it (limma-voom with arrayWeights, edgeR with robust dispersion,
+    or DESeq2 with its Cook's distance outlier handling). The second route
+    removes sample_03 by a criterion fixed before the test, for example a
+    distance beyond three median absolute deviations from its group, or a
+    technical failure in the metrics. Either way, the report gives both fits,
+    with and without sample_03, and states how the significant set changes.
+    Removal with no criterion, or a silent removal that shows only in the
+    sample count, is wrong. DESeq2 Wald or edgeR QL, BH at 0.05, shrinkage.
+  must_match: ["sample_03", "(PCA|principal component)", "(down-?weight|arrayWeights|robust|Cook)", "(criterion|threshold|rule|justif|reason)", "(both|with and without|sensitivity)"]
+  must_not_match: ["(drop|remove|exclude) sample_03 (before|prior to|first|and then)", "(drop|remove|exclude) (the outlier|sample_03) without"]
+
+- id: suspected-batch-n6
+  pattern: batch_balanced_n6
+  hide_columns: [batch]
+  question: "Which genes differ between treated and control? The PCA shows two clusters of six samples, and the clusters do not follow the condition. We recorded no processing batch."
+  tissue: kidney
+  condition: "treatment"
+  experimental_design: "6 treated vs 6 control, unpaired, no recorded batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: ["The PCA shows two clusters of six samples that do not follow the condition, and the sample table records no batch"]
+  reference: >-
+    Raw counts, six per group, a hidden structure that the PCA shows and the
+    sample table does not record. Each cluster holds both conditions, thus the
+    structure is not confounded with the question, and the plan can estimate
+    it. The plan asks the analyst for the unrecorded variable first, for
+    example the extraction date or the sequencing lane. If none is given, it
+    estimates surrogate variables with sva (svaseq on the counts, or RUVSeq
+    with empirical controls) with the condition in the model of interest and
+    the intercept in the null model, and adds them to the design (~ SV1 + SV2
+    + condition). The number of surrogate variables comes from the estimator,
+    not from the two clusters, and the plan checks that no surrogate variable
+    tracks the condition. ComBat or ComBat-seq is wrong here: no batch label
+    exists, and an adjusted matrix must not enter DESeq2 or edgeR. DESeq2 Wald
+    or edgeR QL on the augmented design, BH at 0.05, shrinkage.
+  must_match: ["(sva|svaseq|surrogate variable|RUV)", "(design|formula|covariate|~)", "(cluster|structure|hidden|unrecorded|unknown|latent)", "DESeq2|edgeR|limma"]
+  must_not_match: ["ComBat[- ]?seq (on|to) (the )?(counts|matrix)", "ComBat (on|to) (the )?(counts|matrix|expression)", "removeBatchEffect[^.]{0,40}(before|prior to|then) (DESeq2|edgeR)"]
+
+- id: star-counts-n3
+  pattern: two_group_n3
+  question: "Which genes are differentially expressed between treated and control? The counts come from STAR and featureCounts, not from a transcript quantifier."
+  tissue: liver
+  condition: "drug treatment"
+  experimental_design: "3 treated vs 3 control, unpaired, single batch, raw integer gene-level counts from STAR with featureCounts"
+  count_source: star_featurecounts
+  concerns: []
+  reference: >-
+    Raw integer gene-level counts from STAR and featureCounts, three per
+    group. The counts go into the count model as they are: DESeq2
+    (DESeqDataSetFromMatrix) or edgeR (DGEList) on the integer matrix, with
+    normalization inside the model, a minimal low count filter, BH at an FDR
+    of 0.05, apeglm shrinkage. There is no transcript-level abundance and no per-sample
+    effective length, thus tximport and a length offset do not apply. A plan
+    that runs tximport, that imports the matrix as if it came from Salmon, or
+    that tests TPM or FPKM values, is wrong. QC as usual. The plan states that
+    power is low at three per group.
+  must_match: ["DESeq2|edgeR", "(featureCounts|STAR)", "(integer|raw)[^.]{0,20}counts", "(adjusted p|padj|FDR|false discovery)"]
+  must_not_match: ["tximport\\(", "(run|use|apply|call) tximport", "(convert|transform)[^.]{0,30}(to|into) (TPM|FPKM)[^.]{0,40}(before|prior to|then)"]
+
+- id: mouse-two-group-n6
+  pattern: two_group_n6
+  organism: mouse
+  question: "Which genes and which hallmark pathways change between treated and control in these mouse samples? One sample looks shallow."
+  tissue: liver
+  condition: "high-fat diet vs chow"
+  experimental_design: "6 treated vs 6 control mice, unpaired, single batch, raw gene-level counts from Salmon with mouse gene symbols"
+  count_source: salmon
+  concerns: ["Sample sample_01 has a library size about 4x below the median"]
+  reference: >-
+    Raw counts, mouse, six per group, one low depth sample. QC keeps the low
+    depth sample, inspects it on the PCA and the distance heatmap, and reports
+    its library size; removal only with a stated reason. DESeq2 Wald or edgeR
+    QL, apeglm shrinkage, BH at 0.05. The enrichment uses a mouse resource: the
+    mouse MSigDB collections (msigdbr with species Mus musculus, or the mouse
+    Hallmark MH collection), or an ortholog map from mouse to human symbols
+    (biomaRt, MGI homology, or the msigdbr ortholog table) with the share of
+    genes that map reported and the unmapped genes counted. Symbol case
+    conversion (Trp53 to TP53) alone is not an ortholog map. fgsea preranked on
+    the full ranked list with the statistic stated, set size 15 to 500. A plan
+    that runs the human Hallmark sets on mouse symbols with no map is wrong.
+  must_match: ["DESeq2|edgeR", "hallmark", "(fgsea|GSEA|preranked|ORA|over-representation|enrich)", "(mouse|Mus musculus|murine)", "(ortholog|homolog|msigdbr|species)"]
+  must_not_match: ["remove sample_01 (before|prior)", "toupper\\("]
+
+- id: total-rna-highdup-n6
+  pattern: two_group_n6
+  question: "Which genes differ between treated and control? The libraries are total RNA after ribosomal depletion, and the sequencing QC flags a high duplication rate."
+  tissue: heart
+  condition: "treatment"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, rRNA-depleted total RNA libraries without UMIs, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: ["The sequencing QC reports a duplication rate above 60 percent in most libraries", "Sample sample_01 has a library size about 4x below the median"]
+  reference: >-
+    Raw counts, six per group, rRNA-depleted total RNA libraries with no UMIs
+    and a high duplication rate. The QC first explains the duplication: it
+    reports the rRNA fraction, the mitochondrial fraction, and the intronic
+    share per sample, because leftover rRNA, a few very high mitochondrial
+    genes, and the wide dynamic range of total RNA produce duplicates in a deep
+    library without any technical failure. The plan does not remove duplicate
+    reads: without UMIs a duplicate cannot be told from a true fragment, and
+    removal biases the highly expressed genes. It keeps the metrics as sample
+    covariates for QC, flags a sample whose rRNA fraction or duplication is far
+    from the rest, and keeps sample_01 with its low depth reported. It removes
+    rRNA and mitochondrial genes from the matrix before normalization only if
+    their share is large and uneven across samples, and states the choice.
+    DESeq2 Wald or edgeR QL, low count filter, BH at 0.05, apeglm shrinkage. A
+    plan that runs MarkDuplicates and removes duplicates, or that ignores the
+    library type, is wrong.
+  must_match: ["(rRNA|ribosomal)", "(mitochondrial|mt-|chrM)", "(intron|intergenic|genomic DNA|gene body)", "(UMI|unique molecular)", "DESeq2|edgeR"]
+  must_not_match: ["(remove|drop|deduplicate) (the )?(PCR |read )?duplicates? (before|prior to|then|and then)", "MarkDuplicates[^.]{0,40}REMOVE_DUPLICATES=true", "dedup(licate)? (the )?(reads|BAM|library)"]
+
+- id: zebrafish-two-group-n3
+  pattern: two_group_n3
+  question: "Which genes differ between the treated and the control zebrafish larvae, and which pathways do they point to? Three replicates per group."
+  tissue: whole larvae
+  condition: "drug exposure"
+  experimental_design: "3 treated vs 3 control zebrafish larvae pools, unpaired, single batch, raw gene-level counts from Salmon on the Ensembl Danio rerio annotation"
+  count_source: salmon
+  concerns: []
+  organism: zebrafish
+  reference: >-
+    Raw counts from zebrafish, two groups, three replicates each. The
+    differential expression is as usual: a PCA and a distance heatmap first,
+    then DESeq2 Wald or edgeR quasi-likelihood with a minimal low count filter,
+    normalization inside the model, Benjamini-Hochberg at 0.05, and apeglm
+    shrinkage, with a statement that power is low at three replicates. The plan
+    names the Ensembl release and the gene identifier space of Danio rerio. For
+    the enrichment, no curated collection exists for zebrafish, and the plan
+    says so. It then takes one of three paths: an ortholog map to human
+    (one-to-one orthologs only, the ortholog table and its version named, the
+    share of the tested genes that mapped reported) followed by fgsea on the
+    human Hallmark sets, the Gene Ontology annotation of zebrafish with its thin
+    coverage stated, or a skip of the enrichment with that reason in the report.
+    A plan that runs a human or mouse collection on the zebrafish symbols with
+    no ortholog map is wrong.
+  must_match: ["DESeq2|edgeR", "(zebrafish|Danio rerio)", "(ortholog|Gene Ontology|\\bGO\\b|skip|no curated|not (available|served|exist))", "(adjusted p|padj|FDR|false discovery|Benjamini)"]
+  must_not_match: ["(use|run|apply|load)s? (the )?(msigdb_hallmark_mouse|mouse hallmark)", "KEGG"]
+
+- id: three-prime-n3
+  pattern: two_group_n3
+  question: "Which genes differ between treated and control? The library is a Lexogen QuantSeq 3' tag-seq run, three replicates per group."
+  tissue: liver
+  condition: "drug treatment"
+  experimental_design: "3 treated vs 3 control, unpaired, single batch, Lexogen QuantSeq FWD 3' tag-seq library (one read per transcript molecule at the 3' end), raw gene-level counts from STAR/featureCounts"
+  count_source: star_featurecounts
+  concerns: ["The library is a 3' tag-seq library: one read per transcript molecule, no dependence on the transcript length"]
+  reference: >-
+    Raw counts from a 3' tag library, two groups, three replicates each. A
+    QuantSeq read counts one transcript molecule at the 3' end, thus the count
+    of a gene does not depend on the transcript length, and the plan gives no
+    transcript length correction and no length offset. The counts go straight
+    into DESeq2 Wald or edgeR quasi-likelihood, with the normalization inside
+    the model, Benjamini-Hochberg at 0.05, and apeglm shrinkage. The low count
+    filter uses a lower floor than a full-length library, about 5 counts in at
+    least 3 samples, with the floor and the number of genes kept reported. A
+    length-normalized unit such as TPM or FPKM does not apply here, and the plan
+    says so. QC with a PCA and a distance heatmap first, and a statement that
+    power is low at three replicates. A plan that applies a length offset from
+    tximport, that makes a conversion to TPM, or that corrects a gene length
+    bias in an over-representation step is wrong.
+  must_match: ["DESeq2|edgeR", "(3'|3-prime|three[- ]prime|tag[- ]seq|QuantSeq)", "(length correction|length offset|transcript length|gene length|length[- ]normali)", "(filter|floor|low[- ]count)"]
+  must_not_match: ["lengthScaledTPM|scaledTPM", "goseq with (a |the )?(probability weighting|pwf|gene length|bias)"]
+
+- id: rsem-counts-n6
+  pattern: two_group_n6
+  question: "Which genes differ between treated and control? The quantification came from RSEM, and one sample looks shallow."
+  tissue: colon
+  condition: "treatment"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, RSEM gene-level expected counts summarized into one matrix; the per-sample genes.results files with the effective lengths were not delivered"
+  count_source: rsem
+  concerns: ["The matrix holds RSEM expected counts, which are not integers; the per-sample genes.results files with the effective length per gene were not delivered", "Sample sample_01 has a library size about 4x below the median"]
+  reference: >-
+    RSEM expected counts in one matrix, six replicates per group, one low depth
+    sample. RSEM gives a non-integer expected count and an effective length per
+    gene and sample, and the right import is tximport with type rsem on the
+    per-sample genes.results files, which carries the expected counts and the
+    effective lengths into the count model as a length offset (an effective
+    length of zero set to one first), thus the plan asks for those files. With
+    the matrix alone, the plan states that the length offset is lost, keeps the
+    expected counts (edgeR takes them as they are, DESeq2 after a rounding that
+    the plan states), and never replaces them with a TPM or FPKM value. Then
+    the count model: DESeq2 Wald or edgeR quasi-likelihood, a low count filter,
+    normalization inside the model, Benjamini-Hochberg at 0.05, and apeglm
+    shrinkage. QC keeps the low depth sample, inspects it on the PCA and the
+    distance heatmap, and reports its library size; removal only with a stated
+    reason. A plan that treats the matrix as Salmon output, that fits a model
+    on TPM or FPKM, or that says nothing about the lost lengths, is wrong.
+  must_match: ["tximport", "rsem", "(effective length|length offset|avgTxLength|lengths|genes\\.results)", "DESeq2|edgeR"]
+  must_not_match: ["remove sample_01 (before|prior)", "(fit|run)s? (limma|DESeq2|edgeR|voom) on (the )?(TPM|FPKM)"]
+
+- id: tpm-input-n6
+  pattern: two_group_n6
+  question: "Which genes differ between the lesional and the control samples? The core sent only a TPM table."
+  tissue: skin
+  condition: "psoriasis lesional vs control"
+  experimental_design: "6 lesional vs 6 control, unpaired, single batch, gene-level TPM table from Salmon; no raw counts and no quantification directories were delivered"
+  count_source: salmon
+  concerns: ["Only a TPM table was delivered: no raw counts and no quantification directories"]
+  data_state: tpm_or_fpkm
+  reference: >-
+    A TPM table and no counts. TPM is a length-normalized abundance, not a
+    count, thus a negative binomial count model (DESeq2, edgeR, or voom) does
+    not apply. The plan asks for the raw counts or the quantification
+    directories, and with the TPM alone it fits limma on log2(TPM + 1) with
+    trend=TRUE in the empirical Bayes step, a two-group design with the
+    reference level set, and Benjamini-Hochberg at 0.05 through topTable. QC and
+    the low expression filter run on the log values: a PCA and a distance
+    heatmap on log2(TPM + 1), and a filter that keeps a gene above a small log2
+    TPM in at least the smallest group size. No scaling back to counts, no size
+    factors, and no voom. A plan that feeds the TPM to DESeq2, or that rounds
+    the TPM into counts, is wrong.
+  must_match: ["limma", "trend", "log2.{0,24}TPM", "(adjusted p|padj|FDR|Benjamini|\\bBH\\b)"]
+  must_not_match: ["DESeqDataSetFromMatrix", "round\\([a-z_.]*tpm", "voom\\("]
+
+- id: log-normalized-n6
+  pattern: two_group_n6
+  question: "Which genes differ between treated and control? The core facility delivered normalized log2 expression values, not counts."
+  tissue: muscle
+  condition: "treatment"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, log2 normalized expression values (log2(TPM + 1)) from the core facility; no counts were delivered"
+  count_source: unknown
+  concerns: ["The matrix holds normalized log2 values, not counts"]
+  data_state: log_normalized
+  reference: >-
+    Log2 normalized values from the core facility, six per group. A log-scale
+    value is not a count, thus no DESeq2, no edgeR, and no voom. The plan first
+    does a check of the value range (non-negative, a maximum near 10 to 16, no
+    integer counts hidden in the table, no second log) and states what the
+    range shows. Then limma-trend on the values as they are: lmFit on the
+    two-group design with the reference level set, eBayes with trend=TRUE, and
+    Benjamini-Hochberg at 0.05 through topTable. No re-normalization: no
+    quantile step, no size factors, no second log transform, and no conversion
+    back to counts. QC (PCA, distance heatmap) and the low expression filter run
+    on the log values, and the report says that the values came normalized and
+    names the transform the core reported. A plan that fits a count model, or
+    that normalizes the values again, is wrong.
+  must_match: ["limma", "trend", "(range|scale|already (log|normali)|log2)", "(adjusted p|padj|FDR|Benjamini|\\bBH\\b)"]
+  must_not_match: ["DESeqDataSetFromMatrix", "normalizeBetweenArrays", "voom\\("]
+
+- id: interaction-python-n4
+  pattern: interaction_2x2_n4
+  question: "Does the drug act differently in the knockout than in the wild type? Two genotypes by two treatments, four replicates per cell."
+  tissue: heart
+  condition: "genotype by treatment"
+  experimental_design: "2x2 factorial: genotype (WT, KO) x treatment (vehicle, drug), 4 replicates per cell, raw counts from Salmon"
+  count_source: salmon
+  concerns: []
+  constraints: "Use Python for every script, not R."
+  reference: >-
+    An interaction question under a Python constraint. The design holds both
+    factors and their interaction, and the test of interest is the interaction
+    coefficient, followed by the simple effects of treatment within each
+    genotype. In Python the count model is PyDESeq2, with the interaction in a
+    formula design (~ genotype + treatment + genotype:treatment), the Wald test
+    on the interaction term, and then the within-genotype contrasts. If the
+    installed PyDESeq2 cannot express the interaction or a contrast, the plan
+    states that limit and gives a fallback: a combined group factor with the
+    interaction as a contrast of the four group coefficients, or a stop that
+    asks whether R is permitted for that step. Every script is Python: the QC
+    (PCA, sample distances) and the filter in numpy, pandas, and scikit-learn,
+    and Benjamini-Hochberg through PyDESeq2 or statsmodels. A one-factor model on
+    the four groups without the interaction contrast, or an R script, is wrong.
+  must_match: ["interaction", "genotype", "treatment", "PyDESeq2", "python"]
+  must_not_match: ["Rscript [^ ]*\\.R\\b", "library\\((DESeq2|edgeR|limma)\\)", "suppressPackageStartupMessages"]

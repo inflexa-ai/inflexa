@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly uses DESeq2 with design ~subject + condition, explicit control releveling, and Wald test on the condition coefficient, matching the paired design exactly, with an edgeR QL cross-check on the identical design as a bonus robustness layer. QC precedes testing with blind VST, PCA/heatmap colored by condition and subject, library size checks, and an explicit outlier-flagging policy. Filtering (>=10 counts in >=5 samples) is minimal and justified by group size; normalization is strictly internal to each model (DESeq2 median-of-ratios, edgeR TMM) with no pre-normalized counts fed into any model. BH-FDR at padj<0.05 is applied consistently with apeglm shrinkage reported alongside unshrunken LFC, and independent filtering/Cook's outliers are handled transparently. Enrichment is well-specified (full ranked list, Wald stat, named versioned collections, 15-500 size window, leading-edge reporting) though slightly more elaborate than strictly needed; the final report is thorough, naming methods, versions, thresholds, counts, and caveats."
+}

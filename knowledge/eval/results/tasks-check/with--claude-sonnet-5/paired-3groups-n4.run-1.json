@@ -1,0 +1,947 @@
+{
+  "campaign": "tasks-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "paired-3groups-n4",
+  "run": 1,
+  "startedAt": "2026-09-05T16:02:09.252Z",
+  "elapsedMs": 131645,
+  "outcome": "plan_submitted",
+  "planId": "pln-9dcad3bb",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Strandedness of the Salmon library is unknown in the profile; this cannot be corrected post hoc from counts alone, note this as an unverifiable assumption in the report rather than attempting to infer it from count data"
+        ],
+        "context": "Raw integer Salmon gene-level counts, 12000 genes x 12 samples; metadata has subject (4 levels) and condition (control/treated_a/treated_b), single batch, no other covariates.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 12 blood samples (4 subjects x control/treated_a/treated_b) cluster by condition or by subject, and is there any outlier sample or library-size problem before modeling?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC via blind VST + PCA + sample distance heatmap per R-0033@40bf; template tpl-qc-eda@1.0.0. The strandedness-inference warning (R-0079) cannot be actioned because only gene-level counts, not aligned reads, are available.",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use vst(blind=TRUE) prior to PCA/distance computation; do not use this transform for the differential test itself",
+          "n_top_genes for PCA = 500"
+        ],
+        "description": "Load counts.csv (12000 genes x 12 samples) and metadata.csv (subject, condition), build a DESeqDataSet with design ~ subject + condition, apply the blind variance-stabilizing transform, run PCA on the top 500 variable genes, and compute a sample-to-sample Euclidean distance heatmap. Report library size per sample and flag any subject/condition outlier.",
+        "acceptance_criteria": [
+          "PCA and sample-distance heatmap produced, colored by subject and by condition",
+          "Library size per sample reported",
+          "Any sample departing from its subject/condition group is flagged with a stated reason"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 paired 3-group differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Counts are gene-level from Salmon with no accompanying transcript-level quantification or average transcript length in the provided files, so the standard tximport length-offset correction cannot be applied here; state this deviation from the sourced default in the report",
+          "With only 4 replicates per condition cell, DESeq2 flags (not replaces) Cook's-distance count outliers and sets their p-values to NA — report these genes separately from the independent-filtering NAs"
+        ],
+        "context": "4 subjects x 3 conditions (control, treated_a, treated_b), fully paired/balanced, single batch, raw Salmon gene counts, 12000 genes x 12 samples.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes respond to either treatment (treated_a or treated_b) within a subject relative to control, and which genes differ specifically between treated_a and treated_b?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@762e",
+            "R-0060@0ff9",
+            "R-0036@9786",
+            "R-0069@b1c3",
+            "R-0011@233b",
+            "R-0001@9a17",
+            "R-0039@e17a"
+          ],
+          "reason": "Paired 3-group design with subject blocking: DESeq2 LRT (full ~subject+condition vs reduced ~subject) for the omnibus test, plus pairwise Wald contrasts, per R-0069@b1c3 and R-0011@233b. tximport offset (R-0018) is flagged ungrounded here because only gene-level counts are provided, not transcript-level Salmon quant files.",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+          "template": "tpl-deseq2-multigroup@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "design_terms: subject, condition; full = ~ subject + condition; reduced = ~ subject for the omnibus LRT",
+          "reference_level = control, set explicitly and reported",
+          "contrast_form = factor, numerator, denominator; one named contrast per comparison",
+          "pre-filter: min_count=10 in >= smallest group size (4) samples; do not over-filter beyond this, independent filtering handles the rest"
+        ],
+        "description": "Filter to genes with >=10 counts in at least 4 samples (the smallest group size). Fit DESeq2 with design ~ subject + condition (condition releveled so 'control' is the reference). Run the likelihood-ratio test (full ~ subject + condition vs reduced ~ subject) as the omnibus 'any treatment effect' test. Extract three named Wald contrasts: condition treated_a vs control, condition treated_b vs control, and condition treated_a vs treated_b (via contrast vector, since it is not a single coefficient). Keep DESeq2's default count-outlier handling (Cook's distance NA-flagging with only 4 replicates per cell) and report flagged genes separately from independent-filtering NAs.",
+        "acceptance_criteria": [
+          "Genes pre-filtered by min 10 counts in >=4 samples, filtered gene count reported",
+          "Omnibus LRT results table produced (genes with any treatment effect within subject)",
+          "Three pairwise Wald contrast tables produced with explicit reference level = control stated",
+          "Count-outlier NA genes and independent-filtering NA genes reported as separate counts",
+          "MA plot and dispersion plot produced as fit diagnostics"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Log2 fold-change shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Three pairwise contrasts from the paired 3-group DESeq2 fit (control as reference level).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ashr"
+        ],
+        "question": "What is the shrinkage-corrected effect size for each gene in each of the three pairwise contrasts (treated_a vs control, treated_b vs control, treated_a vs treated_b)?",
+        "grounding": {
+          "claims": [
+            "R-0040@8061",
+            "R-0009@f54e"
+          ],
+          "reason": "Three-group design with contrasts between non-reference levels: ashr shrinkage per R-0040@8061.",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use ashr (not apeglm) for all three contrasts since treated_a vs treated_b is a contrast of two non-reference levels"
+        ],
+        "description": "Apply ashr shrinkage to each of the three pairwise Wald contrasts from T1S2 (ashr is required rather than apeglm because the treated_a vs treated_b contrast is not a single model coefficient). Report both the unshrunken and shrunken log2 fold change with standard error for every gene, and rank/plot on the shrunken value while keeping the unshrunken p-values from the Wald test.",
+        "acceptance_criteria": [
+          "Shrunken and unshrunken log2FC with lfcSE reported per gene per contrast",
+          "Ranking and MA-style plots based on shrunken values only",
+          "p-values unchanged from the Wald test"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Multiple testing and gene lists per contrast",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Four hypothesis tests per gene (1 omnibus LRT + 3 pairwise Wald) from T1S2/T1S3, ~12000 genes before filtering.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes are statistically significant (FDR<0.05) for the omnibus 'any treatment effect' test and for each of the three pairwise contrasts?",
+        "grounding": {
+          "claims": [
+            "R-0061@bcab",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "Multiple contrasts: BH within-contrast adjustment per R-0061@bcab, p-value histogram diagnostic per R-0083@12de.",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "adjustment=BH, alpha=0.05, independent_filtering=true, adjustment_scope=within each contrast/test separately",
+          "selection strictly by padj<0.05, not raw p-value or LFC alone"
+        ],
+        "description": "Apply Benjamini-Hochberg adjustment within each of the four tests (omnibus LRT, treated_a vs control, treated_b vs control, treated_a vs treated_b) at alpha 0.05 with DESeq2 independent filtering left on (alpha passed to results() matches the reporting cutoff). Inspect and report the raw p-value histogram shape for each test before trusting the adjustment. Select significant genes by padj<0.05 only, never by unadjusted p-value or fold change alone. Report the size of each significant gene set and the overlap between the omnibus set and each pairwise set (Venn or table).",
+        "acceptance_criteria": [
+          "BH-adjusted p-values (padj) reported per gene per test, adjustment done within each test separately",
+          "p-value histograms shown for each of the 4 tests with shape commented on",
+          "Significant gene counts (padj<0.05) reported per test",
+          "Overlap table/Venn between omnibus significant genes and each pairwise significant gene set"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway over-representation analysis per contrast",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If fewer than ~50 genes are significant in a contrast, ORA has low power and a changed threshold changes the result — state the significant-list size explicitly next to that contrast's result",
+          "This is ORA rather than the ranked preranked-GSEA default recommended for this design, because the knowledge-base check for this exact paired/blocked situation currently only licenses ORA with an explicit universe; state this substitution in the report"
+        ],
+        "context": "Four gene lists (omnibus + 3 pairwise contrasts) from a paired 3-condition DESeq2 analysis of 12000 human blood genes; MSigDB Hallmark (50 sets) and Reactome pathway gene sets are staged locally for human.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which Hallmark and Reactome pathways are over-represented among the significant genes of the omnibus test and of each pairwise contrast (treated_a vs control, treated_b vs control, treated_a vs treated_b)?",
+        "grounding": {
+          "claims": [
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0103@93aa",
+            "R-0104@34a4",
+            "R-0101@06c8",
+            "R-0048@500d"
+          ],
+          "reason": "knowledge_check validated ORA with explicit tested-gene universe against Hallmark then Reactome as the permitted enrichment method for this situation (the ranked-GSEA default was rejected by the check for this exact paired/blocked design).",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S4"
+        ],
+        "constraints": [
+          "universe = tested_genes (post pre-filter genes from T1S2), never whole-genome",
+          "min_size=15, max_size=500 among tested genes",
+          "gene_set_collection = MSigDB human Hallmark (staged at /mnt/refs/managed/msigdb-hallmark-human), second collection = Reactome (staged at /mnt/refs/managed/reactome-pathways/current, filter GMT to Homo sapiens using the paired index file)",
+          "run enrichment separately per contrast; do not pool genes across contrasts",
+          "map gene symbols to Entrez via org.Hs.eg.db before enrichment and report the unmapped share"
+        ],
+        "description": "For each of the four significant gene sets from T1S4 (omnibus, treated_a-vs-control, treated_b-vs-control, treated_a-vs-treated_b), run over-representation analysis (clusterProfiler::enricher) against the MSigDB human Hallmark gene sets and, as a follow-up collection, the Reactome human gene sets, using the full set of genes tested in T1S2 (post-filter, pre-significance-threshold) as the explicit statistical universe — never the whole genome. Restrict tested gene sets to those with 15-500 member genes among the tested universe. BH-adjust within each contrast/collection. If a contrast yields fewer than ~50 significant genes, state this explicitly next to that contrast's ORA result as a power caveat rather than omitting the analysis.",
+        "acceptance_criteria": [
+          "ORA run per contrast per collection (Hallmark, Reactome) with explicit tested-gene universe stated",
+          "Gene set size window 15-500 applied and stated",
+          "BH-adjusted enrichment results reported per contrast, each contrast in its own table (not pooled)",
+          "Contrasts with fewer than ~50 significant genes flagged with the caveat about low ORA power",
+          "Gene set database name and version stated in the output"
+        ]
+      },
+      {
+        "id": "T1S5",
+        "name": "Final integrated report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Consolidates outputs from T1S1-T1S4 and T2S1 into one interpretable deliverable for the research question of within-subject treatment response and treatment A vs B differences.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "rmarkdown"
+        ],
+        "question": "What is the consolidated answer to which genes respond to treatment A and/or B within subjects, and how the two treatments differ, with full methodology, diagnostics, and reproducibility record?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0086@becf",
+            "R-0105@c4a8",
+            "R-0055@107a"
+          ],
+          "reason": "Report step assembles the required reproducibility record, diagnostic plots, and effect-size tables per the report-step rules.",
+          "status": "grounded",
+          "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S4",
+          "T2S1"
+        ],
+        "constraints": [
+          "report_fields: method, versions, design, thresholds, n_tested, n_de, session_info",
+          "reproducibility_record: session_info, seed, package_versions, collection_version"
+        ],
+        "description": "Assemble a report combining: study design and reference level statement; QC diagnostics (PCA, sample distance, library sizes); DESeq2 fit diagnostics (MA plot, dispersion plot); gene tables per contrast with unshrunken log2FC, ashr-shrunken log2FC, lfcSE, and padj; p-value histograms; significant gene counts and omnibus-vs-pairwise overlap; ORA pathway tables per contrast/collection with leading significant genes; full session info (package versions), random seeds used, and the gene-set collection versions (MSigDB Hallmark 2026.1, Reactome current release).",
+        "acceptance_criteria": [
+          "Report states design formula, reference level, and all four named contrasts",
+          "Report states thresholds (padj<0.05), n genes tested after filtering, and n DE genes per contrast",
+          "Report includes both fit diagnostic plots and p-value histograms",
+          "Report includes full session info, package versions, and gene-set collection versions",
+          "Report explicitly notes the substitution of ORA for ranked GSEA and the missing tximport length-offset as stated deviations"
+        ]
+      }
+    ],
+    "title": "Paired 3-condition blood DE: control vs treated_a vs treated_b",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "Four subjects each contribute a control, treated_a, and treated_b blood sample (12 samples, single batch), with 12000 genes quantified by Salmon as raw integer counts. The design is a within-subject repeated measures with three levels, so the subject must be blocked in the model to remove between-subject variation before testing the treatment effect. We run sample-structure QC to confirm subjects cluster by condition and no sample is an outlier, then fit DESeq2 with design ~ subject + condition. An omnibus likelihood-ratio test (full ~ subject + condition vs reduced ~ subject) identifies genes with any effect of either treatment within a subject; three pairwise Wald contrasts (treated_a vs control, treated_b vs control, treated_a vs treated_b) then resolve the specific question of whether the two treatments differ from each other and from control. Log2 fold changes are shrunk with ashr (contrasts between non-reference levels are not single coefficients, so apeglm does not apply to the A-vs-B contrast). Multiple testing is BH-adjusted within each contrast at alpha 0.05 with independent filtering. Because the knowledge-base check flags that a preranked GSEA is not the licensed enrichment method for this exact situation, enrichment is run as over-representation analysis (ORA) with an explicit tested-gene universe against MSigDB Hallmark and Reactome (both staged locally for human), applied per contrast, with the caveat that ORA on a short significant list has low power and should be read as hypothesis-generating. Everything is reported per contrast with diagnostics, shrinkage tables, and the overlap between the omnibus 'any treatment effect' gene set and each pairwise comparison."
+  },
+  "usage": {
+    "inputTokens": 1605186,
+    "outputTokens": 10141,
+    "cacheCreationInputTokens": 171788,
+    "cacheReadInputTokens": 1433182,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 3,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": true,
+        "batch": "none",
+        "blocking_factor": "subject",
+        "enrichment_input": "ranked_list",
+        "library_type": "unknown",
+        "strandedness": "unknown"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human pathway gene sets hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome curated c2"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "reactome-pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/reactome-pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/reactome-pathways/current"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "ashr",
+          "apeglm",
+          "tximport",
+          "fgsea",
+          "org.Hs.eg.db",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "tximeta",
+          "rtracklayer",
+          "GenomicFeatures",
+          "readr"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gencode human annotation gtf"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/gencode-human"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 3,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": true,
+        "batch": "none",
+        "blocking_factor": "subject",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with >=10 counts in >= smallest group size (4) samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 4
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ subject + condition, reference level = control, gene-level counts already provided (no tximport offset available)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 LRT (full ~subject+condition vs reduced ~subject) for omnibus test, then Wald contrasts treated_a vs control, treated_b vs control, treated_a vs treated_b",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "LRT_then_pairwise_Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "ashr shrinkage on each pairwise contrast",
+            "package": "ashr",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "ashr"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg within each contrast, alpha=0.05, independent filtering on",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked on Wald stat, Hallmark then Reactome, per contrast",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Combined DE + enrichment report with diagnostics",
+            "package": "DESeq2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 3,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": true,
+        "batch": "none",
+        "blocking_factor": "subject",
+        "enrichment_input": "gene_list",
+        "steps": [
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the DESeq2 Wald statistic against MSigDB Hallmark, then Reactome, run once per pairwise contrast; over-representation analysis as a fallback only if the ranked method cannot run",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "second_collection",
+                "value": "reactome"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 3,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": true,
+        "batch": "none",
+        "blocking_factor": "subject",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "enrichment",
+            "method": "Over-representation analysis (clusterProfiler enricher) on significant genes per contrast against MSigDB Hallmark then Reactome, with the tested genes as the explicit universe",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "second_collection",
+                "value": "reactome"
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Paired 3-condition blood DE: control vs treated_a vs treated_b",
+          "analytical_narrative": "Four subjects each contribute a control, treated_a, and treated_b blood sample (12 samples, single batch), with 12000 genes quantified by Salmon as raw integer counts. The design is a within-subject repeated measures with three levels, so the subject must be blocked in the model to remove between-subject variation before testing the treatment effect. We run sample-structure QC to confirm subjects cluster by condition and no sample is an outlier, then fit DESeq2 with design ~ subject + condition. An omnibus likelihood-ratio test (full ~ subject + condition vs reduced ~ subject) identifies genes with any effect of either treatment within a subject; three pairwise Wald contrasts (treated_a vs control, treated_b vs control, treated_a vs treated_b) then resolve the specific question of whether the two treatments differ from each other and from control. Log2 fold changes are shrunk with ashr (contrasts between non-reference levels are not single coefficients, so apeglm does not apply to the A-vs-B contrast). Multiple testing is BH-adjusted within each contrast at alpha 0.05 with independent filtering. Because the knowledge-base check flags that a preranked GSEA is not the licensed enrichment method for this exact situation, enrichment is run as over-representation analysis (ORA) with an explicit tested-gene universe against MSigDB Hallmark and Reactome (both staged locally for human), applied per contrast, with the caveat that ORA on a short significant list has low power and should be read as hypothesis-generating. Everything is reported per contrast with diagnostics, shrinkage tables, and the overlap between the omnibus 'any treatment effect' gene set and each pairwise comparison.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 blood samples (4 subjects x control/treated_a/treated_b) cluster by condition or by subject, and is there any outlier sample or library-size problem before modeling?",
+              "description": "Load counts.csv (12000 genes x 12 samples) and metadata.csv (subject, condition), build a DESeqDataSet with design ~ subject + condition, apply the blind variance-stabilizing transform, run PCA on the top 500 variable genes, and compute a sample-to-sample Euclidean distance heatmap. Report library size per sample and flag any subject/condition outlier.",
+              "context": "Raw integer Salmon gene-level counts, 12000 genes x 12 samples; metadata has subject (4 levels) and condition (control/treated_a/treated_b), single batch, no other covariates.",
+              "acceptance_criteria": [
+                "PCA and sample-distance heatmap produced, colored by subject and by condition",
+                "Library size per sample reported",
+                "Any sample departing from its subject/condition group is flagged with a stated reason"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Use vst(blind=TRUE) prior to PCA/distance computation; do not use this transform for the differential test itself",
+                "n_top_genes for PCA = 500"
+              ],
+              "caveats": [
+                "Strandedness of the Salmon library is unknown in the profile; this cannot be corrected post hoc from counts alone, note this as an unverifiable assumption in the report rather than attempting to infer it from count data"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC via blind VST + PCA + sample distance heatmap per R-0033@40bf; template tpl-qc-eda@1.0.0. The strandedness-inference warning (R-0079) cannot be actioned because only gene-level counts, not aligned reads, are available."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 paired 3-group differential expression",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes respond to either treatment (treated_a or treated_b) within a subject relative to control, and which genes differ specifically between treated_a and treated_b?",
+              "description": "Filter to genes with >=10 counts in at least 4 samples (the smallest group size). Fit DESeq2 with design ~ subject + condition (condition releveled so 'control' is the reference). Run the likelihood-ratio test (full ~ subject + condition vs reduced ~ subject) as the omnibus 'any treatment effect' test. Extract three named Wald contrasts: condition treated_a vs control, condition treated_b vs control, and condition treated_a vs treated_b (via contrast vector, since it is not a single coefficient). Keep DESeq2's default count-outlier handling (Cook's distance NA-flagging with only 4 replicates per cell) and report flagged genes separately from independent-filtering NAs.",
+              "context": "4 subjects x 3 conditions (control, treated_a, treated_b), fully paired/balanced, single batch, raw Salmon gene counts, 12000 genes x 12 samples.",
+              "acceptance_criteria": [
+                "Genes pre-filtered by min 10 counts in >=4 samples, filtered gene count reported",
+                "Omnibus LRT results table produced (genes with any treatment effect within subject)",
+                "Three pairwise Wald contrast tables produced with explicit reference level = control stated",
+                "Count-outlier NA genes and independent-filtering NA genes reported as separate counts",
+                "MA plot and dispersion plot produced as fit diagnostics"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "design_terms: subject, condition; full = ~ subject + condition; reduced = ~ subject for the omnibus LRT",
+                "reference_level = control, set explicitly and reported",
+                "contrast_form = factor, numerator, denominator; one named contrast per comparison",
+                "pre-filter: min_count=10 in >= smallest group size (4) samples; do not over-filter beyond this, independent filtering handles the rest"
+              ],
+              "caveats": [
+                "Counts are gene-level from Salmon with no accompanying transcript-level quantification or average transcript length in the provided files, so the standard tximport length-offset correction cannot be applied here; state this deviation from the sourced default in the report",
+                "With only 4 replicates per condition cell, DESeq2 flags (not replaces) Cook's-distance count outliers and sets their p-values to NA — report these genes separately from the independent-filtering NAs"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@762e",
+                  "R-0060@0ff9",
+                  "R-0036@9786",
+                  "R-0069@b1c3",
+                  "R-0011@233b",
+                  "R-0001@9a17",
+                  "R-0039@e17a"
+                ],
+                "template": "tpl-deseq2-multigroup@1.0.0",
+                "reason": "Paired 3-group design with subject blocking: DESeq2 LRT (full ~subject+condition vs reduced ~subject) for the omnibus test, plus pairwise Wald contrasts, per R-0069@b1c3 and R-0011@233b. tximport offset (R-0018) is flagged ungrounded here because only gene-level counts are provided, not transcript-level Salmon quant files."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Log2 fold-change shrinkage",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What is the shrinkage-corrected effect size for each gene in each of the three pairwise contrasts (treated_a vs control, treated_b vs control, treated_a vs treated_b)?",
+              "description": "Apply ashr shrinkage to each of the three pairwise Wald contrasts from T1S2 (ashr is required rather than apeglm because the treated_a vs treated_b contrast is not a single model coefficient). Report both the unshrunken and shrunken log2 fold change with standard error for every gene, and rank/plot on the shrunken value while keeping the unshrunken p-values from the Wald test.",
+              "context": "Three pairwise contrasts from the paired 3-group DESeq2 fit (control as reference level).",
+              "acceptance_criteria": [
+                "Shrunken and unshrunken log2FC with lfcSE reported per gene per contrast",
+                "Ranking and MA-style plots based on shrunken values only",
+                "p-values unchanged from the Wald test"
+              ],
+              "packages": [
+                "DESeq2",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Use ashr (not apeglm) for all three contrasts since treated_a vs treated_b is a contrast of two non-reference levels"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0040@8061",
+                  "R-0009@f54e"
+                ],
+                "reason": "Three-group design with contrasts between non-reference levels: ashr shrinkage per R-0040@8061."
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Multiple testing and gene lists per contrast",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are statistically significant (FDR<0.05) for the omnibus 'any treatment effect' test and for each of the three pairwise contrasts?",
+              "description": "Apply Benjamini-Hochberg adjustment within each of the four tests (omnibus LRT, treated_a vs control, treated_b vs control, treated_a vs treated_b) at alpha 0.05 with DESeq2 independent filtering left on (alpha passed to results() matches the reporting cutoff). Inspect and report the raw p-value histogram shape for each test before trusting the adjustment. Select significant genes by padj<0.05 only, never by unadjusted p-value or fold change alone. Report the size of each significant gene set and the overlap between the omnibus set and each pairwise set (Venn or table).",
+              "context": "Four hypothesis tests per gene (1 omnibus LRT + 3 pairwise Wald) from T1S2/T1S3, ~12000 genes before filtering.",
+              "acceptance_criteria": [
+                "BH-adjusted p-values (padj) reported per gene per test, adjustment done within each test separately",
+                "p-value histograms shown for each of the 4 tests with shape commented on",
+                "Significant gene counts (padj<0.05) reported per test",
+                "Overlap table/Venn between omnibus significant genes and each pairwise significant gene set"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "adjustment=BH, alpha=0.05, independent_filtering=true, adjustment_scope=within each contrast/test separately",
+                "selection strictly by padj<0.05, not raw p-value or LFC alone"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0061@bcab",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "reason": "Multiple contrasts: BH within-contrast adjustment per R-0061@bcab, p-value histogram diagnostic per R-0083@12de."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway over-representation analysis per contrast",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which Hallmark and Reactome pathways are over-represented among the significant genes of the omnibus test and of each pairwise contrast (treated_a vs control, treated_b vs control, treated_a vs treated_b)?",
+              "description": "For each of the four significant gene sets from T1S4 (omnibus, treated_a-vs-control, treated_b-vs-control, treated_a-vs-treated_b), run over-representation analysis (clusterProfiler::enricher) against the MSigDB human Hallmark gene sets and, as a follow-up collection, the Reactome human gene sets, using the full set of genes tested in T1S2 (post-filter, pre-significance-threshold) as the explicit statistical universe — never the whole genome. Restrict tested gene sets to those with 15-500 member genes among the tested universe. BH-adjust within each contrast/collection. If a contrast yields fewer than ~50 significant genes, state this explicitly next to that contrast's ORA result as a power caveat rather than omitting the analysis.",
+              "context": "Four gene lists (omnibus + 3 pairwise contrasts) from a paired 3-condition DESeq2 analysis of 12000 human blood genes; MSigDB Hallmark (50 sets) and Reactome pathway gene sets are staged locally for human.",
+              "acceptance_criteria": [
+                "ORA run per contrast per collection (Hallmark, Reactome) with explicit tested-gene universe stated",
+                "Gene set size window 15-500 applied and stated",
+                "BH-adjusted enrichment results reported per contrast, each contrast in its own table (not pooled)",
+                "Contrasts with fewer than ~50 significant genes flagged with the caveat about low ORA power",
+                "Gene set database name and version stated in the output"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "constraints": [
+                "universe = tested_genes (post pre-filter genes from T1S2), never whole-genome",
+                "min_size=15, max_size=500 among tested genes",
+                "gene_set_collection = MSigDB human Hallmark (staged at /mnt/refs/managed/msigdb-hallmark-human), second collection = Reactome (staged at /mnt/refs/managed/reactome-pathways/current, filter GMT to Homo sapiens using the paired index file)",
+                "run enrichment separately per contrast; do not pool genes across contrasts",
+                "map gene symbols to Entrez via org.Hs.eg.db before enrichment and report the unmapped share"
+              ],
+              "caveats": [
+                "If fewer than ~50 genes are significant in a contrast, ORA has low power and a changed threshold changes the result — state the significant-list size explicitly next to that contrast's result",
+                "This is ORA rather than the ranked preranked-GSEA default recommended for this design, because the knowledge-base check for this exact paired/blocked situation currently only licenses ORA with an explicit universe; state this substitution in the report"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0103@93aa",
+                  "R-0104@34a4",
+                  "R-0101@06c8",
+                  "R-0048@500d"
+                ],
+                "reason": "knowledge_check validated ORA with explicit tested-gene universe against Hallmark then Reactome as the permitted enrichment method for this situation (the ranked-GSEA default was rejected by the check for this exact paired/blocked design)."
+              }
+            },
+            {
+              "id": "T1S5",
+              "name": "Final integrated report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the consolidated answer to which genes respond to treatment A and/or B within subjects, and how the two treatments differ, with full methodology, diagnostics, and reproducibility record?",
+              "description": "Assemble a report combining: study design and reference level statement; QC diagnostics (PCA, sample distance, library sizes); DESeq2 fit diagnostics (MA plot, dispersion plot); gene tables per contrast with unshrunken log2FC, ashr-shrunken log2FC, lfcSE, and padj; p-value histograms; significant gene counts and omnibus-vs-pairwise overlap; ORA pathway tables per contrast/collection with leading significant genes; full session info (package versions), random seeds used, and the gene-set collection versions (MSigDB Hallmark 2026.1, Reactome current release).",
+              "context": "Consolidates outputs from T1S1-T1S4 and T2S1 into one interpretable deliverable for the research question of within-subject treatment response and treatment A vs B differences.",
+              "acceptance_criteria": [
+                "Report states design formula, reference level, and all four named contrasts",
+                "Report states thresholds (padj<0.05), n genes tested after filtering, and n DE genes per contrast",
+                "Report includes both fit diagnostic plots and p-value histograms",
+                "Report includes full session info, package versions, and gene-set collection versions",
+                "Report explicitly notes the substitution of ORA for ranked GSEA and the missing tximport length-offset as stated deviations"
+              ],
+              "packages": [
+                "DESeq2",
+                "rmarkdown"
+              ],
+              "depends_on": [
+                "T1S4",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "report_fields: method, versions, design, thresholds, n_tested, n_de, session_info",
+                "reproducibility_record: session_info, seed, package_versions, collection_version"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0086@becf",
+                  "R-0105@c4a8",
+                  "R-0055@107a"
+                ],
+                "reason": "Report step assembles the required reproducibility record, diagnostic plots, and effect-size tables per the report-step rules."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:f1149a1794f14d63c9f60306f17adfea4f299cfb1e17e7e9c4fc9770a7aa9263"
+  }
+}

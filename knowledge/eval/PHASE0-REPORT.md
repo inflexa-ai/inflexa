@@ -267,6 +267,119 @@ the method, the filter, and the outcome. It loses only where it fails to
 submit. Every Sonnet plan carries the grounding that no Opus plan carries.
 The price is six times the tool calls and a quarter more wall-clock.
 
+## Four changes in the plane, and the four-arm campaign
+
+The head-to-head campaign showed four faults, and four changes followed.
+
+- **A flagged procedure is consistent.** Under a flag that removes inference
+  the engine drops the shrinkage and the multiple-testing steps, and it
+  turns the enrichment step descriptive. A no-replicates plan copied from
+  the procedure no longer names apeglm.
+- **The environment rides in the answer.** The recommend tool joins the farm
+  lock and the reference store the host binds. Each step says whether its
+  package is present, at which version, and whether its collection is in
+  the store, at which path. The description tells the model not to list what
+  the answer reports.
+- **The answer carries a plan skeleton.** The procedure folds into plan
+  steps. Each step carries the id, the name, the track, the agent, the
+  packages, the dependencies, the constraints, the caveats, and the grounding. The
+  planner adds the question, the acceptance criteria, the resources, and the
+  step budget from the profile.
+- **The enrichment rules are stronger.** A new consensus rule makes the
+  ranked method the default. A companion rule carries the dispute on the
+  ranking statistic. A new situation field `enrichment_input` lets a
+  gene-list rule or a per-sample-score rule win when the caller sets it.
+
+### The four-arm campaign
+
+Campaign `four-arms` in `results/`: the same eight tasks, three runs per
+task, four arms under one host, 96 plans, two blind judges. Every with-arm
+plan carries a grounding on every step, and every with-arm plan follows the
+skeleton ids.
+
+| Arm | Submitted | Rubric, Opus judge | Rubric, Sonnet judge | Tool calls | Listing calls | Time per plan |
+| --- | --- | --- | --- | --- | --- | --- |
+| Sonnet 5 with the plane | 24 of 24 | 94.1 | 94.0 | 11.6 | 7.6 | 86 s |
+| Sonnet 5 alone | 23 of 24 | 63.3 | 62.4 | 11.7 | 5.3 | 75 s |
+| Opus 5 with the plane | 24 of 24 | 96.7 | 97.2 | 4.3 | 1.2 | 126 s |
+| Opus 5 alone | 24 of 24 | 89.5 | 91.4 | 3.2 | 1.9 | 101 s |
+
+| Paired contrast by task, Opus judge | Difference, 95% interval |
+| --- | --- |
+| Sonnet with, minus Sonnet alone | +30.7 [24.9, 37.1] |
+| Opus with, minus Opus alone | +7.1 [4.2, 11.4] |
+| Sonnet with, minus Opus alone | +4.5 [1.9, 8.3] |
+| Sonnet with, minus Opus with | -2.6 [-3.5, -1.7] |
+
+Under the Sonnet judge the same contrasts are +31.5, +5.9, +2.6 with an
+interval of [-0.6, 7.2], and -3.3. The two judges agree on every ordering.
+
+The reading is now clear. Sonnet 5 with the plane is above Opus 5 alone on
+every one of the eight tasks under the Opus judge. The interval of the
+difference is above zero. The plane also lifts Opus by seven points, most
+of it on the no-replicates and the confounded tasks. Sonnet with the plane
+stays three points under Opus with the plane, with a tight interval. Thus the
+model still matters, but far less than the plane does. The four changes cut
+the Sonnet tool calls from 18.6 to 11.6 per plan and the wall-clock from
+118 s to 86 s. No run needed the early cap. The one Sonnet-alone plan that
+did not land failed on a provider error at its first call.
+
+## The second expansion: situations, tasks, and the Python path
+
+The evaluation and the tree grew in three directions.
+
+- **Situations.** The simulator holds fourteen patterns, four of them new:
+  a 60 versus 60 cohort, a design with sex and age covariates, two time
+  points, and a paired design with three groups. Every pattern also writes
+  a TPM matrix and a log-expression matrix beside the counts.
+- **Tasks.** The task set holds 32 tasks over 23 distinct combinations of
+  pattern, data state, and organism. A task can set the organism, the data
+  state, an extra results table, hidden metadata columns, a user constraint,
+  and the expected outcome. The new tasks cover these situations:
+  - three groups, an outlier sample, and a suspected batch with no batch column
+  - STAR and RSEM counts, a 3-prime library, and an unknown strandedness
+  - a mouse cohort, a zebrafish cohort, and a total RNA library
+  - two time points, a paired three-group design, a population cohort, and covariates
+  - an enrichment-only question, a gene-list question, and a per-sample score question
+  - a FASTQ input that must stop, and a QC-only question
+  - TPM and log-scale inputs
+  - three tasks that ask for Python
+- **The Python path.** Six Python templates mirror the R templates slot for
+  slot. They cover PyDESeq2 for the two-group test and gseapy for the
+  ranked and the discrete enrichment. They also cover a QC on log counts,
+  the descriptive path, and decoupler for per-sample scores. A template declares its language. The
+  renderer writes the literals of that language, and the service parses the
+  script with the parser of that language. The test runner runs `python3`
+  in the same image. The caller selects the language with a
+  preference on the recommend call. A preference never changes a rule or a
+  method. The tree holds 27 templates, 21 in R and 6 in Python.
+
+### The validation run of the new tasks
+
+Campaign `tasks-check` in `results/`: each of the 24 new tasks ran once with
+Sonnet 5 and the plane, under the same host as the four-arm campaign.
+
+| Measure | Value |
+| --- | --- |
+| Runs that reached the expected outcome | 24 of 24 |
+| Deterministic expectations met | 156 of 160 |
+| Method steps with a grounding | 86 of 99 |
+| Time and output tokens per plan | 96 s, 7,578 |
+
+The FASTQ task ended in a clarification request that asks for the
+quantification or the counts. That is the expected outcome, and the scorer
+now judges such a request by its question. The three Python tasks received
+the Python templates through the preference, and their plans name PyDESeq2
+and gseapy and no R command. The interaction task in Python has no Python
+template, thus its plan carries no template and names PyDESeq2 by hand.
+
+Two tasks miss an expectation. The total RNA plan does not name the
+mitochondrial fraction or the intronic share. The QC rule for a total RNA
+library asks for both, thus the plan and not the task is short. The zebrafish
+plan names KEGG in a sentence that rejects it, which the pattern cannot
+tell from a use. These are the findings a full campaign over the 32 tasks
+would score with the judges.
+
 ## What the campaign does not show
 
 - One frontier model and one mid-size model, two runs per task. The design

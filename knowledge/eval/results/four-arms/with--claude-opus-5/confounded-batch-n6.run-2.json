@@ -1,0 +1,844 @@
+{
+  "campaign": "four-arms",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "confounded-batch-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T14:01:29.685Z",
+  "elapsedMs": 133641,
+  "outcome": "plan_submitted",
+  "planId": "pln-c3116b40",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC under a confounded design",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Condition and batch are the same partition of these 12 samples; a PCA that separates B1 from B2 is equally a PCA that separates control from treated, and it carries no information about which of the two drives the separation"
+        ],
+        "context": "Inputs: /eval-four-arms-with-confounded-batch-n6-2/data/inputs/counts/counts.csv (12,000 genes x 12 samples, raw integer salmon gene-level counts, gene symbol in the first column) and /eval-four-arms-with-confounded-batch-n6-2/data/inputs/metadata/metadata.csv (12 rows x 3 columns: sample, condition, batch). Build a DESeqDataSet with design ~ condition, apply the variance stabilizing transformation blind to the design, and run PCA on the 500 most variable genes plus a Euclidean sample-distance heatmap. Colour every plot twice, once by condition and once by batch. Because B1 = all controls and B2 = all treated, those two colourings are identical by construction; report that explicitly rather than presenting the batch colouring as independent evidence.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "How do the 12 lung samples (6 treated in batch B2, 6 control in batch B1) group on global expression, and does any sample depart from its group, given that condition and batch label the same partition?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Raw counts, so sample-structure QC runs before the model: blind VST, PCA on the top 500 variable genes, sample distance heatmap, coloured by condition and batch, per R-0033@40bf.",
+          "status": "grounded",
+          "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the variance stabilizing transformation with blind=TRUE",
+          "PCA on the 500 most variable genes",
+          "Colour PCA and distance heatmap by both condition and batch",
+          "Do not fit, estimate, or remove a batch effect anywhere in this analysis"
+        ],
+        "description": "QC artifacts: per-sample library sizes, blind-VST PCA (top 500 variable genes, PC1/PC2 with percent variance) coloured by condition and by batch, sample-to-sample distance heatmap, and a written note that the condition and batch colourings are the same partition of the samples.",
+        "acceptance_criteria": [
+          "All 12 samples in counts.csv are matched to rows of metadata.csv by sample identifier, with the match verified and the sample order aligned before any transform",
+          "Library size per sample reported, with any sample far below the median flagged by name",
+          "PCA on the blind VST of the 500 most variable genes produced, with percent variance for PC1 and PC2, rendered once coloured by condition and once coloured by batch",
+          "Sample-distance heatmap produced",
+          "The report states in words that batch B1 contains exactly the 6 controls and batch B2 exactly the 6 treated samples, so the two colourings cannot be distinguished",
+          "No batch correction, ComBat-seq, removeBatchEffect, or surrogate-variable adjustment is applied at this or any later step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test, treated vs control, confounded",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The processing batch is perfectly confounded with the condition. Every log2 fold change here is a treated-plus-B2 versus control-plus-B1 difference and cannot be attributed to treatment. This is not fixable by analysis",
+          "With 12,000 genes and 6 per group the gene list may be large and largely batch-driven; a large count of significant genes is not evidence of a strong treatment effect",
+          "If a fold-change threshold is wanted, pass it as lfcThreshold inside results() rather than filtering the table afterwards"
+        ],
+        "context": "Fit DESeq2 on the raw counts from counts.csv with design ~ condition. The batch is perfectly confounded with the condition, so no batch term may be fitted (the model matrix would be rank-deficient) and no count-adjustment method may be used (it would remove the condition effect along with the batch). State the assumption this rests on — that the B1/B2 processing difference contributes nothing — and label every result confounded. Set control explicitly as the reference level of the condition factor rather than relying on alphabetical ordering, and name the contrast as the triple (condition, treated, control) so a positive log2 fold change means higher in treated. Pre-filter minimally: keep a gene with at least 10 counts in at least 6 samples (the smallest group size). Let DESeq2 estimate median-of-ratios size factors inside the model; do not pre-scale, pre-normalize, or transform the counts before fitting. Keep the Cook's-distance outlier behaviour on — with 6 replicates per cell DESeq2 flags outlier genes and sets their p-values to NA rather than replacing counts, so report that NA count separately from the NAs produced by independent filtering. The profile names salmon as the count source, but only a gene-level integer matrix was staged: there are no transcript-level quantifications and no per-gene average transcript lengths, so the tximport length-offset route cannot be taken. Record that limitation in the output rather than fabricating offsets.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "Which genes differ between treated (batch B2) and control (batch B1) lung samples under a ~ condition model, given that the estimate cannot be separated from a B2-vs-B1 processing effect?",
+        "grounding": {
+          "claims": [
+            "R-0005@668f",
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@762e",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "Flagged by R-0005@668f: batch perfectly confounded with condition, so no batch term and no repair method; outcome confounded_label_or_stop — the plan takes the label branch and fits ~ condition with every result marked confounded. R-0018@a472 (tximport length offsets) cannot be honoured because only a gene-level matrix was staged; the step states that.",
+          "status": "flagged",
+          "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design: ~ condition only. Do not fit a batch term and do not adjust the counts by any batch-removal method",
+          "Outcome: confounded_label_or_stop — state the no-batch-effect assumption and label every result as confounded",
+          "min_count = 10, min_samples = 6 (smallest group size)",
+          "Median-of-ratios size factors inside the model; no pre-normalized counts",
+          "Explicit reference level (control) and contrast named as factor, numerator, denominator",
+          "Wald test; Cook's outlier policy flag_and_report_na",
+          "apeglm shrinkage for reported and ranked log2 fold changes",
+          "BH adjustment, alpha = 0.05, independent filtering on",
+          "Inspect the p-value histogram before trusting the adjusted p-values",
+          "Select differentially expressed genes by padj, never by raw p-value or by fold change alone",
+          "No tximport length offsets are available (gene-level matrix only); state this rather than approximating them"
+        ],
+        "description": "Full DESeq2 results table for the contrast condition treated vs control: baseMean, unshrunken log2FoldChange with lfcSE, apeglm-shrunken log2FoldChange, stat (Wald), pvalue, padj (BH, independent filtering on, alpha 0.05). Plus the p-value histogram, the MA plot, the dispersion plot, counts of genes tested and genes at padj < 0.05, and the count of NA p-values attributable to outlier flagging versus independent filtering. Every output is labelled as a confounded treatment-plus-batch effect.",
+        "acceptance_criteria": [
+          "Design formula is ~ condition with no batch term; the script contains no ComBat-seq, removeBatchEffect, sva, or any other batch-adjustment call",
+          "Reference level of condition is set explicitly to control by an explicit call, and the contrast is specified as the triple (condition, treated, control)",
+          "Pre-filter keeps genes with >= 10 counts in at least 6 samples; the number of genes retained out of 12,000 is reported",
+          "Size factors are estimated by DESeq2 median-of-ratios inside the model; counts are not scaled or transformed beforehand",
+          "results() is called with alpha = 0.05 and independent filtering enabled, and the reporting cutoff is the same 0.05",
+          "apeglm shrinkage applied via lfcShrink for the reported and ranked fold changes, with the unshrunken estimate and its lfcSE retained in the same table",
+          "p-value histogram produced and its shape described before the adjusted p-values are interpreted",
+          "MA plot and dispersion plot produced",
+          "Number of genes with NA p-value from Cook's outlier flagging is reported separately from those removed by independent filtering",
+          "Every results artifact and summary sentence states that the treated-vs-control estimate is inseparable from the B2-vs-B1 batch effect",
+          "Output includes the full ranked table of all tested genes with the Wald stat column, for the downstream enrichment step"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR quasi-likelihood cross-check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Agreement between DESeq2 and edgeR says nothing about whether the effect is treatment or batch — both fit the same confounded design",
+          "Disagreement between the two methods concentrates at low counts"
+        ],
+        "context": "Run an edgeR quasi-likelihood F-test on the same raw counts from counts.csv with the same one-factor design ~ condition and the same treated-vs-control contrast, using TMM scaling factors and edgeR's filterByExpr. Then compare against the DESeq2 result from T1S2 at padj < 0.05: report the count from each method and the size of the intersection, treat the intersection as the high-confidence set, and list the method-specific genes as a secondary set naming which method called them. Do not report the union as the result. This is a robustness check on the test, not on the design: both methods estimate the same confounded quantity.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma"
+        ],
+        "question": "Which of the treated-vs-control genes are called by both DESeq2 Wald and edgeR quasi-likelihood on the same 12 lung samples, and which by only one?",
+        "grounding": {
+          "claims": [
+            "R-0001@9a17",
+            "R-0042@54e1",
+            "R-0026@762e"
+          ],
+          "reason": "R-0001@9a17 names edgeR QL as the second method at 2-11 replicates per group; R-0042@54e1 requires reporting the per-method counts and treating the intersection as the high-confidence set.",
+          "status": "grounded",
+          "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Same design (~ condition) and same contrast direction (treated vs control) as T1S2",
+          "TMM scaling factors inside the model; no pre-normalized counts",
+          "Report per-method counts and the intersection; do not report the union"
+        ],
+        "description": "edgeR QL results table for treated vs control, a two-way comparison table (DESeq2-only, edgeR-only, intersection) at padj < 0.05, and the intersection gene set exported as the high-confidence list — all labelled confounded.",
+        "acceptance_criteria": [
+          "edgeR QL fit uses design ~ condition with no batch term, TMM normalization, and filterByExpr",
+          "Number of significant genes at FDR < 0.05 reported for edgeR, for DESeq2 (from T1S2), and for their intersection",
+          "Intersection reported as the high-confidence set; the union is not presented as the result",
+          "Method-specific genes listed with the name of the method that called them",
+          "The comparison is described as a test-robustness check that does not address the confounding"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA on the Wald statistic",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Fewer than about 50 significant genes would make an over-representation test pointless; the ranked method on the full list is used regardless, so this changes nothing operationally but should be noted with the significant-gene count",
+          "Enrichment results are method-dependent — a different method or a different ranking metric would give a different list; present sets as hypotheses",
+          "The gene sets inherit the design confounding in full: an enriched pathway may reflect a processing difference between B1 and B2 rather than treatment",
+          "If the second collection cannot be resolved in the environment at run time, report the hallmark pass alone and record the absence — do not substitute a non-human collection"
+        ],
+        "context": "Take the complete DESeq2 results table from T1S2 — every tested gene, not a thresholded subset — and rank it by the Wald statistic (the stat column). The ranking metric is a disputed choice and this plan states its side: the Wald statistic, because it is signed and scaled by its own standard error, unlike the unshrunken fold change (large and noisy at low counts) and unlike a signed p-value (which saturates and produces arbitrary ties at the top). Run fgsea against the human MSigDB hallmark collection first, with gene sets restricted to 15-500 members after intersection with the tested genes, BH adjustment, and a fixed random seed recorded for the permutations. Then run a second, more specific pass against the human GO Biological Process collection. Both reference collections are human gene-symbol GMTs and the count matrix already uses gene symbols, so the identifier spaces match directly; if a mapping step is nonetheless used, report the share of tested genes that failed to map. The rule's named second collection is Reactome, but no Reactome gene-set file is present in this environment — use human GO Biological Process as the second collection and state that substitution; human WikiPathways is available as a further alternative. If neither follow-up collection can be resolved at run time, report the hallmark pass alone and record the absence rather than failing the step. Collapse significant sets that share most of their leading-edge genes into groups and report one representative per group, keeping the full table as a supplement. Do not run an over-representation test on the significant gene list: the ranked method on the full list is the planned approach, and an ORA of a short list has no power.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which hallmark and GO biological-process gene sets are coordinately shifted between treated (B2) and control (B1) lung samples, on the full ranked list of tested genes?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0108@409f",
+            "R-0099@0a77",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0054@801e",
+            "R-0048@500d",
+            "R-0098@d01b",
+            "R-0101@06c8",
+            "R-0103@93aa"
+          ],
+          "reason": "Preranked fgsea on the full tested list per R-0107@976c; the disputed ranking metric of R-0108@409f is decided here for the Wald statistic (signed and scaled by its standard error, per R-0099@0a77). R-0098@d01b names Reactome as the human second collection, but no Reactome GMT is staged, so human GO BP is used and the substitution is stated.",
+          "status": "grounded",
+          "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "rank_metric = stat (DESeq2 Wald statistic); state the choice in the output",
+          "gsea_input = full ranked list of tested genes; never a thresholded list",
+          "min_size = 15, max_size = 500 after intersection with the tested genes",
+          "universe = tested genes",
+          "collapse_redundant = true",
+          "First collection: human MSigDB hallmark gene sets. Second collection: human GO Biological Process gene sets (substituting for Reactome, which is not staged here); human WikiPathways is an acceptable alternative",
+          "Record the permutation seed and the collection version"
+        ],
+        "description": "fgsea results for the human hallmark collection and for a second, more specific human collection (GO Biological Process; WikiPathways human as fallback): set name, size, NES, p-value, BH-adjusted p-value, and leading-edge genes, with redundant sets collapsed to representatives. Includes the collection name and version, the ranking metric, the universe, the size window, and the permutation seed.",
+        "acceptance_criteria": [
+          "Input is the full ranked list of all genes tested in T1S2, not a list thresholded by padj or fold change",
+          "Ranking metric is the DESeq2 Wald statistic (stat), and the choice is stated in the output",
+          "Gene sets restricted to 15-500 members after intersection with the tested genes",
+          "Reference collections resolved against the environment as human hallmark gene sets and a second human pathway/process collection; the resolved collection name and version are reported",
+          "Organism check: only human gene-symbol collections are used against this human symbol matrix; a mouse or rat collection is never substituted",
+          "BH-adjusted p-values reported; redundant significant sets collapsed into groups with one representative each, full table retained as a supplement",
+          "Leading-edge genes reported per significant set",
+          "Permutation seed recorded",
+          "Share of tested genes that failed to map to the collection identifier space reported",
+          "No over-representation test is run on a thresholded gene list",
+          "Every enrichment result is labelled as inheriting the treated/B2 versus control/B1 confounding"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Confounded-design report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A large, statistically clean gene list from this design is exactly what a strong batch effect would also produce; do not read the size of the list as evidence of treatment effect",
+          "Downstream biological interpretation of the enriched sets should be presented as hypothesis, not finding"
+        ],
+        "context": "Assemble the QC (T1S1), the DESeq2 results (T1S2), the edgeR cross-check (T1S3), and the enrichment (T2S1) into one report. The headline is the design, not the gene list: batch B1 holds all 6 controls and batch B2 all 6 treated samples, so the treatment effect and the processing effect are the same contrast and no analysis can separate them. State the assumption the results rest on — that the B1/B2 processing difference contributes nothing to expression — say that it is untestable with these samples, and label every gene and every pathway accordingly. Then give the reproducibility and methods record: package versions and sessionInfo, the random seed used for the GSEA permutations, the gene-set collection name and version, the design formula, the named contrast, the thresholds, the number of genes tested, and the number called per method. Include the MA plot, the dispersion plot and the p-value histogram before the gene tables. In the gene table give the unshrunken log2 fold change, the apeglm-shrunken log2 fold change, and the lfcSE for each gene, and rank the table and the plots by the shrunken value. Give the DESeq2/edgeR overlap counts and the leading-edge genes of each reported gene set. Close with the concrete design fix: batches that each span both conditions, or a set of technical replicates processed across both batches, either of which would make the batch effect estimable.",
+        "maxSteps": 200,
+        "packages": [
+          "knitr",
+          "rmarkdown",
+          "ggplot2"
+        ],
+        "question": "What can and cannot be concluded about treated versus control lung expression from this experiment, and what design would be needed to answer the question properly?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0042@54e1",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf",
+            "R-0005@668f"
+          ],
+          "reason": "Report content follows R-0041/R-0085/R-0087/R-0051/R-0105/R-0086; the confounded labelling and the design recommendation carry out the confounded_label_or_stop outcome of R-0005@668f.",
+          "status": "grounded",
+          "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T2S1"
+        ],
+        "constraints": [
+          "Do not present any gene or pathway as a treatment effect; the permitted framing is treated-plus-B2 versus control-plus-B1",
+          "Report the shrunken and the unshrunken log2 fold change with the lfcSE; rank by the shrunken value",
+          "Include the MA plot, the dispersion plot and the p-value histogram before the gene tables",
+          "Include sessionInfo, package versions, the permutation seed, and the gene-set collection version",
+          "Report the overlap of the two differential expression methods, not their union"
+        ],
+        "description": "A standalone report whose primary conclusion is that the treated-vs-control comparison is confounded with processing batch and therefore not interpretable as a treatment effect, accompanied by the full confounded results (gene tables with shrunken and unshrunken fold changes, fit diagnostics, method overlap, enriched sets with leading edges) and a reproducibility record.",
+        "acceptance_criteria": [
+          "The report leads with the confounding: B1 = all 6 controls, B2 = all 6 treated, treatment and batch effects are not separable, and no analysis fixes this",
+          "The no-batch-effect assumption is stated explicitly and identified as untestable in this dataset",
+          "Every gene-level and pathway-level result is labelled as a confounded treatment-plus-batch effect",
+          "Methods record present: method names, package versions, design formula ~ condition, contrast (condition, treated, control), padj threshold 0.05, number of genes tested after filtering, number of DE genes per method",
+          "MA plot, dispersion plot and p-value histogram appear before the gene tables",
+          "Gene table carries log2FoldChange, apeglm-shrunken log2FoldChange and lfcSE; ranking and plots use the shrunken value",
+          "DESeq2 and edgeR significant counts and their intersection reported, intersection presented as the high-confidence set",
+          "Leading-edge genes listed for each reported gene set, with overlapping leading edges marked",
+          "Enrichment section names the collection, its version, the ranking metric (Wald stat), the universe and the 15-500 size window, and states that enrichment results are method-dependent",
+          "Reproducibility record included: sessionInfo, package versions, GSEA permutation seed, collection version",
+          "A concrete design recommendation is given: batches spanning both conditions, or technical replicates processed across both batches"
+        ]
+      }
+    ],
+    "title": "Treated vs control lung RNA-seq, batch-confounded",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a raw salmon gene-level count matrix (12,000 genes x 12 samples, counts.csv, gene symbols in the first column) with a 12-row sample table (metadata.csv) carrying condition and batch. The design is 6 treated vs 6 control, and the processing batch is perfectly confounded with the condition: batch B1 holds all 6 controls and batch B2 holds all 6 treated samples. That is the fact that shapes the whole plan. No model can separate a treatment effect from a B2-vs-B1 processing effect here, and no repair method can either: a ~ batch + condition design matrix is rank-deficient, and ComBat-seq / removeBatchEffect / SVA would remove the condition effect together with the batch. So the plan fits ~ condition alone, states the untestable assumption it rests on (no batch effect), and labels every result as confounded rather than pretending the estimate is a treatment effect.\n\nT1S1 does sample-structure QC on a blind VST: PCA on the 500 most variable genes and a Euclidean sample-distance heatmap, coloured by both condition and batch, plus library sizes. Because condition and batch are the same partition of the 12 samples, this step cannot separate them either; its job is to show how much total variance the single B1/B2 = control/treated split explains and whether any sample departs from its group, and to say plainly that the two labellings of the PCA are identical.\n\nT1S2 runs the actual contrast: minimal pre-filter (>= 10 counts in at least 6 samples, the smallest group size), median-of-ratios size factors estimated inside the model, DESeq2 Wald test on ~ condition with control set explicitly as the reference level and the contrast named condition, treated (numerator) vs control (denominator), apeglm shrinkage for the reported and ranked fold changes, BH adjustment at alpha 0.05 with independent filtering on, and the p-value histogram inspected before the adjustment. Since the profile says the counts came from salmon but only a gene-level count matrix was staged (no transcript quantifications, no per-gene average transcript lengths), the length-offset import route is unavailable; the step must state that and proceed on the supplied integer matrix.\n\nT1S3 is the robustness check the two-method rule asks for: an edgeR quasi-likelihood F-test on the same counts and the same one-factor design, reporting each method's count and the intersection as the high-confidence set. With 6 per group the two tools should agree on most genes; disagreement concentrates at low counts. This does nothing about the confounding — both methods estimate the same confounded quantity — and the step says so.\n\nT2S1 takes the full ranked list of tested genes into fgsea. The ranking statistic is a disputed choice and this plan states it: the DESeq2 Wald statistic, because it is signed and scaled by its own standard error, which the unshrunken log2 fold change is not and a saturating signed p-value is not. Hallmark first (human, 50 sets), then the human GO Biological Process collection as the second, more specific pass — the seed's reference census carries no Reactome GMT, and GO BP is the staged human follow-up collection the enrichment rule names alongside Reactome and WikiPathways; WikiPathways human is also staged as a fallback. Pathway-level results inherit the confounding exactly as the gene-level ones do.\n\nT1S4 assembles the report and is where the confounding is stated as the headline finding rather than a footnote: what was run, package versions, the design, thresholds, genes tested, genes called, MA and dispersion plots, the p-value histogram, both shrunken and unshrunken fold changes with standard errors, the edgeR overlap, the leading-edge genes of each significant set, and an explicit statement that every differential call is a treatment-plus-batch effect that this experiment cannot decompose, with the design change (batches spanning both conditions, or technical replicates across batches) that would fix it."
+  },
+  "usage": {
+    "inputTokens": 294417,
+    "outputTokens": 10961,
+    "cacheCreationInputTokens": 145092,
+    "cacheReadInputTokens": 149277,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "known_confounded",
+        "enrichment_input": "ranked_list"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb",
+        "limit": 30
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "known_confounded",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Blind VST, PCA on top variable genes, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with >=10 counts in at least 6 samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors inside the model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "pre_normalized",
+                "value": false
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ condition only; batch not fitted because batch is perfectly confounded with condition; results labelled confounded",
+            "package": "DESeq2",
+            "outcome": "confounded_label_or_stop",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition_treated_vs_control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "outcome": "confounded_label_or_stop",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, p-value histogram inspected",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the DESeq2 Wald statistic against MSigDB Hallmark, then Reactome-equivalent second collection",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Confounded-design report: methods, versions, design, thresholds, MA and dispersion plots, shrunken and unshrunken LFC, leading edge genes, edgeR QL overlap",
+            "parameters": [
+              {
+                "name": "robustness",
+                "value": "overlap_of_two_methods"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control lung RNA-seq, batch-confounded",
+          "analytical_narrative": "The input is a raw salmon gene-level count matrix (12,000 genes x 12 samples, counts.csv, gene symbols in the first column) with a 12-row sample table (metadata.csv) carrying condition and batch. The design is 6 treated vs 6 control, and the processing batch is perfectly confounded with the condition: batch B1 holds all 6 controls and batch B2 holds all 6 treated samples. That is the fact that shapes the whole plan. No model can separate a treatment effect from a B2-vs-B1 processing effect here, and no repair method can either: a ~ batch + condition design matrix is rank-deficient, and ComBat-seq / removeBatchEffect / SVA would remove the condition effect together with the batch. So the plan fits ~ condition alone, states the untestable assumption it rests on (no batch effect), and labels every result as confounded rather than pretending the estimate is a treatment effect.\n\nT1S1 does sample-structure QC on a blind VST: PCA on the 500 most variable genes and a Euclidean sample-distance heatmap, coloured by both condition and batch, plus library sizes. Because condition and batch are the same partition of the 12 samples, this step cannot separate them either; its job is to show how much total variance the single B1/B2 = control/treated split explains and whether any sample departs from its group, and to say plainly that the two labellings of the PCA are identical.\n\nT1S2 runs the actual contrast: minimal pre-filter (>= 10 counts in at least 6 samples, the smallest group size), median-of-ratios size factors estimated inside the model, DESeq2 Wald test on ~ condition with control set explicitly as the reference level and the contrast named condition, treated (numerator) vs control (denominator), apeglm shrinkage for the reported and ranked fold changes, BH adjustment at alpha 0.05 with independent filtering on, and the p-value histogram inspected before the adjustment. Since the profile says the counts came from salmon but only a gene-level count matrix was staged (no transcript quantifications, no per-gene average transcript lengths), the length-offset import route is unavailable; the step must state that and proceed on the supplied integer matrix.\n\nT1S3 is the robustness check the two-method rule asks for: an edgeR quasi-likelihood F-test on the same counts and the same one-factor design, reporting each method's count and the intersection as the high-confidence set. With 6 per group the two tools should agree on most genes; disagreement concentrates at low counts. This does nothing about the confounding — both methods estimate the same confounded quantity — and the step says so.\n\nT2S1 takes the full ranked list of tested genes into fgsea. The ranking statistic is a disputed choice and this plan states it: the DESeq2 Wald statistic, because it is signed and scaled by its own standard error, which the unshrunken log2 fold change is not and a saturating signed p-value is not. Hallmark first (human, 50 sets), then the human GO Biological Process collection as the second, more specific pass — the seed's reference census carries no Reactome GMT, and GO BP is the staged human follow-up collection the enrichment rule names alongside Reactome and WikiPathways; WikiPathways human is also staged as a fallback. Pathway-level results inherit the confounding exactly as the gene-level ones do.\n\nT1S4 assembles the report and is where the confounding is stated as the headline finding rather than a footnote: what was run, package versions, the design, thresholds, genes tested, genes called, MA and dispersion plots, the p-value histogram, both shrunken and unshrunken fold changes with standard errors, the edgeR overlap, the leading-edge genes of each significant set, and an explicit statement that every differential call is a treatment-plus-batch effect that this experiment cannot decompose, with the design change (batches spanning both conditions, or technical replicates across batches) that would fix it.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC under a confounded design",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "How do the 12 lung samples (6 treated in batch B2, 6 control in batch B1) group on global expression, and does any sample depart from its group, given that condition and batch label the same partition?",
+              "context": "Inputs: /eval-four-arms-with-confounded-batch-n6-2/data/inputs/counts/counts.csv (12,000 genes x 12 samples, raw integer salmon gene-level counts, gene symbol in the first column) and /eval-four-arms-with-confounded-batch-n6-2/data/inputs/metadata/metadata.csv (12 rows x 3 columns: sample, condition, batch). Build a DESeqDataSet with design ~ condition, apply the variance stabilizing transformation blind to the design, and run PCA on the 500 most variable genes plus a Euclidean sample-distance heatmap. Colour every plot twice, once by condition and once by batch. Because B1 = all controls and B2 = all treated, those two colourings are identical by construction; report that explicitly rather than presenting the batch colouring as independent evidence.",
+              "description": "QC artifacts: per-sample library sizes, blind-VST PCA (top 500 variable genes, PC1/PC2 with percent variance) coloured by condition and by batch, sample-to-sample distance heatmap, and a written note that the condition and batch colourings are the same partition of the samples.",
+              "acceptance_criteria": [
+                "All 12 samples in counts.csv are matched to rows of metadata.csv by sample identifier, with the match verified and the sample order aligned before any transform",
+                "Library size per sample reported, with any sample far below the median flagged by name",
+                "PCA on the blind VST of the 500 most variable genes produced, with percent variance for PC1 and PC2, rendered once coloured by condition and once coloured by batch",
+                "Sample-distance heatmap produced",
+                "The report states in words that batch B1 contains exactly the 6 controls and batch B2 exactly the 6 treated samples, so the two colourings cannot be distinguished",
+                "No batch correction, ComBat-seq, removeBatchEffect, or surrogate-variable adjustment is applied at this or any later step"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Use the variance stabilizing transformation with blind=TRUE",
+                "PCA on the 500 most variable genes",
+                "Colour PCA and distance heatmap by both condition and batch",
+                "Do not fit, estimate, or remove a batch effect anywhere in this analysis"
+              ],
+              "caveats": [
+                "Condition and batch are the same partition of these 12 samples; a PCA that separates B1 from B2 is equally a PCA that separates control from treated, and it carries no information about which of the two drives the separation"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Raw counts, so sample-structure QC runs before the model: blind VST, PCA on the top 500 variable genes, sample distance heatmap, coloured by condition and batch, per R-0033@40bf."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test, treated vs control, confounded",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes differ between treated (batch B2) and control (batch B1) lung samples under a ~ condition model, given that the estimate cannot be separated from a B2-vs-B1 processing effect?",
+              "context": "Fit DESeq2 on the raw counts from counts.csv with design ~ condition. The batch is perfectly confounded with the condition, so no batch term may be fitted (the model matrix would be rank-deficient) and no count-adjustment method may be used (it would remove the condition effect along with the batch). State the assumption this rests on — that the B1/B2 processing difference contributes nothing — and label every result confounded. Set control explicitly as the reference level of the condition factor rather than relying on alphabetical ordering, and name the contrast as the triple (condition, treated, control) so a positive log2 fold change means higher in treated. Pre-filter minimally: keep a gene with at least 10 counts in at least 6 samples (the smallest group size). Let DESeq2 estimate median-of-ratios size factors inside the model; do not pre-scale, pre-normalize, or transform the counts before fitting. Keep the Cook's-distance outlier behaviour on — with 6 replicates per cell DESeq2 flags outlier genes and sets their p-values to NA rather than replacing counts, so report that NA count separately from the NAs produced by independent filtering. The profile names salmon as the count source, but only a gene-level integer matrix was staged: there are no transcript-level quantifications and no per-gene average transcript lengths, so the tximport length-offset route cannot be taken. Record that limitation in the output rather than fabricating offsets.",
+              "description": "Full DESeq2 results table for the contrast condition treated vs control: baseMean, unshrunken log2FoldChange with lfcSE, apeglm-shrunken log2FoldChange, stat (Wald), pvalue, padj (BH, independent filtering on, alpha 0.05). Plus the p-value histogram, the MA plot, the dispersion plot, counts of genes tested and genes at padj < 0.05, and the count of NA p-values attributable to outlier flagging versus independent filtering. Every output is labelled as a confounded treatment-plus-batch effect.",
+              "acceptance_criteria": [
+                "Design formula is ~ condition with no batch term; the script contains no ComBat-seq, removeBatchEffect, sva, or any other batch-adjustment call",
+                "Reference level of condition is set explicitly to control by an explicit call, and the contrast is specified as the triple (condition, treated, control)",
+                "Pre-filter keeps genes with >= 10 counts in at least 6 samples; the number of genes retained out of 12,000 is reported",
+                "Size factors are estimated by DESeq2 median-of-ratios inside the model; counts are not scaled or transformed beforehand",
+                "results() is called with alpha = 0.05 and independent filtering enabled, and the reporting cutoff is the same 0.05",
+                "apeglm shrinkage applied via lfcShrink for the reported and ranked fold changes, with the unshrunken estimate and its lfcSE retained in the same table",
+                "p-value histogram produced and its shape described before the adjusted p-values are interpreted",
+                "MA plot and dispersion plot produced",
+                "Number of genes with NA p-value from Cook's outlier flagging is reported separately from those removed by independent filtering",
+                "Every results artifact and summary sentence states that the treated-vs-control estimate is inseparable from the B2-vs-B1 batch effect",
+                "Output includes the full ranked table of all tested genes with the Wald stat column, for the downstream enrichment step"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Design: ~ condition only. Do not fit a batch term and do not adjust the counts by any batch-removal method",
+                "Outcome: confounded_label_or_stop — state the no-batch-effect assumption and label every result as confounded",
+                "min_count = 10, min_samples = 6 (smallest group size)",
+                "Median-of-ratios size factors inside the model; no pre-normalized counts",
+                "Explicit reference level (control) and contrast named as factor, numerator, denominator",
+                "Wald test; Cook's outlier policy flag_and_report_na",
+                "apeglm shrinkage for reported and ranked log2 fold changes",
+                "BH adjustment, alpha = 0.05, independent filtering on",
+                "Inspect the p-value histogram before trusting the adjusted p-values",
+                "Select differentially expressed genes by padj, never by raw p-value or by fold change alone",
+                "No tximport length offsets are available (gene-level matrix only); state this rather than approximating them"
+              ],
+              "caveats": [
+                "The processing batch is perfectly confounded with the condition. Every log2 fold change here is a treated-plus-B2 versus control-plus-B1 difference and cannot be attributed to treatment. This is not fixable by analysis",
+                "With 12,000 genes and 6 per group the gene list may be large and largely batch-driven; a large count of significant genes is not evidence of a strong treatment effect",
+                "If a fold-change threshold is wanted, pass it as lfcThreshold inside results() rather than filtering the table afterwards"
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+                "claims": [
+                  "R-0005@668f",
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@762e",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Flagged by R-0005@668f: batch perfectly confounded with condition, so no batch term and no repair method; outcome confounded_label_or_stop — the plan takes the label branch and fits ~ condition with every result marked confounded. R-0018@a472 (tximport length offsets) cannot be honoured because only a gene-level matrix was staged; the step states that."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "edgeR quasi-likelihood cross-check",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the treated-vs-control genes are called by both DESeq2 Wald and edgeR quasi-likelihood on the same 12 lung samples, and which by only one?",
+              "context": "Run an edgeR quasi-likelihood F-test on the same raw counts from counts.csv with the same one-factor design ~ condition and the same treated-vs-control contrast, using TMM scaling factors and edgeR's filterByExpr. Then compare against the DESeq2 result from T1S2 at padj < 0.05: report the count from each method and the size of the intersection, treat the intersection as the high-confidence set, and list the method-specific genes as a secondary set naming which method called them. Do not report the union as the result. This is a robustness check on the test, not on the design: both methods estimate the same confounded quantity.",
+              "description": "edgeR QL results table for treated vs control, a two-way comparison table (DESeq2-only, edgeR-only, intersection) at padj < 0.05, and the intersection gene set exported as the high-confidence list — all labelled confounded.",
+              "acceptance_criteria": [
+                "edgeR QL fit uses design ~ condition with no batch term, TMM normalization, and filterByExpr",
+                "Number of significant genes at FDR < 0.05 reported for edgeR, for DESeq2 (from T1S2), and for their intersection",
+                "Intersection reported as the high-confidence set; the union is not presented as the result",
+                "Method-specific genes listed with the name of the method that called them",
+                "The comparison is described as a test-robustness check that does not address the confounding"
+              ],
+              "packages": [
+                "edgeR",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Same design (~ condition) and same contrast direction (treated vs control) as T1S2",
+                "TMM scaling factors inside the model; no pre-normalized counts",
+                "Report per-method counts and the intersection; do not report the union"
+              ],
+              "caveats": [
+                "Agreement between DESeq2 and edgeR says nothing about whether the effect is treatment or batch — both fit the same confounded design",
+                "Disagreement between the two methods concentrates at low counts"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+                "claims": [
+                  "R-0001@9a17",
+                  "R-0042@54e1",
+                  "R-0026@762e"
+                ],
+                "reason": "R-0001@9a17 names edgeR QL as the second method at 2-11 replicates per group; R-0042@54e1 requires reporting the per-method counts and treating the intersection as the high-confidence set."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA on the Wald statistic",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which hallmark and GO biological-process gene sets are coordinately shifted between treated (B2) and control (B1) lung samples, on the full ranked list of tested genes?",
+              "context": "Take the complete DESeq2 results table from T1S2 — every tested gene, not a thresholded subset — and rank it by the Wald statistic (the stat column). The ranking metric is a disputed choice and this plan states its side: the Wald statistic, because it is signed and scaled by its own standard error, unlike the unshrunken fold change (large and noisy at low counts) and unlike a signed p-value (which saturates and produces arbitrary ties at the top). Run fgsea against the human MSigDB hallmark collection first, with gene sets restricted to 15-500 members after intersection with the tested genes, BH adjustment, and a fixed random seed recorded for the permutations. Then run a second, more specific pass against the human GO Biological Process collection. Both reference collections are human gene-symbol GMTs and the count matrix already uses gene symbols, so the identifier spaces match directly; if a mapping step is nonetheless used, report the share of tested genes that failed to map. The rule's named second collection is Reactome, but no Reactome gene-set file is present in this environment — use human GO Biological Process as the second collection and state that substitution; human WikiPathways is available as a further alternative. If neither follow-up collection can be resolved at run time, report the hallmark pass alone and record the absence rather than failing the step. Collapse significant sets that share most of their leading-edge genes into groups and report one representative per group, keeping the full table as a supplement. Do not run an over-representation test on the significant gene list: the ranked method on the full list is the planned approach, and an ORA of a short list has no power.",
+              "description": "fgsea results for the human hallmark collection and for a second, more specific human collection (GO Biological Process; WikiPathways human as fallback): set name, size, NES, p-value, BH-adjusted p-value, and leading-edge genes, with redundant sets collapsed to representatives. Includes the collection name and version, the ranking metric, the universe, the size window, and the permutation seed.",
+              "acceptance_criteria": [
+                "Input is the full ranked list of all genes tested in T1S2, not a list thresholded by padj or fold change",
+                "Ranking metric is the DESeq2 Wald statistic (stat), and the choice is stated in the output",
+                "Gene sets restricted to 15-500 members after intersection with the tested genes",
+                "Reference collections resolved against the environment as human hallmark gene sets and a second human pathway/process collection; the resolved collection name and version are reported",
+                "Organism check: only human gene-symbol collections are used against this human symbol matrix; a mouse or rat collection is never substituted",
+                "BH-adjusted p-values reported; redundant significant sets collapsed into groups with one representative each, full table retained as a supplement",
+                "Leading-edge genes reported per significant set",
+                "Permutation seed recorded",
+                "Share of tested genes that failed to map to the collection identifier space reported",
+                "No over-representation test is run on a thresholded gene list",
+                "Every enrichment result is labelled as inheriting the treated/B2 versus control/B1 confounding"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "constraints": [
+                "rank_metric = stat (DESeq2 Wald statistic); state the choice in the output",
+                "gsea_input = full ranked list of tested genes; never a thresholded list",
+                "min_size = 15, max_size = 500 after intersection with the tested genes",
+                "universe = tested genes",
+                "collapse_redundant = true",
+                "First collection: human MSigDB hallmark gene sets. Second collection: human GO Biological Process gene sets (substituting for Reactome, which is not staged here); human WikiPathways is an acceptable alternative",
+                "Record the permutation seed and the collection version"
+              ],
+              "caveats": [
+                "Fewer than about 50 significant genes would make an over-representation test pointless; the ranked method on the full list is used regardless, so this changes nothing operationally but should be noted with the significant-gene count",
+                "Enrichment results are method-dependent — a different method or a different ranking metric would give a different list; present sets as hypotheses",
+                "The gene sets inherit the design confounding in full: an enriched pathway may reflect a processing difference between B1 and B2 rather than treatment",
+                "If the second collection cannot be resolved in the environment at run time, report the hallmark pass alone and record the absence — do not substitute a non-human collection"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0108@409f",
+                  "R-0099@0a77",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0054@801e",
+                  "R-0048@500d",
+                  "R-0098@d01b",
+                  "R-0101@06c8",
+                  "R-0103@93aa"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "Preranked fgsea on the full tested list per R-0107@976c; the disputed ranking metric of R-0108@409f is decided here for the Wald statistic (signed and scaled by its standard error, per R-0099@0a77). R-0098@d01b names Reactome as the human second collection, but no Reactome GMT is staged, so human GO BP is used and the substitution is stated."
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Confounded-design report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What can and cannot be concluded about treated versus control lung expression from this experiment, and what design would be needed to answer the question properly?",
+              "context": "Assemble the QC (T1S1), the DESeq2 results (T1S2), the edgeR cross-check (T1S3), and the enrichment (T2S1) into one report. The headline is the design, not the gene list: batch B1 holds all 6 controls and batch B2 all 6 treated samples, so the treatment effect and the processing effect are the same contrast and no analysis can separate them. State the assumption the results rest on — that the B1/B2 processing difference contributes nothing to expression — say that it is untestable with these samples, and label every gene and every pathway accordingly. Then give the reproducibility and methods record: package versions and sessionInfo, the random seed used for the GSEA permutations, the gene-set collection name and version, the design formula, the named contrast, the thresholds, the number of genes tested, and the number called per method. Include the MA plot, the dispersion plot and the p-value histogram before the gene tables. In the gene table give the unshrunken log2 fold change, the apeglm-shrunken log2 fold change, and the lfcSE for each gene, and rank the table and the plots by the shrunken value. Give the DESeq2/edgeR overlap counts and the leading-edge genes of each reported gene set. Close with the concrete design fix: batches that each span both conditions, or a set of technical replicates processed across both batches, either of which would make the batch effect estimable.",
+              "description": "A standalone report whose primary conclusion is that the treated-vs-control comparison is confounded with processing batch and therefore not interpretable as a treatment effect, accompanied by the full confounded results (gene tables with shrunken and unshrunken fold changes, fit diagnostics, method overlap, enriched sets with leading edges) and a reproducibility record.",
+              "acceptance_criteria": [
+                "The report leads with the confounding: B1 = all 6 controls, B2 = all 6 treated, treatment and batch effects are not separable, and no analysis fixes this",
+                "The no-batch-effect assumption is stated explicitly and identified as untestable in this dataset",
+                "Every gene-level and pathway-level result is labelled as a confounded treatment-plus-batch effect",
+                "Methods record present: method names, package versions, design formula ~ condition, contrast (condition, treated, control), padj threshold 0.05, number of genes tested after filtering, number of DE genes per method",
+                "MA plot, dispersion plot and p-value histogram appear before the gene tables",
+                "Gene table carries log2FoldChange, apeglm-shrunken log2FoldChange and lfcSE; ranking and plots use the shrunken value",
+                "DESeq2 and edgeR significant counts and their intersection reported, intersection presented as the high-confidence set",
+                "Leading-edge genes listed for each reported gene set, with overlapping leading edges marked",
+                "Enrichment section names the collection, its version, the ranking metric (Wald stat), the universe and the 15-500 size window, and states that enrichment results are method-dependent",
+                "Reproducibility record included: sessionInfo, package versions, GSEA permutation seed, collection version",
+                "A concrete design recommendation is given: batches spanning both conditions, or technical replicates processed across both batches"
+              ],
+              "packages": [
+                "knitr",
+                "rmarkdown",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Do not present any gene or pathway as a treatment effect; the permitted framing is treated-plus-B2 versus control-plus-B1",
+                "Report the shrunken and the unshrunken log2 fold change with the lfcSE; rank by the shrunken value",
+                "Include the MA plot, the dispersion plot and the p-value histogram before the gene tables",
+                "Include sessionInfo, package versions, the permutation seed, and the gene-set collection version",
+                "Report the overlap of the two differential expression methods, not their union"
+              ],
+              "caveats": [
+                "A large, statistically clean gene list from this design is exactly what a strong batch effect would also produce; do not read the size of the list as evidence of treatment effect",
+                "Downstream biological interpretation of the enriched sets should be presented as hypothesis, not finding"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0042@54e1",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf",
+                  "R-0005@668f"
+                ],
+                "reason": "Report content follows R-0041/R-0085/R-0087/R-0051/R-0105/R-0086; the confounded labelling and the design recommendation carry out the confounded_label_or_stop outcome of R-0005@668f."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed"
+  }
+}

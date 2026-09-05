@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference design exactly: batch enters the DESeq2 formula as ~batch + condition with an explicit relevel of condition to control, no pre-adjustment of counts, and an explicit rejection of ComBat-seq with the correct rationale about breaking the count mean-variance model. QC precedes testing with blind VST, PCA colored by both batch and condition, a distance heatmap, per-sample library sizes, and named outlier flagging, though the downstream action on a flagged sample is left implicit. Filtering (>=10 counts in >=6 samples, tied to the smallest group size), internal median-of-ratios normalization, Wald test, apeglm shrinkage of the single condition coefficient, BH with alpha=0.05 passed consistently to results(), and separate accounting of Cook's-flag vs independent-filtering NAs at n=6 are all correct and stated. Enrichment was not asked for and is arguably unwarranted for a plain gene-level question, but it is specified rigorously (Wald-stat ranking, tested-gene universe, named and versioned collections, 15-500 size window, leading edge, no post-hoc ORA on a short list), so it costs only a little. The report section names versions, design, contrast, thresholds, tested and significant counts, diagnostics, and method-dependence caveats."
+}

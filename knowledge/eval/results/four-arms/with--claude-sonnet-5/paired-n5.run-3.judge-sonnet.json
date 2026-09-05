@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the paired design and blocks on subject (~subject+condition) with an explicit control reference level and Wald test on the condition coefficient, matching the reference exactly. QC precedes modeling with blind VST, PCA colored by condition/subject, sample distance heatmap, library size comparison, and an explicit no-drop/report-only outlier policy. Filtering (>=10 counts in >=5 samples), raw-count input to DESeq2's internal size-factor normalization, apeglm shrinkage, BH at alpha=0.05 with independent filtering, and full reporting of tested/significant gene counts, versions, and caveats are all well specified. Enrichment is appropriately preranked (Wald statistic) with explicit universe, gene-set collections, versions, and size window, though Reactome's version is only 'current' rather than a pinned release, a minor gap."
+}

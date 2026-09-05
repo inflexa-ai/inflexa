@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the perfect batch–condition confound, demonstrates the rank deficiency of ~batch + condition explicitly, refuses ComBat-seq/SVA/RUV/removeBatchEffect, fits the only estimable model (~condition with control as reference), and labels every table and figure as treated(B2) vs control(B1) — exactly what the reference requires. QC is dataset-specific (PCA colored by both labels with a note that they are collinear, library sizes, detection rates, Cook's flags) but omits sample-distance clustering and states no explicit policy for dropping an outlier or shallow sample. The low-count filter (\"minimum count in at least 6 samples\") is group-size-aware and reported, but the actual count threshold is left unspecified; normalization is left inside DESeq2/edgeR with no pre-adjustment, though size factors/TMM are never named. FDR is BH at 0.05 with apeglm/ashr shrinkage, but the |log2FC| > 1 cut is applied post hoc rather than as an lfcThreshold in the test; enrichment is a preranked GSEA on the Wald statistic with human hallmark and GO-BP symbol GMTs, a 15–500 size window, universe-match reporting and redundancy collapsing, but no collection version, and software versions are absent from the reporting plan."
+}

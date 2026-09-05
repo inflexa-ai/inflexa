@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the design precisely: unpaired 6v6, single batch, raw Salmon counts, DESeq2 Wald with ~condition and an explicitly set control reference and named contrast, plus an edgeR QL cross-check whose intersection (not union) is treated as high-confidence. QC precedes testing with per-sample library sizes and detected genes, blind VST PCA and a distance heatmap colored by condition, and an explicit retention policy for sample_01 that forbids removal on depth alone, with a sensitivity re-run reported without altering the primary result. Filtering (>=10 counts in >=6 samples, tied to the smaller group size) is minimal and justified, normalization is median-of-ratios computed inside the model with an explicit prohibition on pre-normalizing, and inference uses BH at alpha=0.05 with alpha passed to results(), apeglm shrinkage for reporting/ranking, and separate accounting of Cook's-flagged vs independent-filtering NAs. Enrichment is fgsea preranked on the full tested-gene list with the Wald statistic stated as the metric, MSigDB Hallmark named with version and a 15-500 size window, universe stated, leading edges reported, and Reactome as a labeled follow-up. Reporting covers versions, design, contrast, thresholds, tested/significant counts, diagnostics, sample_01 handling, and sessionInfo; the only minor quibbles are that apeglm shrinkage operates on a coefficient rather than an arbitrary contrast (unstated) and the Hallmark release label should be verified at run time."
+}

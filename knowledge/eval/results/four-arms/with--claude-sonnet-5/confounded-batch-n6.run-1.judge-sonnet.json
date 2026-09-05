@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes the perfect confound, refuses to fit a batch term or apply ComBat-seq/SVA/removeBatchEffect, and runs ~condition with every output explicitly labeled confounded, matching the reference exactly. QC (PCA/distance/library size, colored by condition=batch) precedes testing with an explicit non-separability caveat; low-count filtering (>=10 counts in >=6 samples) is minimal and justified; DESeq2 median-of-ratios normalization is used inside the model with no pre-normalization; design/contrast/reference level are explicit, and BH-FDR at 0.05 with apeglm shrinkage is stated. GSEA is arguably not warranted given the confound (reference implies stopping or heavy caveat rather than running enrichment as if meaningful), but the plan does caveat it as hypothesis-generating only and specifies ranking metric, universe, and size window, so it's a reasonable but slightly risky choice. The report is exceptionally complete, leading with the confounding caveat, versions, thresholds, gene counts, and an explicit recommendation for a rebalanced design."
+}

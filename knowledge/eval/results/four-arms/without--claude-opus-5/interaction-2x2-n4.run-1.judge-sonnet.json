@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan directly targets the interaction question with ~genotype+treatment+genotype:treatment, an LRT for the global interaction, cell-means simple effects with numerical verification against the factorial coefficient, and an independent limma-voom cross-check with explicit power/lfcSE quantification—fully matching the reference and going beyond it in rigor. QC (library size, size factors, VST PCA by genotype/treatment, sample-distance heatmap, dispersion) precedes testing, though no explicit outlier-handling policy is stated. Filtering (>=10 counts in >=4 samples) is minimal and justified by the smallest group size, and normalization is handled internally via DESeq2/TMM with no pre-normalized counts fed into the model. BH FDR at stated alphas (0.05/0.10) with apeglm/ashr shrinkage kept separate from inference p-values is well specified. GSEA uses full rankings, stated metric, named human collections, size window, seed, and clearly separates formal interaction-level enrichment from descriptive NES comparisons; ORA is correctly avoided as primary. The report is thorough with versions of methods (not exact software versions), explicit caveats, and gene/sample counts throughout, only lacking a fully explicit outlier QC decision rule."
+}

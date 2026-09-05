@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies this as an interaction question, fits ~genotype+treatment+genotype:treatment with explicit WT/vehicle reference levels, tests the interaction coefficient, and derives the two simple effects as named contrasts, exactly matching the reference; it goes further with an edgeR QL cross-check. QC precedes testing with library size, blind VST, PCA, and sample-distance heatmap with a stated outlier policy. The filter (>=10 counts in >=4 samples) is minimal and justified by the smallest cell size. Normalization is correctly left inside DESeq2 (median-of-ratios) and edgeR (TMM), with no pre-normalized counts fed to either model. BH correction with ashr shrinkage is applied per contrast with independent filtering and p-value histogram checks, though FDR is explicitly not pooled across the three contrasts, which is reasonable but slightly less clean than a single joint framework. Enrichment is well-justified per-contrast fgsea on the Wald statistic with explicit universe, size window, and species-matched collections, only slightly dinged for the added complexity of three separate rankings rather than a single clean design. The final report is exceptionally complete, naming versions, thresholds, gene counts, reference levels, and design caveats including the power limitation of the interaction term and the salmon length-offset issue."
+}

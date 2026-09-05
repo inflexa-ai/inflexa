@@ -9,7 +9,10 @@
 # Patterns:
 #   two_group_n3, two_group_n6, paired_n5, batch_balanced_n6, interaction_2x2_n4,
 #   timecourse_2x4_n3, confounded_batch_n6, no_replicates_1v1, multi_group_3x4,
-#   outlier_n5
+#   outlier_n5, two_group_n60, covariates_n6, timecourse_2x2_n3, paired_3groups_n4
+#
+# Every pattern also writes log_expr.csv (log2(TPM + 1)) for the templates that
+# take log-scale input.
 #
 # Every pattern also writes tpm.csv and gene_lengths.csv (a TPM matrix from the
 # counts and simulated gene lengths) for the templates that take abundance
@@ -73,6 +76,15 @@ make_design <- function(pattern) {
     meta <- data.frame(condition = rep(c("control", "treated_a", "treated_b"), each = 4))
   } else if (pattern == "outlier_n5") {
     meta <- data.frame(condition = rep(c("control", "treated"), each = 5))
+  } else if (pattern == "two_group_n60") {
+    meta <- data.frame(condition = rep(c("control", "treated"), each = 60))
+  } else if (pattern == "covariates_n6") {
+    meta <- data.frame(condition = rep(c("control", "treated"), each = 6), sex = rep(c("F", "M"), times = 6), age = round(runif(12, 25, 75)))
+  } else if (pattern == "timecourse_2x2_n3") {
+    meta <- expand.grid(replicate = 1:3, time = c("t0", "t1"), condition = c("control", "treated"), stringsAsFactors = FALSE)[, c("condition", "time")]
+    meta$time_hours <- as.integer(factor(meta$time)) - 1L
+  } else if (pattern == "paired_3groups_n4") {
+    meta <- data.frame(subject = rep(sprintf("S%02d", 1:4), times = 3), condition = rep(c("control", "treated_a", "treated_b"), each = 4))
   } else {
     stop("unknown pattern ", pattern)
   }
@@ -116,7 +128,7 @@ plant_hallmark <- function(condition_column, test_level) {
   }
 }
 
-if (PATTERN %in% c("two_group_n3", "two_group_n6", "batch_balanced_n6", "confounded_batch_n6", "no_replicates_1v1", "paired_n5", "outlier_n5")) {
+if (PATTERN %in% c("two_group_n3", "two_group_n6", "batch_balanced_n6", "confounded_batch_n6", "no_replicates_1v1", "paired_n5", "outlier_n5", "two_group_n60", "covariates_n6")) {
   de_index <- sample_expressed(0.10)
   lfc <- effect_size(length(de_index))
   treated <- meta$condition == "treated"
@@ -128,6 +140,42 @@ if (PATTERN %in% c("two_group_n3", "two_group_n6", "batch_balanced_n6", "confoun
 if (PATTERN == "paired_n5") {
   subject_effect <- matrix(rnorm(n_genes * 5, sd = 0.45), nrow = n_genes)
   for (i in seq_len(n_samples)) log_mu[, i] <- log_mu[, i] + subject_effect[, as.integer(factor(meta$subject))[i]]
+}
+if (PATTERN == "covariates_n6") {
+  # A sex effect on 5% of the genes and an age slope on 3%, both nuisance terms
+  # the design must hold; the truth stays the condition effect.
+  sex_index <- sample_expressed(0.05)
+  log_mu[sex_index, meta$sex == "M"] <- log_mu[sex_index, meta$sex == "M"] + effect_size(length(sex_index))
+  age_index <- sample_expressed(0.03)
+  age_slope <- rnorm(length(age_index), sd = 0.02)
+  for (i in seq_len(n_samples)) log_mu[age_index, i] <- log_mu[age_index, i] + age_slope * (meta$age[i] - 50)
+}
+if (PATTERN == "paired_3groups_n4") {
+  subject_effect <- matrix(rnorm(n_genes * 4, sd = 0.45), nrow = n_genes)
+  for (i in seq_len(n_samples)) log_mu[, i] <- log_mu[, i] + subject_effect[, as.integer(factor(meta$subject))[i]]
+  a_index <- sample_expressed(0.08)
+  b_index <- unique(c(sample(a_index, size = round(0.5 * length(a_index))), sample_expressed(0.06)))
+  a_lfc <- effect_size(length(a_index)); b_lfc <- effect_size(length(b_index))
+  log_mu[a_index, meta$condition == "treated_a"] <- log_mu[a_index, meta$condition == "treated_a"] + a_lfc
+  log_mu[b_index, meta$condition == "treated_b"] <- log_mu[b_index, meta$condition == "treated_b"] + b_lfc
+  truth$de[c(a_index, b_index)] <- 1L
+  truth$lfc[a_index] <- a_lfc; truth$lfc[b_index] <- b_lfc
+  truth$planted_set[a_index] <- "treated_a"
+  truth$planted_set[b_index] <- ifelse(truth$planted_set[b_index] == "treated_a", "treated_a_and_b", "treated_b")
+  plant_hallmark("condition", "treated_a")
+}
+if (PATTERN == "timecourse_2x2_n3") {
+  # Two time points: the truth is the condition-by-time interaction, the genes
+  # whose change over time differs between the groups.
+  time_index <- sample_expressed(0.10)
+  log_mu[time_index, meta$time_hours == 1] <- log_mu[time_index, meta$time_hours == 1] + effect_size(length(time_index))
+  interaction_index <- sample_expressed(0.06)
+  interaction_lfc <- sign(rnorm(length(interaction_index))) * (1.2 + abs(rnorm(length(interaction_index), sd = 0.8)))
+  late_treated <- meta$condition == "treated" & meta$time_hours == 1
+  log_mu[interaction_index, late_treated] <- log_mu[interaction_index, late_treated] + interaction_lfc
+  truth$de[interaction_index] <- 1L
+  truth$lfc[interaction_index] <- interaction_lfc
+  truth$planted_set[interaction_index] <- "condition_by_time"
 }
 if (PATTERN %in% c("batch_balanced_n6", "confounded_batch_n6")) {
   batch_index <- sample(seq_len(n_genes), size = round(0.30 * n_genes))
@@ -221,6 +269,7 @@ tpm <- sweep(rpk, 2, colSums(rpk), "/") * 1e6
 # ── Write ─────────────────────────────────────────────────────────────────────
 write.csv(data.frame(gene = genes, counts, check.names = FALSE), file.path(OUT, "counts.csv"), row.names = FALSE)
 write.csv(data.frame(gene = genes, round(tpm, 4), check.names = FALSE), file.path(OUT, "tpm.csv"), row.names = FALSE)
+write.csv(data.frame(gene = genes, round(log2(tpm + 1), 4), check.names = FALSE), file.path(OUT, "log_expr.csv"), row.names = FALSE)
 write.csv(data.frame(gene = genes, length = gene_lengths), file.path(OUT, "gene_lengths.csv"), row.names = FALSE)
 write.csv(meta, file.path(OUT, "metadata.csv"), row.names = FALSE)
 write.csv(truth, file.path(OUT, "truth.csv"), row.names = FALSE)

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan diagnoses the design correctly — it states plainly that n=1 per arm leaves no within-group variance, refuses FDR columns and 'significant' labels, and makes a normalized, expression-floored ranked log2FC table the primary deliverable, which is exactly what the design supports. It then undercuts that stance by running edgeR exactTest at two fabricated BCVs and emitting nominal p-value columns; the assumption-carrying column names and caveats mitigate but do not remove the problem, since the reference standard is no p-values at all, and downstream readers routinely strip such labels. QC is appropriate to a two-sample design (library sizes, detected genes, zero counts, scatter with diagonal, MA, log2FC histogram) with the correct recognition that PCA is uninformative, though there is no stated policy for a shallow or aberrant library beyond noting normalization drift. Filtering (total count >= 10 plus a stated CPM floor for ranking) and normalization (TMM with median-of-ratios cross-check, plus the explicit caveat that most-genes-unchanged may fail) are well justified. The enrichment step is thorough on universe, organism, symbol overlap and 15–500 size window but no collection version, and applying preranked GSEA to a single unreplicated fold-change vector generates permutation statistics that add little beyond the ranked list itself; the report likewise omits software versions."
+}

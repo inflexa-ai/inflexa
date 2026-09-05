@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect confound, refuses to fit a batch term (demonstrating rank-deficiency numerically), refuses ComBat/SVA as legitimate corrections (and even empirically demonstrates why they fail rather than just asserting it), and labels every output as a condition+batch composite rather than a treatment effect, matching the reference exactly. QC (PCA/heatmap/library size colored by condition and batch, rank check) precedes testing, filtering (count>=10 in >=6 samples) is minimal and stated, normalization is handled inside DESeq2 with no pre-adjustment of counts, the design/contrast is explicit (~condition, control reference, treated vs control) with the confound caveat baked into labels, BH FDR at padj<0.05 with apeglm shrinkage is used for the reported effect, and enrichment is run on the full ranked list with fgsea against named hallmark/GO-BP collections with size windows and permutation count, all caveated as inheriting the confound. Reporting is thorough: versions/packages, counts of tested/significant genes, thresholds, and design caveats are all named per step, though exact software version numbers are not pinned, slightly limiting report_completeness and reproducibility scores."
+}

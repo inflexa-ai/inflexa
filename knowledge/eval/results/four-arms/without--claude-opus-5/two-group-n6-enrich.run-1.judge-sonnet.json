@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly matches DESeq2 Wald to the unpaired 6v6 single-batch design with ~condition and an explicit control reference level, and treats depth as a normalization matter rather than an exclusion criterion by default. QC is thorough (library size ratio, size factors, VST/PCA, distance heatmap, Cook's distance) with an explicit keep/keep-flagged/drop policy tied to combined evidence, plus a pre-specified 11-sample sensitivity analysis that directly operationalizes 'handle it carefully.' Filtering (>=10 counts in >=6 samples) is minimal and justified, normalization is done inside DESeq2 via size factors with no pre-adjustment, and apeglm shrinkage is used for reported effects while unshrunken Wald stats correctly drive GSEA ranking with BH at 0.05 stated. Enrichment uses fgsea preranked on the full list against a named, versioned human Hallmark collection with a tested-gene universe, size-window handling, seed control, and a parallel sensitivity GSEA; report completeness is strong (versions, thresholds, filtered gene counts, DE counts, caveats) though slightly less explicit on final consolidated reporting of package version numbers in one place."
+}

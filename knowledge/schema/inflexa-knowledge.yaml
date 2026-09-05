@@ -97,6 +97,15 @@ enums:
       outlier_sample: {}
       sample_identity_doubt: {}
       high_duplication: {}
+  EnrichmentInputEnum:
+    description: The input of an enrichment step.
+    permissible_values:
+      ranked_list:
+        description: Every tested gene, ranked by a statistic.
+      gene_list:
+        description: A discrete list, for example the genes below an adjusted p-value cutoff.
+      sample_scores:
+        description: A score per sample and per gene set, for a comparison of the scores.
 
   StepTypeEnum:
     description: The ordered step types of a bulk RNA-seq procedure.
@@ -234,6 +243,9 @@ classes:
         range: LibraryTypeEnum
       strandedness:
         range: StrandednessEnum
+      enrichment_input:
+        description: What the enrichment step takes. Absent when the question is not enrichment.
+        range: EnrichmentInputEnum
       interaction:
         description: True when the question is an interaction between two factors.
         range: boolean

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject (~subject + condition) in DESeq2 with an edgeR QL cross-check on the identical design and filtered gene set, which is exactly what this 5-subject within-subject question requires. QC is dataset-specific — blind VST, PCA and distance heatmap colored by both condition and subject to verify pairing, library sizes with deviating samples flagged — though the action taken on a flagged outlier is left implicit rather than stated as a policy. Filtering (>=10 counts in >=5 samples, justified by smallest group size), normalization inside the model (median-of-ratios; TMM for edgeR, no pre-normalized input), explicit control reference level and named contrast, BH at a stated alpha=0.05 matched to results(), apeglm shrinkage, and separation of Cook's-distance NAs from independent-filtering NAs are all correct and explicit. Enrichment is not strictly required by the question but is well-specified: full ranked list on the Wald statistic, named collections with versions, 15-500 size window, leading-edge genes, unmapped share reported. The final report names methods, versions, design, contrast, thresholds, gene counts tested and significant, diagnostics, and reproducibility record; the only mild gap is that design caveats (n=5, low power, unknown strandedness noted only in QC) are not foregrounded in the report step."
+}

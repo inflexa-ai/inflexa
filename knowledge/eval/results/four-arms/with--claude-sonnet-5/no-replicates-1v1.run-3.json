@@ -1,0 +1,570 @@
+{
+  "campaign": "four-arms",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "no-replicates-1v1",
+  "run": 3,
+  "startedAt": "2026-09-05T13:53:36.097Z",
+  "elapsedMs": 67961,
+  "outcome": "plan_submitted",
+  "planId": "pln-3c6cecb0",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With one sample per condition, PCA and distance metrics are descriptive only — no group-separation statistic is estimable"
+        ],
+        "context": "Input: /eval-four-arms-with-no-replicates-1v1-3/data/inputs/counts/counts.csv (12000 genes x 3 cols: gene symbol + 1 treated + 1 control sample, raw salmon-derived integer counts) and metadata.csv (2 rows x 2 cols: sample, condition). Human liver tissue.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "How do the treated and control liver samples relate in overall expression structure (library size, top-variance PCA, sample-to-sample distance) before any differential analysis?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC via blind VST + PCA + sample distance heatmap per R-0033, applied as-is despite n=1 per group since it is purely descriptive",
+          "status": "grounded",
+          "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use vst(blind=TRUE) per DESeq2 for the transform since design has no replication",
+          "Do not attempt dispersion estimation or a design-aware transform"
+        ],
+        "acceptance_criteria": [
+          "Blind VST applied to the 12000x2 sample count matrix (gene-symbol indexed)",
+          "PCA computed on top 500 most-variable genes and plotted with both samples labeled by condition (treated/control)",
+          "Sample distance heatmap and library size barplot produced",
+          "QC report notes that with n=1 per group no cluster/outlier inference is meaningful beyond descriptive comparison"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Normalize and compute descriptive fold changes (no inferential test)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This step performs NO inferential hypothesis test — per design rule, a p-value from an n=1-per-group comparison has no statistical basis",
+          "State explicitly which design (biological replicates, e.g. n>=3 per group) would support inference"
+        ],
+        "context": "Same input files as T1S1. Condition column in metadata.csv defines treated vs control; set control as the explicit reference level.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "What are the normalized expression levels and descriptive log2 fold changes (treated vs control) for the 12000 genes, given the design has no biological replication and cannot support a statistical test?",
+        "grounding": {
+          "claims": [
+            "R-0002@087b",
+            "R-0026@762e",
+            "R-0036@9786",
+            "R-0003@6b3a"
+          ],
+          "reason": "Flagged by R-0003: no biological replication in either group forces descriptive-only fold changes, no inferential DE test",
+          "status": "flagged",
+          "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+          "template": "tpl-descriptive-no-replicates@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count=10, min_samples=1 pre-filter",
+          "Normalize with DESeq2 estimateSizeFactors only — do not call DESeq()/nbinomWaldTest, since dispersion cannot be estimated with 1 sample/group",
+          "Never report a p-value or adjusted p-value from this comparison",
+          "Rank/sort output table by descriptive log2FC magnitude for downstream use"
+        ],
+        "acceptance_criteria": [
+          "Genes filtered to keep >=10 counts in at least 1 sample (smallest group size = 1)",
+          "DESeq2 median-of-ratios size factors computed and counts normalized (normalization only, no GLM fit requiring replication)",
+          "Descriptive log2 fold change = log2((normalized_treated+pseudocount)/(normalized_control+pseudocount)) computed per gene, contrast explicitly stated as treated vs control (control = reference)",
+          "Output table has gene symbol, raw counts, normalized counts, descriptive log2FC — NO p-values or adjusted p-values reported",
+          "Report explicitly states: no inferential DE test was run because n=1 per group provides no within-group variance estimate; a p-value here would have no statistical basis"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA on descriptive fold changes (Hallmark + Reactome)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Because the input ranking is descriptive (no test statistic with an error model), report enrichment results as hypothesis-generating signal, not statistically validated pathway calls",
+          "Enrichment method choice affects which sets appear — state the method (fgsea preranked) explicitly"
+        ],
+        "context": "Ranked gene list (gene symbol, descriptive log2FC) from T1S2, human liver treated-vs-control. Reference gene sets: MSigDB Hallmark human GMT (/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt, 50 sets, HGNC symbols) confirmed present, and Reactome pathways GMT (/mnt/refs/managed/reactome-pathways/current/ReactomePathways.gmt, filter to Homo sapiens via ReactomePathways.txt) confirmed present.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea"
+        ],
+        "question": "Which biological pathways (MSigDB Hallmark, then Reactome) show coordinated, descriptive enrichment among genes ranked by the treated-vs-control log2 fold change?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0108@409f"
+          ],
+          "reason": "Flagged by R-0003: enrichment inherits descriptive-only status since it is ranked on non-inferential fold changes; rank metric choice (descriptive log2FC) stated per disputed rule R-0108",
+          "status": "flagged",
+          "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use gene symbols directly (both GMTs are HGNC-symbol keyed) — map only if a symbol mismatch is found against the count matrix's gene identifiers",
+          "Restrict Reactome GMT to Homo sapiens pathways using ReactomePathways.txt before running fgsea",
+          "Do not run an over-representation test on a hard-thresholded significant gene list, since no significance threshold exists in this descriptive design"
+        ],
+        "acceptance_criteria": [
+          "Full ranked list of all filtered/tested genes (from T1S2) used as input — no pre-thresholding by fold change or significance",
+          "Rank metric = descriptive log2 fold change from T1S2 (explicitly documented as the chosen metric, since no Wald statistic exists in this no-replicate design)",
+          "fgsea run against MSigDB Hallmark gene sets (human, 50 sets) as primary collection, then Reactome pathways (human subset) as secondary collection",
+          "Gene set size window restricted to 15-500 members among tested genes",
+          "Redundant/overlapping significant sets collapsed, full table kept as supplement",
+          "Report states NO set-level p-value/FDR is presented as inferential evidence — results are descriptive/hypothesis-generating only, consistent with the non-inferential input ranking",
+          "Leading-edge genes reported for top-ranked sets in each collection",
+          "Universe = genes tested in T1S2 (not whole genome)"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Final report: DE + enrichment summary with reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Synthesizes outputs of T1S2 (descriptive fold-change table) and T2S1 (GSEA results) into one report for the human liver treated-vs-control comparison.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the complete, reproducible summary of the treated-vs-control liver comparison, including explicit statement of the design's inferential limits?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "No specific rule covers report-assembly step type beyond the general reporting claims already listed",
+          "status": "ungrounded",
+          "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Do not present any p-value from T1S2 or T2S1 as inferential/significant",
+          "Explicitly name the no-replication caveat in the executive summary, not buried in methods"
+        ],
+        "acceptance_criteria": [
+          "Report states: method (DESeq2 normalization, descriptive log2FC), package versions, the 1-vs-1 design with no biological replication, and that no inferential p-value is reported",
+          "States number of genes tested after filtering out of the original 12000",
+          "Lists top genes by descriptive |log2FC| with normalized counts (no p-values)",
+          "Reports the enrichment method (fgsea preranked), gene set database and version (MSigDB Hallmark 2026.1, Reactome current), rank metric used, universe, and size window",
+          "Lists leading-edge genes for top pathways per collection with a stated caveat on method-dependence of enrichment results",
+          "States explicitly what design (e.g., >=3 biological replicates per group) would be required to support a valid inferential DE test with FDR control",
+          "Includes reproducibility record: session info, package versions, gene set collection versions, and any random seed used"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control: descriptive DE + GSEA (no replicates)",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The data profile confirms a 1-vs-1 design (1 treated liver sample vs 1 control liver sample, no biological replication) from salmon-derived raw gene counts (12000 genes x 3 columns incl. gene symbol, human). With no within-group replicates, DESeq2/edgeR cannot estimate dispersion, so per the grounded procedure (rule R-0003) no inferential p-value has statistical validity here. The plan therefore: (1) runs sample-structure QC (blind VST, PCA, library sizes) to characterize the two samples before any modeling; (2) filters low-count genes and computes DESeq2 median-of-ratios size factors purely for normalization (no dispersion/test fitting); (3) reports normalized counts and descriptive log2 fold changes (treated vs control) explicitly labeled as non-inferential, with no adjusted p-values; (4) uses these descriptive fold changes to rank the full gene list for preranked GSEA (fgsea) against MSigDB Hallmark (primary) and Reactome (secondary), both staged locally for human, again treated as descriptive/hypothesis-generating since the design supports no significance test; (5) produces a final report stating explicitly that this design cannot support inferential DE calls and naming the replicated design that would."
+  },
+  "usage": {
+    "inputTokens": 421614,
+    "outputTokens": 5489,
+    "cacheCreationInputTokens": 127929,
+    "cacheReadInputTokens": 293613,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 1,
+        "n_per_group_max": 1,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": []
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 1,
+        "n_per_group_max": 1,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA + sample distance heatmap + library size barplot",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with counts >= 10 in >= smallest group size (1) samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "Descriptive log2 fold changes only, no inferential test (no replication)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ],
+            "outcome": "descriptive_only"
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on descriptive log2 fold change with MSigDB Hallmark, then Reactome",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "descriptive_log2_fold_change"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              }
+            ],
+            "outcome": "descriptive_only"
+          },
+          {
+            "step_type": "report",
+            "method": "Structured report with reproducibility record",
+            "package": "DESeq2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control: descriptive DE + GSEA (no replicates)",
+          "analytical_narrative": "The data profile confirms a 1-vs-1 design (1 treated liver sample vs 1 control liver sample, no biological replication) from salmon-derived raw gene counts (12000 genes x 3 columns incl. gene symbol, human). With no within-group replicates, DESeq2/edgeR cannot estimate dispersion, so per the grounded procedure (rule R-0003) no inferential p-value has statistical validity here. The plan therefore: (1) runs sample-structure QC (blind VST, PCA, library sizes) to characterize the two samples before any modeling; (2) filters low-count genes and computes DESeq2 median-of-ratios size factors purely for normalization (no dispersion/test fitting); (3) reports normalized counts and descriptive log2 fold changes (treated vs control) explicitly labeled as non-inferential, with no adjusted p-values; (4) uses these descriptive fold changes to rank the full gene list for preranked GSEA (fgsea) against MSigDB Hallmark (primary) and Reactome (secondary), both staged locally for human, again treated as descriptive/hypothesis-generating since the design supports no significance test; (5) produces a final report stating explicitly that this design cannot support inferential DE calls and naming the replicated design that would.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "How do the treated and control liver samples relate in overall expression structure (library size, top-variance PCA, sample-to-sample distance) before any differential analysis?",
+              "acceptance_criteria": [
+                "Blind VST applied to the 12000x2 sample count matrix (gene-symbol indexed)",
+                "PCA computed on top 500 most-variable genes and plotted with both samples labeled by condition (treated/control)",
+                "Sample distance heatmap and library size barplot produced",
+                "QC report notes that with n=1 per group no cluster/outlier inference is meaningful beyond descriptive comparison"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: /eval-four-arms-with-no-replicates-1v1-3/data/inputs/counts/counts.csv (12000 genes x 3 cols: gene symbol + 1 treated + 1 control sample, raw salmon-derived integer counts) and metadata.csv (2 rows x 2 cols: sample, condition). Human liver tissue.",
+              "constraints": [
+                "Use vst(blind=TRUE) per DESeq2 for the transform since design has no replication",
+                "Do not attempt dispersion estimation or a design-aware transform"
+              ],
+              "caveats": [
+                "With one sample per condition, PCA and distance metrics are descriptive only — no group-separation statistic is estimable"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC via blind VST + PCA + sample distance heatmap per R-0033, applied as-is despite n=1 per group since it is purely descriptive"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Normalize and compute descriptive fold changes (no inferential test)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "What are the normalized expression levels and descriptive log2 fold changes (treated vs control) for the 12000 genes, given the design has no biological replication and cannot support a statistical test?",
+              "acceptance_criteria": [
+                "Genes filtered to keep >=10 counts in at least 1 sample (smallest group size = 1)",
+                "DESeq2 median-of-ratios size factors computed and counts normalized (normalization only, no GLM fit requiring replication)",
+                "Descriptive log2 fold change = log2((normalized_treated+pseudocount)/(normalized_control+pseudocount)) computed per gene, contrast explicitly stated as treated vs control (control = reference)",
+                "Output table has gene symbol, raw counts, normalized counts, descriptive log2FC — NO p-values or adjusted p-values reported",
+                "Report explicitly states: no inferential DE test was run because n=1 per group provides no within-group variance estimate; a p-value here would have no statistical basis"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same input files as T1S1. Condition column in metadata.csv defines treated vs control; set control as the explicit reference level.",
+              "constraints": [
+                "min_count=10, min_samples=1 pre-filter",
+                "Normalize with DESeq2 estimateSizeFactors only — do not call DESeq()/nbinomWaldTest, since dispersion cannot be estimated with 1 sample/group",
+                "Never report a p-value or adjusted p-value from this comparison",
+                "Rank/sort output table by descriptive log2FC magnitude for downstream use"
+              ],
+              "caveats": [
+                "This step performs NO inferential hypothesis test — per design rule, a p-value from an n=1-per-group comparison has no statistical basis",
+                "State explicitly which design (biological replicates, e.g. n>=3 per group) would support inference"
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+                "claims": [
+                  "R-0002@087b",
+                  "R-0026@762e",
+                  "R-0036@9786",
+                  "R-0003@6b3a"
+                ],
+                "template": "tpl-descriptive-no-replicates@1.0.0",
+                "reason": "Flagged by R-0003: no biological replication in either group forces descriptive-only fold changes, no inferential DE test"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA on descriptive fold changes (Hallmark + Reactome)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways (MSigDB Hallmark, then Reactome) show coordinated, descriptive enrichment among genes ranked by the treated-vs-control log2 fold change?",
+              "acceptance_criteria": [
+                "Full ranked list of all filtered/tested genes (from T1S2) used as input — no pre-thresholding by fold change or significance",
+                "Rank metric = descriptive log2 fold change from T1S2 (explicitly documented as the chosen metric, since no Wald statistic exists in this no-replicate design)",
+                "fgsea run against MSigDB Hallmark gene sets (human, 50 sets) as primary collection, then Reactome pathways (human subset) as secondary collection",
+                "Gene set size window restricted to 15-500 members among tested genes",
+                "Redundant/overlapping significant sets collapsed, full table kept as supplement",
+                "Report states NO set-level p-value/FDR is presented as inferential evidence — results are descriptive/hypothesis-generating only, consistent with the non-inferential input ranking",
+                "Leading-edge genes reported for top-ranked sets in each collection",
+                "Universe = genes tested in T1S2 (not whole genome)"
+              ],
+              "packages": [
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Ranked gene list (gene symbol, descriptive log2FC) from T1S2, human liver treated-vs-control. Reference gene sets: MSigDB Hallmark human GMT (/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt, 50 sets, HGNC symbols) confirmed present, and Reactome pathways GMT (/mnt/refs/managed/reactome-pathways/current/ReactomePathways.gmt, filter to Homo sapiens via ReactomePathways.txt) confirmed present.",
+              "constraints": [
+                "Use gene symbols directly (both GMTs are HGNC-symbol keyed) — map only if a symbol mismatch is found against the count matrix's gene identifiers",
+                "Restrict Reactome GMT to Homo sapiens pathways using ReactomePathways.txt before running fgsea",
+                "Do not run an over-representation test on a hard-thresholded significant gene list, since no significance threshold exists in this descriptive design"
+              ],
+              "caveats": [
+                "Because the input ranking is descriptive (no test statistic with an error model), report enrichment results as hypothesis-generating signal, not statistically validated pathway calls",
+                "Enrichment method choice affects which sets appear — state the method (fgsea preranked) explicitly"
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0108@409f"
+                ],
+                "reason": "Flagged by R-0003: enrichment inherits descriptive-only status since it is ranked on non-inferential fold changes; rank metric choice (descriptive log2FC) stated per disputed rule R-0108"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Final report: DE + enrichment summary with reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the complete, reproducible summary of the treated-vs-control liver comparison, including explicit statement of the design's inferential limits?",
+              "acceptance_criteria": [
+                "Report states: method (DESeq2 normalization, descriptive log2FC), package versions, the 1-vs-1 design with no biological replication, and that no inferential p-value is reported",
+                "States number of genes tested after filtering out of the original 12000",
+                "Lists top genes by descriptive |log2FC| with normalized counts (no p-values)",
+                "Reports the enrichment method (fgsea preranked), gene set database and version (MSigDB Hallmark 2026.1, Reactome current), rank metric used, universe, and size window",
+                "Lists leading-edge genes for top pathways per collection with a stated caveat on method-dependence of enrichment results",
+                "States explicitly what design (e.g., >=3 biological replicates per group) would be required to support a valid inferential DE test with FDR control",
+                "Includes reproducibility record: session info, package versions, gene set collection versions, and any random seed used"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Synthesizes outputs of T1S2 (descriptive fold-change table) and T2S1 (GSEA results) into one report for the human liver treated-vs-control comparison.",
+              "constraints": [
+                "Do not present any p-value from T1S2 or T2S1 as inferential/significant",
+                "Explicitly name the no-replication caveat in the executive summary, not buried in methods"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "No specific rule covers report-assembly step type beyond the general reporting claims already listed"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:1322cd0c9a10fdcdaa179664686e6635ddbc6790ab33a90c8534ca73db0e40ed"
+  }
+}

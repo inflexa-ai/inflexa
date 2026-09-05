@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 0,
+    "normalization": 6,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the perfect confound, refuses to fit batch or use ComBat/SVA, and consistently labels results as treatment-OR-batch throughout every artifact, matching the reference's core requirement. QC (library size, PCA colored by condition/batch, cross-tab) precedes testing and explicitly notes PCA cannot separate condition from batch. DESeq2 with size-factor normalization and apeglm shrinkage plus BH at padj<0.05 are correctly specified in-model, but no low-count filtering step (e.g., filterByExpr or minimal count/sample threshold) is mentioned anywhere, which is a clear omission. Enrichment is run despite the confound — arguably it should have been withheld or more strongly gated given the caveat that any pathway hit is just as confounded as the DE list, and no explicit universe/background gene set or GSEA ranking metric is stated, only 'full ranked list' vaguely referenced. Report completeness is strong: versions/packages named per step, thresholds stated, caveats repeated, though exact software versions and final tested/significant gene counts are described as to-be-reported rather than fixed numbers."
+}

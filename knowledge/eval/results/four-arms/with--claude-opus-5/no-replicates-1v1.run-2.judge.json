@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the fatal design limitation (one sample per condition), refuses any inferential test, and delivers median-of-ratios normalized counts with explicitly descriptive log2 fold changes, no p-values, no FDR and no shrinkage, with the required design (>=3 biological replicates or a paired design) named. QC is design-aware: library sizes, detection, blind VST, sample distance, and an explicit statement that PCA/clustering are uninformative with n=2 and that no sample may be dropped. The filter (>=10 counts in >=1 sample, tied to the smallest group size) and normalization (size factors inside DESeq2, no pre-scaling) are minimal and correctly placed, and the reference level and contrast direction are stated verbatim. The main deduction is the fgsea step: enrichment is not warranted here, and running a preranked test on an untestable statistic produces set-level p-values that the plan must then spend paragraphs disclaiming - a self-contradiction that risks exactly the misreading the report step is designed to prevent, even though the universe, size window, collections, seed and mapping losses are all well specified."
+}

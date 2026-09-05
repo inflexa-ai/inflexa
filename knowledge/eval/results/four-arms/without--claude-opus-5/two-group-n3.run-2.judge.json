@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 negative-binomial Wald test on raw Salmon counts with ~condition, control set as reference, apeglm shrinkage for reported/ranked effects, BH at 0.05 (with 0.1 also reported and an explicit refusal to move thresholds to manufacture hits), and edgeR QL/limma-voom concordance as a sanity check rather than a substitute. QC is genuinely design-aware: library sizes, detected genes, VST PCA, distance and correlation heatmaps, per-sample within-group correlation with an explicit outlier verdict and a stated policy of not dropping a sample at n=3. The low-count filter is minimal and justified by the smallest group size with in/out counts reported, and normalization stays inside the model (VST used only for QC), though the plan never names size factors or TMM explicitly. Enrichment is correctly preranked fgsea on the full ranking with the Wald statistic named as the metric, a 15-500 size window, seed, symbol match rate and BH adjustment, but the collection version is not pinned. The confidence half of the question is treated as a first-class step (dispersion-based minimum detectable log2FC, leave-one-out stability with Jaccard, method concordance), and the reporting covers design, thresholds, tested and significant counts and caveats, losing a little only because software versions are not explicitly required in the report."
+}

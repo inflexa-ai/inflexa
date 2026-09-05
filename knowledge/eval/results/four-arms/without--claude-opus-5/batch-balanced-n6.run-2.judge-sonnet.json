@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly makes ~ batch + condition the primary model with control as reference, explicitly forbids testing on ComBat-corrected counts, and uses raw counts with DESeq2's internal size-factor normalization (TMM for the voom sensitivity arm). QC precedes testing with PCA/distance heatmap colored/shaped by condition and batch, PC-association stats, and an explicit outlier-reporting (not removal) policy. filterByExpr on the batch+condition design is a defensible, non-arbitrary low-count filter. FDR is BH with separate padj<0.05/0.10 counts by direction, apeglm/ashr shrinkage used for ranking/plots while retaining unshrunken LFC and stats, and a zero-hits contingency is stated. Enrichment correctly uses the full ranked list for GSEA with ranking metric stated, restricts universe to tested genes with coverage reporting, and adds an ORA cross-check with named human collections — only minor deduction for not pinning exact GMT versions. The report is unusually complete: versions/tools implied via packages, explicit design, thresholds, gene counts, and caveats (n=6 power, pre-filtered gene universe, batch balance) are all addressed, plus a valuable added sensitivity analysis (voom and batch-free) that exceeds the reference without contradicting it."
+}

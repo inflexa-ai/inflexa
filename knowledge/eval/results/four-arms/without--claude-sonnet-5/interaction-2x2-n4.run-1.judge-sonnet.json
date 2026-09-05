@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies this as an interaction question and fits ~genotype+treatment+genotype:treatment with explicit reference levels, LRT for the interaction, and simple effects within each genotype, matching the reference closely. QC (PCA/MDS, correlation heatmap by genotype/treatment) precedes filtering and modeling, though no explicit outlier-handling policy is stated. Filtering uses filterByExpr/CPM-based rule (reasonable, minimal) and normalization is implicit via DESeq2/edgeR defaults but not explicitly stated as size-factor normalization inside the model. BH-FDR and shrinkage (apeglm/ashr) are specified for interaction and simple effects, satisfying the fdr_shrinkage criterion well. Enrichment is not strictly warranted by the reference plan but is included with reasonable rigor (fgsea preranked, ORA with universe implied by background genes, named human collections); however, no explicit universe/background gene list or GMT version/size-window is stated, and the extra network/TF steps go beyond scope without harming core criteria. Reporting is fairly complete (methods, thresholds, packages, caveats about power and interaction vs simple effects) but lacks explicit versions and counts of tested/significant genes."
+}

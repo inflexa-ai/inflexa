@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 4,
+    "low_count_filter": 0,
+    "normalization": 5,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 5
+  },
+  "rationale": "The core DE step correctly specifies the full factorial model with interaction and simple-effect contrasts, matching the reference design and question. However, QC is reduced to a PCA/dispersion plot buried in acceptance criteria with no stated outlier/shallow-sample policy or library-size/sample-distance check, and there is no low-count filtering step at all. Normalization via DESeq2 size factors is implied by using raw counts but never explicitly stated, and apeglm/ashr shrinkage is listed as a package but not explicitly applied to the interaction or contrast estimates. The plan adds enrichment and PPI network steps beyond what the question warrants, and the enrichment step lacks an explicit universe, collection version, or size window; report completeness is partial, missing tool versions and explicit design caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 6,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly treats sample_01 as a QC question with PCA/clustering check and an explicit retain-vs-exclude decision carried into DE, matching the reference's core instruction; it also correctly does preranked GSEA on the full ranked list with a stated statistic, size-window mention, and ORA with the tested-gene universe. However, it never states the DESeq2 design formula (~condition) or reference level, so contrast correctness is only implied, not explicit; low-count filtering is deferred to 'standard DESeq2 default' without stating a concrete rule (e.g., min row sum/count threshold) or justification tied to n=6 per group; and apeglm/lfcshrink is never mentioned, with |log2FC|>1 used as a post-hoc/threshold-in-test filter but not paired with shrinkage as required, weakening fdr_shrinkage. Report completeness lists many outputs but doesn't mention tool/package versions or the hallmark database version, which the reference explicitly requires."
+}

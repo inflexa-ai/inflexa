@@ -1,0 +1,154 @@
+id: tpl-descriptive-python
+version: 1.0.0
+label: "Descriptive log2 fold changes for a design without replication, no inferential test (Python)"
+language: python
+method: M-0015
+step_types: [filter_low_counts, normalize, differential_expression]
+edam_operations: [EDAM:operation_3223]
+citations: [S-0001, S-0002, S-0011, S-0040]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_no_replicates]
+  min_replicates: 1
+  conditions:
+    - field: n_per_group_min
+      op: lt
+      value: 2
+  notes: >-
+    The Python mirror of tpl-descriptive-no-replicates. A count matrix whose
+    first column is the gene identifier and whose header holds the sample
+    identifiers, plus a sample table with one row per sample. At least one
+    level of the condition holds one sample, thus no dispersion can be
+    estimated and the script does no inferential test. It normalizes the
+    counts with median-of-ratios size factors in numpy (or counts per million),
+    keeps the genes with enough counts in every sample, and reports a log2
+    fold change per gene with a pseudocount. The results table has no p-value
+    column and no adjusted p-value column. The ranking is by the size of the
+    log2 fold change. The summary states that the design has no replication
+    and names the design that supports inference.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the denominator of the fold change, for example Control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The level of the condition that is the numerator of the fold change, for example Treated."
+    adaptable: true
+  - name: normalization
+    type: string
+    description: "The normalization of the counts before the fold change: DESeq2 median-of-ratios size factors computed in numpy, or counts per million by library size."
+    adaptable: true
+    default: median_of_ratios
+    default_source: "doi:10.1186/s13059-014-0550-8"
+    enum: [median_of_ratios, cpm]
+  - name: min_count
+    type: integer
+    description: "A gene stays when it has at least this many raw counts in every sample. Without replication a gene that is near zero in one sample gives an unreliable fold change, thus the filter applies to every sample."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 0
+  - name: pseudocount
+    type: number
+    description: "The constant added to each normalized value before the log2 ratio. It bounds the fold change of a gene with a low count."
+    adaptable: true
+    default: 1
+    default_source: "vignette:DESeq2/1.52.0#count-data-transformations"
+    minimum: 0
+  - name: n_top_labels
+    type: integer
+    description: "The number of genes with the largest fold change that carry a label on the MA plot."
+    adaptable: true
+    default: 15
+    minimum: 0
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example descriptive or treated_vs_control."
+    adaptable: true
+    default: descriptive
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+outputs:
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per gene that passes the filter, ranked by the size of the log2 fold change: gene, base_mean, log2_fold_change, normalized_<sample> for each sample. No p-value column and no adjusted p-value column."
+  - name: normalized_counts
+    path: "output/{prefix}_normalized_counts.csv"
+    format: EDAM:format_3752
+    description: "Normalized counts of every input gene, genes by samples."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The contrast, the group sizes, the statement that the design has no replication, the counts of input and reported genes, the thresholds, the package versions."
+  - name: ma
+    path: "figures/{prefix}_ma.png"
+    description: "MA-style plot, log2 fold change against the mean of the normalized counts, with the top genes labeled (and PDF)."
+  - name: sample_scatter
+    path: "figures/{prefix}_sample_scatter.png"
+    description: "Scatter of the log2 normalized counts of the test group against the reference group (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "The Python version and the package versions for the record."
+environment:
+  - name: numpy
+    version: "2.5.2"
+    track: python
+  - name: pandas
+    version: "3.0.5"
+    track: python
+  - name: matplotlib
+    version: "3.11.1"
+    track: python
+bioconductor: "3.23"
+body_file: body.py
+tests:
+  - name: no-replicates-1v1
+    dataset: no_replicates_1v1/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+    expect:
+      - "exists output/descriptive_results.csv"
+      - "exists output/descriptive_normalized_counts.csv"
+      - "exists output/descriptive_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/descriptive_ma.png"
+      - "exists figures/descriptive_ma.pdf"
+      - "exists figures/descriptive_sample_scatter.png"
+      - "exists figures/descriptive_sample_scatter.pdf"
+      - "csv_rows output/descriptive_results.csv >= 5000"
+      - "json output/descriptive_summary.json n_samples == 2"
+      - "json output/descriptive_summary.json replication.n_per_group_min == 1"
+      - "truth_top_precision output/descriptive_results.csv 300 >= 0.5"

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly matches the unpaired 6v6 single-batch design with DESeq2/pydeseq2 on raw counts, and QC is the strongest element: library sizes quantified, sample_01's fold-deviation reported, PCA/correlation used to distinguish 'shallow but consistent' from 'shallow and aberrant', with an explicit documented retain-or-drop decision and a sensitivity check. Normalization is handled inside the model via size factors with an explicit prohibition on pre-normalized input. Weaknesses: the design formula and reference level are never written out (only 'condition as the design factor'), the low-count filter is gestured at ('e.g. min row sum') without a stated threshold or justification, and there is no LFC shrinkage (apeglm/ashr) while an additional |log2FC| > 1 cut is layered on top of BH 0.05. Enrichment is well specified (full ranked list, named ranking statistic, 50 hallmark sets, ORA restricted to the ~12000 tested genes as universe, GSEA/ORA concordance check) but omits the gene-set size window and the MSigDB version, and the report never commits to naming software versions."
+}

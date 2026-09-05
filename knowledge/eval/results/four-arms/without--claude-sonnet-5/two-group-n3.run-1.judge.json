@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly matches the design: a negative binomial Wald test in DESeq2/pydeseq2 on raw Salmon counts for an unpaired 3v3 single-batch comparison, with no spurious batch or pairing term, explicit raw-count input, a minimal near-zero prefilter with retained-gene reporting, and an honest low-power framing that does not tighten alpha. QC is solid (PCA or correlation heatmap on VST/rlog, dispersion plot, ID-matching check) though library sizes and an explicit outlier-handling policy are only gestured at, and the design is described in words rather than as an explicit formula with a stated reference level. The main statistical gap is that no LFC shrinkage (apeglm/ashr) is specified for reported effect sizes, and reporting an unadjusted p<0.05 count invites over-interpretation even if labeled as comparison. Enrichment was not warranted by the question but is included anyway; the GSEA-preranked-first choice and stated ranking metric are sensible, yet there is no collection version, no gene-set size window, and no explicit ORA background universe. Reporting covers method, design, thresholds, significant-gene counts and design caveats, but omits software versions."
+}

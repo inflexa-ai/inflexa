@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 0,
+    "normalization": 5,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the research question as an interaction test and specifies ~genotype+treatment+genotype:treatment with extraction of the interaction coefficient plus both within-genotype simple effects, which is exactly right for this 2x2 design. QC is only partial: a PCA colored by genotype and treatment and a dispersion plot are named, but there are no sample distances, library size checks, or any stated outlier/shallow-sample policy. A low-count filter is never mentioned, and normalization is only implicit in feeding raw integer counts to DESeq2 (no explicit size-factor/median-of-ratios statement). BH-adjusted p at padj<0.05 is stated, but apeglm appears only in the package list with no acceptance criterion requiring shrunk LFCs for the reported interaction or contrast (and apeglm cannot be used with a contrast, which is unaddressed). Enrichment is ORA on thresholded lists with no explicit universe, no collection version, no size window, and an unjustified assumption that the data are human; fgsea is listed without any ranked list or ranking metric. Reporting covers design, thresholds, and significant-gene counts and includes sensible underpowered fallbacks, but omits software versions and design caveats such as n=4/cell power for an interaction term."
+}

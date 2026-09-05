@@ -1,0 +1,253 @@
+{
+  "campaign": "four-arms",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "timecourse-2x4-n3",
+  "run": 1,
+  "startedAt": "2026-09-05T13:32:37.182Z",
+  "elapsedMs": 25905,
+  "outcome": "plan_submitted",
+  "planId": "pln-c7534c43",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, QC, and align counts/metadata",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the raw count matrix (12000 genes x samples) and the sample metadata (condition, time, time_hours) agree on sample identity, and are replicates balanced across the 2 conditions x 4 time points design?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample ID overlap between counts.csv columns and metadata.csv rows is reported explicitly, including any samples present in one file but not the other (counts.csv reports 25 sample columns vs metadata.csv reporting 24 rows - this mismatch must be resolved and documented, not silently dropped)",
+          "Cross-tabulation of condition x time confirms replicate count per cell (expected 3, deviations flagged)",
+          "Low-count genes are filtered by a stated, reproducible rule (e.g. sum of counts across samples >= 10) before any downstream modeling",
+          "A cleaned counts matrix and metadata table restricted to the reconciled common sample set are written for downstream steps"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "DESeq2 likelihood-ratio test for condition:time interaction",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas"
+        ],
+        "question": "Which genes have a statistically significant condition-by-time interaction — i.e. a treatment-specific trajectory across t0-t3 beyond the trend shared by both conditions — using DESeq2 LRT comparing full model ~condition + time + condition:time against reduced model ~condition + time?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 dataset built from raw integer counts (not normalized/rounded values) using the reconciled matrix and metadata from T1S1, with time coded as a categorical factor (t0/t1/t2/t3) to allow non-linear trajectories",
+          "LRT contrast is exactly full ~condition + time + condition:time vs reduced ~condition + time, and this is stated in the output",
+          "Output table has one row per gene with LRT p-value, BH-adjusted p-value (FDR), and log2FoldChange columns retained from the full model per condition:time coefficient",
+          "Genes with FDR < 0.05 are flagged as interaction-significant and counted; if zero genes pass, this null result is reported rather than lowering the threshold post hoc",
+          "Independent filtering / outlier handling defaults of DESeq2 are left on and noted in the report"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Cluster time-course shapes of interaction genes by condition",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy",
+          "scikit-learn",
+          "matplotlib"
+        ],
+        "question": "Among genes with a significant condition:time interaction (T2S1, FDR<0.05), what distinct temporal trajectory shapes (e.g. divergent-increasing, divergent-decreasing, transient/pulse in one condition only) distinguish the two conditions across t0-t3?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Uses variance-stabilized (VST or rlog) expression of only the interaction-significant gene set from T2S1, averaged per condition x time_hours cell across the 3 replicates",
+          "Genes are grouped into a small number of shape clusters (e.g. hierarchical clustering or k-means on standardized per-condition trajectories) with cluster assignment exported per gene",
+          "A trajectory plot (mean +/- SD per condition over time_hours) is produced for at least the largest 2-3 clusters to visualize the divergence pattern",
+          "If T2S1 returns zero significant genes, this step reports that no interaction gene set exists for clustering rather than substituting a relaxed threshold silently"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment of interaction-significant genes",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Which biological pathways are over-represented among genes showing a treatment-specific temporal trajectory (condition:time interaction, FDR<0.05 from T2S1), using human WikiPathways gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the interaction-significant gene list (and, if available, the per-cluster gene lists from T2S2) as input to over-representation or gene-set enrichment analysis against the WikiPathways Homo sapiens GMT resource confirmed present at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt",
+          "Background/universe for enrichment is set to all genes passing the T1S1 expression filter, not the full unfiltered 12000-gene list, to avoid inflated significance",
+          "Output table lists pathway name, gene overlap, p-value and BH-adjusted p-value, sorted by adjusted p-value",
+          "If the interaction gene list from T2S1 is empty, this step reports that no enrichment could be run rather than enriching an arbitrary substitute gene set"
+        ]
+      }
+    ],
+    "title": "Treatment x time interaction DE in bulk RNA-seq",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The design is 2 conditions x 4 time points (t0-t3), n=3, raw salmon counts for 12000 genes x 25 samples (metadata has 24 rows for 24 non-control samples plus columns condition/time/time_hours - one sample count discrepancy to reconcile at QC). The research question asks for genes whose response over time differs BETWEEN the two conditions, beyond genes that simply change with time in both arms equally - this is precisely a condition:time interaction term in a negative-binomial GLM, not a series of pairwise contrasts. Plan: (1) load and QC counts/metadata, align sample identifiers, confirm factor levels and replicate balance; (2) fit DESeq2 with a full model ~condition + time + condition:time versus a reduced model ~condition + time (LRT), which isolates genes needing the interaction term - i.e., genes with a treatment-specific trajectory beyond the shared time trend; (3) characterize the interaction-significant genes by clustering their time-course shapes per condition and running pathway enrichment against WikiPathways human gene sets to interpret what biological processes diverge between arms over time. This directly answers the stated question and avoids overclaiming from marginal per-time-point contrasts."
+  },
+  "usage": {
+    "inputTokens": 43231,
+    "outputTokens": 2445,
+    "cacheCreationInputTokens": 34077,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treatment x time interaction DE in bulk RNA-seq",
+          "analytical_narrative": "The design is 2 conditions x 4 time points (t0-t3), n=3, raw salmon counts for 12000 genes x 25 samples (metadata has 24 rows for 24 non-control samples plus columns condition/time/time_hours - one sample count discrepancy to reconcile at QC). The research question asks for genes whose response over time differs BETWEEN the two conditions, beyond genes that simply change with time in both arms equally - this is precisely a condition:time interaction term in a negative-binomial GLM, not a series of pairwise contrasts. Plan: (1) load and QC counts/metadata, align sample identifiers, confirm factor levels and replicate balance; (2) fit DESeq2 with a full model ~condition + time + condition:time versus a reduced model ~condition + time (LRT), which isolates genes needing the interaction term - i.e., genes with a treatment-specific trajectory beyond the shared time trend; (3) characterize the interaction-significant genes by clustering their time-course shapes per condition and running pathway enrichment against WikiPathways human gene sets to interpret what biological processes diverge between arms over time. This directly answers the stated question and avoids overclaiming from marginal per-time-point contrasts.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, QC, and align counts/metadata",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the raw count matrix (12000 genes x samples) and the sample metadata (condition, time, time_hours) agree on sample identity, and are replicates balanced across the 2 conditions x 4 time points design?",
+              "acceptance_criteria": [
+                "Sample ID overlap between counts.csv columns and metadata.csv rows is reported explicitly, including any samples present in one file but not the other (counts.csv reports 25 sample columns vs metadata.csv reporting 24 rows - this mismatch must be resolved and documented, not silently dropped)",
+                "Cross-tabulation of condition x time confirms replicate count per cell (expected 3, deviations flagged)",
+                "Low-count genes are filtered by a stated, reproducible rule (e.g. sum of counts across samples >= 10) before any downstream modeling",
+                "A cleaned counts matrix and metadata table restricted to the reconciled common sample set are written for downstream steps"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "DESeq2 likelihood-ratio test for condition:time interaction",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Which genes have a statistically significant condition-by-time interaction — i.e. a treatment-specific trajectory across t0-t3 beyond the trend shared by both conditions — using DESeq2 LRT comparing full model ~condition + time + condition:time against reduced model ~condition + time?",
+              "acceptance_criteria": [
+                "DESeq2 dataset built from raw integer counts (not normalized/rounded values) using the reconciled matrix and metadata from T1S1, with time coded as a categorical factor (t0/t1/t2/t3) to allow non-linear trajectories",
+                "LRT contrast is exactly full ~condition + time + condition:time vs reduced ~condition + time, and this is stated in the output",
+                "Output table has one row per gene with LRT p-value, BH-adjusted p-value (FDR), and log2FoldChange columns retained from the full model per condition:time coefficient",
+                "Genes with FDR < 0.05 are flagged as interaction-significant and counted; if zero genes pass, this null result is reported rather than lowering the threshold post hoc",
+                "Independent filtering / outlier handling defaults of DESeq2 are left on and noted in the report"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Cluster time-course shapes of interaction genes by condition",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Among genes with a significant condition:time interaction (T2S1, FDR<0.05), what distinct temporal trajectory shapes (e.g. divergent-increasing, divergent-decreasing, transient/pulse in one condition only) distinguish the two conditions across t0-t3?",
+              "acceptance_criteria": [
+                "Uses variance-stabilized (VST or rlog) expression of only the interaction-significant gene set from T2S1, averaged per condition x time_hours cell across the 3 replicates",
+                "Genes are grouped into a small number of shape clusters (e.g. hierarchical clustering or k-means on standardized per-condition trajectories) with cluster assignment exported per gene",
+                "A trajectory plot (mean +/- SD per condition over time_hours) is produced for at least the largest 2-3 clusters to visualize the divergence pattern",
+                "If T2S1 returns zero significant genes, this step reports that no interaction gene set exists for clustering rather than substituting a relaxed threshold silently"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment of interaction-significant genes",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are over-represented among genes showing a treatment-specific temporal trajectory (condition:time interaction, FDR<0.05 from T2S1), using human WikiPathways gene sets?",
+              "acceptance_criteria": [
+                "Uses the interaction-significant gene list (and, if available, the per-cluster gene lists from T2S2) as input to over-representation or gene-set enrichment analysis against the WikiPathways Homo sapiens GMT resource confirmed present at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt",
+                "Background/universe for enrichment is set to all genes passing the T1S1 expression filter, not the full unfiltered 12000-gene list, to avoid inflated significance",
+                "Output table lists pathway name, gene overlap, p-value and BH-adjusted p-value, sorted by adjusted p-value",
+                "If the interaction gene list from T2S1 is empty, this step reports that no enrichment could be run rather than enriching an arbitrary substitute gene set"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

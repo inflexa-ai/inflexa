@@ -11,7 +11,7 @@
  * outcome.
  */
 
-import type { Method, Modality, ParameterValue, Rule, Situation, StepType, Template } from "../model.js";
+import type { Method, Modality, ParameterValue, Rule, Situation, StepType, Template, Preferences } from "../model.js";
 import { evaluateCondition } from "./conditions.js";
 import type { MatchedRule } from "./rules.js";
 
@@ -62,6 +62,8 @@ export interface AssembledProcedure {
     readonly steps: readonly ProcedureStep[];
     /** Step types of the walk that no rule covers. Absence is reported, never filled. */
     readonly uncovered: readonly StepType[];
+    /** Step types the procedure drops because a flag removed inference: a shrinkage or a multiple-testing step has nothing to act on. */
+    readonly dropped: readonly StepType[];
     /** True when a flag rule changes the outcome of the whole analysis. */
     readonly flagged: boolean;
     /** True when the central step of the question has a method. */
@@ -106,7 +108,14 @@ function mergeParameters(rules: readonly MatchedRule[]): ParameterValue[] {
     return [...byName.values()];
 }
 
-function templateFor(method: Method, step: StepType, situation: Situation, catalog: Catalog): string | undefined {
+/**
+ * The template of a method for a step: the first template of the method whose
+ * applicability holds. A language preference of the caller selects, among the
+ * templates that hold, the first one in that language, and falls back to the
+ * first one that holds. A preference never changes a rule or a method.
+ */
+function templateFor(method: Method, step: StepType, situation: Situation, catalog: Catalog, preferences?: Preferences): string | undefined {
+    const holding: Template[] = [];
     for (const id of method.templates ?? []) {
         const template = catalog.templates.get(id);
         if (!template) continue;
@@ -115,9 +124,11 @@ function templateFor(method: Method, step: StepType, situation: Situation, catal
         if (applicability.count_sources && situation.count_source && !applicability.count_sources.includes(situation.count_source)) continue;
         if (applicability.min_replicates !== undefined && situation.n_per_group_min < applicability.min_replicates) continue;
         if ((applicability.conditions ?? []).some((condition) => !evaluateCondition(condition, situation))) continue;
-        return `${template.id}@${template.version}`;
+        holding.push(template);
     }
-    return undefined;
+    const preferred = preferences?.language ? holding.find((template) => template.language === preferences.language) : undefined;
+    const chosen = preferred ?? holding[0];
+    return chosen ? `${chosen.id}@${chosen.version}` : undefined;
 }
 
 function primaryPackage(method: Method): ProcedureStep["package"] {
@@ -150,7 +161,7 @@ function flagOf(rule: Rule, claim: string): ProcedureFlag | undefined {
     };
 }
 
-export function assembleProcedure(applicable: readonly MatchedRule[], situation: Situation, modality: Modality, catalog: Catalog): AssembledProcedure {
+export function assembleProcedure(applicable: readonly MatchedRule[], situation: Situation, modality: Modality, catalog: Catalog, preferences?: Preferences): AssembledProcedure {
     const walk = modality.question_steps[situation.question] ?? modality.step_order;
     const steps: ProcedureStep[] = [];
     const uncovered: StepType[] = [];
@@ -193,7 +204,7 @@ export function assembleProcedure(applicable: readonly MatchedRule[], situation:
 
         const forbids = [...new Set(candidates.flatMap((matched) => matched.rule.action.forbids ?? []))];
         const parameters = mergeParameters(candidates);
-        const template = method ? templateFor(method, step, situation, catalog) : undefined;
+        const template = method ? templateFor(method, step, situation, catalog, preferences) : undefined;
 
         steps.push({
             step,
@@ -217,7 +228,43 @@ export function assembleProcedure(applicable: readonly MatchedRule[], situation:
             ...(forbids.length > 0 ? { forbids } : {}),
         });
     }
+    const consistent = withoutInference(steps);
     const central = centralStep(situation.question);
-    const central_covered = steps.some((step) => step.step === central && step.method !== undefined);
-    return { steps, uncovered, flagged, central_covered };
+    const central_covered = consistent.steps.some((step) => step.step === central && step.method !== undefined);
+    return { steps: consistent.steps, uncovered, dropped: consistent.dropped, flagged, central_covered };
+}
+
+const INFERENCE_ONLY_STEPS: ReadonlySet<StepType> = new Set(["shrink_lfc", "multiple_testing"]);
+
+/**
+ * A flag on the differential expression step that removes inference makes the
+ * downstream inferential steps contradictory: there is no fold change to
+ * shrink and no p-value to adjust. The procedure drops them and turns the
+ * enrichment step descriptive, so a planner that copies the procedure as it
+ * is copies a consistent one.
+ */
+function withoutInference(steps: readonly ProcedureStep[]): { steps: ProcedureStep[]; dropped: StepType[] } {
+    const de = steps.find((step) => step.step === "differential_expression");
+    const removing = de?.flags?.find((flag) => flag.severity === "flag" && flag.outcome !== undefined && removesInference(flag.outcome));
+    if (!removing) return { steps: [...steps], dropped: [] };
+    const dropped = steps.filter((step) => INFERENCE_ONLY_STEPS.has(step.step)).map((step) => step.step);
+    const kept = steps
+        .filter((step) => !INFERENCE_ONLY_STEPS.has(step.step))
+        .map((step) => {
+            if (step.step !== "enrichment") return step;
+            const parameters = [
+                ...(step.parameters ?? []).filter((parameter) => parameter.name !== "rank_metric"),
+                { name: "rank_metric", value: "descriptive_log2_fold_change", default_source: `rule:${removing.rule.split("@")[0]}` },
+                { name: "inference", value: "none", default_source: `rule:${removing.rule.split("@")[0]}` },
+            ];
+            const flag: ProcedureFlag = {
+                rule: removing.rule,
+                severity: "flag",
+                message:
+                    "The design supports no inferential test, thus the enrichment is descriptive: rank the genes by the descriptive log2 fold change, report the leading edge of each set, and report no set-level p-value as evidence.",
+                outcome: removing.outcome!,
+            };
+            return { ...step, parameters, flags: [...(step.flags ?? []), flag] };
+        });
+    return { steps: kept, dropped };
 }

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan uses ~ batch + condition with an explicit control reference level and a named Wald contrast, exactly matching the reference design, and adds a well-justified edgeR QL robustness check on the identical design without letting it override DESeq2 as the primary call. QC precedes testing with PCA/heatmap/library sizes colored by both batch and condition and an explicit no-silent-removal outlier policy. The filter (>=10 counts in >=6 samples) is minimal and justified by group size; normalization is strictly in-model (DESeq2 size factors, edgeR TMM) with no pre-adjustment of counts, and ComBat-seq is explicitly excluded from the DE path. BH at alpha=0.05 with independent filtering and apeglm shrinkage are correctly specified, and enrichment is done properly on the full ranked list (Wald stat) with stated universe, named/versioned collections, and a 15-500 size window, including a sound rule for skipping ORA when the DE list is short. The report section is comprehensive, naming methods, versions, thresholds, gene counts, and design caveats, so overall this plan meets or exceeds the reference on every criterion."
+}

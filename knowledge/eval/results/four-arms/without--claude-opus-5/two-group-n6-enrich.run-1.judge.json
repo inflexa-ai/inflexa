@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the stated design precisely: unpaired n=6 vs n=6, single batch, no covariates available, so DESeq2 Wald with ~condition and control set as the explicit reference level is the right model, and it refuses to invent covariates the 12x2 metadata lacks. QC is exemplary and specific to the flagged concern — library-size ratio to median, detected genes, size factors, VST PCA, distance heatmap and per-sample Cook's distance — with an explicit keep/keep-flagged/drop policy, retention as primary, and a pre-specified 11-sample sensitivity fit with quantified concordance rather than silent deletion. Filtering (>=10 counts in >=6 samples, tied to the smaller group size, with retained-gene count reported) and normalisation (median-of-ratios inside the model, explicit ban on downsampling or rescaling) are both correct and justified. Multiple testing is BH at 0.05 with apeglm shrinkage for reporting and unshrunken Wald statistics for the preranked fgsea ranking, an explicitly stated and correct separation; hallmark GSEA uses the full tested list as background with human HGNC symbols confirmed and a seed, losing a little only for a lower size bound of 10 with no upper bound versus the 15-500 window. Reporting covers design, thresholds, tested and significant counts, collection version and caveats, but package versions are only implied by a package list rather than promised in the report."
+}

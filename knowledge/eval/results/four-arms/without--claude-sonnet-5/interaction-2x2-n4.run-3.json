@@ -1,0 +1,463 @@
+{
+  "campaign": "four-arms",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-2x2-n4",
+  "run": 3,
+  "startedAt": "2026-09-05T13:31:23.264Z",
+  "elapsedMs": 73908,
+  "outcome": "plan_submitted",
+  "planId": "pln-47b39d92",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering, and full factorial DESeq2 model fit",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "Verify metadata sample identifiers match counts column names exactly (order and naming) before building the DESeqDataSet — a silent mismatch would scramble the design",
+          "Confirm genotype and treatment are encoded as two-level factors (WT/KO, vehicle/drug) as described in the data context; if additional levels appear, stop and reconcile rather than assume"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "After removing low-count genes, does a DESeq2 negative-binomial model with design ~genotype*treatment fit the 2x2 factorial design (genotype: WT/KO; treatment: vehicle/drug; 4 replicates per cell, 16 samples) converge cleanly, and what do PCA/sample-distance diagnostics show about batch structure or outlier samples across the four arms?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts (12000 genes x samples) and metadata (16 samples x genotype/treatment/condition) are loaded and sample order/names are matched between the two files before any modeling",
+          "Genes with near-zero counts across all samples are filtered (e.g. rowSums or DESeq2 default independent filtering) and the number of genes retained is reported",
+          "A DESeqDataSet is constructed with design = ~genotype*treatment (genotype and treatment set to factors with WT and vehicle as reference levels) and DESeq() runs to completion without convergence errors",
+          "PCA plot (rlog or vst-transformed) and a sample-distance heatmap are produced showing the four groups (WT-vehicle, WT-drug, KO-vehicle, KO-drug), each with 4 replicates",
+          "The fitted DESeqDataSet object and vst/rlog matrix are saved for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Extract genotype x treatment interaction effect",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "With n=4/cell (16 samples total), power to detect interaction effects is limited relative to main effects — state this explicitly rather than implying the interaction test is as well-powered as a two-group comparison",
+          "Do not conflate 'significant in each simple effect' with 'significant interaction' — a gene can be DE in KO-drug-vs-vehicle but not KO-vehicle-vs-WT-vehicle without a formally significant interaction term; only the interaction coefficient answers the stated question directly"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ashr",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes show a significant genotype:treatment interaction — i.e., where the drug-vs-vehicle effect differs between KO and WT — using the DESeq2 model fit in T1S1, and how many genes pass FDR < 0.05?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "results() is called on the fitted DESeqDataSet requesting the genotypeKO.treatmentdrug interaction coefficient (name= as it appears in resultsNames(dds))",
+          "Independent filtering and Benjamini-Hochberg FDR correction are applied (DESeq2 defaults); genes with padj < 0.05 are reported as the interaction gene set",
+          "Log2 fold-change shrinkage is applied for reporting effect sizes: ashr (or normal) shrinkage is used since apeglm does not support multi-level/interaction contrasts",
+          "A results table (gene, log2FC, lfcSE, pvalue, padj) is exported as CSV, and an MA plot and volcano plot (EnhancedVolcano) of the interaction term are produced",
+          "The count and identity of significant interaction genes is stated plainly, including if zero genes pass FDR — a null interaction result is a valid, reportable outcome, not a failure"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Simple effects: drug response within each genotype",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "These simple-effects contrasts are descriptive/interpretive aids for the interaction result, not a substitute statistical test for 'does the drug act differently' — that claim rests on T1S2's interaction term"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "What is the drug-vs-vehicle effect within WT alone, and within KO alone, using contrasts from the same ~genotype*treatment DESeq2 fit, and how do these two effect-size lists compare (concordant direction vs discordant) for genes flagged by the interaction test in T1S2?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "The WT-only drug-vs-vehicle contrast and KO-only drug-vs-vehicle contrast are both extracted from the single fitted model in T1S1 (e.g. via listing resultsNames or main effect + interaction combination, or by relevelling factors as needed) rather than by refitting two separate two-group models",
+          "apeglm shrinkage is applied to each of these two single-coefficient contrasts",
+          "log2FC(drug in KO) vs log2FC(drug in WT) is plotted as a scatter, with interaction-significant genes from T1S2 highlighted, to visualize genotype-dependent divergence",
+          "A results table per contrast (gene, log2FC, padj) is exported as CSV",
+          "The step explicitly reports whether interaction-significant genes tend to show concordant (same direction, different magnitude) or discordant (opposite direction) drug response between genotypes"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the genotype-dependent drug response",
+        "agent": "enrichment-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "Pathway gene sets use HGNC symbols — confirm the counts.csv gene identifier column is already gene symbol (as the data context states) so no ID mapping step is silently skipped or silently wrong"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which WikiPathways human pathways are over-represented among genes with a significant genotype:treatment interaction (from T1S2), ranked by direction and magnitude of the interaction log2FC?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Confirms the WikiPathways human gene-set file is present before proceeding (path resolved at run time, organism=Homo sapiens, 2026.07.10 snapshot); if absent, reports the enrichment step could not run rather than fabricating pathway results",
+          "Gene set names are recovered by splitting the '%'-delimited descriptor field per the file's documented format",
+          "fgsea is run pre-ranked on the interaction-term log2FC (signed, shrunk from T1S2) across all tested genes; separately, a hypergeometric/ORA test (clusterProfiler) is run on the padj<0.05 interaction gene subset from T1S2 against the same WikiPathways background",
+          "If the T1S2 interaction gene set is empty (null interaction result), this step falls back to ranking on the interaction log2FC alone via fgsea and states plainly that ORA could not be run for lack of a significant gene list",
+          "A results table (pathway, NES/odds ratio, padj) and a dot/bar plot of the top pathways are produced"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Network context of interaction genes via STRING PPI",
+        "agent": "network-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "The full STRING links file is ~83MB gzipped, 13.7M rows (double-counted edges): read and dedupe efficiently rather than materializing the full dense graph, and do not attempt distance-based measures on the unfiltered full graph as documented"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "igraph"
+        ],
+        "question": "Do genes with a significant genotype:treatment interaction (T1S2) form a more highly connected subnetwork than expected by chance in the STRING human high-confidence PPI network, and what hub genes/modules characterize this genotype-dependent drug-response signature?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "network",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Confirms the STRING v12.0 human protein-info and protein-links files are present before proceeding; if absent, reports the network step could not run",
+          "protein.info.v12.0.txt.gz is joined to protein.links.v12.0.txt.gz on STRING protein id to map preferred_name (gene symbol) onto both interactors, and duplicate reverse-direction edges are collapsed to an undirected graph",
+          "Edges are filtered to combined_score >= 700 (documented high-confidence cut) before any subnetwork or connectivity analysis",
+          "The induced subnetwork on interaction-significant genes (from T1S2) is extracted; if that list is empty, the step falls back to the top N genes by interaction-term |log2FC| and states this substitution explicitly",
+          "Basic subnetwork statistics (node count, edge count, degree distribution, top-degree hub genes) are reported, with a plotted subnetwork"
+        ]
+      }
+    ],
+    "title": "2x2 genotype x drug interaction DE + pathway analysis",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data is a bulk RNA-seq 2x2 factorial (genotype: WT/KO x treatment: vehicle/drug, n=4/cell, 12000 genes x 16 samples in metadata + 17 columns in counts implying a gene-symbol column) in human brain tissue. The research question — does the drug act differently in KO vs WT — is precisely a statistical interaction question (genotype:treatment term), not a simple two-group contrast. The correct design is DESeq2 with design ~genotype*treatment (equivalently genotype+treatment+genotype:treatment). Track 1 does QC/filtering and fits this full model, then extracts the interaction term as the primary answer (which genes respond to drug differently by genotype) alongside the two simple effects (drug effect within WT; drug effect within KO) for interpretability, using apeglm/ashr shrinkage since apeglm does not support interaction contrasts directly (ashr or normal shrinkage used for the interaction coefficint, apeglm reserved for the single-coefficient simple-effect contrasts). Track 2 takes the interaction-significant gene set forward to WikiPathways human pathway over-representation (fgsea/clusterProfiler) and a STRING PPI-based network view, to describe what biological processes the genotype-dependent drug response involves. This structure directly answers the stated question (interaction term) while the simple-effects contrasts and pathway/network views give the mechanistic and directional detail a synthesizer needs to interpret a bare interaction gene list."
+  },
+  "usage": {
+    "inputTokens": 832859,
+    "outputTokens": 5552,
+    "cacheCreationInputTokens": 120608,
+    "cacheReadInputTokens": 712083,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "fgsea",
+          "clusterProfiler",
+          "apeglm",
+          "EnhancedVolcano",
+          "ashr"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/bioconductor/deseq2",
+        "query": "interaction term design formula genotype treatment interaction results contrast"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "interaction term design formula genotype treatment"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeq2 interaction term design ~genotype*treatment results name interaction effect"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string-ppi-human"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 interaction term genotype treatment factorial design RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "two-way factorial RNA-seq interaction effect knockout drug treatment brain",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression 2x2 factorial design interaction genotype drug",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 likelihood ratio test interaction term negative binomial",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Love Huber Anders DESeq2 moderated estimation fold change dispersion",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ComplexHeatmap",
+          "pheatmap",
+          "ggplot2",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "2x2 genotype x drug interaction DE + pathway analysis",
+          "analytical_narrative": "The data is a bulk RNA-seq 2x2 factorial (genotype: WT/KO x treatment: vehicle/drug, n=4/cell, 12000 genes x 16 samples in metadata + 17 columns in counts implying a gene-symbol column) in human brain tissue. The research question — does the drug act differently in KO vs WT — is precisely a statistical interaction question (genotype:treatment term), not a simple two-group contrast. The correct design is DESeq2 with design ~genotype*treatment (equivalently genotype+treatment+genotype:treatment). Track 1 does QC/filtering and fits this full model, then extracts the interaction term as the primary answer (which genes respond to drug differently by genotype) alongside the two simple effects (drug effect within WT; drug effect within KO) for interpretability, using apeglm/ashr shrinkage since apeglm does not support interaction contrasts directly (ashr or normal shrinkage used for the interaction coefficint, apeglm reserved for the single-coefficient simple-effect contrasts). Track 2 takes the interaction-significant gene set forward to WikiPathways human pathway over-representation (fgsea/clusterProfiler) and a STRING PPI-based network view, to describe what biological processes the genotype-dependent drug response involves. This structure directly answers the stated question (interaction term) while the simple-effects contrasts and pathway/network views give the mechanistic and directional detail a synthesizer needs to interpret a bare interaction gene list.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, filtering, and full factorial DESeq2 model fit",
+              "track": "1",
+              "step_type": "analysis",
+              "question": "After removing low-count genes, does a DESeq2 negative-binomial model with design ~genotype*treatment fit the 2x2 factorial design (genotype: WT/KO; treatment: vehicle/drug; 4 replicates per cell, 16 samples) converge cleanly, and what do PCA/sample-distance diagnostics show about batch structure or outlier samples across the four arms?",
+              "acceptance_criteria": [
+                "Counts (12000 genes x samples) and metadata (16 samples x genotype/treatment/condition) are loaded and sample order/names are matched between the two files before any modeling",
+                "Genes with near-zero counts across all samples are filtered (e.g. rowSums or DESeq2 default independent filtering) and the number of genes retained is reported",
+                "A DESeqDataSet is constructed with design = ~genotype*treatment (genotype and treatment set to factors with WT and vehicle as reference levels) and DESeq() runs to completion without convergence errors",
+                "PCA plot (rlog or vst-transformed) and a sample-distance heatmap are produced showing the four groups (WT-vehicle, WT-drug, KO-vehicle, KO-drug), each with 4 replicates",
+                "The fitted DESeqDataSet object and vst/rlog matrix are saved for downstream steps"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Verify metadata sample identifiers match counts column names exactly (order and naming) before building the DESeqDataSet — a silent mismatch would scramble the design",
+                "Confirm genotype and treatment are encoded as two-level factors (WT/KO, vehicle/drug) as described in the data context; if additional levels appear, stop and reconcile rather than assume"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Extract genotype x treatment interaction effect",
+              "track": "1",
+              "step_type": "analysis",
+              "question": "Which genes show a significant genotype:treatment interaction — i.e., where the drug-vs-vehicle effect differs between KO and WT — using the DESeq2 model fit in T1S1, and how many genes pass FDR < 0.05?",
+              "acceptance_criteria": [
+                "results() is called on the fitted DESeqDataSet requesting the genotypeKO.treatmentdrug interaction coefficient (name= as it appears in resultsNames(dds))",
+                "Independent filtering and Benjamini-Hochberg FDR correction are applied (DESeq2 defaults); genes with padj < 0.05 are reported as the interaction gene set",
+                "Log2 fold-change shrinkage is applied for reporting effect sizes: ashr (or normal) shrinkage is used since apeglm does not support multi-level/interaction contrasts",
+                "A results table (gene, log2FC, lfcSE, pvalue, padj) is exported as CSV, and an MA plot and volcano plot (EnhancedVolcano) of the interaction term are produced",
+                "The count and identity of significant interaction genes is stated plainly, including if zero genes pass FDR — a null interaction result is a valid, reportable outcome, not a failure"
+              ],
+              "packages": [
+                "DESeq2",
+                "ashr",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=4/cell (16 samples total), power to detect interaction effects is limited relative to main effects — state this explicitly rather than implying the interaction test is as well-powered as a two-group comparison",
+                "Do not conflate 'significant in each simple effect' with 'significant interaction' — a gene can be DE in KO-drug-vs-vehicle but not KO-vehicle-vs-WT-vehicle without a formally significant interaction term; only the interaction coefficient answers the stated question directly"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Simple effects: drug response within each genotype",
+              "track": "1",
+              "step_type": "analysis",
+              "question": "What is the drug-vs-vehicle effect within WT alone, and within KO alone, using contrasts from the same ~genotype*treatment DESeq2 fit, and how do these two effect-size lists compare (concordant direction vs discordant) for genes flagged by the interaction test in T1S2?",
+              "acceptance_criteria": [
+                "The WT-only drug-vs-vehicle contrast and KO-only drug-vs-vehicle contrast are both extracted from the single fitted model in T1S1 (e.g. via listing resultsNames or main effect + interaction combination, or by relevelling factors as needed) rather than by refitting two separate two-group models",
+                "apeglm shrinkage is applied to each of these two single-coefficient contrasts",
+                "log2FC(drug in KO) vs log2FC(drug in WT) is plotted as a scatter, with interaction-significant genes from T1S2 highlighted, to visualize genotype-dependent divergence",
+                "A results table per contrast (gene, log2FC, padj) is exported as CSV",
+                "The step explicitly reports whether interaction-significant genes tend to show concordant (same direction, different magnitude) or discordant (opposite direction) drug response between genotypes"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "These simple-effects contrasts are descriptive/interpretive aids for the interaction result, not a substitute statistical test for 'does the drug act differently' — that claim rests on T1S2's interaction term"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of the genotype-dependent drug response",
+              "track": "2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are over-represented among genes with a significant genotype:treatment interaction (from T1S2), ranked by direction and magnitude of the interaction log2FC?",
+              "acceptance_criteria": [
+                "Confirms the WikiPathways human gene-set file is present before proceeding (path resolved at run time, organism=Homo sapiens, 2026.07.10 snapshot); if absent, reports the enrichment step could not run rather than fabricating pathway results",
+                "Gene set names are recovered by splitting the '%'-delimited descriptor field per the file's documented format",
+                "fgsea is run pre-ranked on the interaction-term log2FC (signed, shrunk from T1S2) across all tested genes; separately, a hypergeometric/ORA test (clusterProfiler) is run on the padj<0.05 interaction gene subset from T1S2 against the same WikiPathways background",
+                "If the T1S2 interaction gene set is empty (null interaction result), this step falls back to ranking on the interaction log2FC alone via fgsea and states plainly that ORA could not be run for lack of a significant gene list",
+                "A results table (pathway, NES/odds ratio, padj) and a dot/bar plot of the top pathways are produced"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Pathway gene sets use HGNC symbols — confirm the counts.csv gene identifier column is already gene symbol (as the data context states) so no ID mapping step is silently skipped or silently wrong"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "Network context of interaction genes via STRING PPI",
+              "track": "2",
+              "step_type": "network",
+              "question": "Do genes with a significant genotype:treatment interaction (T1S2) form a more highly connected subnetwork than expected by chance in the STRING human high-confidence PPI network, and what hub genes/modules characterize this genotype-dependent drug-response signature?",
+              "acceptance_criteria": [
+                "Confirms the STRING v12.0 human protein-info and protein-links files are present before proceeding; if absent, reports the network step could not run",
+                "protein.info.v12.0.txt.gz is joined to protein.links.v12.0.txt.gz on STRING protein id to map preferred_name (gene symbol) onto both interactors, and duplicate reverse-direction edges are collapsed to an undirected graph",
+                "Edges are filtered to combined_score >= 700 (documented high-confidence cut) before any subnetwork or connectivity analysis",
+                "The induced subnetwork on interaction-significant genes (from T1S2) is extracted; if that list is empty, the step falls back to the top N genes by interaction-term |log2FC| and states this substitution explicitly",
+                "Basic subnetwork statistics (node count, edge count, degree distribution, top-degree hub genes) are reported, with a plotted subnetwork"
+              ],
+              "packages": [
+                "igraph"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "The full STRING links file is ~83MB gzipped, 13.7M rows (double-counted edges): read and dedupe efficiently rather than materializing the full dense graph, and do not attempt distance-based measures on the unfiltered full graph as documented"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

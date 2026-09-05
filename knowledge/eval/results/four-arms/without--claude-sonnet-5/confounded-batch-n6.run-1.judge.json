@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 1,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 2,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 3
+  },
+  "rationale": "The planner correctly diagnosed the perfect confounding of batch with condition, explained the rank-deficiency, and explicitly refused ComBat/SVA/RUV rescue attempts, which matches the reference's preferred halt-and-ask outcome — so design reasoning scores high. However, it submitted no plan, so nearly every executable criterion is unstated: no QC (PCA, library sizes, sample distances, outlier policy), no low-count filter, no normalization strategy, no design formula or reference level or contrast, and no FDR/alpha or LFC shrinkage. It gestures at a caveated exploratory alternative but never specifies the model, thresholds, or reporting content, so report completeness is only partially served by the well-articulated design caveat. Enrichment is not warranted absent a DE result and is absent, but by omission rather than by reasoned exclusion, so it receives partial credit."
+}

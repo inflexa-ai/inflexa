@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly specifies design ~batch+condition with batch as balanced covariate, DESeq2 with apeglm shrinkage, BH-adjusted padj, explicit alpha, and reference-level verification, matching the reference closely. QC step properly colors PCA by both condition and batch with variance-explained reporting and a sound outlier policy. Normalization is implicit via DESeq2's internal size factors (VST only used for PCA visualization, not fed into the count model), and filtering uses a standard count>=10-in-min-group-size rule, both reasonable though not deeply justified for this dataset's specifics. Enrichment is reasonably handled (ORA vs GSEA fallback, named WikiPathways version, universe consideration) but the universe choice and ranking metric for GSEA aren't fully pinned down. Report completeness is implied by acceptance criteria (counts of tested/significant genes, thresholds, caveats) but no explicit step consolidates versions and full caveats into one final report artifact."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly uses ~ batch + condition on raw counts for a balanced two-batch design, with control as reference and apeglm shrinkage on the named coefficient, matching the reference exactly; robustness fits (condition-only, limma-voom) are a reasonable addition without displacing the primary model. QC is thorough (PCA/heatmap by both factors, outlier and library-size checks) and the low-count filter is minimal and justified for n=6. Normalization stays inside DESeq2, with explicit prohibition of pre-adjusted counts entering the model. FDR/BH and shrinkage are explicit with stated alpha and sensitivity thresholds reported rather than used as filters. GSEA on the full ranked list plus a secondary ORA with a stated universe and size window covers enrichment well, though version pinning for the gene set collections is not stated. The report step is comprehensive, naming methods, thresholds, counts, and design caveats, just missing explicit software version numbers."
+}

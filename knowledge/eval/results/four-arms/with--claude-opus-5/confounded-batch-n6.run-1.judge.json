@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan identifies the perfect confounding correctly, explicitly refuses a batch term (not full rank) and refuses ComBat-seq/removeBatchEffect/SVA, fits ~condition alone, states the untestable no-batch-effect assumption, labels every artifact as confounded, and closes by recommending a rebalanced design or bridging technical replicates rather than a computational fix — exactly the reference behaviour. QC is design-specific: blind VST, PCA on top 500, distance heatmap, library sizes coloured by both factors with the explicit note that the two colourings are identical by construction, and a name-don't-drop outlier policy. Filtering (>=10 counts in >=6 samples, tied to the smallest group), normalization inside the model (median-of-ratios and TMM, no pre-scaling), explicit reference level and named contrast, BH at alpha 0.05 with independent filtering and apeglm shrinkage kept separate from the p-values are all correct and stated. Enrichment is technically well specified (full ranked list, Wald statistic with justification, tested-gene universe, named collections with versions, 15-500 window after intersection, collapse, seed, human-only Reactome filtering) and carries the confounding caveat, but running GSEA on a contrast that cannot be attributed to treatment adds interpretive risk beyond what the design supports, hence a small deduction. The report block is thorough and leads with the limitation rather than burying it."
+}

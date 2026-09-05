@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the interaction LRT (full ~condition+time+condition:time vs reduced ~condition+time) as the primary test, states reference levels explicitly, and supplements with edgeR QLF as a robustness check. QC precedes the model with blind VST, PCA (500 HVGs, colored by condition and time), distance heatmap, and library sizes, with an explicit no-drop-without-reason policy. The pre-filter (>=10 counts in >=3 samples, the smallest cell size) is minimal and justified; normalization is correctly kept inside DESeq2 via median-of-ratios, with explicit constraints against pre-normalization. BH at alpha=0.05 is applied with independent filtering, apeglm/ashr shrinkage is used appropriately per-coefficient while p-values remain from the unshrunken/LRT fit, and NA-padj causes are split by Cook's outliers vs independent filtering. Enrichment is well-justified given the interaction context, using a full ranked list, stated ranking metric with a secondary unsigned pass, explicit collections/versions, size window, seed, and honest reporting of the Reactome substitution and mapping loss. The report step is thorough, covering power caveats, method overlap, trajectory clustering, and full reproducibility record, losing only minor points for the acknowledged length-offset limitation and slight complexity in dual shrinkage handling."
+}

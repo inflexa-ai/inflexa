@@ -71,12 +71,27 @@ resolves its types.
 - A template body uses three constructs only: `{{slot}}`, `{{#if slot}}`, and
   `{{#unless slot}}`. Every adaptable slot lands on a line that ends with
   `# [adaptable: slot]`. A pinned slot carries a default and a source.
+- A template is R (`body.R`, run with `Rscript`) or Python (`body.py`, run
+  with `python3`). A Python template attaches to the same method as its R
+  mirror, after the R templates, with the same applicability. The caller
+  selects the language with a preference on the recommend request. A
+  preference never changes a rule or a method.
 - A published snapshot is never edited. A correction is a new snapshot. A rule
   is never deleted. It becomes deprecated with a `replaced_by` link.
 - The step order of a modality lives in `kb/modalities/`. A new step type is a
   schema change, in `schema/` and in `src/model.ts` together.
+- A new Situation field is a schema change in three places: `schema/`,
+  `src/model.ts`, and the situation schema of the harness tools. A condition
+  over an absent field is false, thus a rule that names the new field fires
+  only when the caller sets it.
 
 ## Tests and gates
+
+The evaluation data holds fourteen simulated patterns under `eval/data/`,
+each with counts, TPM, log-expression, lengths, metadata, and the truth. The
+task set in `eval/tasks/tasks.yaml` names a pattern and the facts of the
+profile. A task can set the organism, the data state, an extra results
+table, hidden columns, a user constraint, and the expected outcome.
 
 `bun test` covers the engine, the renderer, and the canonical form with no
 network and no Docker. `bun run validate` reads the tree. `templates:test`

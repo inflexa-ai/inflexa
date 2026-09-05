@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames the question as a genotype-by-treatment interaction, fits ~genotype + treatment + genotype:treatment with named reference levels (WT, vehicle), and extracts the interaction coefficient plus both simple effects, which is exactly the reference approach; it also anticipates the low power of an interaction test at n=4/cell and the Cook's-distance NA behavior below 7 replicates. QC precedes testing with blind VST PCA colored by both factors, sample distance heatmap, library sizes, and an explicit no-silent-drop outlier policy. Filtering (>=10 counts in >=4 samples, tied to smallest group size) is minimal and justified, raw counts go into DESeq2 with no pre-normalization, and BH at alpha=0.05 with ashr shrinkage on the contrasts is stated in the test rather than post hoc. Enrichment is well specified (full ranked list by Wald stat, 15-500 size window, per-contrast, leading edge, named collections and versions), but it assumes human collections and org.Hs.eg.db without justifying species for what is most plausibly a mouse knockout brain dataset, which is the one substantive weakness. Reporting is thorough on methods, versions, design, thresholds, gene counts, diagnostics, and design caveats."
+}

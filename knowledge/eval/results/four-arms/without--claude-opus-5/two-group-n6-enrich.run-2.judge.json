@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the design precisely: unpaired 6-vs-6, single batch, no covariates available, DESeq2 Wald on ~condition with control set as reference and LFC direction stated, plus a clearly framed leave-one-out sensitivity run rather than a silent drop of sample_01. QC is exemplary and dataset-specific — library sizes, ratio to median, detected genes benchmarked against depth by subsampling, size factors for all 12, VST PCA and correlation clustering, with a stated default-KEEP policy that requires both depth and structure outlyingness to justify exclusion. Normalization is median-of-ratios inside the model on the full matrix, and FDR is BH at 0.05 with apeglm shrinkage used for effect size but not for significance calls, which is the correct separation. Enrichment is fgsea preranked on the full Wald-statistic ranking against human Hallmark with an explicit tested-gene universe, per-set coverage, and duplicate-symbol handling; only the minSize of 10 rather than 15 and the missing MSigDB version number are minor slips. The low-count filter is the weakest point — it offers two alternative rules without committing to one before run time — and the report specifies thresholds, gene counts and caveats thoroughly but never asks for software/reference versions."
+}

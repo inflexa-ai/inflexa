@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: batch is a balanced known covariate entering the design as ~batch + condition with control set as the reference level, the counts are never adjusted before the model, and normalization (median-of-ratios, TMM) stays internal to each count model. QC is explicit and dataset-specific — blind VST, PCA colored by both batch and condition, Euclidean sample-distance heatmap, library sizes, and a no-silent-drop policy — and the low-count filter (>=10 counts in >=6 samples, justified as the smallest group size) is minimal and tied to the design. Testing is Wald with BH at alpha=0.05, independent filtering on, apeglm shrinkage for the reported effect, plus an edgeR QL cross-check appropriate at n=6/group. Enrichment is not strictly warranted by the question but is executed correctly (full ranked list, Wald stat metric stated, named collections with versions, 15-500 size window, per-collection BH, collapse); the unqualified assumption of human identifiers (org.Hs.eg.db) for an unspecified-species kidney dataset is the one soft spot. The report section names methods, versions, design, thresholds, tested/significant counts, diagnostics, session info and seeds, though design-level caveats are lighter than the method-dependence caveat."
+}

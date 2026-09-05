@@ -12,6 +12,12 @@ assertion: >-
   the first enrichment method for a group comparison.
 modality: bulk_rna_seq
 conditions:
+  - field: question
+    op: in
+    value: [enrichment, full_plan]
+  - field: enrichment_input
+    op: eq
+    value: sample_scores
   - field: n_per_group_min
     op: gte
     value: 6

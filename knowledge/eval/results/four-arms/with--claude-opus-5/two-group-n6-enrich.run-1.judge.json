@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the design precisely: a two-group unpaired 6v6 contrast fitted with DESeq2 Wald on raw counts plus an independent edgeR quasi-likelihood fit, with the intersection (not union) reported as high-confidence. QC precedes testing and specifically adjudicates sample_01 with a pre-stated rule that depth alone is not grounds for exclusion, backed by library size and detected-gene tables, blind-VST PCA, a distance heatmap, a machine-readable verdict, and a with/without sensitivity analysis of the DE result. Filtering is minimal and tied to the smallest group size (>=10 counts in >=6 samples), normalization stays inside the models (median-of-ratios and TMM) with transformed values used for visualization only, the reference level and contrast direction are explicit, and significance is BH at alpha 0.05 with apeglm shrinkage reported alongside unshrunken estimates plus a p-value histogram check. Enrichment is preranked fgsea on the full tested-gene list ranked by the Wald statistic against human Hallmark with version, size window 15-500, unmapped share, seed, and a stated Reactome-to-GO BP substitution. The report section names versions, formula, thresholds, tested and significant counts, diagnostics, and the design's power and isoform-offset caveats; nothing material is missing."
+}

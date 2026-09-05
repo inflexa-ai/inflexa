@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly matches DESeq2 Wald + apeglm to a 6v6 unpaired single-batch design, with explicit reference level and named contrast. QC is thorough: blind VST, PCA, distance heatmap, library-size table, explicit non-silent decision policy for sample_01. Filtering (>=10 counts in >=6 samples) is minimal and justified by group size, and normalization uses DESeq2 size factors with no pre-scaling. FDR/shrinkage steps are fully specified (BH alpha=0.05, independent filtering, apeglm, both shrunken/unshrunken LFC, diagnostics). Enrichment is well specified (fgsea preranked on Wald stat, Hallmark 2026.1, size window 15-500, universe = tested genes, leading-edge genes), though the ORA universe language is slightly redundant since only GSEA is run. Report completeness is excellent, naming versions, thresholds, gene counts, and caveats including sample_01 and single-method enrichment limitation."
+}

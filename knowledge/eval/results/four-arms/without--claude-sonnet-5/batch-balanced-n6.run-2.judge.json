@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 5,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly reads the balanced batch structure and puts it in the model as an additive covariate (~ batch + condition) on raw counts, explicitly rejecting pre-model ComBat-seq correction, which matches the reference and fits a 6v6 design. QC includes a numeric batch-by-condition cross-tab, sample name reconciliation, and a PCA colored by condition and marked by batch, but omits library size inspection and any stated policy for outliers or shallow samples. The low-count filter is left as an unspecified example ('minimum total or per-group threshold'), so it is neither justified nor concrete, and while BH at padj<0.05 is explicit, no lfcShrink or equivalent effect-size shrinkage is mentioned, which is a clear gap. Enrichment names a collection and an explicit tested-gene universe but hedges between ORA and 'GSEA-style' without a ranking metric, and states no collection version or gene-set size window; reporting covers design, thresholds, and significant/NA gene counts but never software versions or design caveats."
+}

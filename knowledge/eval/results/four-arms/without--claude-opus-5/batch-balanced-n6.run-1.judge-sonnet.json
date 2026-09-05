@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly fits ~ batch + condition as the primary design with control as reference, treats ComBat-style correction as inappropriate before the model, and adds a limma-voom concordance check without treating it as a second chance for significance. QC (PCA/heatmap colored by condition and batch, PC-association stats, library size, outlier policy) precedes testing and is thorough. The filter (>=10 counts in >=6 samples) is minimal and justified relative to arm size. Normalization is internal to DESeq2/edgeR-TMM with no pre-adjustment of counts fed to the model. BH FDR at 0.05 is explicit, apeglm/ashr shrinkage is used for effect size ranking separate from testing p-values, and thresholds are stated in the test rather than post hoc. Enrichment uses the full ranked list for GSEA with the ranking metric stated, an explicit ORA universe, named human collections, size window 15-500, and redundancy collapsing—slightly less than ideal only in not specifying exact collection versions. The report requests versions of packages but doesn't explicitly ask for software version numbers to be recorded in output, otherwise it covers method, design, thresholds, counts, and caveats comprehensively."
+}

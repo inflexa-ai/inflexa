@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference precisely: a single DESeq2 model with ~ genotype + treatment + genotype:treatment, explicit relevel to WT/vehicle, Wald test on the interaction coefficient as the primary answer, plus both simple effects as named contrasts, with an edgeR QL cross-check on the identical design and filtered gene set. QC is concrete and pre-model (blind VST, PCA on top 500 variable genes colored by both factors, sample distances, library sizes) with an explicit no-drop-but-flag policy justified by n=4 per cell. The filter (>=10 counts in >=4 samples, tied to the smallest cell) is minimal and justified; normalization is correctly left inside the models (median-of-ratios offsets, TMM for edgeR) with an explicit prohibition on pre-normalization. BH at alpha=0.05 passed into results() for independent filtering, ashr shrinkage correctly chosen over apeglm because two effects are contrasts, unshrunken p-values retained, and per-contrast FDR scope stated. Enrichment is preranked fgsea per contrast on the full ranked list with the Wald statistic, tested-gene universe, 15-500 size window, named human collections with versions and symbol-mapping loss quantified; the only minor soft spot is the interaction-ranked GSEA being of limited interpretability, which the plan itself flags. The report enumerates versions, design, contrasts, thresholds, tested and significant counts, seeds, and the key caveat that a null interaction at n=4 is not evidence of equivalence."
+}

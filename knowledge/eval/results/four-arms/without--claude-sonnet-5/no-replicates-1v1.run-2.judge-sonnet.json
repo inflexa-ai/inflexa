@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 3,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "Despite extensive, well-reasoned caveats acknowledging the lack of replication, the plan's primary deliverable is an edgeR exact test with an externally fixed BCV that produces p-values and FDR<0.05 calls — this is precisely the invalid inferential move the reference forbids for a 1-vs-1 design, so method_fits_design and fdr_shrinkage score low despite the sensitivity analysis and honest framing. QC (library size, detection, correlation) and a minimal CPM-based low-count filter are both present and reasonably justified for a 2-sample design. Normalization is done correctly via edgeR::calcNormFactors/TMM rather than pre-normalizing into a count model, but there is no design formula/blocking structure (not needed here) and no fold-change shrinkage is applied to the reported effect sizes. The WikiPathways preranked GSEA step is technically sound (full ranked list, stated ranking metric, named/versioned collection, symbol-matching noted) but rests on an invalid upstream statistical call. Report completeness is good on versions/design/caveats but undermined by reporting invalid significance thresholds as a primary result."
+}

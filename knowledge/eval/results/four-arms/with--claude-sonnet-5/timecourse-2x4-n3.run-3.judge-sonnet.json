@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan implements exactly the reference design: DESeq2 LRT of full (~condition+time+condition:time) vs reduced (~condition+time), with explicit factor levels, alpha, and simple-effects reported alongside the omnibus test. QC is thorough (blind VST, PCA, distances, library size, explicit handling of the 25-vs-24 sample mismatch) though it doesn't explicitly mention batch/day as a formal covariate beyond visual screening. Filtering (>=10 counts in >=3 samples) is minimal and justified; normalization is correctly left inside DESeq2's model (size factors), never pre-normalized. FDR and shrinkage are handled well (BH via independent filtering, apeglm/ashr chosen appropriately per contrast type), though shrinkage is applied to simple-effect coefficients rather than the interaction contrast itself, a minor deviation from ideal LRT-effect reporting. Enrichment is well-justified with GSEA on the LRT stat, named collections/versions, and size windows, appropriately avoiding ORA for small gene lists. The final report is exceptionally complete, covering versions, thresholds, gene counts, diagnostics, and power caveats."
+}

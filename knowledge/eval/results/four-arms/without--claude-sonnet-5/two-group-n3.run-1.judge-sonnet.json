@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 6,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly uses DESeq2/pydeseq2 Wald test on raw counts for an unpaired 3v3 design, includes PCA/correlation/dispersion QC, minimal justified prefiltering, and explicitly discusses low-n power limitations without lowering alpha. However, normalization is never stated as size-factor based inside the model (just 'do not pre-normalize'), and the design formula/contrast (reference level, ~condition, contrast direction) is never explicitly written out. BH-FDR at 0.05 is used but apeglm/lfcSE shrinkage of the reported fold change is never mentioned, and thresholds like padj<0.05 vs padj<0.1 vs raw p<0.05 risk implying post-hoc threshold shopping rather than a single stated alpha. Enrichment is reasonably justified with GSEA-primary/ORA-secondary and universe/namespace checks, but lacks a stated gene-set size window or WikiPathways version. Report completeness is strong (methods, thresholds, counts, caveats) but weakened by the missing shrinkage and formula details."
+}

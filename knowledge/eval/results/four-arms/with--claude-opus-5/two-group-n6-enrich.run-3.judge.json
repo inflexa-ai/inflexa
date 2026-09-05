@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on ~condition with an explicit control reference level and a named numerator/denominator contrast, apeglm shrinkage kept beside the unshrunken estimate, BH at alpha 0.05 passed into results(), and an edgeR QL cross-check on the identical filtered matrix and design. QC is specific and correct: blind VST PCA on the top 500 variable genes, Euclidean distance heatmap, per-sample library size, size factor and detected-gene table, and a written keep/drop policy for sample_01 plus a quantified leave-one-out sensitivity refit rather than silent deletion. Normalization is entirely inside the model (median-of-ratios; TMM for edgeR) with an explicit prohibition on pre-normalizing counts; the low-count filter (>=10 counts in >=6 samples, the smallest group size) is minimal and justified, though slightly stricter than the usual smallest-group-size-of-counts rule. Enrichment is preranked fgsea on the full tested-gene list ranked by the Wald statistic with the reason stated, hallmark 2026.1 named with version, 15-500 size window applied after intersecting with tested genes, seed recorded, unmapped fraction reported, and an explicit note on the GO BP substitution for Reactome. The final report covers versions, design, contrast, thresholds, tested and significant counts, DESeq2/edgeR intersection, sessionInfo, and honest power caveats."
+}

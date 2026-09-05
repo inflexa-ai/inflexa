@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly blocks on subject (~subject + condition) in both DESeq2 and edgeR, explicitly framing the condition coefficient as the within-subject contrast, with reference level, contrast direction, and design term order all stated. QC precedes the model with PCA/heatmap/library size checks colored by condition and labeled by subject, with an explicit, sensible policy for not dropping samples given n=5 pairs. The low-count filter (>=10 counts in >=5 samples) is minimal and justified, and normalization is correctly done inside DESeq2/edgeR with no pre-normalization. BH-FDR at 0.05, apeglm shrinkage, independent filtering vs Cook's NA accounting, and thresholds inside results() are all explicit and correct. GSEA uses the full ranked list by Wald statistic with stated rationale, named collections/versions, size window, seed, and unmapped-share reporting, with ORA appropriately gated by a significance threshold; only minor deduction for GO BP substitution being a slight compromise rather than the ideal Reactome set. The final report is comprehensive, naming methods, versions, design, thresholds, gene counts, per-subject diagnostics, and caveats of the paired design and limited power."
+}

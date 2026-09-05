@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses the perfect confound, refuses to add a batch term (proving rank deficiency numerically), refuses ComBat/SVA as a repair, and labels every artefact as a treated+B2 vs control+B1 composite that 'cannot be attributed to treatment' — exactly what the reference requires; the ComBat/sva step is framed as a diagnostic demonstration of failure rather than a corrected gene list, which is acceptable though it does add work of limited value. QC is dataset-specific (PCA, correlation heatmap, library sizes, condition and batch annotation tracks that are noted to be identical, per-sample QC table) but no explicit policy is given for handling an outlier or shallow library. The filter (≥10 counts in ≥6 samples) is minimal and tied to group size, normalization stays inside DESeq2 with VST only for visualization and an explicit ban on pre-model count adjustment, and the design/contrast with control as reference is stated precisely. BH with apeglm shrinkage and independent filtering is correct, though the |LFC|>1 criterion is applied post hoc rather than via lfcThreshold; enrichment is preranked fgsea on the full list with a stated metric, named human collections, size window and permutations, but no collection version, and it arguably adds little given a confounded ranking. Reporting covers design, thresholds, significant-gene counts and caveats but does not commit to software versions."
+}

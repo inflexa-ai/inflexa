@@ -1,0 +1,321 @@
+{
+  "campaign": "four-arms",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "no-replicates-1v1",
+  "run": 2,
+  "startedAt": "2026-09-05T13:58:26.795Z",
+  "elapsedMs": 68033,
+  "outcome": "plan_submitted",
+  "planId": "pln-67e43567",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Normalization and 1v1 library comparability QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Median-of-ratios size factors from only two samples are far less stable than from a full cohort; state this",
+          "A high sample-sample correlation is expected even between biologically distinct liver samples and is NOT evidence of a good comparison"
+        ],
+        "context": "Design is 1 treated vs 1 control, raw integer salmon counts, human liver. There are no replicates, so this step is not preprocessing for a test — it is the check that decides whether any downstream ranking is worth reading. A strongly non-flat MA trend or a large size-factor imbalance means fold changes are dominated by technical differences.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib",
+          "seaborn",
+          "statsmodels"
+        ],
+        "question": "Are the single treated and single control liver libraries technically comparable enough that a between-sample fold-change ranking is interpretable at all?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_normalization",
+        "depends_on": [],
+        "constraints": [
+          "Do not run any two-group differential test in this step",
+          "Do not drop or impute genes silently — report every filtering count",
+          "Report normalization on both CPM and median-of-ratios scales rather than picking one without justification"
+        ],
+        "description": "Load /eval-four-arms-without-no-replicates-1v1-2/data/inputs/counts/counts.csv (12,000 genes x 2 samples, first column gene symbol) and /eval-four-arms-without-no-replicates-1v1-2/data/inputs/metadata/metadata.csv (2 rows: sample, condition). Verify the two count column names match the metadata sample IDs exactly and record the actual condition labels found (do not assume the strings 'treated'/'control'). Compute per-sample library size, number of detected genes (count > 0), and the count distribution. Apply CPM and median-of-ratios (DESeq2-style geometric-mean) size-factor normalization; report both size factors and the ratio between them. Filter to expressed genes using a stated rule (e.g. raw count >= 10 in at least one sample) and report how many of the 12,000 genes survive. Produce: MA plot (mean log2 expression vs log2 ratio) with a lowess trend to expose composition or trend bias, log-log scatter of the two samples, Spearman and Pearson correlation on log2(normalized+1), and a histogram of log2 fold changes. Write the normalized matrix and the filtered gene set to disk for T1S2.",
+        "acceptance_criteria": [
+          "Count columns are matched to metadata sample IDs and the two actual condition label strings are reported verbatim",
+          "Per-sample library size, detected-gene count, and both CPM and median-of-ratios size factors are reported",
+          "Number of genes retained by the expression filter out of 12,000 is stated with the exact filter rule",
+          "MA plot, log-log scatter, and log2FC histogram are produced; Spearman and Pearson correlation between the two samples are reported",
+          "Normalized count matrix and filtered gene list are written to disk for downstream steps",
+          "The report states explicitly that with n=1 per group no within-group variance exists"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Fold-change ranking with dispersion sensitivity analysis",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Genes with a zero count in one sample will produce extreme or infinite log2FC — handle with the stated pseudocount and flag them in a separate column",
+          "Large apparent fold changes at low expression are the dominant failure mode here; the expression floor must be reported, not silently applied",
+          "A single sample per arm confounds treatment with every individual-level and batch-level difference between the two libraries"
+        ],
+        "context": "Depends on T1S1's normalized matrix and gene filter. The research question asks which genes are differentially expressed; with one sample per condition the honest answer is a prioritized candidate list plus an explicit statement that differential expression cannot be established. The BCV sweep is the standard way to make that dependency visible rather than hiding it behind a single default.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib",
+          "edgeR",
+          "limma"
+        ],
+        "question": "Which genes show the largest expression differences between the single treated and single control liver sample, and how sensitive is that ranking to the dispersion one is forced to assume?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Never report the BCV-based p-values or FDR as if they were estimated from the data — they are conditional on an assumed constant",
+          "Do not run DESeq2 with design ~condition on this data; it cannot estimate dispersion from n=1 per group",
+          "The primary deliverable must be the fold-change ranking, with the edgeR output presented as a sensitivity analysis subordinate to it"
+        ],
+        "description": "Primary output: a descriptive ranked table of all filtered genes with raw counts, normalized counts per sample, mean expression, and log2 fold change (treated vs control) computed on median-of-ratios-normalized counts with a pseudocount (state the pseudocount used). Rank primarily by log2FC restricted to genes above an expression floor, since low-count genes give unstable ratios; report both the unfiltered and expression-floored ranking. Label this table unambiguously as a descriptive ranking with NO p-values and NO FDR.\n\nSecondary, explicitly exploratory: run edgeR exactTest on the two libraries with a fixed assumed common dispersion, per the edgeR user guide's documented procedure for experiments without replication — repeat at BCV = 0.4 (typical human tissue), BCV = 0.2, and BCV = 0.6, and report how many genes pass FDR < 0.05 and how much the top-50 gene list overlaps across the three assumptions. The purpose is to show the answer is a function of an assumed constant, not of the data. Do not present any of these p-values as calibrated evidence.\n\nDeliver: a merged CSV (gene symbol, counts, normalized values, log2FC, and the three BCV-conditional statistics), a volcano-style plot annotated with the assumed BCV, and a short written statement of the minimum replication (n per group) that would be needed to test the top candidates.",
+        "acceptance_criteria": [
+          "Ranked log2FC table covers every gene retained by T1S1 and is labelled as descriptive, not a statistical test",
+          "Pseudocount and expression floor used for the ranking are stated explicitly",
+          "edgeR exactTest is run at three assumed BCV values (0.2, 0.4, 0.6) and the number of FDR<0.05 genes at each is reported",
+          "Top-50 overlap across the three BCV assumptions is quantified, demonstrating dependence on the assumed dispersion",
+          "Output CSV and volcano plot are written; the plot title or caption names the assumed BCV",
+          "The written summary states that no valid FDR-controlled DE call is possible at n=1 per group and names the replication that would be required"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Rank-based pathway enrichment on the log2FC ranking",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With one sample per arm the ranking may be dominated by inter-individual liver variation (e.g. metabolic, sex, or ischemia-time differences) rather than treatment; enriched pathways may reflect that",
+          "Leading-edge genes are the concrete follow-up candidates but require a replicated experiment to confirm"
+        ],
+        "context": "Depends on the T1S2 ranking. Because pathway-level coordination aggregates over many genes, it is somewhat more robust to single-sample noise than any individual gene call — but it inherits the total absence of replication and cannot establish a treatment effect. Human liver tissue, so human gene sets only; the rat and mouse WikiPathways files in the store must not be used.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the genes shifted between the treated and control liver sample fall into coherent human pathways, i.e. is there a coordinated program rather than scattered single-gene noise?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use human gene sets only — the mouse and rat WikiPathways files in the store are the wrong organism for this liver dataset",
+          "Do not run over-representation analysis on an arbitrarily thresholded DE gene list; there is no valid threshold here, so the rank-based method is required",
+          "Do not claim pathway activation or inhibition as a demonstrated treatment effect"
+        ],
+        "description": "Take the full gene-level log2FC ranking from T1S2 (all filtered genes, ranked by log2FC, gene symbols as identifiers) and run a rank-based gene set enrichment (GSEA preranked, e.g. gseapy.prerank or fgsea) against human pathway gene sets. Use the human WikiPathways collection available in the reference store at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt — parse the '%'-delimited first field to recover a readable pathway name, and confirm the file is present before use. The gene symbols in the counts file are the identifier space, matching the HGNC symbols in that GMT; report the fraction of ranked genes that map into the collection and drop unmatched symbols with a count. Restrict to gene sets of 15-500 members. Report normalized enrichment scores, nominal p-values and FDR from the permutation null, and leading-edge genes for the top up- and down-shifted pathways, with a dot plot of the top 20 by |NES| and an enrichment plot for the top 3.\n\nInterpretation constraint: the permutation statistics test whether the ranking is non-random with respect to set membership; they do NOT recover the biological replication the underlying ranking lacks. Every enrichment result must be reported as exploratory hypothesis generation. If the WikiPathways human GMT is absent at run time, report that and fall back to any other human pathway or GO gene-set collection the environment holds, naming the substitute; if none is available, report the gap rather than fabricating a collection.",
+        "acceptance_criteria": [
+          "Preranked GSEA is run on the complete T1S2 log2FC ranking, not on a truncated top-gene list",
+          "The human (not mouse or rat) WikiPathways GMT is used and its path and gene-set count after 15-500 size filtering are reported",
+          "Symbol-mapping rate into the collection is reported with the number of unmatched symbols dropped",
+          "Table of pathways with NES, nominal p, FDR and leading-edge genes is written to disk",
+          "Dot plot of top 20 pathways by |NES| and enrichment plots for the top 3 are produced",
+          "Results are labelled exploratory, with an explicit note that enrichment permutation p-values do not compensate for n=1 per condition"
+        ]
+      }
+    ],
+    "title": "Treated vs control liver: 1v1 unreplicated DE screen",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a 12,000 x 3 raw salmon count CSV (first column gene symbol, one column per sample) plus a 2 x 2 metadata table describing exactly one treated and one control human liver sample. With n=1 per condition there is no within-group variance, so no method can estimate dispersion from the data and no p-value or FDR from a two-group test is valid. Any plan that runs DESeq2/edgeR with a design of ~condition here would either fail outright or emit p-values that are pure fabrication. The plan therefore does what the data can actually support and says plainly what it cannot.\n\nT1S1 normalizes the two libraries (CPM/median-of-ratios size factors on the raw counts), filters low-count genes, and quantifies the technical comparability of the two libraries (library sizes, detected genes, MA-plot trend, Spearman/Pearson correlation on log counts) — this is the honest QC that decides whether a fold-change ranking is even interpretable. T1S2 produces the primary deliverable: a per-gene ranked table of log2 fold change (treated vs control) with pseudocount-shrunk and expression-filtered estimates, explicitly labelled a descriptive ranking, not a statistical test. As a secondary, clearly-labelled exploratory device it also runs edgeR exactTest with a fixed, assumed BCV (the edgeR manual's convention for unreplicated designs, e.g. BCV 0.4 for human tissue and a 0.2 sensitivity check), reporting how the top-gene list moves with the assumed dispersion — this is a sensitivity analysis of an assumption, not evidence. T2S1 then takes the ranked log2FC vector into a rank-based gene set enrichment against human WikiPathways (present at /mnt/refs/managed/wikipathways-human), because a coordinated pathway-level shift is more robust to single-sample noise than any individual gene call; its statistics are permutation-based over gene ranks and are also to be reported as exploratory, since the underlying ranking has no replication behind it.\n\nThe deliverable is a prioritized candidate list plus an explicit statement of what replication would be required to test it. No step will report an FDR-controlled DE gene set as if it were established."
+  },
+  "usage": {
+    "inputTokens": 87974,
+    "outputTokens": 4777,
+    "cacheCreationInputTokens": 35738,
+    "cacheReadInputTokens": 52212,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pydeseq2",
+          "gseapy",
+          "decoupler",
+          "clusterProfiler",
+          "fgsea"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "differential expression without biological replicates RNA-seq one sample per condition",
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control liver: 1v1 unreplicated DE screen",
+          "analytical_narrative": "The input is a 12,000 x 3 raw salmon count CSV (first column gene symbol, one column per sample) plus a 2 x 2 metadata table describing exactly one treated and one control human liver sample. With n=1 per condition there is no within-group variance, so no method can estimate dispersion from the data and no p-value or FDR from a two-group test is valid. Any plan that runs DESeq2/edgeR with a design of ~condition here would either fail outright or emit p-values that are pure fabrication. The plan therefore does what the data can actually support and says plainly what it cannot.\n\nT1S1 normalizes the two libraries (CPM/median-of-ratios size factors on the raw counts), filters low-count genes, and quantifies the technical comparability of the two libraries (library sizes, detected genes, MA-plot trend, Spearman/Pearson correlation on log counts) — this is the honest QC that decides whether a fold-change ranking is even interpretable. T1S2 produces the primary deliverable: a per-gene ranked table of log2 fold change (treated vs control) with pseudocount-shrunk and expression-filtered estimates, explicitly labelled a descriptive ranking, not a statistical test. As a secondary, clearly-labelled exploratory device it also runs edgeR exactTest with a fixed, assumed BCV (the edgeR manual's convention for unreplicated designs, e.g. BCV 0.4 for human tissue and a 0.2 sensitivity check), reporting how the top-gene list moves with the assumed dispersion — this is a sensitivity analysis of an assumption, not evidence. T2S1 then takes the ranked log2FC vector into a rank-based gene set enrichment against human WikiPathways (present at /mnt/refs/managed/wikipathways-human), because a coordinated pathway-level shift is more robust to single-sample noise than any individual gene call; its statistics are permutation-based over gene ranks and are also to be reported as exploratory, since the underlying ranking has no replication behind it.\n\nThe deliverable is a prioritized candidate list plus an explicit statement of what replication would be required to test it. No step will report an FDR-controlled DE gene set as if it were established.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-05T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Normalization and 1v1 library comparability QC",
+              "track": "T1",
+              "step_type": "qc_normalization",
+              "question": "Are the single treated and single control liver libraries technically comparable enough that a between-sample fold-change ranking is interpretable at all?",
+              "description": "Load /eval-four-arms-without-no-replicates-1v1-2/data/inputs/counts/counts.csv (12,000 genes x 2 samples, first column gene symbol) and /eval-four-arms-without-no-replicates-1v1-2/data/inputs/metadata/metadata.csv (2 rows: sample, condition). Verify the two count column names match the metadata sample IDs exactly and record the actual condition labels found (do not assume the strings 'treated'/'control'). Compute per-sample library size, number of detected genes (count > 0), and the count distribution. Apply CPM and median-of-ratios (DESeq2-style geometric-mean) size-factor normalization; report both size factors and the ratio between them. Filter to expressed genes using a stated rule (e.g. raw count >= 10 in at least one sample) and report how many of the 12,000 genes survive. Produce: MA plot (mean log2 expression vs log2 ratio) with a lowess trend to expose composition or trend bias, log-log scatter of the two samples, Spearman and Pearson correlation on log2(normalized+1), and a histogram of log2 fold changes. Write the normalized matrix and the filtered gene set to disk for T1S2.",
+              "context": "Design is 1 treated vs 1 control, raw integer salmon counts, human liver. There are no replicates, so this step is not preprocessing for a test — it is the check that decides whether any downstream ranking is worth reading. A strongly non-flat MA trend or a large size-factor imbalance means fold changes are dominated by technical differences.",
+              "question_note": null,
+              "acceptance_criteria": [
+                "Count columns are matched to metadata sample IDs and the two actual condition label strings are reported verbatim",
+                "Per-sample library size, detected-gene count, and both CPM and median-of-ratios size factors are reported",
+                "Number of genes retained by the expression filter out of 12,000 is stated with the exact filter rule",
+                "MA plot, log-log scatter, and log2FC histogram are produced; Spearman and Pearson correlation between the two samples are reported",
+                "Normalized count matrix and filtered gene list are written to disk for downstream steps",
+                "The report states explicitly that with n=1 per group no within-group variance exists"
+              ],
+              "constraints": [
+                "Do not run any two-group differential test in this step",
+                "Do not drop or impute genes silently — report every filtering count",
+                "Report normalization on both CPM and median-of-ratios scales rather than picking one without justification"
+              ],
+              "caveats": [
+                "Median-of-ratios size factors from only two samples are far less stable than from a full cohort; state this",
+                "A high sample-sample correlation is expected even between biologically distinct liver samples and is NOT evidence of a good comparison"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib",
+                "seaborn",
+                "statsmodels"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Fold-change ranking with dispersion sensitivity analysis",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes show the largest expression differences between the single treated and single control liver sample, and how sensitive is that ranking to the dispersion one is forced to assume?",
+              "description": "Primary output: a descriptive ranked table of all filtered genes with raw counts, normalized counts per sample, mean expression, and log2 fold change (treated vs control) computed on median-of-ratios-normalized counts with a pseudocount (state the pseudocount used). Rank primarily by log2FC restricted to genes above an expression floor, since low-count genes give unstable ratios; report both the unfiltered and expression-floored ranking. Label this table unambiguously as a descriptive ranking with NO p-values and NO FDR.\n\nSecondary, explicitly exploratory: run edgeR exactTest on the two libraries with a fixed assumed common dispersion, per the edgeR user guide's documented procedure for experiments without replication — repeat at BCV = 0.4 (typical human tissue), BCV = 0.2, and BCV = 0.6, and report how many genes pass FDR < 0.05 and how much the top-50 gene list overlaps across the three assumptions. The purpose is to show the answer is a function of an assumed constant, not of the data. Do not present any of these p-values as calibrated evidence.\n\nDeliver: a merged CSV (gene symbol, counts, normalized values, log2FC, and the three BCV-conditional statistics), a volcano-style plot annotated with the assumed BCV, and a short written statement of the minimum replication (n per group) that would be needed to test the top candidates.",
+              "context": "Depends on T1S1's normalized matrix and gene filter. The research question asks which genes are differentially expressed; with one sample per condition the honest answer is a prioritized candidate list plus an explicit statement that differential expression cannot be established. The BCV sweep is the standard way to make that dependency visible rather than hiding it behind a single default.",
+              "acceptance_criteria": [
+                "Ranked log2FC table covers every gene retained by T1S1 and is labelled as descriptive, not a statistical test",
+                "Pseudocount and expression floor used for the ranking are stated explicitly",
+                "edgeR exactTest is run at three assumed BCV values (0.2, 0.4, 0.6) and the number of FDR<0.05 genes at each is reported",
+                "Top-50 overlap across the three BCV assumptions is quantified, demonstrating dependence on the assumed dispersion",
+                "Output CSV and volcano plot are written; the plot title or caption names the assumed BCV",
+                "The written summary states that no valid FDR-controlled DE call is possible at n=1 per group and names the replication that would be required"
+              ],
+              "constraints": [
+                "Never report the BCV-based p-values or FDR as if they were estimated from the data — they are conditional on an assumed constant",
+                "Do not run DESeq2 with design ~condition on this data; it cannot estimate dispersion from n=1 per group",
+                "The primary deliverable must be the fold-change ranking, with the edgeR output presented as a sensitivity analysis subordinate to it"
+              ],
+              "caveats": [
+                "Genes with a zero count in one sample will produce extreme or infinite log2FC — handle with the stated pseudocount and flag them in a separate column",
+                "Large apparent fold changes at low expression are the dominant failure mode here; the expression floor must be reported, not silently applied",
+                "A single sample per arm confounds treatment with every individual-level and batch-level difference between the two libraries"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib",
+                "edgeR",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Rank-based pathway enrichment on the log2FC ranking",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Do the genes shifted between the treated and control liver sample fall into coherent human pathways, i.e. is there a coordinated program rather than scattered single-gene noise?",
+              "description": "Take the full gene-level log2FC ranking from T1S2 (all filtered genes, ranked by log2FC, gene symbols as identifiers) and run a rank-based gene set enrichment (GSEA preranked, e.g. gseapy.prerank or fgsea) against human pathway gene sets. Use the human WikiPathways collection available in the reference store at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt — parse the '%'-delimited first field to recover a readable pathway name, and confirm the file is present before use. The gene symbols in the counts file are the identifier space, matching the HGNC symbols in that GMT; report the fraction of ranked genes that map into the collection and drop unmatched symbols with a count. Restrict to gene sets of 15-500 members. Report normalized enrichment scores, nominal p-values and FDR from the permutation null, and leading-edge genes for the top up- and down-shifted pathways, with a dot plot of the top 20 by |NES| and an enrichment plot for the top 3.\n\nInterpretation constraint: the permutation statistics test whether the ranking is non-random with respect to set membership; they do NOT recover the biological replication the underlying ranking lacks. Every enrichment result must be reported as exploratory hypothesis generation. If the WikiPathways human GMT is absent at run time, report that and fall back to any other human pathway or GO gene-set collection the environment holds, naming the substitute; if none is available, report the gap rather than fabricating a collection.",
+              "context": "Depends on the T1S2 ranking. Because pathway-level coordination aggregates over many genes, it is somewhat more robust to single-sample noise than any individual gene call — but it inherits the total absence of replication and cannot establish a treatment effect. Human liver tissue, so human gene sets only; the rat and mouse WikiPathways files in the store must not be used.",
+              "acceptance_criteria": [
+                "Preranked GSEA is run on the complete T1S2 log2FC ranking, not on a truncated top-gene list",
+                "The human (not mouse or rat) WikiPathways GMT is used and its path and gene-set count after 15-500 size filtering are reported",
+                "Symbol-mapping rate into the collection is reported with the number of unmatched symbols dropped",
+                "Table of pathways with NES, nominal p, FDR and leading-edge genes is written to disk",
+                "Dot plot of top 20 pathways by |NES| and enrichment plots for the top 3 are produced",
+                "Results are labelled exploratory, with an explicit note that enrichment permutation p-values do not compensate for n=1 per condition"
+              ],
+              "constraints": [
+                "Use human gene sets only — the mouse and rat WikiPathways files in the store are the wrong organism for this liver dataset",
+                "Do not run over-representation analysis on an arbitrarily thresholded DE gene list; there is no valid threshold here, so the rank-based method is required",
+                "Do not claim pathway activation or inhibition as a demonstrated treatment effect"
+              ],
+              "caveats": [
+                "With one sample per arm the ranking may be dominated by inter-individual liver variation (e.g. metabolic, sex, or ischemia-time differences) rather than treatment; enriched pathways may reflect that",
+                "Leading-edge genes are the concrete follow-up candidates but require a replicated experiment to confirm"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

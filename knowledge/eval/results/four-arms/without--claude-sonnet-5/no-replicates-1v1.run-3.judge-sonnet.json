@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 1,
+    "qc_present": 5,
+    "low_count_filter": 0,
+    "normalization": 2,
+    "model_formula_contrasts": 2,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 4
+  },
+  "rationale": "The plan explicitly rejects the reference's correct approach (descriptive log2FC only, no p-values) and instead runs a fixed-dispersion edgeR exactTest with BH-adjusted FDR and a significance cutoff, which the reference explicitly calls wrong regardless of caveats attached. QC is present (library size, count distribution) but lacks PCA/sample distance framing since n=1 makes that moot, and there's no stated outlier policy. No low-count filter is mentioned at all. Normalization is not explicitly stated as being done inside the model (size factors/TMM) versus pre-adjustment. The design formula/contrast is not made explicit (no formula shown, dispersion is manually injected rather than modeled), and shrinkage is absent. Enrichment is reasonable in mechanics (ORA+GSEA, named human WikiPathways GMT, universe consideration via mapping-fraction caveat) but is built atop an invalid upstream p-value list, undermining its warrant; report completeness is undermined because it reports fabricated significance rather than the required 'no inference possible' framing."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan identifies the perfect aliasing of batch with condition, proves it numerically via a design-matrix rank check and cross-tabulation, explicitly forbids ComBat-seq/SVA/RUV and sample-dropping, fits the only estimable model (~condition, control reference), and labels every output as a treatment+batch composite while leading the report with the confound and concrete rebalanced-design remedies — exactly the reference behavior. QC is thorough (PCA with percent variance, correlation clustering, library size and detection rate by batch), though no explicit policy is stated for handling an outlier or shallow sample beyond leave-one-out stability. Filtering is tied to the smallest group size (n=6) but leaves the count threshold unnamed; normalization is correctly internal to DESeq2 on raw integer counts; FDR at padj<0.05 with apeglm/ashr shrinkage is specified, though BH is only implied by 'padj'. Enrichment is well-scoped (full ranked list with the Wald statistic named, ORA universe restricted to the filtered tested genes, human HGNC hallmark and GO-BP) but omits a gene-set size window and any collection version, and its coherence-diagnostic framing is honest if somewhat optional here. Reporting is strong: methods, DESeq2 version, thresholds, tested and significant gene counts, and the design caveat as the headline."
+}

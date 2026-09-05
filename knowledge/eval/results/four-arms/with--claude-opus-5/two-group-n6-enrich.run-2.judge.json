@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the design precisely: 6v6 unpaired, single batch, raw Salmon gene-level counts, DESeq2 Wald on ~condition with an explicitly set reference level and a named factor/numerator/denominator contrast, plus an edgeR QL cross-check reported as an intersection rather than a union. QC is genuinely dataset-specific — library sizes, detected genes, size factors, blind VST PCA and distance heatmap with sample_01 labelled, an explicit keep-inspect-report policy and a drop-one sensitivity rerun whose overlap is quantified. Filtering (>=10 counts in >=6 samples, the smallest group size) is minimal and justified; normalization stays inside the model (median-of-ratios and TMM) with an honest note that no length offsets are available; BH at alpha 0.05 with apeglm shrinkage, lfcThreshold inside results(), and a p-value histogram check before trusting adjustment. Enrichment is preranked fgsea on the full tested-gene list with the Wald statistic stated and defended, Hallmark named with a size window applied after intersection, a seed, and redundancy collapsing — the only soft spot is the asserted 'MSigDB 2026.1' version, which the plan does at least commit to verifying at run time. The synthesis step names methods, versions, thresholds, tested and significant counts, sample_01 handling and the modest-power caveat."
+}

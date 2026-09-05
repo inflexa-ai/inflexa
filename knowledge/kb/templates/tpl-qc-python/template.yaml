@@ -1,0 +1,176 @@
+id: tpl-qc-python
+version: 1.0.0
+label: "Sample structure QC in Python: log2(CPM + 1), PCA, sample distances, library sizes"
+language: python
+method: M-0006
+step_types: [qc_sample_structure]
+edam_operations: [EDAM:operation_3218]
+citations: [S-0001, S-0002, S-0012, S-0040]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  min_replicates: 1
+  notes: >-
+    The Python mirror of tpl-qc-eda. A count matrix whose first column is the
+    gene identifier and whose header holds the sample identifiers, plus a
+    sample table with one row per sample. The script reads no design formula.
+    Median-of-ratios size factors scale the counts, then log2(CPM + 1) takes
+    the place of the variance stabilizing transformation. PCA on the most
+    variable genes with scikit-learn, a Euclidean sample distance heatmap with
+    seaborn, and the library size and the number of detected genes per sample.
+    The condition column colors the PCA and the distance heatmap. An optional
+    batch column gives the point shape of the PCA and a second annotation of
+    the heatmap. The library size of each sample is compared to the median
+    library size, and a sample whose depth is below the median by more than
+    the low depth ratio is flagged. The template applies to any design pattern.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest. It colors the PCA and the heatmap."
+    adaptable: true
+  - name: batch_column
+    type: string
+    description: "The column of the sample table that holds the batch. Absent, the PCA uses one point shape and the heatmap has no batch annotation."
+    adaptable: true
+    required: false
+  - name: n_top_genes_pca
+    type: integer
+    description: "The number of most variable genes for the PCA."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 50
+  - name: low_depth_ratio
+    type: number
+    description: "A sample is flagged low depth when the median library size is more than this many times its own library size."
+    adaptable: true
+    default: 4
+    default_source: "doi:10.1186/s13059-016-0881-8"
+    minimum: 1
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example qc or lesional_qc."
+    adaptable: true
+    default: qc
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+outputs:
+  - name: library_sizes
+    path: "output/{prefix}_library_sizes.csv"
+    format: EDAM:format_3752
+    description: "One row per sample: sample, library_size, detected_genes, ratio_to_median, low_depth."
+  - name: log_cpm
+    path: "output/{prefix}_log_cpm.csv"
+    format: EDAM:format_3752
+    description: "log2(CPM + 1) after the median-of-ratios size factor scaling, genes by samples."
+  - name: pca
+    path: "output/{prefix}_pca.csv"
+    format: EDAM:format_3752
+    description: "One row per sample: sample, PC1, PC2, condition, and batch when a batch column is given."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The inputs, n_samples, n_genes, n_low_depth_samples, the low_depth_samples list, the percent variance of PC1 and PC2, the thresholds, the package versions."
+  - name: pca_figure
+    path: "figures/{prefix}_pca.png"
+    description: "PCA of the samples on the top variable genes, colored by condition, shaped by batch (and PDF)."
+  - name: sample_distances
+    path: "figures/{prefix}_sample_distances.png"
+    description: "Euclidean sample distance heatmap on the log2(CPM + 1) values (and PDF)."
+  - name: library_sizes_figure
+    path: "figures/{prefix}_library_sizes.png"
+    description: "Library size and detected genes per sample, the low depth samples marked (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "The Python version and the package versions for the record."
+environment:
+  - name: pandas
+    version: "3.0.5"
+    track: python
+  - name: numpy
+    version: "2.5.2"
+    track: python
+  - name: scikit-learn
+    version: "1.9.0"
+    track: python
+  - name: scipy
+    version: "1.16.3"
+    track: python
+  - name: matplotlib
+    version: "3.11.1"
+    track: python
+  - name: seaborn
+    version: "0.13.2"
+    track: python
+bioconductor: "3.23"
+body_file: body.py
+tests:
+  - name: two-group-n6
+    dataset: two_group_n6/seed-1
+    # The simulation plants sample_01 at a size factor of 0.25 against a nominal
+    # 1.0, but the realized library size is 3.84 times below the median, thus
+    # the default ratio of 4 does not flag it. The test pins the ratio at 3,
+    # the same as tpl-qc-eda.
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      low_depth_ratio: 3
+    expect:
+      - "exists output/qc_summary.json"
+      - "exists output/qc_pca.csv"
+      - "csv_rows output/qc_pca.csv >= 12"
+      - "json output/qc_summary.json n_low_depth_samples == 1"
+      - "exists figures/qc_pca.png"
+      - "exists figures/qc_sample_distances.png"
+      - "exists output/qc_library_sizes.csv"
+      - "exists output/qc_log_cpm.csv"
+      - "exists output/session_info.txt"
+      - "exists figures/qc_pca.pdf"
+      - "exists figures/qc_sample_distances.pdf"
+      - "exists figures/qc_library_sizes.png"
+      - "exists figures/qc_library_sizes.pdf"
+      - "csv_rows output/qc_library_sizes.csv == 12"
+      - "csv_rows output/qc_pca.csv == 12"
+      - "csv_rows output/qc_log_cpm.csv >= 5000"
+      - "json output/qc_summary.json n_samples == 12"
+      - "json output/qc_summary.json low_depth_samples.0 == sample_01"
+      - "json output/qc_summary.json percent_variance.PC1 > 0"
+      - "json output/qc_summary.json percent_variance.PC2 > 0"
+  - name: balanced-batch
+    dataset: batch_balanced_n6/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      batch_column: batch
+      output_prefix: qc_batch
+    expect:
+      - "exists output/qc_batch_summary.json"
+      - "exists figures/qc_batch_pca.png"
+      - "exists figures/qc_batch_sample_distances.png"
+      - "exists figures/qc_batch_library_sizes.png"
+      - "json output/qc_batch_summary.json n_samples == 12"
+      - "json output/qc_batch_summary.json batch_column == batch"

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses the fatal limitation of a 1v1 design, states that within-condition variance is unestimable, makes a descriptive TMM-CPM log2FC ranking the primary deliverable, and specifies the replication needed (>=3, preferably >=5 per arm) — this is the core of the reference answer and is well executed, with descriptive QC (library sizes, detection rates, top-fraction genes, MA and scatter plots) appropriate to n=2 and a minimal, justified CPM>=1 filter. It nonetheless departs from the reference by running edgeR exactTest with fixed BCVs of 0.1/0.2/0.4 and reporting FDR<0.05 gene counts; the framing as an assumption-sensitivity demonstration is honest and clearly labelled, but it still produces p-values and FDR numbers the design cannot support, and a reader could lift them as a discovery list. There is no design formula or contrast to specify beyond a stated direction convention, which the plan does give; no shrinkage of the reported effect sizes is proposed, only a pseudocount. Enrichment is not warranted here — a permutation GSEA on a single-pair ranking manufactures an apparent null — and although the plan uses the full ranked list, a named human collection, a size window, a seed and a universe-overlap report, it should have been omitted or reduced to a purely descriptive readout; no collection version is given."
+}

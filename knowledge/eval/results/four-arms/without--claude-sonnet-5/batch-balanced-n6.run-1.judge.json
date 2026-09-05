@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly treats the balanced batch as a covariate in ~ batch + condition with control releveled as reference, feeds raw integer counts to DESeq2 with no pre-adjustment or ComBat-seq, and explicitly forbids reporting the batch main effect as biology — a good fit to the stated design and n=6 per group. QC is present (VST PCA colored by both condition and batch, library sizes, dispersion check) but no sample-distance heatmap and no stated policy for handling an outlier or shallow library. The low-count filter (row sum < 10) is minimal and justified, and normalization stays inside the model via size factors. FDR is BH with independent filtering and both 0.05 and 0.1 reported, but there is no mention of lfcShrink or any shrinkage estimator for the reported effect sizes, which is a clear gap. Enrichment is well specified: named collection with version, tested-genes background for ORA, signed ranking metric for GSEA, and an underpowered-ORA fallback — though no explicit gene-set size window. Reporting covers design, thresholds, hit counts, convergence and the power caveat, but omits software versions."
+}

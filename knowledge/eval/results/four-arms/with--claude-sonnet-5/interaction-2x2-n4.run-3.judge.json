@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 6,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the question as an interaction and specifies ~genotype+treatment+genotype:treatment with explicit reference levels (WT, vehicle), the interaction Wald coefficient as the primary test, and both simple effects (the WT coefficient and a list() contrast for KO), which is exactly the reference approach; it also flags the n=4/cell power limitation rather than reading a null interaction as equivalence. QC is thorough and design-aware (blind VST, PCA colored by both factors, sample distances, library sizes, named-not-silently-dropped outlier policy), and the low-count filter (>=10 counts in >=4 samples) is minimal and justified by the smallest cell size. FDR handling is complete: BH at alpha=0.05 with independent filtering, ashr shrinkage with a stated reason for preferring it over apeglm for contrasts, p-value histograms and Cook's-distance NA accounting per contrast. Enrichment is well specified (full ranked list on the Wald stat, no pre-thresholding, named collections, 15-500 size window post-intersection with tested genes, species restriction, collapsePathways, mapping-failure rate), losing a little only for not pinning an MSigDB version. The one real gap is normalization: raw counts go into DESeq2 and size-factor estimation is implicit, but the plan never states that median-of-ratios normalization happens inside the model or that no pre-normalized values are used."
+}

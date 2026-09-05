@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the paired structure and blocks on subject (~ subject + condition) in DESeq2 with a limma-voom paired sensitivity fit, and adds a per-pair sign-consistency table that directly addresses the 'within each subject' phrasing — this is exactly the reference model and is dataset-specific rather than generic. QC precedes testing (library sizes, VST PCA by subject and condition, distance heatmap, within-pair vs between-subject distances) with an explicit no-drop policy for outliers, and the low-count filter (filterByExpr with design, or >=10 counts in >=5 samples) is minimal, justified, and reported as a retained-gene count. Normalization is handled inside the count models and per-pair values are taken from VST/normalized rather than raw counts, though size factors/TMM are never named explicitly. FDR handling is exemplary: pre-specified BH alpha 0.05, unshrunken Wald p for significance, apeglm/ashr shrinkage for ranking, relaxed thresholds flagged as exploratory. Enrichment is well specified (GSEA on the full ranking with stated metric, tested genes as ORA universe, named human symbol-keyed collections, GO redundancy collapsing) but omits collection versions and a set-size window, and the report section, while rich in thresholds, counts, and design caveats, does not commit to reporting software versions."
+}

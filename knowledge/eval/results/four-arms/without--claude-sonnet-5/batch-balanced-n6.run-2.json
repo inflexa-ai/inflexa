@@ -1,0 +1,225 @@
+{
+  "campaign": "four-arms",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "batch-balanced-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T13:25:44.375Z",
+  "elapsedMs": 29264,
+  "outcome": "plan_submitted",
+  "planId": "pln-7d30e85f",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, batch/condition balance check, and count filtering",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Input is counts.csv (12000 genes x 13 columns: gene symbol + 12 samples) and metadata.csv (12 rows x 3 columns: sample, condition, batch) from salmon. Design is stated as balanced: 6 treated vs 6 control, two batches balanced across conditions. This step verifies that balance empirically before it is relied on in the DE model and removes genes with negligible counts across all samples.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "scikit-learn"
+        ],
+        "question": "Are the 12 kidney samples (6 treated, 6 control) correctly labeled with respect to condition and the two processing batches, and which of the 12000 genes have sufficient counts to be tested?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Metadata condition and batch columns are cross-tabulated and the reported balance (3 treated/3 control per batch, or equivalent even split) is confirmed numerically",
+          "Sample identifiers in counts.csv columns match metadata.csv rows exactly (order and naming reconciled)",
+          "A count filter (e.g., minimum total or per-group count threshold) is applied and the number of genes retained out of the original 12000 is reported",
+          "A PCA or hierarchical clustering plot of filtered counts is produced showing samples colored by condition and shaped/labeled by batch, to visually inspect batch and condition separation"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, treated vs control, batch-adjusted",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Raw integer gene counts from salmon, 12 samples (6 treated, 6 control), 2 batches balanced across condition. Because batch is balanced with respect to condition it is safe and appropriate to include as an additive covariate in the negative-binomial model rather than requiring separate batch-correction (e.g., ComBat-seq) prior to testing — adjusting in the model preserves count-based statistical validity.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which of the filtered genes are differentially expressed between treated and control kidney samples after adjusting for the two known processing batches?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 (or pydeseq2) is run on the filtered raw count matrix from T1S1 with design ~ batch + condition, testing the condition (treated vs control) coefficient",
+          "Output table includes gene symbol, log2FoldChange, raw p-value, and BH-adjusted p-value (padj) for every tested gene",
+          "Independent filtering / outlier handling defaults are reported (number of genes with padj NA noted)",
+          "Significant DE genes are reported at padj < 0.05, with counts of up- and down-regulated genes in treated vs control",
+          "A volcano plot and an MA plot of the results are produced",
+          "Diagnostic dispersion plot is generated to confirm model fit"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment of treated-vs-control DE genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Uses the batch-adjusted DE gene table from T1S2. A human WikiPathways gene set collection (HGNC symbols) is available in the reference store and matches this dataset's organism (Homo sapiens) and gene symbol identifier space directly, requiring no ID mapping step.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which biological pathways are over-represented among the genes differentially expressed between treated and control kidney samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Over-representation analysis (e.g., hypergeometric/Fisher test) or GSEA-style ranked enrichment is run using the WikiPathways human gene sets against the significant DE gene list (padj < 0.05) from T1S2, using all filtered tested genes as the background universe",
+          "Pathway descriptor names are parsed from the '%'-delimited GMT field into readable pathway names",
+          "Results table reports pathway name, WikiPathways ID, gene overlap count, p-value, and BH-adjusted q-value, sorted by significance",
+          "If the WikiPathways human reference is unavailable at run time, the step reports that gap explicitly rather than silently skipping enrichment",
+          "A bar or dot plot of the top enriched pathways is produced"
+        ]
+      }
+    ],
+    "title": "Kidney treated vs control DE with batch adjustment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-05T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is a balanced 6-vs-6 bulk RNA-seq design (raw salmon gene counts, 12000 genes x 13 columns including gene symbol, 12 samples) with two known processing batches evenly split across conditions (treated/control). Because batch is balanced with respect to condition, it can be included as a covariate in the differential expression model without confounding the condition effect. The plan: (1) load and QC the counts/metadata, confirm the batch-by-condition balance and filter low-count genes; (2) run DESeq2 with a design that includes batch as a covariate and condition as the term of interest, producing a moderated, batch-adjusted treated-vs-control gene list; (3) run pathway enrichment (WikiPathways human gene sets) on the resulting DE gene list to give the differences biological context. No translational/clinical data (drug, PK, safety, immune) is present in this profile, so no translational steps are added."
+  },
+  "usage": {
+    "inputTokens": 87165,
+    "outputTokens": 2298,
+    "cacheCreationInputTokens": 68857,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with batch adjustment",
+          "analytical_narrative": "The dataset is a balanced 6-vs-6 bulk RNA-seq design (raw salmon gene counts, 12000 genes x 13 columns including gene symbol, 12 samples) with two known processing batches evenly split across conditions (treated/control). Because batch is balanced with respect to condition, it can be included as a covariate in the differential expression model without confounding the condition effect. The plan: (1) load and QC the counts/metadata, confirm the batch-by-condition balance and filter low-count genes; (2) run DESeq2 with a design that includes batch as a covariate and condition as the term of interest, producing a moderated, batch-adjusted treated-vs-control gene list; (3) run pathway enrichment (WikiPathways human gene sets) on the resulting DE gene list to give the differences biological context. No translational/clinical data (drug, PK, safety, immune) is present in this profile, so no translational steps are added.",
+          "created_at": "2026-09-05T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, batch/condition balance check, and count filtering",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Are the 12 kidney samples (6 treated, 6 control) correctly labeled with respect to condition and the two processing batches, and which of the 12000 genes have sufficient counts to be tested?",
+              "context": "Input is counts.csv (12000 genes x 13 columns: gene symbol + 12 samples) and metadata.csv (12 rows x 3 columns: sample, condition, batch) from salmon. Design is stated as balanced: 6 treated vs 6 control, two batches balanced across conditions. This step verifies that balance empirically before it is relied on in the DE model and removes genes with negligible counts across all samples.",
+              "acceptance_criteria": [
+                "Metadata condition and batch columns are cross-tabulated and the reported balance (3 treated/3 control per batch, or equivalent even split) is confirmed numerically",
+                "Sample identifiers in counts.csv columns match metadata.csv rows exactly (order and naming reconciled)",
+                "A count filter (e.g., minimum total or per-group count threshold) is applied and the number of genes retained out of the original 12000 is reported",
+                "A PCA or hierarchical clustering plot of filtered counts is produced showing samples colored by condition and shaped/labeled by batch, to visually inspect batch and condition separation"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "scikit-learn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, treated vs control, batch-adjusted",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the filtered genes are differentially expressed between treated and control kidney samples after adjusting for the two known processing batches?",
+              "context": "Raw integer gene counts from salmon, 12 samples (6 treated, 6 control), 2 batches balanced across condition. Because batch is balanced with respect to condition it is safe and appropriate to include as an additive covariate in the negative-binomial model rather than requiring separate batch-correction (e.g., ComBat-seq) prior to testing — adjusting in the model preserves count-based statistical validity.",
+              "acceptance_criteria": [
+                "DESeq2 (or pydeseq2) is run on the filtered raw count matrix from T1S1 with design ~ batch + condition, testing the condition (treated vs control) coefficient",
+                "Output table includes gene symbol, log2FoldChange, raw p-value, and BH-adjusted p-value (padj) for every tested gene",
+                "Independent filtering / outlier handling defaults are reported (number of genes with padj NA noted)",
+                "Significant DE genes are reported at padj < 0.05, with counts of up- and down-regulated genes in treated vs control",
+                "A volcano plot and an MA plot of the results are produced",
+                "Diagnostic dispersion plot is generated to confirm model fit"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment of treated-vs-control DE genes",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are over-represented among the genes differentially expressed between treated and control kidney samples?",
+              "context": "Uses the batch-adjusted DE gene table from T1S2. A human WikiPathways gene set collection (HGNC symbols) is available in the reference store and matches this dataset's organism (Homo sapiens) and gene symbol identifier space directly, requiring no ID mapping step.",
+              "acceptance_criteria": [
+                "Over-representation analysis (e.g., hypergeometric/Fisher test) or GSEA-style ranked enrichment is run using the WikiPathways human gene sets against the significant DE gene list (padj < 0.05) from T1S2, using all filtered tested genes as the background universe",
+                "Pathway descriptor names are parsed from the '%'-delimited GMT field into readable pathway names",
+                "Results table reports pathway name, WikiPathways ID, gene overlap count, p-value, and BH-adjusted q-value, sorted by significance",
+                "If the WikiPathways human reference is unavailable at run time, the step reports that gap explicitly rather than silently skipping enrichment",
+                "A bar or dot plot of the top enriched pathways is produced"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

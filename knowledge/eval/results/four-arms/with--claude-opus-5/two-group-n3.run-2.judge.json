@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly on the core: a negative binomial count model (DESeq2 Wald) on raw Salmon gene-level counts with a minimal, justified filter (>=10 in >=3 samples, tied to the smallest group size), median-of-ratios size factors estimated inside the model with an explicit prohibition on pre-normalizing, ~condition with the control reference level set explicitly and the contrast named, BH at alpha 0.05 with independent filtering on, and apeglm shrinkage retained alongside the unshrunken estimate. QC precedes the test and is design-aware: library sizes, blind VST, PCA on the top 500 genes, sample-distance heatmap, name-based sample matching, and a flag-not-drop outlier policy because removing one of three replicates leaves n=2. The confidence half is answered honestly with an edgeR QL cross-check reported as an intersection rather than a union, a p-value histogram, leave-one-out stability, and an explicit statement that power is low at n=3 with a stated refusal to move alpha. Enrichment is appropriate given low single-gene power and is fully specified (full ranked list, Wald statistic as the named metric, human MSigDB hallmark plus GO BP with version, 15-500 size window after intersection with tested genes, seed, Reactome-substitution disclosed); it is a mild addition beyond the reference's minimum, hence the single point off. The report step names methods, versions, design, thresholds, tested and significant counts, NA-padj causes split by mechanism, and the design's caveats including the missing transcript-length offset."
+}

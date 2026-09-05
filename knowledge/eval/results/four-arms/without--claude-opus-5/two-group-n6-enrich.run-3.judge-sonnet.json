@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan explicitly fits the 6v6 unpaired single-batch design with design ~ condition, states the reference level and LFC direction, and adds a principled dual-cohort sensitivity analysis for the shallow sample rather than an arbitrary drop. QC is thorough (library size, detected genes, size factors, VST PCA, sample correlations) with a stated keep/drop decision rule stated up front. Low-count filtering is minimal and justified (min count in smallest group size) though the exact threshold formula is slightly informal. Normalization is correctly done inside DESeq2 on raw counts with no pre-normalization. BH FDR at 0.05 and apeglm shrinkage are used correctly with thresholds embedded in the test, and independent filtering/pre-filter gene counts are reported. Enrichment uses the full ranked list into fgsea preranked against Hallmark with stated ranking metric, size-window caveats, and universe restriction for any ORA, closely matching the reference; minor deduction for not explicitly stating the 15-500 size cutoff or software versions in the plan text itself."
+}

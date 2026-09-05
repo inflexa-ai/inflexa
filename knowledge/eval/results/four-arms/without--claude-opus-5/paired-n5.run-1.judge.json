@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the complete paired design and specifies DESeq2 with ~ subject + condition, control as reference, Wald test on the condition coefficient, with the unpaired fit run only as a labeled sensitivity comparison — exactly what the design demands, and the per-subject delta/leave-one-out step is a sensible n=5 guard that is explicitly kept descriptive rather than inferential. QC is thorough and dataset-specific (library sizes, detected genes, zero fraction, VST PCA labeled by subject and colored by condition, correlation heatmap, and an outlier policy that flags rather than drops because dropping destroys a pair). The filter (>=10 total counts plus nonzero in >=5 samples) is minimal and its yield is reported; normalization is left to DESeq2 internals with VST used only for visualization, though median-of-ratios size factor estimation is never named outright. BH at stated alphas with apeglm shrinkage and an explicit refusal to relax thresholds post hoc is exemplary; enrichment specifies fgsea preranked with the ranking statistic, human symbol-keyed hallmark and GO BP, a 10-500 size window, and all retained genes as the ORA universe, but omits an MSigDB version. Reporting covers design, thresholds, tested and significant counts, and power caveats, losing a little only for not committing to software version reporting."
+}

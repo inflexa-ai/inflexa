@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 7,
+    "low_count_filter": 5,
+    "normalization": 5,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies this as an interaction question and specifies ~genotype*treatment with WT/vehicle as reference levels, extracts the named interaction coefficient as the primary test, and derives both simple effects from the single fit rather than refitting two-group models — with an explicit caveat that simple effects are interpretive, not the test. QC is present (PCA on vst/rlog, sample-distance heatmap, sample-name matching, convergence check) but lacks library-size inspection and any stated policy for handling an outlier or shallow sample. The low-count filter is hand-waved ('near-zero counts... e.g. rowSums or DESeq2 default independent filtering'), conflating pre-filtering with independent filtering and giving no justified threshold; normalization is never mentioned at all, so median-of-ratios size factors are only implicit even though nothing pre-normalized is fed into the model. Multiple testing (BH, padj<0.05) and shrinkage are handled well and correctly reason about apeglm's limitation for interaction contrasts; enrichment names WikiPathways with a dated snapshot and a stated ranking metric, but the ORA universe is described only as 'the same WikiPathways background' rather than the tested-gene universe, and no gene-set size window is given. Reporting covers design, thresholds, gene counts, and the honest n=4 power caveat, but omits software versions."
+}

@@ -1,0 +1,233 @@
+{
+  "campaign": "four-arms",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T13:20:57.736Z",
+  "elapsedMs": 42868,
+  "outcome": "plan_submitted",
+  "planId": "pln-5ad03f97",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, reconcile samples, and run DESeq2 DE",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "counts.csv has 7 sample columns but metadata.csv has 6 rows — resolve this mismatch explicitly (extra/mislabeled sample) rather than silently dropping or guessing an assignment",
+          "With n=3 per group, dispersion estimates are noisy; rely on DESeq2's empirical Bayes shrinkage (do not disable it) and do not apply an additional ad hoc fold-change filter beyond what the acceptance criteria specify",
+          "Do not assume paired design — treat as unpaired per the stated experimental design"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "pandas",
+          "ggplot2"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between treated (n=3) and control (n=3) liver samples in this unpaired single-batch design, using raw Salmon gene-level counts?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv columns are matched to metadata.csv rows; any count-matrix sample with no metadata entry (the counts file has 7 columns vs 6 metadata rows) is reported and excluded, leaving the intended 3 vs 3 design",
+          "Raw counts are modeled with DESeq2 (design ~condition), independent filtering and BH FDR applied",
+          "Output table includes gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj for all tested genes",
+          "A summary reports counts of genes at padj<0.05 and padj<0.1, plus a diagnostic (PCA or sample-distance heatmap, and dispersion plot) checking for outlier samples or batch structure within the single stated batch",
+          "MA plot and volcano plot are generated for visual QC of the DE call"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Power and precision assessment for the n=3 vs n=3 design",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not present a post-hoc power number as if it were a pre-registered power calculation — frame it as a retrospective precision/sensitivity check on this specific dataset",
+          "Leave-one-out with n=3 per group means each LOO fit has only n=2 in one arm; report this explicitly as a stability heuristic, not a formal statistical test"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Given the observed gene-wise dispersion and effect-size distribution from the 3-vs-3 DESeq2 fit, what minimum effect size is reliably detectable at this sample size, and how much false-negative risk does n=3 per group carry for this liver drug-treatment comparison?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistical-modeling",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Report the empirical relationship between mean expression, dispersion, and statistical power at n=3 per group using the fitted DESeq2 dispersions (e.g., via a power-simulation approach such as RNASeqPower-style calculation or bootstrap subsampling of the observed data)",
+          "State, in concrete terms, the minimum log2 fold-change detectable at 80% power for genes at low/median/high mean count, given the observed dispersion range",
+          "Quantify sensitivity to a single sample swap or outlier by a leave-one-out re-run of the DESeq2 model (drop one sample per group at a time) and report how much the significant gene list changes",
+          "Explicit statement of the confidence level appropriate for the DE call: what can be claimed as robust vs what is exploratory only, tied to the n=3 constraint"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the treated vs control DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Confirm the WikiPathways human GMT file is present before running (it is: HGNC gene symbols, 2026.07.10 snapshot) — no substitution with a mouse/rat pathway set is valid for this human liver dataset",
+          "Gene symbol matching between the DESeq2 output and the GMT file must be case- and alias-consistent; report unmatched gene count"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "pandas"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Enrichment (e.g., over-representation or GSEA using the DESeq2 stat/log2FC ranking) is run against WikiPathways human gene sets confirmed present in the reference store",
+          "Report includes pathway name, WikiPathways ID, gene overlap, and BH-adjusted p-value",
+          "If fewer than 10 genes pass padj<0.05 in T1S1, enrichment is run instead on the full ranked gene list (GSEA-style) and this fallback is stated explicitly",
+          "Findings are reported as gene-set-level associations only, not causal drug-mechanism claims"
+        ]
+      }
+    ],
+    "title": "Liver drug DE: 3 vs 3 treated-control + power check",
+    "created_at": "2026-09-05T00:00:00Z",
+    "analytical_narrative": "The dataset is a bulk RNA-seq liver drug-treatment study with raw Salmon gene-level counts (12000 genes x 7 samples) and a 6-sample metadata table describing an unpaired 3 treated vs 3 control single-batch design — one sample in counts.csv has no matching metadata row and must be reconciled before analysis. The analytical path is standard for a small-n unpaired count-based comparison: (1) QC and align counts to metadata, dropping any unmatched sample; (2) DESeq2 differential expression with the Wald test and BH-FDR, which is appropriate for n=3/group and count data; (3) an explicit power/precision assessment quantifying what n=3 per group can and cannot resolve (detectable effect size, dispersion-driven false negative risk) rather than treating DE output at face value; (4) pathway enrichment on the DE gene list against WikiPathways human gene sets to give biological context; (5) a synthesis step folding the DE results and the power analysis into a single confidence-qualified answer to the research question. No translational/PK/safety data is present, so no drug-target or biomarker tracks are added."
+  },
+  "usage": {
+    "inputTokens": 87163,
+    "outputTokens": 2434,
+    "cacheCreationInputTokens": 77997,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug DE: 3 vs 3 treated-control + power check",
+          "analytical_narrative": "The dataset is a bulk RNA-seq liver drug-treatment study with raw Salmon gene-level counts (12000 genes x 7 samples) and a 6-sample metadata table describing an unpaired 3 treated vs 3 control single-batch design — one sample in counts.csv has no matching metadata row and must be reconciled before analysis. The analytical path is standard for a small-n unpaired count-based comparison: (1) QC and align counts to metadata, dropping any unmatched sample; (2) DESeq2 differential expression with the Wald test and BH-FDR, which is appropriate for n=3/group and count data; (3) an explicit power/precision assessment quantifying what n=3 per group can and cannot resolve (detectable effect size, dispersion-driven false negative risk) rather than treating DE output at face value; (4) pathway enrichment on the DE gene list against WikiPathways human gene sets to give biological context; (5) a synthesis step folding the DE results and the power analysis into a single confidence-qualified answer to the research question. No translational/PK/safety data is present, so no drug-target or biomarker tracks are added.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, reconcile samples, and run DESeq2 DE",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12000 genes are differentially expressed between treated (n=3) and control (n=3) liver samples in this unpaired single-batch design, using raw Salmon gene-level counts?",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv columns are matched to metadata.csv rows; any count-matrix sample with no metadata entry (the counts file has 7 columns vs 6 metadata rows) is reported and excluded, leaving the intended 3 vs 3 design",
+                "Raw counts are modeled with DESeq2 (design ~condition), independent filtering and BH FDR applied",
+                "Output table includes gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj for all tested genes",
+                "A summary reports counts of genes at padj<0.05 and padj<0.1, plus a diagnostic (PCA or sample-distance heatmap, and dispersion plot) checking for outlier samples or batch structure within the single stated batch",
+                "MA plot and volcano plot are generated for visual QC of the DE call"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "pandas",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "counts.csv has 7 sample columns but metadata.csv has 6 rows — resolve this mismatch explicitly (extra/mislabeled sample) rather than silently dropping or guessing an assignment",
+                "With n=3 per group, dispersion estimates are noisy; rely on DESeq2's empirical Bayes shrinkage (do not disable it) and do not apply an additional ad hoc fold-change filter beyond what the acceptance criteria specify",
+                "Do not assume paired design — treat as unpaired per the stated experimental design"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Power and precision assessment for the n=3 vs n=3 design",
+              "track": "T1",
+              "step_type": "statistical-modeling",
+              "question": "Given the observed gene-wise dispersion and effect-size distribution from the 3-vs-3 DESeq2 fit, what minimum effect size is reliably detectable at this sample size, and how much false-negative risk does n=3 per group carry for this liver drug-treatment comparison?",
+              "acceptance_criteria": [
+                "Report the empirical relationship between mean expression, dispersion, and statistical power at n=3 per group using the fitted DESeq2 dispersions (e.g., via a power-simulation approach such as RNASeqPower-style calculation or bootstrap subsampling of the observed data)",
+                "State, in concrete terms, the minimum log2 fold-change detectable at 80% power for genes at low/median/high mean count, given the observed dispersion range",
+                "Quantify sensitivity to a single sample swap or outlier by a leave-one-out re-run of the DESeq2 model (drop one sample per group at a time) and report how much the significant gene list changes",
+                "Explicit statement of the confidence level appropriate for the DE call: what can be claimed as robust vs what is exploratory only, tied to the n=3 constraint"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "caveats": [
+                "Do not present a post-hoc power number as if it were a pre-registered power calculation — frame it as a retrospective precision/sensitivity check on this specific dataset",
+                "Leave-one-out with n=3 per group means each LOO fit has only n=2 in one arm; report this explicitly as a stability heuristic, not a formal statistical test"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of the treated vs control DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control liver samples?",
+              "acceptance_criteria": [
+                "Enrichment (e.g., over-representation or GSEA using the DESeq2 stat/log2FC ranking) is run against WikiPathways human gene sets confirmed present in the reference store",
+                "Report includes pathway name, WikiPathways ID, gene overlap, and BH-adjusted p-value",
+                "If fewer than 10 genes pass padj<0.05 in T1S1, enrichment is run instead on the full ranked gene list (GSEA-style) and this fallback is stated explicitly",
+                "Findings are reported as gene-set-level associations only, not causal drug-mechanism claims"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Confirm the WikiPathways human GMT file is present before running (it is: HGNC gene symbols, 2026.07.10 snapshot) — no substitution with a mouse/rat pathway set is valid for this human liver dataset",
+                "Gene symbol matching between the DESeq2 output and the GMT file must be case- and alias-consistent; report unmatched gene count"
+              ]
+            }
+          ],
+          "created_at": "2026-09-05T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

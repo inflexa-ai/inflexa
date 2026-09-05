@@ -145,14 +145,14 @@ export async function checkExpectation(expectation: string, stepDir: string, dat
     }
 }
 
-export async function runInSandbox(stepDir: string, dataDir: string, scriptRelative: string): Promise<{ code: number; stdout: string; stderr: string }> {
+export async function runInSandbox(stepDir: string, dataDir: string, scriptRelative: string, language: "R" | "python" = "R"): Promise<{ code: number; stdout: string; stderr: string }> {
     const proc = Bun.spawn(
         [
             "docker",
             "run",
             "--rm",
             "--entrypoint",
-            "Rscript",
+            language === "R" ? "Rscript" : "python3",
             "-v",
             `${STORE}:/mnt/libs:ro`,
             "-v",
@@ -201,10 +201,10 @@ if (import.meta.main) {
                 continue;
             }
             const stepDir = await mkdtemp(join(tmpdir(), `inflexa-tpl-${template.id}-`));
-            const scriptRelative = join("scripts", `${template.id}.R`);
+            const scriptRelative = join("scripts", `${template.id}.${template.language === "R" ? "R" : "py"}`);
             await Bun.write(join(stepDir, scriptRelative), rendered.script);
             const started = Date.now();
-            const run = await runInSandbox(stepDir, dataDir, scriptRelative);
+            const run = await runInSandbox(stepDir, dataDir, scriptRelative, template.language);
             const seconds = ((Date.now() - started) / 1000).toFixed(1);
             if (run.code !== 0) {
                 console.error(`✗ ${template.id} ${test.name}: exit ${run.code} after ${seconds}s\n${run.stderr.split("\n").slice(-25).join("\n")}`);

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan targets exactly the right test — a DESeq2 LRT of ~condition + time + condition:time against ~condition + time, with time as a 4-level factor, explicit reference levels (control, t0), no spurious batch term, and per-time-point interaction coefficients to give direction and timing — and it correctly warns that a constant treatment offset should not appear in the interaction set. QC is concrete and design-aware (library sizes, VST PCA colored by condition and shaped by time, distance heatmap, dispersion plot) with a stated outlier policy and its consequence (n=2 cell). Filtering (>=10 counts in >=3 samples, matching the smallest group size) is minimal and reported as genes retained out of 12,000; raw counts go into DESeq2 with no pre-normalization and VST is confined to QC/clustering, though size-factor estimation is implicit rather than named. BH at both 0.05 and 0.10 with lfcShrink and an honest caveat on shrinkage availability for interaction terms is correct, and the zero-hit contingency is handled without threshold shopping. Enrichment uses the tested-gene background with the size reported, human hallmark and GO BP, an unsigned LRT-statistic ranking, and a time-only contrast set, but omits gene-set size windows and collection versions; the report plan covers design, thresholds, counts and power caveats but does not explicitly commit to software versions."
+}

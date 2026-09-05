@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly uses DESeq2 with ~subject + condition as the primary paired model, explicitly justifies it over an unpaired comparison, and even quantifies the power gain—directly matching the reference. QC (library size, PCA, correlation heatmap, subject-dominant axis expectation) precedes testing with a sensible outlier policy for paired data. The filter (>=10 counts across samples plus nonzero in >=5 samples) is minimal and justified, though slightly more elaborate than typical defaults. Normalization is correctly left to DESeq2's internal size factors, with VST used only for visualization/QC, not as model input. FDR at stated alpha (0.05/0.1) with apeglm shrinkage and explicit no-post-hoc-threshold policy fully satisfies fdr_shrinkage. Enrichment is well-specified (fgsea pre-ranked, hallmark+GO BP, size window, universe for ORA, leading-edge cross-check), losing a touch for complexity/redundancy risk but otherwise thorough. Report completeness is strong (versions via packages, thresholds, counts, caveats on power and per-subject risk) though exact software versions aren't pinned to numbers."
+}

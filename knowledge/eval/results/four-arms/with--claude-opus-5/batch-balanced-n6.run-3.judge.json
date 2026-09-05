@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly on the design: the balanced batch enters as a fixed effect in ~ batch + condition on raw counts, with an explicit statement that ComBat-seq or any pre-adjustment must not precede the test and would inflate confidence, and with normalization (median-of-ratios, TMM) kept inside the model. QC is design-specific and complete — blind VST, PCA on the top 500 variable genes colored by condition with batch as shape, distance heatmap annotated by both, library sizes, cross-tabulation, and a flag-not-drop outlier policy. The filter (>=10 counts in >=6 samples, justified as the smallest group size) is minimal and reported, though the edgeR step's simultaneous call for filterByExpr slightly contradicts the stated requirement to use the identical gene set. Contrast, reference level, sign convention, alpha 0.05 BH with independent filtering, apeglm shrinkage alongside the unshrunken estimate, and lfcThreshold-in-results rather than a post hoc fold-change cut are all explicit, and the report section covers versions, thresholds, tested and significant counts, NA attribution, and design limitations. Enrichment was not requested by the question, but the preranked GSEA is specified rigorously (Wald-statistic ranking justified, tested-gene universe, human-only collections with recorded versions, 15-500 window after intersection, recorded seed, no ORA on a short list), so it costs only a little for scope creep."
+}

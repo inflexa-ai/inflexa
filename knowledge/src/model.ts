@@ -20,6 +20,8 @@ export const BatchEnum = z.enum(["none", "known_balanced", "known_confounded", "
 export const LibraryTypeEnum = z.enum(["polyA", "total", "three_prime", "unknown"]);
 export const StrandednessEnum = z.enum(["verified", "declared_unverified", "unknown"]);
 export const QualityFlagEnum = z.enum(["low_depth_sample", "outlier_sample", "sample_identity_doubt", "high_duplication"]);
+/** What the enrichment step takes: the full ranked list, a discrete gene list, or per-sample scores. */
+export const EnrichmentInputEnum = z.enum(["ranked_list", "gene_list", "sample_scores"]);
 export const StepTypeEnum = z.enum([
     "qc_sample_structure",
     "filter_low_counts",
@@ -62,8 +64,15 @@ export const SituationSchema = z.object({
     strandedness: StrandednessEnum.optional(),
     interaction: z.boolean().optional(),
     quality_flags: z.array(QualityFlagEnum).optional(),
+    enrichment_input: EnrichmentInputEnum.optional(),
 });
 export type Situation = z.infer<typeof SituationSchema>;
+
+/** The preferences of the caller for the answer. They select among equal templates and never change a rule. */
+export const PreferencesSchema = z.object({
+    language: z.enum(["R", "python"]).optional(),
+});
+export type Preferences = z.infer<typeof PreferencesSchema>;
 
 const Scalar = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 

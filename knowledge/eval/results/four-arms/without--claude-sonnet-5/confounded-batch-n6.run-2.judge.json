@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 2,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly diagnoses the perfect confound, refuses ComBat-seq/SVA/batch covariates with a sound rank-deficiency justification, fits ~condition alone, and labels every result as an inseparable treatment+batch effect — exactly the reference behavior, though it never offers the option of pausing for a rebalanced design. QC is solid (VST/log-CPM PCA annotated by the identical condition/batch labels, correlation heatmap for outliers) but omits library-size inspection and any stated action policy for an outlier. A low-count pre-filter is entirely absent (DESeq2 independent filtering is not a substitute), and while raw integer counts correctly enter the model, size-factor normalization is only implicit. FDR is BH at 0.05 as a stated threshold, but no LFC shrinkage is specified for the reported effect sizes, and the reference level for condition is never declared. Enrichment is the weakest element: it is arguably unwarranted on a wholly confounded gene list, and although the collection is named and versioned, there is no ORA universe, no gene-set size window, and an ambiguous ranking metric."
+}

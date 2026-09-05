@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan identifies the perfect confounding as the governing fact, refuses a batch term (correctly citing rank deficiency), explicitly bars ComBat-seq/removeBatchEffect/SVA at every step, fits ~ condition alone with the no-batch-effect assumption stated as untestable, labels every gene and pathway as a treated-plus-B2 versus control-plus-B1 effect, and closes with a concrete design fix - exactly the reference behaviour. QC is dataset-specific (blind VST PCA, distance heatmap, library sizes, coloured by both labels with the honest note that the two colourings are the same partition) and flags low-library samples by name, though the outlier policy is thin beyond Cook's-distance NA reporting. Filtering (>=10 counts in >=6 samples, the smallest group), median-of-ratios/TMM inside the model with no pre-adjusted counts, explicit reference level and (condition, treated, control) triple, BH at alpha 0.05 with independent filtering, apeglm shrinkage for ranking, and lfcThreshold-inside-results are all correct and justified. Enrichment is well specified (full ranked list, Wald stat with a stated rationale, tested-gene universe, 15-500 window, named collections with version and seed, redundancy collapse, ORA declined) but running and reporting GSEA on an uninterpretable confounded ranking adds little beyond the labelled caveat, hence the small deduction."
+}

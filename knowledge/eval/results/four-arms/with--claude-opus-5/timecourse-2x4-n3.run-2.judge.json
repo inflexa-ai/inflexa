@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan targets exactly the condition:time interaction with a DESeq2 LRT of ~condition+time+condition:time against ~condition+time, adds per-coefficient apeglm-shrunken interaction terms and within-time simple effects, and cross-checks with an edgeR QL joint test on the three interaction coefficients — a precise match to the 2x4xn3 design, with an explicit and correct power caveat about the difference-of-differences at n=3. QC is concrete (column-to-metadata reconciliation with a halt, blind VST PCA on top 500 genes colored by condition and shaped by time, distance heatmap, library sizes, flag-not-drop outlier policy). Filtering is minimal and justified (>=10 counts in >=3 samples, the smallest cell size) with independent filtering downstream; normalization is inside the models (median-of-ratios for DESeq2, TMM for edgeR) with an explicit prohibition on pre-scaling. Formulas, reference levels (t0, control), reduced model and contrasts are all stated; BH at alpha 0.05 with apeglm shrinkage and no post hoc threshold loosening, plus p-value histogram and Cook's-distance NA accounting. Enrichment is preranked on the full tested list with the ranking metric (unsigned LRT statistic) stated and interpreted, tested-gene universe, 15–500 size window, named collections and versions, seed, and unmapped-share reporting — the only quibble is that an unsigned omnibus ranking makes GSEA's directional statistic awkward, though the plan acknowledges this and offers a signed companion run; the final report covers design, thresholds, counts, diagnostics, overlap, trajectories, caveats and session info."
+}

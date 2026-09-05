@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan uses DESeq2 Wald test (NB model) fit to the exact 3v3 unpaired single-batch design, with an edgeR QLF cross-check reported as intersection rather than union, and explicitly states the n=3 power caveat without lowering alpha. QC (blind VST, PCA top500, sample-distance heatmap, library size, outlier policy) precedes testing. Filter (>=10 counts in >=3 samples) is minimal and justified by group size; normalization is DESeq2 median-of-ratios and edgeR TMM, both internal to the model. Design formula ~condition with explicit control reference level and named contrast is correct for this unpaired single-batch design with no blocking/interaction needed. BH FDR at 0.05 with apeglm shrinkage reported alongside unshrunken estimates satisfies fdr_shrinkage. Enrichment is well-specified (preranked fgsea on Wald stat, explicit universe, size window, named/versioned Hallmark then Reactome) though GSEA arguably isn't strictly required by the base question, slightly softening its necessity. Report step is comprehensive, naming versions, thresholds, tested/DE counts per method and intersection, diagnostics, and caveats."
+}

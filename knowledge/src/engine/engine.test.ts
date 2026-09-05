@@ -127,6 +127,18 @@ describe("matchRules and assembleProcedure", () => {
         expect(procedure.flagged).toBe(false);
     });
 
+    it("selects the template by the language preference among the templates that hold, and falls back to the first", () => {
+        const python: Template = { ...TEMPLATE, id: "tpl-two-group-py", language: "python", body_file: "body.py" };
+        const methods = new Map(CATALOG.methods);
+        methods.set("M-0001", { ...METHODS[0]!, templates: ["tpl-two-group", "tpl-two-group-py"] });
+        const catalog: Catalog = { methods, templates: new Map([[TEMPLATE.id, TEMPLATE], [python.id, python]]) };
+        const { applicable } = matchRules(rules, SITUATION);
+        const de = (preferences?: { language: "R" | "python" }) => assembleProcedure(applicable, SITUATION, MODALITY, catalog, preferences).steps.find((s) => s.step === "differential_expression")?.template;
+        expect(de()).toBe("tpl-two-group@1.0.0");
+        expect(de({ language: "python" })).toBe("tpl-two-group-py@1.0.0");
+        expect(de({ language: "R" })).toBe("tpl-two-group@1.0.0");
+    });
+
     it("returns the nearest rules when nothing covers the central step", () => {
         const { applicable, nearest } = matchRules(rules, { ...SITUATION, data_state: "log_normalized" });
         const procedure = assembleProcedure(applicable, { ...SITUATION, data_state: "log_normalized" }, MODALITY, CATALOG);

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the 1-vs-1 design as unable to support dispersion estimation, restricts itself to DESeq2 size-factor normalization and descriptive log2FC, and explicitly bans p-values/FDR — matching the reference exactly. QC (blind VST, PCA, library size, distance heatmap) precedes analysis with correct caveats about n=1 limits. The low-count filter is minimal and justified given group size 1. No design formula/DESeq() model is fit (correctly, since none is valid), but the contrast direction and reference level are stated explicitly, so model_formula_contrasts is only partially applicable. GSEA is not explicitly requested by the task but is handled responsibly as hypothesis-generating with explicit ranking metric, universe, collection versions, and size window. The final report is comprehensive, naming methods, versions, gene counts, caveats, and the replicated design needed for valid inference."
+}

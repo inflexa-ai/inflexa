@@ -1,0 +1,14 @@
+{
+  "judge": "claude-opus-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies that a 1-vs-1 design supports no dispersion estimate and therefore no valid inference, and it explicitly bans Wald tests, p-values, FDR, and lfcShrink while still reporting normalized counts and descriptive log2 fold changes and naming the replicated design needed for inference — exactly the reference behavior. Filtering (>=10 counts in >=1 sample, tied to smallest group size), median-of-ratios normalization inside DESeq2 with no pre-scaling, and an explicit reference level and contrast direction are all correct and justified. QC is appropriate but necessarily thin: library sizes, blind VST, and a single pairwise distance, with an honest statement that outlier and clustering claims are impossible at n=2. The main weakness is the enrichment step: with a purely descriptive, unshrunken, unreplicated ranking, fgsea is not warranted, and running a permutation test whose p-values must then be disclaimed reintroduces the appearance of inference the rest of the plan carefully avoids, even though the universe, size window, collection versions, and ranking metric are all correctly specified. The consolidated report is exemplary in stating methods, versions, thresholds, gene counts, and the no-replication caveat up front."
+}

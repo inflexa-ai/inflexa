@@ -1,0 +1,14 @@
+{
+  "judge": "claude-sonnet-5",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the interaction as the target (LRT of full ~condition+time+condition:time vs reduced ~condition+time), with explicit reference levels, per-timepoint simple-effect Wald contrasts shrunk with ashr (correctly reasoned over apeglm), and repeated, well-justified n=3 power caveats. QC (PCA/distances/library size, blind VST) precedes testing with an explicit outlier policy. Filtering (10 counts in ≥3 samples) is minimal and tied to the smallest cell size, and normalization is internal to DESeq2 with no pre-normalization. BH-FDR at 0.05 with independent filtering and p-value histogram diagnostics is stated, though shrinkage is only applied to simple effects, not the LRT stat itself (appropriately noted as having no single LFC). ORA is used instead of GSEA per a cited knowledge-check constraint, with explicit universe, collections, and size window, which is reasonable though slightly less ideal than rank-based GSEA for continuous LRT/trajectory signal. The final report is thorough, covering design, QC, diagnostics, thresholds, gene/pathway counts, caveats, and reproducibility."
+}
