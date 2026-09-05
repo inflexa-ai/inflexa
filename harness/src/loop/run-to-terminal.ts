@@ -109,8 +109,11 @@ export async function runToTerminal(
         tools: [...salvage.tools],
         maxIterations: salvageBudget,
     };
+    // The early cap of the first run must not end the salvage turn, whose whole
+    // purpose is to submit after the first run stopped.
+    const { stopWhen: _stopWhen, ...continuation } = opts;
     const salvageOpts: RunAgentOptions = {
-        ...opts,
+        ...continuation,
         formatStepName: salvageStepNames(opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER),
     };
     const salvaged = await runAgent(salvageAgent, [...first.messages, { role: "user", content: salvage.nudge }], session, salvageOpts);

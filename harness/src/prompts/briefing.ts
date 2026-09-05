@@ -48,6 +48,9 @@ export const STEP_TASK_FIELDS = [
     "constraints",
     "acceptance_criteria",
     "caveats",
+    // The step agent reads the template id and the claim identifiers from the
+    // step, not from prose: the grounding renders beside the task fields.
+    "grounding",
 ] as const satisfies readonly (keyof AnalysisStep)[];
 
 /**
@@ -123,8 +126,25 @@ export function renderTask(step: AnalysisStep): string {
     if (step.caveats && step.caveats.length > 0) {
         parts.push(section("Caveats", bullets(step.caveats)));
     }
+    if (step.grounding) {
+        parts.push(section("Grounding", renderGrounding(step.grounding)));
+    }
 
     return parts.join("\n\n");
+}
+
+/**
+ * The grounding as data lines. The template id is the one value the agent
+ * acts on (it names it to `knowledge_template`), thus it renders first after
+ * the status. The claim identifiers and the digest are for the record.
+ */
+function renderGrounding(grounding: NonNullable<AnalysisStep["grounding"]>): string {
+    const lines = [`- Status: ${grounding.status}`];
+    if (grounding.template) lines.push(`- Template: \`${grounding.template}\``);
+    lines.push(`- Snapshot: ${grounding.snapshot}`);
+    lines.push(`- Claims: ${grounding.claims.length > 0 ? grounding.claims.join(", ") : "none"}`);
+    lines.push(`- Reason: ${grounding.reason}`);
+    return lines.join("\n");
 }
 
 // ── (2) Workspace ─────────────────────────────────────────────────────

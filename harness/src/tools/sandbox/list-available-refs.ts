@@ -542,8 +542,8 @@ function collectCategories(entries: readonly ReferenceInventoryEntry[]): string[
 function renderContent(path: string, scan: RawScan, entries: readonly ReferenceInventoryEntry[]): string {
     if (scan.state === "unavailable")
         return (
-            "No reference store is provisioned. Nothing in the analysis environment can fetch reference data — the host stages it, " +
-            "so a store provisioned through the host's own path will show up on a later call."
+            "No reference store is provisioned for this session. Nothing in the analysis environment can fetch reference data, and a later call " +
+            "in this run gives the same answer. Plan with the data at hand, or ask for the reference by what it is."
         );
     if (scan.state === "not_found") return `Reference path does not exist: ${path}`;
     if (scan.state === "not_a_directory") return `Reference path is not a directory: ${path}`;
@@ -592,7 +592,7 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
             '`category` is shorthand for a top-level group (e.g. "pathways", "regulatory-networks"), and the groups present come back in `categories`; ' +
             "`limit` caps the entries returned. The response carries `returned`, `total`, and `hasMore`, so truncation is never silent. " +
             "An empty result means the dataset is absent right now — not that it is unobtainable. Say so; never guess a path, and never silently substitute a different dataset. " +
-            "The store is provisioned by the host and is NOT frozen: datasets can be added through the host's own provisioning path, and whatever is added shows up on a later call. " +
+            "The store is provisioned by the host and is NOT frozen: datasets can be added through the host's own provisioning path between runs, and whatever is added shows up in a later run. Within one run the listing does not change, thus one call per question is enough. " +
             "So before you report a gap as permanent, check whether any tool you hold reaches that provisioning path — offer that route if one exists, and call the gap permanent only when none does.",
         inputSchema: ListAvailableRefsInputSchema,
         // `execute` resolves `path ?? category` for the subtree it inspects, and

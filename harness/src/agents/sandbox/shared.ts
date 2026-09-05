@@ -79,6 +79,8 @@ import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import type { Logger } from "../../lib/logger.js";
 import type { CitationResolver } from "../../citations/types.js";
 import { createResolveCitationTool } from "../../tools/research/resolve-citation.js";
+import { createKnowledgeTemplateTool, type KnowledgeClient } from "../../tools/knowledge/index.js";
+import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
 
 /**
  * Tools every sandbox agent receives — sandbox-environment introspection,
@@ -144,6 +146,13 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
      * and the package-link prompt layer appends. Without it, neither exists.
      */
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
+    /**
+     * The knowledge service client. Bound, an agent that declares
+     * `knowledgeTemplate` gets the tool, over the same mutator as `write_file`.
+     * Absent, the declaration resolves to nothing, which is the default state
+     * of the open-source host and never an error.
+     */
+    readonly knowledge?: KnowledgeClient;
 }
 
 /** Per-agent override for the prompt composition and tool surface. */
@@ -164,7 +173,7 @@ export interface SandboxAgentPromptOptions {
  * read/mutate tools and `inspect_data_profile` are added by `createSandboxAgent`
  * regardless of meta — they are the always-on substrate, not in the allowlist.
  */
-function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxToolName[]): Tool[] {
+function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxToolName[], mutator: WorkspaceMutator | undefined): Tool[] {
     const ncbi = createNcbiTools(deps.bioKeys);
     const chemDb = createChemDbTools(deps.bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
     if (tools.includes("resolve_citation") && deps.citationResolver === undefined) {
@@ -208,6 +217,10 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         searchGeoDatasets: searchGeoDatasetsTool,
         targetSafety: targetSafetyTool,
         comptox: chemDb.comptox,
+        knowledgeTemplate:
+            deps.knowledge && mutator
+                ? createKnowledgeTemplateTool({ client: deps.knowledge, mutator, ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}) })
+                : undefined,
     };
 
     const seen = new Set<SandboxToolName>();
@@ -216,6 +229,10 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         if (seen.has(name)) continue;
         seen.add(name);
         const tool = registry[name];
+        // The knowledge template is the one optional member of the allowlist: an
+        // agent declares it, and it attaches only when the embedder binds a client
+        // and the agent can write. Absence is a normal state, not a wiring fault.
+        if (name === "knowledgeTemplate" && !tool) continue;
         if (!tool) {
             throw new Error(`createSandboxAgent: unknown SandboxToolName "${name}" — ` + `agent meta references a tool with no harness implementation.`);
         }
@@ -235,7 +252,7 @@ function createMarkExecActive(deps: SandboxAgentDeps): (execId: string) => Promi
 /** Build the workspace mutate + read tools every sandbox agent receives. In
  *  `readOnly` mode the write_file/edit_file pair is omitted; execute_command
  *  and the read tools stay. */
-function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] {
+function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools: Tool[]; mutator: WorkspaceMutator | undefined } {
     const { step, sandboxClient, workspaceFs, pool, embedding, lineageCollector } = deps;
     // Registry tagging is a best-effort watchdog backstop (`run-exec.ts` already
     // swallows a throw here); fold a `DbError` into a no-op so a registry write
@@ -250,19 +267,19 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
     const hostWorkingDir = step.allowedWritePrefix;
     const sandboxWorkingDir = toSandboxPath(step.workspaceRoot, step.analysisId, hostWorkingDir);
 
-    const mutateTools = readOnly
-        ? []
-        : (() => {
-              const mutator = createWorkspaceMutator({
-                  workspaceRoot: step.workspaceRoot,
-                  analysisId: step.analysisId,
-                  workingDir: hostWorkingDir,
-                  ...(lineageCollector ? { lineageCollector } : {}),
-              });
-              return [createWriteFileTool({ mutator }), createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, workingDir: hostWorkingDir })];
-          })();
+    const mutator = readOnly
+        ? undefined
+        : createWorkspaceMutator({
+              workspaceRoot: step.workspaceRoot,
+              analysisId: step.analysisId,
+              workingDir: hostWorkingDir,
+              ...(lineageCollector ? { lineageCollector } : {}),
+          });
+    const mutateTools = mutator
+        ? [createWriteFileTool({ mutator }), createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, workingDir: hostWorkingDir })]
+        : [];
 
-    return [
+    const tools = [
         createExecuteCommandTool({
             sandboxClient,
             sandbox: step.sandbox,
@@ -281,6 +298,7 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
         createGrepTool(workspaceFs, hostWorkingDir),
         ...(embedding ? [createWorkspaceSearchTool(pool, embedding)] : []),
     ];
+    return { tools, mutator };
 }
 
 /**
@@ -319,8 +337,9 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
     const systemPrompt = composeSystemPrompt(agentBody);
 
     const skillTools = deps.skillsDir ? Object.values(createSkillTools({ skillsDir: deps.skillsDir, skills: meta.skills })) : [];
+    const workspace = buildWorkspaceTools(deps, opts.readOnly ?? false);
     const tools: Tool[] = [
-        ...buildWorkspaceTools(deps, opts.readOnly ?? false),
+        ...workspace.tools,
         // Always-on, not in the `meta.tools` allowlist: the data profile is the only
         // record of what the analysis's input dataset IS, and no file carries it (the
         // profiler's scratch tree is deleted on completion). An agent that cannot pull
@@ -332,7 +351,7 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
         // seam (the harness-sandbox-agents spec).
         ...(deps.extendAnalysisFarm ? [createLinkPackagesTool({ extendAnalysisFarm: deps.extendAnalysisFarm, analysisId: deps.step.analysisId })] : []),
         ...skillTools,
-        ...resolveSandboxTools(deps, meta.tools),
+        ...resolveSandboxTools(deps, meta.tools, workspace.mutator),
         ...(deps.blockerHolder ? [createReportBlockerTool(deps.blockerHolder)] : []),
     ];
 

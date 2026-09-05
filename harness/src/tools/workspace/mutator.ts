@@ -52,7 +52,7 @@ export type WriteFileResult =
  * (`inflexa:tool` in the signed document) — the seam records the write without
  * inspecting its caller.
  */
-export type MutateToolName = "write_file" | "edit_file";
+export type MutateToolName = "write_file" | "edit_file" | "knowledge_template";
 
 export interface WorkspaceMutatorDeps {
     /** Absolute host root of this analysis's workspace tree — used by the resolver. */

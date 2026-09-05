@@ -30,6 +30,13 @@ function fullyPopulatedStep(): AnalysisStep {
         constraints: ["SENTINEL_CONSTRAINT_A", "SENTINEL_CONSTRAINT_B"],
         acceptance_criteria: ["SENTINEL_ACCEPTANCE"],
         caveats: ["SENTINEL_CAVEAT"],
+        grounding: {
+            status: "grounded",
+            snapshot: "sha256:SENTINEL_SNAPSHOT",
+            claims: ["SENTINEL_CLAIM"],
+            template: "tpl-sentinel@1.0.0",
+            reason: "SENTINEL_REASON",
+        },
         depends_on: [],
         status: "pending",
         resources: { cpu: 1, memoryGb: 2 },
@@ -308,7 +315,16 @@ describe("AnalysisStep field-coverage guard", () => {
             const sentinel = `COVER_${field.toUpperCase()}`;
             sentinels.set(field, sentinel);
             const current = (base as Record<string, unknown>)[field];
-            step[field] = Array.isArray(current) ? [sentinel] : sentinel;
+            // An object-valued field (the grounding) keeps its shape, and each of its
+            // string members carries the sentinel, thus the renderer must emit the
+            // members and not only the presence of the field.
+            step[field] = Array.isArray(current)
+                ? [sentinel]
+                : typeof current === "object" && current !== null
+                  ? Object.fromEntries(
+                        Object.entries(current).map(([key, value]) => [key, Array.isArray(value) ? [sentinel] : typeof value === "string" ? sentinel : value]),
+                    )
+                  : sentinel;
         }
         const prompt = renderTask(step as unknown as AnalysisStep);
         for (const [field, sentinel] of sentinels) {

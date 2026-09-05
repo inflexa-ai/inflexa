@@ -140,6 +140,11 @@ export type { RunCanceler, RunCancelerDeps, CancelRunResult } from "./execution/
 
 // Tool primitive.
 export { defineTool, isToolError } from "./tools/define-tool.js";
+// The knowledge plane seam: an embedder binds a client at its composition root
+// (or none), and it can hand `knowledge_recommend` to the conversation agent
+// through `hostTools`.
+export { createHttpKnowledgeClient, createKnowledgeRecommendTool, createKnowledgeCheckTool, createKnowledgeTools } from "./tools/knowledge/index.js";
+export type { KnowledgeClient, KnowledgeSituation, HttpKnowledgeClientConfig } from "./tools/knowledge/index.js";
 export type { Tool, ToolDefinition, ToolContext, ToolError } from "./tools/define-tool.js";
 
 // Tool-call-detail authoring aids for an embedder that contributes a host tool.

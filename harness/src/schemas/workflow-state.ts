@@ -10,6 +10,36 @@ import { z } from "zod";
 // ── Plan structures ─────────────────────────────────────────────────
 
 /**
+ * The grounding of one method step: the claim identifiers and the snapshot
+ * digest that `knowledge_recommend` returned in this run, the template the
+ * step renders, and a one-line reason. Optional on both step schemas, thus a
+ * stored plan and a plan made without the knowledge service load and
+ * validate as before. Phase 0 validates the shape only. An empty field is
+ * visible: the evaluation counts a method step without a value as ungrounded.
+ */
+export const GroundingSchema = z.object({
+    status: z
+        .enum(["grounded", "ungrounded", "flagged"])
+        .describe(
+            "`grounded` when the step follows a returned procedure; `ungrounded` when no rule covered it or the service did not answer; `flagged` when a rule changed the outcome of the step.",
+        ),
+    snapshot: z.string().describe("The `snapshot.digest` that `knowledge_recommend` returned in this run, or `none`."),
+    claims: z
+        .array(z.string())
+        .describe("The claim identifiers of the step as `knowledge_recommend` returned them (for example `R-0031@e7d0`). Empty when ungrounded."),
+    template: z
+        .string()
+        .optional()
+        .describe("The template id with its version (for example `tpl-deseq2-two-group@1.0.0`) when the step renders a template. Absent otherwise."),
+    reason: z
+        .string()
+        .describe(
+            "One line: the situation and the method with the rule that selects it, the side chosen for a disputed rule, or why the step is ungrounded or flagged.",
+        ),
+});
+export type Grounding = z.infer<typeof GroundingSchema>;
+
+/**
  * A step of an analysis plan. `PlanStepSchema` (schemas/plan-schemas.ts) narrows
  * this into the planner's output contract and emits it as the `submit_plan`
  * arg schema — so each field's meaning belongs in `.describe()`,
@@ -55,6 +85,10 @@ export const AnalysisStepSchema = z.object({
         })
         .optional()
         .describe("Resources the step needs. Ground the estimate in the actual data size — see the resource-estimation rules."),
+
+    grounding: GroundingSchema.optional().describe(
+        "The knowledge grounding of a method step: fill it from the answer of `knowledge_recommend` when that tool is attached. Omit it when no knowledge tool is attached.",
+    ),
 
     // Execution fields
     agent: z.string().optional().describe("Assigned sandbox agent name from registry"),

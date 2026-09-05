@@ -43,6 +43,7 @@ import { createListAvailableRefsTool } from "../sandbox/list-available-refs.js";
 import { createReportBlockerToolFor } from "../sandbox/report-blocker.js";
 import { searchGeoDatasetsTool } from "../bio/search-geo-datasets.js";
 import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
+import { createKnowledgeTools, type KnowledgeClient } from "../knowledge/index.js";
 import { queryDocsTool, resolveLibraryIdTool } from "./context7-docs.js";
 import { searchArxivTool } from "./search-arxiv.js";
 import { createSearchGithubReposTool } from "./search-github-repos.js";
@@ -50,6 +51,7 @@ import { createSearchSemanticScholarTool } from "./search-semantic-scholar.js";
 
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../../app/data-profile-orientation.js";
 import { DEFAULT_SANDBOX_MAX_STEPS, type ResourcePolicy } from "../../config/resource-limits.js";
+import { guardRepeatedCalls } from "../../loop/call-guard.js";
 import { plannerPrompt } from "../../prompts/planner.js";
 import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
@@ -80,6 +82,15 @@ const PLANNER_MAX_ITERATIONS = 200;
 
 /** Wall-clock guard for a single plan-generation invocation. */
 const PLAN_TIMEOUT_MS = 600_000;
+
+/**
+ * The refusals of the call guard that end the search phase of one plan. A
+ * planner that the guard refused this many times is not searching, it is
+ * looping, and the wrap-up plus the salvage turn give it the plan it has. Six
+ * is above any count a frontier planner reached in the Phase 0 campaign
+ * (zero) and far below the hundred-plus refused calls of a looping run.
+ */
+const PLANNER_REFUSAL_LIMIT = 6;
 
 // ── Diagnostic bounds ───────────────────────────────────────────────
 //
@@ -888,6 +899,13 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
     readonly usageRecorder?: UsageRecorder;
     /** API keys for the search tools the planner uses to ground a plan. */
     readonly bioKeys: BioToolKeys;
+    /**
+     * The knowledge service client. Bound, the planner gains `knowledge_recommend`
+     * and `knowledge_check`. Absent, no knowledge tool attaches and no
+     * description of one enters the context, which is the default state of
+     * the open-source host.
+     */
+    readonly knowledge?: KnowledgeClient;
 }
 
 /**
@@ -902,7 +920,7 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
  * A tool here never writes and never computes. Thus the worst outcome of a
  * needless call is latency, and the prompt is what bounds that.
  */
-function buildPlannerSearchTools(deps: GeneratePlanDeps): Tool[] {
+export function buildPlannerSearchTools(deps: GeneratePlanDeps): Tool[] {
     const bioKeys = deps.bioKeys;
     const ncbi = createNcbiTools(bioKeys);
     return [
@@ -932,6 +950,9 @@ function buildPlannerSearchTools(deps: GeneratePlanDeps): Tool[] {
             ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
             ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
         }),
+        // The knowledge plane: one cited procedure per situation, and one check
+        // of the draft. Both attach only when the embedder binds a client.
+        ...createKnowledgeTools({ ...(deps.knowledge === undefined ? {} : { client: deps.knowledge }) }),
     ];
 }
 
@@ -1135,7 +1156,17 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // dep, thus the tool must stay constructible from an empty bag. The tool
             // definitions are identical across invocations, thus the request prefix
             // that the cache keys on does not move.
-            const searchTools = buildPlannerSearchTools(deps);
+            // The guard bounds the repeated calls of one plan: the third call with
+            // an input the plan already sent, or the call past the budget of one
+            // tool, answers a refusal that says to continue. The terminal tools
+            // stay outside it, because a refused submit would strand the plan.
+            let refusals = 0;
+            const searchTools = guardRepeatedCalls(buildPlannerSearchTools(deps), {
+                onRefusal: (refusal) => {
+                    refusals += 1;
+                    logger.warn("planner call refused by the guard", { ...refusal, refusals });
+                },
+            });
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
@@ -1164,6 +1195,10 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                         emit: ctx.emit,
                         runStep: passthroughStep,
                         resolved: () => holder.outcome !== null,
+                        // A planner the guard refused too many times is looping:
+                        // the early cap ends the search, and the salvage turn
+                        // submits the plan it has.
+                        stopWhen: () => refusals >= PLANNER_REFUSAL_LIMIT,
                         // Planner prose is unusable: every meaningful outcome is
                         // a tool call, and the terminal predicate stops the loop
                         // as soon as one is recorded.
