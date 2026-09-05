@@ -9,6 +9,8 @@
 - [x] 2.1 `knowledge_recommend` over the flat situation schema, with the contract in its description.
 - [x] 2.2 `knowledge_check` over the situation plus the drafted steps.
 - [x] 2.2.1 The per-plan check cap, and the optional `outcome` of a drafted step.
+- [x] 2.1.1 The environment join and the plan skeleton of the recommend answer, and the `enrichment_input` field.
+- [x] 2.1.2 The `preferred_language` of the recommend call, sent as a preference beside the situation.
 - [x] 2.3 `knowledge_template` over the mutator, with the farm versions from the lock, in workflow execution mode.
 - [x] 2.4 `createKnowledgeTools` gives the two planner tools or nothing.
 - [x] 2.5 Test the three tools with a fake client and a real mutator over a temporary tree.

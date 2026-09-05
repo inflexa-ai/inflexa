@@ -121,6 +121,11 @@ const ValidationFailureSchema = z.looseObject({
     ),
 });
 
+/** The preferences of the caller: the language of the template the answer names. */
+export interface KnowledgePreferences {
+    readonly language?: "R" | "python";
+}
+
 /** What a drafted step carries into the check. */
 export interface DraftedStep {
     readonly step_type: string;
@@ -156,7 +161,11 @@ export interface KnowledgeRejected {
 }
 
 export interface KnowledgeClient {
-    recommend(situation: KnowledgeSituation, responseFormat?: "concise" | "detailed"): Promise<RecommendResponse | KnowledgeUnavailable | KnowledgeRejected>;
+    recommend(
+        situation: KnowledgeSituation,
+        responseFormat?: "concise" | "detailed",
+        preferences?: KnowledgePreferences,
+    ): Promise<RecommendResponse | KnowledgeUnavailable | KnowledgeRejected>;
     check(situation: KnowledgeSituation, steps: readonly DraftedStep[]): Promise<CheckResponse | KnowledgeUnavailable | KnowledgeRejected>;
     render(
         template: string,
@@ -206,8 +215,12 @@ export function createHttpKnowledgeClient(config: HttpKnowledgeClientConfig): Kn
     }
 
     return {
-        recommend: (situation, responseFormat) =>
-            post("/v1/recommend", { situation, ...(responseFormat ? { response_format: responseFormat } : {}) }, RecommendResponseSchema),
+        recommend: (situation, responseFormat, preferences) =>
+            post(
+                "/v1/recommend",
+                { situation, ...(responseFormat ? { response_format: responseFormat } : {}), ...(preferences ? { preferences } : {}) },
+                RecommendResponseSchema,
+            ),
         check: (situation, steps) => post("/v1/check", { situation, steps }, CheckResponseSchema),
         render: (template, slots, farm) => post("/v1/template/render", { template, slots, ...(farm ? { farm } : {}) }, RenderResponseSchema),
     };

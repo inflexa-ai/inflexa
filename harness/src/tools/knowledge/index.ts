@@ -15,6 +15,8 @@ import { createKnowledgeCheckTool } from "./check.js";
 import { createKnowledgeRecommendTool } from "./recommend.js";
 
 export * from "./client.js";
+export * from "./environment.js";
+export * from "./skeleton.js";
 export * from "./check.js";
 export * from "./recommend.js";
 export * from "./situation.js";
@@ -22,10 +24,21 @@ export * from "./template.js";
 
 export interface KnowledgeToolsDeps {
     readonly client?: KnowledgeClient;
+    /** Host path of the farm `inflexa.lock`, for the environment join of the recommend answer. */
+    readonly farmLockFile?: string;
+    /** Host path of the reference store, for the same join. */
+    readonly refStorePath?: string;
 }
 
 /** The planner tools: `knowledge_recommend` and `knowledge_check`, or an empty list with no client. */
 export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
     if (!deps.client) return [];
-    return [createKnowledgeRecommendTool({ client: deps.client }), createKnowledgeCheckTool({ client: deps.client })];
+    return [
+        createKnowledgeRecommendTool({
+            client: deps.client,
+            ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
+            ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
+        }),
+        createKnowledgeCheckTool({ client: deps.client }),
+    ];
 }
