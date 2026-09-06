@@ -1,0 +1,87 @@
+id: R-0127
+title: "TPM input with a matched reference: EPIC or quanTIseq for absolute cell fractions"
+assertion: >-
+  When the input is a linear-scale TPM matrix of human samples and the tissue
+  matches the reference profiles, estimate absolute cell fractions with EPIC,
+  or with quanTIseq for the ten immune types of its TIL10 signature. Both fit
+  the sample against reference profiles with constrained least squares and a
+  correction for the mRNA content per cell type, and both return an
+  uncharacterized fraction for the cells that the reference does not hold,
+  such as tumor cells. An absolute fraction is comparable between cell types
+  and between samples, which a marker-based score is not. The reference
+  profiles come from blood and tumor immune cells, thus state the match
+  between the tissue and the reference in the report, and give FPKM values to
+  the method only after a rescale to TPM.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: human
+  - field: data_state
+    op: eq
+    value: tpm_or_fpkm
+action:
+  step_type: deconvolution
+  method: M-0043
+  parameters:
+    - name: input_scale
+      value: tpm_linear
+      default_source: "doi:10.7554/eLife.26476"
+    - name: output
+      value: absolute_fractions_with_uncharacterized_fraction
+      default_source: "doi:10.7554/eLife.26476"
+    - name: reference_tissue_match
+      value: state_in_report
+      default_source: "doi:10.1093/bioinformatics/btz363"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0044
+    when: "The tissue is a tumor and the ten immune types of the TIL10 signature cover the question."
+  - method: M-0041
+    when: "A between-sample comparison of each population is enough, and no absolute fraction is claimed: MCP-counter on the log2 TPM."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0100
+    paraphrase: >-
+      EPIC fits the TPM profile of a bulk sample against reference profiles
+      of immune, stromal, and endothelial cells with a constrained least
+      squares that accounts for the mRNA content per cell type, and it
+      returns an absolute proportion per cell type beside the proportion of
+      uncharacterized cells, which in a tumor are the cancer cells.
+    anchor: "Abstract; Results, EPIC; Methods, Deconvolution"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0101
+    paraphrase: >-
+      quanTIseq quantifies the absolute fractions of ten immune cell types
+      from RNA-seq with a constrained least squares fit of the TPM profile
+      against the TIL10 signature matrix and a correction for the mRNA
+      content, and it returns the fraction of other cells beside them.
+    anchor: "Abstract; Results, quanTIseq; Methods, Deconvolution"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0102
+    paraphrase: >-
+      The benchmark separates the methods that give an absolute score,
+      comparable between cell types and between samples, from the methods
+      that give a relative score, and it names EPIC and quanTIseq as the
+      absolute methods with a good performance, with the guideline that the
+      methods take non-log TPM as input.
+    anchor: "Results, Comparison of the methods; Guidelines"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [deconvolution, absolute-fractions, tpm]

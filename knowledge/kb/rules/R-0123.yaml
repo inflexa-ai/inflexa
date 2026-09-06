@@ -1,0 +1,51 @@
+id: R-0123
+title: "STRING as the protein association network for a neighborhood of the DE genes, with the confidence cutoff stated"
+assertion: >-
+  For a human dataset, the STRING network of the reference store gives the
+  protein associations among the differentially expressed genes and their
+  first neighbors. STRING gives each association a combined confidence score
+  between 0 and 1 from several evidence channels, thus the plan states the
+  cutoff, 0.7 as the STRING convention for a high-confidence network, and
+  the channels that entered it. A dense cluster of DE genes in the network is
+  a hypothesis about a functional module and not an activity, and the report
+  names the STRING version and the number of DE genes that the network holds.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: human
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: pathway_activity
+  parameters:
+    - name: ppi_network
+      value: string_from_reference_store
+      default_source: "doi:10.1093/nar/gkac1000"
+    - name: string_confidence_cutoff
+      value: 0.7
+      default_source: "doi:10.1093/nar/gkac1000"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0124
+    paraphrase: >-
+      STRING collects protein-protein associations from experiments, curated
+      databases, text mining, co-expression, and genomic context, gives each
+      association a combined confidence score, and offers a network and a
+      functional enrichment for a set of proteins of a sequenced genome.
+    anchor: "Abstract; Database content; Network analysis"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [pathway-activity, string, ppi, network, needs-source]

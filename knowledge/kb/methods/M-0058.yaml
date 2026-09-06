@@ -1,0 +1,19 @@
+id: M-0058
+label: "Disease Ontology over-representation with DOSE"
+edam_operation: EDAM:operation_3501
+description: >-
+  Hypergeometric over-representation of a discrete human gene list against
+  the Disease Ontology terms, with the tested genes as the universe and Entrez
+  gene identifiers as the key. DOSE also gives a ranked gene set test on the
+  same terms and a semantic similarity between terms for the reduction of a
+  long term list. A complement to the Gene Ontology analysis for a human list.
+packages:
+  - name: DOSE
+    track: bioconductor
+    biotools: dose
+    version_range: ">=4.0"
+    bioconductor: "3.23"
+  - name: org.Hs.eg.db
+    track: bioconductor
+    version_range: ">=3.20"
+    bioconductor: "3.23"

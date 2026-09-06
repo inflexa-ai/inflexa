@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: blind VST, top-2000 centered variable genes, ConsensusClusterPlus with 1000 reps at 80% subsampling over k=2..8, k chosen jointly from CDF delta-area and PAC with item and cluster consensus reported, cross-tabulation against condition and library size with a chi-square/Fisher test, and the explicit caution that consensus clustering finds structure in noise. It falls short of the reference by only stating that caution rather than running a permuted or simulated null matrix as a decision rule, by not naming an adjusted Rand index, and by leaving gene resampling implicit in the constraints. Normalization is handled inside vst but size-factor estimation is never stated, and the cell-composition comparison across clusters names no test or multiple-testing control. QC is thorough with outlier and depth flagging, though no removal policy is stated; enrichment is correctly and explicitly omitted, and the report specification is comprehensive including seeds and versions."
+}

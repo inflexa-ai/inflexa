@@ -1,0 +1,848 @@
+{
+  "campaign": "wider-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "variance-partition-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T07:29:38.015Z",
+  "elapsedMs": 77454,
+  "outcome": "plan_submitted",
+  "planId": "pln-a3323ce5",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Strandedness cannot be verified from counts alone; if RSeQC-style inference is not possible from this input, state that explicitly and proceed on the assumption the Salmon quantification used a consistent, correct strand setting across all 12 samples"
+        ],
+        "context": "Input: counts.csv (12000 genes x 12 samples, raw Salmon gene counts) and metadata.csv (condition, sex, age). No batch variable recorded; design is a single unpaired 6v6 comparison.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 12 adipose samples (6 treated, 6 control) show expected library sizes and sample structure (PCA on blind-VST top 500 variable genes, sample distance heatmap) before any model is fit, and is strandedness of the Salmon quantification consistent across samples?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0079@6f8a"
+          ],
+          "reason": "R-0033: blind vst + PCA + sample-distance heatmap is the standard pre-model QC for raw counts",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use variance-stabilizing transform with blind=TRUE for QC only, not for the DE test",
+          "n_top_genes=500 for the PCA gene selection"
+        ],
+        "acceptance_criteria": [
+          "PCA plot and sample-distance heatmap produced on blind VST of the 12000x12 count matrix, colored by condition, sex",
+          "Library size per sample reported and no sample flagged as a severe outlier without note",
+          "Any strandedness ambiguity noted (best-effort only, since only counts, no FASTQ, are provided)"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Variance partition: condition, sex, age",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group, per-gene variance fraction estimates are noisy; report at the level of the across-gene distribution, not individual-gene claims",
+          "This is a descriptive diagnostic, not a significance test — it does not replace the DESeq2 model or its p-values"
+        ],
+        "context": "Same 12000x12 count matrix and metadata (condition, sex, age) as T1S1. This step answers the variance-decomposition half of the research question and must run independently of, and before, the DE test.",
+        "maxSteps": 200,
+        "packages": [
+          "variancePartition",
+          "limma",
+          "edgeR"
+        ],
+        "question": "Before testing treated vs control, how much of the per-gene expression variance is explained by condition, by sex, and by age, respectively, across the 12 adipose samples?",
+        "grounding": {
+          "claims": [
+            "R-0143@bdc1"
+          ],
+          "reason": "R-0143: variancePartition mixed-model variance decomposition is the standard method for this diagnostic, chosen over dream (rejected by knowledge_check as method outside permitted set)",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-variance-partition@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "variance_partition",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "count_input = voom_log_cpm_with_weights",
+          "categorical terms (condition, sex) as random effects, continuous term (age) as fixed effect, per variancePartition convention"
+        ],
+        "acceptance_criteria": [
+          "variancePartition fit run on voom log-CPM with precision weights from the filtered count matrix, with condition and sex as random effects and age as a continuous fixed effect",
+          "Per-gene variance fraction table produced for condition, sex, age, and residual",
+          "Distribution (violin/boxplot) of variance fractions across all tested genes reported for each factor, plus summary medians",
+          "Report states whether condition, sex, or age is the dominant explanatory factor and whether sex/age materially compete with condition for variance, informing the covariate choice in the DE model"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 per group, DESeq2 flags (not replaces) Cook's-distance count outliers and sets their p-values to NA — report these separately from the independent-filtering NAs",
+          "Adjusting for sex and age assumes these are not so collinear with condition that they absorb its signal; the variance-partition step (T1S4) checks this before interpretation"
+        ],
+        "context": "12000x12 raw Salmon gene-level counts and metadata with condition (treated/control), sex (F/M), age (years). Unpaired 6v6 design, single batch, sex and age recorded as covariates.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "tximport"
+        ],
+        "question": "Adjusting for sex and age, which genes differ in expression between treated (n=6) and control (n=6) adipose samples?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0023@e919",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "R-0001/R-0023: DESeq2 Wald test with covariates as fixed-effect design terms is the consensus method for a 6v6 design with recorded sex/age covariates",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count=10, min_samples=6 for the pre-filter",
+          "size factors computed inside DESeq2 via median-of-ratios, not pre-normalized counts",
+          "reference level for condition set explicitly, not left to alphabetical default",
+          "alpha=0.05 passed to results() to match the reporting cutoff"
+        ],
+        "acceptance_criteria": [
+          "Genes filtered to >=10 counts in >=6 samples (smallest group size) before the fit",
+          "tximport-style gene-level import from Salmon counts, DESeq2 median-of-ratios normalization applied inside the model (no pre-normalization of the counts)",
+          "Design formula ~ sex + age + condition fit with condition releveled so 'control' is the explicit reference level; contrast named as (condition, treated, control)",
+          "Wald test run; apeglm shrinkage applied to the condition coefficient; unshrunken log2FC, shrunken log2FC, lfcSE, and p-values all retained in the results table",
+          "BH-adjusted p-values reported at alpha=0.05 with DESeq2 independent filtering on; p-value histogram inspected and reported; MA plot and dispersion plot produced as fit diagnostics",
+          "Count of genes tested after filtering and count of significant genes (padj<0.05) reported; genes with NA padj from Cook's-distance outlier flagging reported separately from independent-filtering NAs"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA: Hallmark and Reactome",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are method-dependent; report as hypotheses for follow-up, not proven findings",
+          "Reactome file covers all species in one GMT — filter to Homo sapiens using the accompanying ReactomePathways.txt index before running fgsea"
+        ],
+        "context": "Ranked gene list comes from the DESeq2 Wald statistic of the treated-vs-control contrast (T1S2). Reference gene sets: MSigDB human hallmark (50 sets, HGNC symbols, /mnt/refs/managed/msigdb-hallmark-human/2026.1/) and Reactome pathways (human subset, HGNC symbols, /mnt/refs/managed/reactome-pathways/current/) as confirmed present in the reference store.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea"
+        ],
+        "question": "Which MSigDB Hallmark and Reactome pathways are enriched among genes ranked by the treated-vs-control DESeq2 Wald statistic?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "R-0107/R-0048: preranked fgsea on the Wald statistic against Hallmark then Reactome is the human-organism default; both collections confirmed present in the reference store",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "rank_metric = DESeq2 Wald statistic (stat column), not unshrunken log2FC and not a signed p-value with ties",
+          "min_size=15, max_size=500 applied after intersecting each gene set with the tested genes",
+          "universe = tested genes (post-filter), not the whole genome or annotation",
+          "if fewer than ~50 genes are significant at padj<0.05, do not additionally run an over-representation test on that short list — rely on the ranked method"
+        ],
+        "acceptance_criteria": [
+          "Full ranked list of all tested genes (post-filter) ranked by the DESeq2 Wald statistic (stat column), no pre-thresholding",
+          "fgsea run against MSigDB Hallmark (2026.1, human) gene sets, then separately against Reactome (current) human gene sets, with gene set size window 15-500",
+          "Gene symbols mapped/checked against the collection identifier space; unmapped share reported",
+          "BH-adjusted enrichment p-values reported; redundant/overlapping significant sets collapsed with one representative reported per group, full table kept as supplement",
+          "Leading-edge genes reported for each significant set; database name and version stated for each collection separately (not merged)"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Combined report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not overstate enrichment findings as validated; state method-dependence explicitly"
+        ],
+        "context": "Synthesizes T1S1 QC, T1S4 variance partition, T1S2 DE results, and T2S1 enrichment results into one report for the adipose treated-vs-control study.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the combined picture of variance attributable to condition/sex/age, the treated-vs-control differential expression result, and the pathway enrichment of that result, for this adipose cohort?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "no single rule covers a report step, but its content is drawn directly from the report-related claims returned by knowledge_recommend",
+          "status": "ungrounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1",
+          "T1S4"
+        ],
+        "constraints": [],
+        "acceptance_criteria": [
+          "Report states the variance-partition summary (median % variance explained by condition, sex, age, residual) before presenting the DE results, and notes whether the DE covariate adjustment is consistent with the variance-partition finding",
+          "Report states design formula, reference level, contrast, package versions, thresholds (alpha=0.05, min_count=10), number of genes tested, number of significant DE genes",
+          "MA plot and dispersion plot included as fit diagnostics; p-value histogram included",
+          "Gene table includes unshrunken log2FC, shrunken (apeglm) log2FC, lfcSE, p-value, padj, ranked by shrunken log2FC",
+          "Enrichment section states each gene-set database and version, the ranking metric, the universe, and the size window, with leading-edge genes for significant sets",
+          "Full reproducibility record included: session info, package versions, gene-set collection versions, random seed for any step using resampling"
+        ]
+      }
+    ],
+    "title": "Adipose treated vs control: variance partition + DE",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "12 adipose samples (6 treated, 6 control), raw Salmon gene counts (12000 genes x 12 samples), with sex and age recorded per sample and no batch structure. The question has two parts. First, quantify how much of the per-gene expression variance is attributable to condition, sex, and age before any group test is run, using variancePartition on voom log-CPM with precision weights (condition and sex as random effects, age as a continuous fixed effect), so the design choice for the DE model is evidence-based rather than assumed. Second, test treated vs control for differential expression with DESeq2 (median-of-ratios normalization, Wald test, apeglm shrinkage, BH-FDR with independent filtering at alpha=0.05), adjusting for sex and age as fixed-effect covariates in the design since both were measured and could confound the comparison. Genes are filtered to >=10 counts in >=6 samples (the smallest group size) before the test. The ranked DE statistic then feeds a preranked fgsea enrichment against MSigDB Hallmark (2026.1) and Reactome (current) gene sets. A combined report ties the variance-partition diagnostic to the DE and enrichment results, with all required diagnostics (PCA/sample-distance QC, MA and dispersion plots, p-value histogram, session info, package and gene-set-collection versions)."
+  },
+  "usage": {
+    "inputTokens": 551771,
+    "outputTokens": 8005,
+    "cacheCreationInputTokens": 179081,
+    "cacheReadInputTokens": 372618,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "covariates": [
+          "sex",
+          "age"
+        ],
+        "extra_analyses": [
+          "variance_partition"
+        ],
+        "strandedness": "unknown"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "covariates": [
+          "sex",
+          "age"
+        ],
+        "extra_analyses": [
+          "variance_partition"
+        ],
+        "strandedness": "unknown",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA, sample distances, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "variance_partition",
+            "method": "variancePartition mixed model: sex+age as fixed, condition as fixed (2-level, only comparison of interest) share of variance per gene",
+            "package": "variancePartition",
+            "parameters": [
+              {
+                "name": "count_input",
+                "value": "voom_log_cpm_with_weights"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep gene with >=10 counts in >=6 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "design = ~ sex + age + condition, reference level control, tximport gene-level import from salmon",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH FDR with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on Wald statistic, MSigDB Hallmark then Reactome",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "combined report with QC, variance partition, DE results, enrichment",
+            "package": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "covariates": [
+          "sex",
+          "age"
+        ],
+        "extra_analyses": [
+          "variance_partition"
+        ],
+        "strandedness": "unknown",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA, sample distances, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "variance_partition",
+            "method": "variancePartition: the share of the variance of each gene explained by each factor of the design (condition, sex as random effects; age as fixed effect) on voom log-CPM with weights",
+            "package": "variancePartition",
+            "parameters": [
+              {
+                "name": "count_input",
+                "value": "voom_log_cpm_with_weights"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep gene with >=10 counts in >=6 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "design = ~ sex + age + condition, explicit reference level set for condition factor, tximport gene-level import from salmon",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH FDR with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on Wald statistic, MSigDB Hallmark then Reactome",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "combined report with QC, variance partition, DE results, enrichment",
+            "package": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Adipose treated vs control: variance partition + DE",
+          "analytical_narrative": "12 adipose samples (6 treated, 6 control), raw Salmon gene counts (12000 genes x 12 samples), with sex and age recorded per sample and no batch structure. The question has two parts. First, quantify how much of the per-gene expression variance is attributable to condition, sex, and age before any group test is run, using variancePartition on voom log-CPM with precision weights (condition and sex as random effects, age as a continuous fixed effect), so the design choice for the DE model is evidence-based rather than assumed. Second, test treated vs control for differential expression with DESeq2 (median-of-ratios normalization, Wald test, apeglm shrinkage, BH-FDR with independent filtering at alpha=0.05), adjusting for sex and age as fixed-effect covariates in the design since both were measured and could confound the comparison. Genes are filtered to >=10 counts in >=6 samples (the smallest group size) before the test. The ranked DE statistic then feeds a preranked fgsea enrichment against MSigDB Hallmark (2026.1) and Reactome (current) gene sets. A combined report ties the variance-partition diagnostic to the DE and enrichment results, with all required diagnostics (PCA/sample-distance QC, MA and dispersion plots, p-value histogram, session info, package and gene-set-collection versions).",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 12 adipose samples (6 treated, 6 control) show expected library sizes and sample structure (PCA on blind-VST top 500 variable genes, sample distance heatmap) before any model is fit, and is strandedness of the Salmon quantification consistent across samples?",
+              "acceptance_criteria": [
+                "PCA plot and sample-distance heatmap produced on blind VST of the 12000x12 count matrix, colored by condition, sex",
+                "Library size per sample reported and no sample flagged as a severe outlier without note",
+                "Any strandedness ambiguity noted (best-effort only, since only counts, no FASTQ, are provided)"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: counts.csv (12000 genes x 12 samples, raw Salmon gene counts) and metadata.csv (condition, sex, age). No batch variable recorded; design is a single unpaired 6v6 comparison.",
+              "constraints": [
+                "Use variance-stabilizing transform with blind=TRUE for QC only, not for the DE test",
+                "n_top_genes=500 for the PCA gene selection"
+              ],
+              "caveats": [
+                "Strandedness cannot be verified from counts alone; if RSeQC-style inference is not possible from this input, state that explicitly and proceed on the assumption the Salmon quantification used a consistent, correct strand setting across all 12 samples"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0079@6f8a"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "R-0033: blind vst + PCA + sample-distance heatmap is the standard pre-model QC for raw counts"
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Variance partition: condition, sex, age",
+              "track": "T1",
+              "step_type": "variance_partition",
+              "question": "Before testing treated vs control, how much of the per-gene expression variance is explained by condition, by sex, and by age, respectively, across the 12 adipose samples?",
+              "acceptance_criteria": [
+                "variancePartition fit run on voom log-CPM with precision weights from the filtered count matrix, with condition and sex as random effects and age as a continuous fixed effect",
+                "Per-gene variance fraction table produced for condition, sex, age, and residual",
+                "Distribution (violin/boxplot) of variance fractions across all tested genes reported for each factor, plus summary medians",
+                "Report states whether condition, sex, or age is the dominant explanatory factor and whether sex/age materially compete with condition for variance, informing the covariate choice in the DE model"
+              ],
+              "packages": [
+                "variancePartition",
+                "limma",
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same 12000x12 count matrix and metadata (condition, sex, age) as T1S1. This step answers the variance-decomposition half of the research question and must run independently of, and before, the DE test.",
+              "constraints": [
+                "count_input = voom_log_cpm_with_weights",
+                "categorical terms (condition, sex) as random effects, continuous term (age) as fixed effect, per variancePartition convention"
+              ],
+              "caveats": [
+                "With n=6 per group, per-gene variance fraction estimates are noisy; report at the level of the across-gene distribution, not individual-gene claims",
+                "This is a descriptive diagnostic, not a significance test — it does not replace the DESeq2 model or its p-values"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0143@bdc1"
+                ],
+                "template": "tpl-variance-partition@1.0.0",
+                "reason": "R-0143: variancePartition mixed-model variance decomposition is the standard method for this diagnostic, chosen over dream (rejected by knowledge_check as method outside permitted set)"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Adjusting for sex and age, which genes differ in expression between treated (n=6) and control (n=6) adipose samples?",
+              "acceptance_criteria": [
+                "Genes filtered to >=10 counts in >=6 samples (smallest group size) before the fit",
+                "tximport-style gene-level import from Salmon counts, DESeq2 median-of-ratios normalization applied inside the model (no pre-normalization of the counts)",
+                "Design formula ~ sex + age + condition fit with condition releveled so 'control' is the explicit reference level; contrast named as (condition, treated, control)",
+                "Wald test run; apeglm shrinkage applied to the condition coefficient; unshrunken log2FC, shrunken log2FC, lfcSE, and p-values all retained in the results table",
+                "BH-adjusted p-values reported at alpha=0.05 with DESeq2 independent filtering on; p-value histogram inspected and reported; MA plot and dispersion plot produced as fit diagnostics",
+                "Count of genes tested after filtering and count of significant genes (padj<0.05) reported; genes with NA padj from Cook's-distance outlier flagging reported separately from independent-filtering NAs"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "tximport"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000x12 raw Salmon gene-level counts and metadata with condition (treated/control), sex (F/M), age (years). Unpaired 6v6 design, single batch, sex and age recorded as covariates.",
+              "constraints": [
+                "min_count=10, min_samples=6 for the pre-filter",
+                "size factors computed inside DESeq2 via median-of-ratios, not pre-normalized counts",
+                "reference level for condition set explicitly, not left to alphabetical default",
+                "alpha=0.05 passed to results() to match the reporting cutoff"
+              ],
+              "caveats": [
+                "With 6 per group, DESeq2 flags (not replaces) Cook's-distance count outliers and sets their p-values to NA — report these separately from the independent-filtering NAs",
+                "Adjusting for sex and age assumes these are not so collinear with condition that they absorb its signal; the variance-partition step (T1S4) checks this before interpretation"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0023@e919",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "R-0001/R-0023: DESeq2 Wald test with covariates as fixed-effect design terms is the consensus method for a 6v6 design with recorded sex/age covariates"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA: Hallmark and Reactome",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB Hallmark and Reactome pathways are enriched among genes ranked by the treated-vs-control DESeq2 Wald statistic?",
+              "acceptance_criteria": [
+                "Full ranked list of all tested genes (post-filter) ranked by the DESeq2 Wald statistic (stat column), no pre-thresholding",
+                "fgsea run against MSigDB Hallmark (2026.1, human) gene sets, then separately against Reactome (current) human gene sets, with gene set size window 15-500",
+                "Gene symbols mapped/checked against the collection identifier space; unmapped share reported",
+                "BH-adjusted enrichment p-values reported; redundant/overlapping significant sets collapsed with one representative reported per group, full table kept as supplement",
+                "Leading-edge genes reported for each significant set; database name and version stated for each collection separately (not merged)"
+              ],
+              "packages": [
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Ranked gene list comes from the DESeq2 Wald statistic of the treated-vs-control contrast (T1S2). Reference gene sets: MSigDB human hallmark (50 sets, HGNC symbols, /mnt/refs/managed/msigdb-hallmark-human/2026.1/) and Reactome pathways (human subset, HGNC symbols, /mnt/refs/managed/reactome-pathways/current/) as confirmed present in the reference store.",
+              "constraints": [
+                "rank_metric = DESeq2 Wald statistic (stat column), not unshrunken log2FC and not a signed p-value with ties",
+                "min_size=15, max_size=500 applied after intersecting each gene set with the tested genes",
+                "universe = tested genes (post-filter), not the whole genome or annotation",
+                "if fewer than ~50 genes are significant at padj<0.05, do not additionally run an over-representation test on that short list — rely on the ranked method"
+              ],
+              "caveats": [
+                "Enrichment results are method-dependent; report as hypotheses for follow-up, not proven findings",
+                "Reactome file covers all species in one GMT — filter to Homo sapiens using the accompanying ReactomePathways.txt index before running fgsea"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "R-0107/R-0048: preranked fgsea on the Wald statistic against Hallmark then Reactome is the human-organism default; both collections confirmed present in the reference store"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Combined report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the combined picture of variance attributable to condition/sex/age, the treated-vs-control differential expression result, and the pathway enrichment of that result, for this adipose cohort?",
+              "acceptance_criteria": [
+                "Report states the variance-partition summary (median % variance explained by condition, sex, age, residual) before presenting the DE results, and notes whether the DE covariate adjustment is consistent with the variance-partition finding",
+                "Report states design formula, reference level, contrast, package versions, thresholds (alpha=0.05, min_count=10), number of genes tested, number of significant DE genes",
+                "MA plot and dispersion plot included as fit diagnostics; p-value histogram included",
+                "Gene table includes unshrunken log2FC, shrunken (apeglm) log2FC, lfcSE, p-value, padj, ranked by shrunken log2FC",
+                "Enrichment section states each gene-set database and version, the ranking metric, the universe, and the size window, with leading-edge genes for significant sets",
+                "Full reproducibility record included: session info, package versions, gene-set collection versions, random seed for any step using resampling"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1",
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Synthesizes T1S1 QC, T1S4 variance partition, T1S2 DE results, and T2S1 enrichment results into one report for the adipose treated-vs-control study.",
+              "constraints": [],
+              "caveats": [
+                "Do not overstate enrichment findings as validated; state method-dependence explicitly"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "no single rule covers a report step, but its content is drawn directly from the report-related claims returned by knowledge_recommend"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e"
+  }
+}

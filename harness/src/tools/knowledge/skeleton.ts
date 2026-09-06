@@ -55,13 +55,55 @@ const GROUPS: readonly {
         name: "Differential expression",
     },
     { id: "T2S1", track: "T2", step_type: "enrichment", agent: "enrichment-agent", steps: ["enrichment"], name: "Gene set enrichment" },
+    {
+        id: "T2S2",
+        track: "T2",
+        step_type: "activity",
+        agent: "enrichment-agent",
+        steps: ["tf_activity", "pathway_activity"],
+        name: "Regulator and pathway activity",
+    },
+    { id: "T1S4", track: "T1", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["variance_partition"], name: "Variance partition" },
+    { id: "T3S1", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["signature_scoring"], name: "Signature scoring" },
+    { id: "T3S2", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["deconvolution"], name: "Cell type deconvolution" },
+    { id: "T3S3", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["coexpression"], name: "Co-expression modules" },
+    { id: "T3S4", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["clustering"], name: "Sample clustering" },
+    { id: "T3S5", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["survival"], name: "Outcome association" },
+    { id: "T1S5", track: "T1", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["transcript_level"], name: "Transcript-level analysis" },
+    { id: "T1S6", track: "T1", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["annotation"], name: "Identifier annotation" },
     { id: "T1S3", track: "T1", step_type: "report", agent: "bulk-transcriptomics-agent", steps: ["report"], name: "Report" },
 ];
 
-const DEPENDS: Readonly<Record<string, readonly string[]>> = { T1S1: [], T1S2: ["T1S1"], T2S1: ["T1S2"], T1S3: ["T1S2", "T2S1"] };
+/**
+ * The dependencies of each group. A group depends on the QC, on the
+ * differential expression when its input is a results table, and the report
+ * depends on every group that is present.
+ */
+const DEPENDS: Readonly<Record<string, readonly string[]>> = {
+    T1S1: [],
+    T1S2: ["T1S1"],
+    T2S1: ["T1S2"],
+    T2S2: ["T1S2", "T1S1"],
+    T1S4: ["T1S1"],
+    T3S1: ["T1S1"],
+    T3S2: ["T1S1"],
+    T3S3: ["T1S1"],
+    T3S4: ["T1S1"],
+    T3S5: ["T3S1", "T1S1"],
+    T1S5: ["T1S1"],
+    T1S6: ["T1S1"],
+    T1S3: ["T1S2", "T2S1", "T2S2", "T1S4", "T3S1", "T3S2", "T3S3", "T3S4", "T3S5", "T1S5", "T1S6"],
+};
 
 function renderValue(value: unknown): string {
     return Array.isArray(value) ? value.map(String).join(", ") : String(value);
+}
+
+/** The present dependencies of a group; a group whose own dependency is absent falls back to the QC. */
+function dependsOn(id: string, kept: ReadonlySet<string>): string[] {
+    const present = (DEPENDS[id] ?? []).filter((dependency) => kept.has(dependency));
+    if (present.length > 0) return [...new Set(present)];
+    return id !== "T1S1" && kept.has("T1S1") ? ["T1S1"] : [];
 }
 
 export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonStep[] {
@@ -95,7 +137,7 @@ export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonSte
             step_type: group.step_type,
             agent: group.agent,
             packages,
-            depends_on: DEPENDS[group.id]!.filter((id) => keptIds.has(id)),
+            depends_on: dependsOn(group.id, keptIds),
             constraints,
             caveats: hardFlag ? [hardFlag.message, ...caveats] : caveats,
             grounding: {

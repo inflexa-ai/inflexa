@@ -1,0 +1,69 @@
+id: R-0154
+title: "A gene expression signature for an outcome: penalized Cox with glmnet, a cross-validated lambda stated, and an external validation or a stated caution"
+assertion: >-
+  To build a multi-gene signature for a time-to-event outcome, fit a
+  penalized Cox model with glmnet on the log-scale expression of the tested
+  genes, with a lasso or elastic net penalty. Select the lambda by
+  cross-validation on the partial-likelihood deviance, state the lambda rule
+  (the minimum or the one-standard-error rule) and the alpha, and report the
+  genes with a nonzero coefficient and their coefficients. The performance of
+  the signature on the samples that selected it is optimistic, thus validate
+  the risk score on an external cohort, or, when no cohort exists, report the
+  cross-validated concordance and state that the signature is not validated.
+  Do not re-fit the coefficients on the validation cohort.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: survival
+  method: M-0054
+  parameters:
+    - name: penalty
+      value: lasso_or_elastic_net_alpha_stated
+      default_source: "doi:10.18637/jss.v039.i05"
+    - name: lambda_selection
+      value: cross_validation_rule_stated
+      default_source: "doi:10.18637/jss.v039.i05"
+    - name: validation
+      value: external_cohort_or_stated_caution
+      default_source: "rule:R-0154"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0053
+    when: "One score or one gene is the question: the plain Cox model with the clinical covariates, without a penalty."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0116
+    paraphrase: >-
+      The paper fits the Cox proportional hazards model with an elastic net
+      penalty by coordinate descent along a path of lambda values, for the
+      case where the predictors outnumber the samples, and it selects the
+      lambda by cross-validation on the partial-likelihood deviance. The
+      lasso end of the penalty gives a sparse set of predictors.
+    anchor: "Abstract; Algorithm; Cross-validation"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0115
+    paraphrase: >-
+      The paper presents the coordinate descent algorithm of glmnet for the
+      lasso and the elastic net over a regularization path, with the alpha
+      parameter between the ridge and the lasso, and it uses cross-validation
+      to select the lambda on the path.
+    anchor: "Introduction; Regularization paths; Cross-validation"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [survival, signature, glmnet, needs-source]

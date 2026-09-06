@@ -1,0 +1,61 @@
+id: R-0132
+title: "A deconvolution result is a covariate or an outcome, never a replacement for the design"
+assertion: >-
+  A cell type estimate is an outcome or a covariate, and it never replaces
+  the design of the differential expression test. A cell type fraction that
+  differs between the groups is a composition change. Report it beside the
+  differential expression, because a gene that marks that cell type appears
+  differentially expressed through the composition alone. When the question
+  is cell-intrinsic, the fraction can enter the design as a covariate, with
+  the caution that the fraction is an estimate with its own error and that
+  the covariate removes the composition signal from every gene. State in the
+  report which role the estimate plays.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: deconvolution
+  parameters:
+    - name: composition_role
+      value: outcome_or_covariate_stated
+      default_source: "doi:10.1093/bioinformatics/btz363"
+    - name: report_composition_beside_de
+      value: true
+      default_source: "doi:10.1038/s41467-020-19015-1"
+severity: info
+strength: common_practice
+evidence_quality: low
+recommendation_strength: conditional
+evidence:
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0102
+    paraphrase: >-
+      The paper presents the cell type estimates as a quantification of the
+      immune contexture of a sample, an outcome that relates to the
+      prognosis and to the response to therapy, and it warns that an
+      estimate carries a method-specific error and a spillover from related
+      cell types.
+    anchor: "Introduction; Results, Spillover; Guidelines"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0104
+    paraphrase: >-
+      The benchmark measures the error of the estimated proportions against
+      the true proportions and finds that the error depends on the method,
+      the normalization, and the marker selection, thus an estimate is not
+      a measurement.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [deconvolution, design, report, needs-source]

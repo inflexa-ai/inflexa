@@ -1,0 +1,76 @@
+id: R-0116
+title: "Transcription factor activity in mouse: the mouse CollecTRI or DoRothEA regulons, no human network on mouse symbols without an ortholog map"
+assertion: >-
+  For a mouse dataset, infer the transcription factor activity with the mouse
+  CollecTRI regulons, or the mouse DoRothEA regulons as the alternative. Do
+  not run the human network on the mouse gene symbols, because a symbol that
+  differs only in its case is not an ortholog map, and a gene without a
+  one-to-one ortholog then enters the wrong regulon or no regulon. When only
+  a human network is at hand, map the mouse genes to the human orthologs with
+  a stated ortholog table first, keep the one-to-one orthologs, and report the
+  share of the tested genes that mapped.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: mouse
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: tf_activity
+  method: M-0035
+  parameters:
+    - name: regulon_collection
+      value: collectri_mouse
+      default_source: "doi:10.1093/nar/gkad841"
+    - name: ortholog_policy
+      value: no_human_network_on_mouse_symbols_without_ortholog_map
+      default_source: "doi:10.1093/nar/gkaa1007"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0038
+    when: "The result must compare with a published DoRothEA analysis: the mouse DoRothEA regulons of confidence A to C."
+evidence:
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0092
+    paraphrase: >-
+      CollecTRI builds its signed regulons from human resources, thus a use on
+      another species needs a map of the regulators and the targets. The
+      resource is distributed with a mouse version through an orthology map.
+    anchor: "Abstract; Data availability"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0086
+    paraphrase: >-
+      OMA gives orthology relations between species from a whole-genome
+      comparison, and it separates one-to-one orthologs from one-to-many and
+      many-to-many relations, thus a map between the genes of two species
+      states which genes have one counterpart.
+    anchor: "Abstract; Orthology inference"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0096
+    paraphrase: >-
+      The study applies the DoRothEA regulons and the PROGENy model on
+      single-cell data of human and of mouse origin with a species-matched
+      version of each resource, thus a mouse version of each resource is in
+      use.
+    anchor: "Methods, Resources; Results, Application to mouse data"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [tf-activity, mouse, orthology, collectri]

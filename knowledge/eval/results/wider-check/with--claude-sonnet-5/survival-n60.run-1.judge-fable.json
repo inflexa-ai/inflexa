@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly fits a Cox model on the continuous UCell score with condition as a covariate, checks proportional hazards via scaled Schoenfeld residuals with a stated remedy, and relegates the KM tertile curves to display only, which matches the reference. It falters on power: it claims adequacy from '120 events/censoring records' rather than counting events and censored samples up front and reporting median follow-up, which is the quantity that governs a Cox fit. The score is not standardized (HR per unit of a 0-1 UCell score is hard to interpret), the condition reference level is not stated, and the likelihood ratio p-value is not specified. QC, filtering, DESeq2 normalization, signature-gene presence checks, and the reproducibility record are otherwise explicit and appropriate for this single-batch, unpaired design."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw counts with internal median-of-ratios, a justified >=10-in-6 filter, ~condition with vehicle releveled as reference and an explicit contrast, BH at 0.05 with apeglm shrinkage, and decoupleR mlm on the PROGENy human model using the Wald statistic of all tested genes with top 500 responsive genes and BH across 14 pathways, with the footprint-vs-membership distinction stated explicitly. QC is thorough and keeps sample_01 with a stated keep/exclude policy tied to PCA rather than depth. The main omission is the per-sample activity matrix (mlm/ulm on vst values with limma on scores) that the reference uses to show replicate consistency and produce the heatmap; the added CollecTRI and fgsea steps are well specified and correctly framed as complementary rather than as the pathway activity answer. Reactome and WikiPathways releases are deferred to the report rather than stated up front."
+}

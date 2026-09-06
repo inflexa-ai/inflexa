@@ -1,0 +1,231 @@
+id: tpl-decoupler-py-tf-activity
+version: 1.0.0
+label: "decoupler ulm transcription factor activity on the CollecTRI regulons, from a pydeseq2 contrast and per sample"
+language: python
+method: M-0035
+step_types: [tf_activity]
+edam_operations: [EDAM:operation_3501]
+citations: [S-0091, S-0092, S-0001, S-0019]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates]
+  min_replicates: 2
+  conditions:
+    - field: interaction
+      op: is_null
+    - field: n_timepoints
+      op: is_null
+  notes: >-
+    The Python mirror of tpl-decoupler-tf-activity. A count matrix whose
+    first column is the gene identifier and whose header holds the sample
+    identifiers, plus a sample table with one row per sample, plus a signed
+    regulon network in CSV with the columns source, target, and weight, for
+    example the CollecTRI regulons. The gene identifiers of the network must
+    match the gene column of the counts. The condition column is renamed to
+    `condition` inside the script. The script fits pydeseq2 with the design
+    ~ condition and takes the Wald statistic of the test level against the
+    reference level as the gene-level statistic of the contrast. When a
+    results table path is given, the script takes the `stat` column of that
+    table instead, and it does not fit the model. The univariate linear model
+    (ulm) of decoupler regresses the statistic on the signed target weights
+    of each regulator, and the t-value of the slope is the activity score.
+    A regulator enters the test when at least min_regulon_size of its targets
+    are among the tested genes. The script takes the two-sided p-value of
+    the t-value itself, and Benjamini-Hochberg (statsmodels) adjusts the
+    p-values across the regulators. The same model on log2(CPM + 1) of the
+    filtered counts gives one score per regulator and sample, where the R
+    path uses the variance stabilized matrix. The output files and the
+    columns keep the names of the R path. The estimator is pinned to ulm,
+    because the p-value of the decoupler mlm has no closed form that the
+    script can adjust itself.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the denominator of the contrast, for example Control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The level of the condition that is the numerator of the contrast, for example Treated."
+    adaptable: true
+  - name: results_path
+    type: string
+    description: "Path of a results table CSV with the columns gene and stat, for example the output of tpl-pydeseq2-two-group. Given, the script takes the stat column as the contrast statistic and does not fit the model. Absent, the script fits pydeseq2 on the counts."
+    adaptable: true
+    required: false
+  - name: network_path
+    type: string
+    description: "Path of the regulon network CSV with the columns source (the regulator), target (the gene), and weight (+1 or -1, the mode of regulation)."
+    adaptable: true
+  - name: regulon_collection
+    type: string
+    description: "The name of the regulon collection in the network file, for the summary record, for example collectri_human or collectri_mouse."
+    adaptable: true
+    default: collectri_human
+    default_source: "doi:10.1093/nar/gkad841"
+  - name: activity_method
+    type: string
+    description: "The decoupler estimator: ulm, one univariate linear model per regulator. The Python path pins ulm."
+    adaptable: false
+    default: ulm
+    default_source: "doi:10.1093/bioadv/vbac016"
+  - name: min_regulon_size
+    type: integer
+    description: "A regulator enters the test when at least this many of its targets are among the tested genes (the tmin of decoupler)."
+    adaptable: true
+    default: 5
+    default_source: "doi:10.1093/bioadv/vbac016"
+    minimum: 1
+  - name: min_count
+    type: integer
+    description: "A gene stays when it has at least this many counts in at least as many samples as the smallest group."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 0
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff that counts a regulator as significant in the summary and the figures."
+    adaptable: false
+    default: 0.05
+    default_source: "doi:10.1111/j.2517-6161.1995.tb02031.x"
+  - name: n_top_regulators
+    type: integer
+    description: "The number of regulators on the bar plot and the heatmap, ordered by adjusted p-value."
+    adaptable: true
+    default: 25
+    minimum: 5
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example tf or tf_treated_vs_control."
+    adaptable: true
+    default: tf
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+  - name: network
+    path: "{{network_path}}"
+    format: EDAM:format_3752
+    description: "The signed regulon network, CSV with source, target, weight."
+  - name: results
+    path: "{{results_path}}"
+    format: EDAM:format_3752
+    description: "Optional results table with the columns gene and stat, CSV."
+outputs:
+  - name: activity
+    path: "output/{prefix}_activity.csv"
+    format: EDAM:format_3752
+    description: "One row per tested regulator: regulator, score (the t-value of the slope), pvalue, padj (Benjamini-Hochberg), n_targets (the targets among the tested genes)."
+  - name: scores
+    path: "output/{prefix}_scores.csv"
+    format: EDAM:format_3752
+    description: "The per-sample score matrix on log2(CPM + 1): regulator, then one column per sample."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The contrast, the network name, the minimum regulon size, the number of regulators tested and significant, the package versions."
+  - name: top_regulators
+    path: "figures/{prefix}_top_regulators.png"
+    description: "Bar plot of the activity score of the top regulators by adjusted p-value, colored by significance (and PDF)."
+  - name: score_heatmap
+    path: "figures/{prefix}_score_heatmap.png"
+    description: "Heatmap of the per-sample scores of the top regulators, row scaled, samples in columns, annotated by condition (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "The Python version and the package versions for the record."
+environment:
+  - name: decoupler
+    version: "2.2.0"
+    track: python
+  - name: pydeseq2
+    version: "0.5.4"
+    track: python
+  - name: pandas
+    version: "3.0.5"
+    track: python
+  - name: numpy
+    version: "2.5.2"
+    track: python
+  - name: scipy
+    version: "1.16.3"
+    track: python
+  - name: statsmodels
+    version: "0.15.0"
+    track: python
+  - name: matplotlib
+    version: "3.11.1"
+    track: python
+  - name: seaborn
+    version: "0.13.2"
+    track: python
+bioconductor: "3.23"
+body_file: body.py
+tests:
+  - name: regulons-n6-collectri
+    dataset: regulons_n6/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+      network_path: /work/refs/collectri.csv
+    expect:
+      - "exists output/tf_activity.csv"
+      - "csv_rows output/tf_activity.csv >= 100"
+      - "truth_regulon_recall output/tf_activity.csv >= 0.66"
+      - "exists output/tf_scores.csv"
+      - "exists output/tf_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/tf_top_regulators.png"
+      - "exists figures/tf_top_regulators.pdf"
+      - "exists figures/tf_score_heatmap.png"
+      - "exists figures/tf_score_heatmap.pdf"
+      - "json output/tf_summary.json min_regulon_size == 5"
+      - "json output/tf_summary.json n_regulators_tested >= 100"
+      - "json output/tf_summary.json n_samples == 12"
+      - "json output/tf_summary.json statistic_source == pydeseq2_wald"
+  - name: two-group-n6-results-table
+    dataset: two_group_n6/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+      results_path: /work/data/de_results.csv
+      network_path: /work/refs/collectri.csv
+      output_prefix: tf_from_table
+    expect:
+      - "exists output/tf_from_table_activity.csv"
+      - "exists output/tf_from_table_scores.csv"
+      - "exists output/tf_from_table_summary.json"
+      - "exists figures/tf_from_table_top_regulators.png"
+      - "exists figures/tf_from_table_score_heatmap.png"
+      - "csv_rows output/tf_from_table_activity.csv >= 100"
+      - "json output/tf_from_table_summary.json statistic_source == results_table"

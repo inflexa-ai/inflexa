@@ -81,7 +81,12 @@ resolves its types.
   with a `replaced_by` link, because a claim id in a decision record must
   resolve. Before that release, delete a rule that a new rule replaces.
 - The step order of a modality lives in `kb/modalities/`. A new step type is a
-  schema change, in `schema/` and in `src/model.ts` together.
+  schema change, in `schema/` and in `src/model.ts` together. The walk of a
+  question is the list in `question_steps`, and a caller adds a step of the
+  order with `extra_analyses`. The step types cover the QC, the count model,
+  the enrichment, and the wider computations: variance partition, regulator
+  and pathway activity, signature scoring, deconvolution, co-expression,
+  clustering, survival, transcript level, and annotation.
 - A new Situation field is a schema change in three places: `schema/`,
   `src/model.ts`, and the situation schema of the harness tools. A condition
   over an absent field is false, thus a rule that names the new field fires
@@ -89,18 +94,21 @@ resolves its types.
 
 ## Tests and gates
 
-The evaluation data holds fourteen simulated patterns under `eval/data/`,
+The evaluation data holds seventeen simulated patterns under `eval/data/`,
 each with counts, TPM, log-expression, lengths, metadata, and the truth. The
 task set in `eval/tasks/tasks.yaml` names a pattern and the facts of the
-profile. A task can set the organism, the data state, an extra results
-table, hidden columns, a user constraint, and the expected outcome.
+profile. A task can set the organism, the data state, an extra input (a
+results table or a signature gene list), hidden columns, a user constraint,
+and the expected outcome.
 
 `bun test` covers the engine, the renderer, and the canonical form with no
 network and no Docker. `bun run validate` reads the tree. `templates:test`
 needs Docker, the sandbox image, and the local package store. It renders each
 declared test and runs it in the image with the farm mounted. A test compares
-the results with the truth of the simulated dataset. Do not weaken a bound to
-make a test pass. Fix the script or the simulation, and say why.
+the results with the truth of the simulated dataset.
+
+Do not weaken a bound to make a test pass. Fix the script or the simulation,
+and say why.
 
 ## Documents
 

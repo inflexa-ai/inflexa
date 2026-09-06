@@ -315,4 +315,26 @@ describe("the curated tree on the evaluation situations", () => {
         const three = answer({ ...BASE, n_groups: 3, n_per_group_min: 4, n_per_group_max: 4 }, { language: "python" });
         expect(step(three, "differential_expression").template).toBe("tpl-pydeseq2-multigroup@1.0.0");
     });
+
+    it("the wider computations: each new question kind has a method on its central step, and an extra analysis joins a full plan", () => {
+        expect(step(answer({ ...BASE, question: "tf_activity" }), "tf_activity").method?.id).toBe("M-0035");
+        expect(step(answer({ ...BASE, question: "tf_activity" }), "pathway_activity").method?.id).toBe("M-0036");
+        expect(step(answer({ ...BASE, question: "deconvolution" }), "deconvolution").method?.id).toBe("M-0041");
+        expect(step(answer({ ...BASE, question: "signature_scoring" }), "signature_scoring").method?.id).toBe("M-0045");
+        expect(step(answer({ ...BASE, question: "clustering", n_per_group_min: 60, n_per_group_max: 60 }), "clustering").method?.id).toBe("M-0048");
+        const survival = answer({ ...BASE, question: "survival", n_per_group_min: 60, n_per_group_max: 60 });
+        expect(step(survival, "survival").method?.id).toBe("M-0053");
+        expect(step(survival, "signature_scoring").method?.id).toBe("M-0045");
+        const large = answer({ ...BASE, question: "coexpression", n_per_group_min: 60, n_per_group_max: 60 });
+        expect(step(large, "coexpression").method?.id).toBe("M-0047");
+        const small = answer({ ...BASE, question: "coexpression" });
+        expect(small.match).toBe("flag");
+        expect(step(small, "coexpression").forbids).toContain("M-0047");
+        const extra = answer({ ...BASE, extra_analyses: ["tf_activity", "variance_partition"] });
+        expect(step(extra, "tf_activity").method?.id).toBe("M-0035");
+        expect(step(extra, "variance_partition").method?.id).toBe("M-0049");
+        expect(step(extra, "differential_expression").method?.id).toBe("M-0001");
+        const transcripts = answer({ ...BASE, extra_analyses: ["transcript_level"] });
+        expect(transcripts.flags.some((flag) => flag.outcome?.startsWith("stop"))).toBe(true);
+    });
 });

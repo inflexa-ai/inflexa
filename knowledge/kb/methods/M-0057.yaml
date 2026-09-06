@@ -1,0 +1,30 @@
+id: M-0057
+label: "Gene identifier annotation with the organism package and the reference store tables"
+description: >-
+  A map between gene symbols, Entrez gene identifiers, and Ensembl gene
+  identifiers for human or mouse. The organism annotation package gives the
+  map through AnnotationDbi, and the NCBI gene info table and the GENCODE GTF
+  of the reference store give the release-dated map for the same identifiers.
+  The result table carries one identifier space per column, the annotation
+  release, and the share of the input identifiers that did not map.
+packages:
+  - name: AnnotationDbi
+    track: bioconductor
+    version_range: ">=1.60"
+    bioconductor: "3.23"
+  - name: org.Hs.eg.db
+    track: bioconductor
+    version_range: ">=3.20"
+    bioconductor: "3.23"
+  - name: org.Mm.eg.db
+    track: bioconductor
+    version_range: ">=3.20"
+    bioconductor: "3.23"
+  - name: ggplot2
+    track: cran
+    version_range: ">=3.5"
+  - name: jsonlite
+    track: cran
+    version_range: ">=1.8"
+templates:
+  - tpl-annotation-map

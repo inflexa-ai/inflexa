@@ -1,0 +1,823 @@
+{
+  "campaign": "wider-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "tf-activity-python-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T07:35:18.587Z",
+  "elapsedMs": 95548,
+  "outcome": "plan_submitted",
+  "planId": "pln-2847dbd1",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A PCA/heatmap view is descriptive only; do not draw a DE conclusion from it"
+        ],
+        "context": "12000 x 12 raw integer Salmon gene counts, single batch, no known confounders.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scikit-learn",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the 6 aldosterone-treated and 6 vehicle-control kidney samples separate by condition on a variance-stabilized expression matrix, and are there outlier samples or library-size problems before differential testing?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC (blind VST, PCA top-500, sample distance heatmap) grounded by R-0033@40bf; template tpl-qc-python@1.0.0",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-qc-python@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use vst(blind) equivalent (variance-stabilizing transform ignoring the design) for QC only, never for the DE test itself",
+          "Top 500 variable genes for PCA per grounded default"
+        ],
+        "description": "Load counts.csv (12000 genes x 12 samples) and metadata.csv (condition: aldosterone vs vehicle). Build a DESeq2-style size-factor/variance-stabilizing transform via pydeseq2, compute PCA on the top 500 most-variable genes, plot a sample-to-sample Euclidean distance heatmap, and plot per-sample library sizes, all colored by condition.",
+        "acceptance_criteria": [
+          "PCA plot and sample-distance heatmap produced, colored by condition",
+          "Library size bar plot produced for all 12 samples",
+          "Any sample that fails to cluster with its condition group or has markedly low library size is flagged and reported, not silently dropped"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2-style differential expression (pydeseq2 Wald test + apeglm shrinkage)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 replicates per group, DESeq2's outlier-replacement runs at cells with >=7 replicates; here it flags-and-NAs Cook's-distance outliers instead — report those genes explicitly"
+        ],
+        "context": "12000 genes x 12 samples, 6 vs 6 unpaired, single batch, raw Salmon gene counts.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which genes are differentially expressed between aldosterone-treated (n=6) and vehicle-control (n=6) kidney samples, with control as the reference level?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "pydeseq2 Wald test with apeglm shrinkage, minimal pre-filter, explicit reference level, BH+independent filtering per R-0001/R-0029/R-0009/R-0010; apeglm shrink confirmed permitted by knowledge_check",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-pydeseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Pre-filter: keep gene with >=10 counts in >=6 samples (smallest group)",
+          "Do not pre-normalize counts; normalization (median-of-ratios) happens inside pydeseq2",
+          "Explicit reference level: vehicle/control is the reference, contrast named condition[aldosterone vs vehicle]",
+          "Shrink log2FoldChange with apeglm (or ashr if a non-reference contrast is needed); keep the unshrunken estimate and SE in the table too",
+          "Select DE genes by BH-adjusted p-value (padj<0.05) with independent filtering on, never by raw p-value or fold change alone"
+        ],
+        "description": "Pre-filter to genes with >=10 counts in at least 6 samples (the smallest group size). Fit pydeseq2 DeseqDataSet with design ~condition, condition releveled so 'control' is the reference. Run the Wald test for the contrast condition treated vs control, at alpha=0.05 with independent filtering on. Apply apeglm shrinkage to the log2 fold change via pydeseq2's lfc_shrink. Inspect and plot the raw p-value histogram before BH adjustment, and produce MA and dispersion diagnostic plots. Flag genes with an NA p-value from Cook's-distance outlier detection separately from genes removed by independent filtering.",
+        "acceptance_criteria": [
+          "DE results table with baseMean, unshrunken log2FoldChange, shrunken log2FoldChange (apeglm), lfcSE, stat, pvalue, padj for every tested gene",
+          "Explicit contrast reported as condition: aldosterone vs vehicle (vehicle = reference)",
+          "p-value histogram, MA plot and dispersion plot saved",
+          "Number of genes tested after pre-filter and number of DE genes at padj<0.05 reported",
+          "Genes flagged NA by the Cook's outlier policy reported separately from independent-filter dropouts"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Transcription factor activity inference (decoupleR ulm on CollecTRI)",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "An ARACNe/VIPER-style tissue-specific regulon inference needs roughly 100+ samples and cannot be run on 6 vs 6; CollecTRI/DoRothEA prior networks are the only sound substitute here",
+          "If CollecTRI coverage of a biologically expected regulator (e.g. NR3C2/mineralocorticoid receptor) is thin, note it explicitly rather than omitting the regulator silently"
+        ],
+        "context": "CollecTRI human TF-target network (source, target, signed weight; ~1186 regulators) staged at /mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv. DoRothEA human regulons (confidence A-E) staged as a fallback/comparison at /mnt/refs/managed/dorothea-human/current/dorothea_hs.rda if CollecTRI proves insufficient for coverage.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which transcription factors show significantly increased or decreased inferred activity in aldosterone-treated versus control kidney samples, ranked by activity score?",
+        "grounding": {
+          "claims": [
+            "R-0111@b668",
+            "R-0113@7a4d",
+            "R-0114@9db7",
+            "R-0121@5f27"
+          ],
+          "reason": "decoupleR ulm on CollecTRI regulons using the Wald statistic of all tested genes per R-0111@b668; R-0121@5f27 rules out a de novo network at n=6/group; environment confirms decoupleR 2.2.0 present and CollecTRI_regulons.csv staged",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-decoupler-py-tf-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "tf_activity",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use decoupleR ulm (method_ulm/run_ulm) as the primary activity method, per the grounded procedure",
+          "Score on the Wald statistic ('stat' column) of every tested gene from the DE step, not a thresholded subset",
+          "Minimum regulon size = 5 targets among tested genes to score a TF",
+          "Keep the sign/mode of regulation (activating +1 / repressing -1) of each CollecTRI edge",
+          "State that a generic prior-knowledge network can miss a kidney/mineralocorticoid-specific regulator and can add noise from targets silent in kidney; this is stated as a caveat, not corrected for"
+        ],
+        "description": "Load the CollecTRI human regulatory network staged in the reference store (source TF, target gene, signed weight). Run decoupler's univariate linear model (run_ulm / method_ulm) using the DESeq2 Wald statistic (from T1S2, for every tested gene, not only the significant ones) as the gene-level score, against the CollecTRI regulons. Require at least 5 targets per TF present among tested genes for a TF to be scored. Report all TFs with their ulm activity score, p-value and BH-adjusted p-value, sorted by |score|, and select the top 6 activated and top 6 inhibited (12 total, satisfying the 'six per group' request) as the headline TF list. Also report which CollecTRI-listed target genes of each top TF were themselves DE (padj<0.05) as supporting evidence.",
+        "acceptance_criteria": [
+          "CollecTRI human regulon loaded from the reference store with its version recorded (2.0, Zenodo record 8192729)",
+          "Full TF activity table produced (TF, ulm score, p-value, padj, n_targets_tested) for every TF with >=5 tested targets",
+          "Top 6 TFs with the most positive activity score and top 6 with the most negative activity score explicitly reported as the answer to the research question",
+          "For each of the 12 headline TFs, the count and identity of its CollecTRI targets that are DE at padj<0.05 is reported as corroborating evidence",
+          "Report states this is a prior-knowledge-network inference (not a de novo regulatory network), appropriate given only 6 samples per group"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Hallmark pathway enrichment (context for the TF findings)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment result is method-dependent; treat as a hypothesis-generating, secondary line of evidence to the TF activity analysis, not a proof of mechanism"
+        ],
+        "context": "MSigDB human Hallmark gene sets (50 sets) staged at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which MSigDB Hallmark pathways are enriched among genes ranked by the aldosterone-vs-control Wald statistic, and do they support the TF activity findings?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0045@f652",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77",
+            "R-0108@409f"
+          ],
+          "reason": "gseapy preranked GSEA on the Wald statistic against Hallmark human per R-0107/R-0048/R-0099; rank metric choice (stat) stated explicitly per disputed rule R-0108",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-gseapy-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Rank metric = Wald statistic (stat), stated explicitly per the disputed-choice rule",
+          "Gene set size window 15-500 among tested genes",
+          "BH adjustment for multiple testing across gene sets"
+        ],
+        "description": "Rank all tested genes by the DESeq2 Wald statistic ('stat') from T1S2. Run gseapy prerank against the MSigDB human Hallmark gene sets staged in the reference store (50 sets), with a min/max set size window of 15-500 genes among the tested genes, BH-adjusted FDR, and collapse of redundant leading-edge overlaps. Report the leading-edge genes of each significant Hallmark set and cross-reference them against the top TF targets from T2S1.",
+        "acceptance_criteria": [
+          "Ranked list uses the Wald statistic for every tested gene (no pre-threshold)",
+          "Hallmark gene set version (2026.1) and gseapy version recorded",
+          "Significant Hallmark sets (FDR<0.25 per standard GSEA convention, stated explicitly) reported with NES, p-value, FDR and leading-edge genes",
+          "Redundant/overlapping significant sets noted and not double-counted as independent findings"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Consolidated report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Synthesis step drawing only on outputs already produced by T1S1, T1S2, T2S1, T2S2.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "matplotlib"
+        ],
+        "question": "What is the integrated answer to 'which transcription factors drive the aldosterone-vs-control response', supported by QC, DE and pathway evidence, with full reproducibility metadata?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report structure/content rules apply generically but no single method is being selected here; grounding tags carried over for traceability",
+          "status": "ungrounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "Do not introduce new statistical tests in the report step; synthesize only"
+        ],
+        "description": "Assemble a single report combining: QC plots and any flagged samples (T1S1); DE summary (design, contrast, thresholds, n tested, n DE genes, MA/dispersion/p-value-histogram plots) (T1S2); the headline TF activity result — top 6 activated and top 6 inhibited TFs with scores, FDR, and DE-target support (T2S1); Hallmark enrichment context (T2S2); and a reproducibility section (package versions for pydeseq2/decoupler/gseapy, CollecTRI network version 2.0, MSigDB Hallmark version 2026.1, random seeds used).",
+        "acceptance_criteria": [
+          "Report states the design formula, reference level, and contrast in plain language",
+          "Report presents the 6 top-activated and 6 top-inhibited TFs as the direct answer to the research question, each with its ulm score, padj, n targets tested, and n DE targets",
+          "Report lists package versions, reference dataset versions, and any random seeds",
+          "Report explicitly states the sample size (6 vs 6) as a limitation for both the DE outlier handling and the choice of a prior-knowledge TF network over a de novo one"
+        ]
+      }
+    ],
+    "title": "Aldosterone vs vehicle kidney: DE and TF activity",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "Six aldosterone-treated vs six vehicle-control human kidney samples, raw Salmon gene-level counts (12000 genes x 12 samples), single batch, unpaired. The question asks which transcription factors drive the treated-vs-control response. The plan follows the grounded bulk RNA-seq procedure end to end in Python: (1) sample-structure QC on a variance-stabilized matrix to confirm the samples separate by condition and to catch outliers before any test; (2) a minimal low-count pre-filter followed by pydeseq2's built-in median-of-ratios normalization and a Wald test of treated vs control, with an explicit reference level (control) so a positive log2FC means higher in treated; (3) apeglm-style shrinkage of the fold change and BH-adjusted independent filtering at alpha 0.05 to call DE genes; (4) TF activity inference with decoupleR's univariate linear model (ulm) run on the DESeq2 Wald statistic of every tested gene against the CollecTRI human regulon staged in the reference store — this is the central deliverable, since a prior-knowledge regulon on 6-vs-6 counts is the only sound TF-activity method at this sample size (an ARACNe/VIPER-style network needs far more replicates); (5) a Hallmark GSEA pass on the same ranked statistic for pathway-level context around the TF findings; (6) a consolidated report with QC/fit diagnostics, the DE table (raw and shrunken LFC), the ranked TF activity table (top TFs by |ulm score| with FDR), enrichment results, and full reproducibility metadata (package versions, regulon version, seed)."
+  },
+  "usage": {
+    "inputTokens": 965910,
+    "outputTokens": 8654,
+    "cacheCreationInputTokens": 186515,
+    "cacheReadInputTokens": 779275,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "tf_activity"
+        ],
+        "preferred_language": "python"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea collectri regulon TF human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "pydeseq2",
+          "gseapy",
+          "fgsea"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "scipy",
+          "statsmodels"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/decoupler",
+        "query": "ulm method_ulm decouple tf activity from DESeq2 stats contrast, run_ulm function signature"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "pydeseq2",
+        "query": "DeseqDataSet DeseqStats contrast apeglm shrinkage two group design"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "tf_activity"
+        ],
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind), PCA, sample distance heatmap, library sizes",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >=6 samples (smallest group)",
+            "package": "pandas",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors (pydeseq2 internal)",
+            "package": "pydeseq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "condition ~ 1 + condition, reference level = vehicle/control, contrast condition treated vs control",
+            "package": "pydeseq2"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "pydeseq2 Wald test",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm-style shrinkage via pydeseq2 lfc_shrink (apeglm)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering, alpha=0.05",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "decoupler ulm on Wald stat with CollecTRI human regulon",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              },
+              {
+                "name": "regulon_collection",
+                "value": "collectri_human"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "gseapy prerank GSEA on Wald stat with MSigDB Hallmark human",
+            "package": "gseapy",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "summary report with QC, DE, TF activity, enrichment results, session info",
+            "package": "pandas"
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "tf_activity"
+        ],
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage (via pydeseq2 DeseqStats.lfc_shrink)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Aldosterone vs vehicle kidney: DE and TF activity",
+          "analytical_narrative": "Six aldosterone-treated vs six vehicle-control human kidney samples, raw Salmon gene-level counts (12000 genes x 12 samples), single batch, unpaired. The question asks which transcription factors drive the treated-vs-control response. The plan follows the grounded bulk RNA-seq procedure end to end in Python: (1) sample-structure QC on a variance-stabilized matrix to confirm the samples separate by condition and to catch outliers before any test; (2) a minimal low-count pre-filter followed by pydeseq2's built-in median-of-ratios normalization and a Wald test of treated vs control, with an explicit reference level (control) so a positive log2FC means higher in treated; (3) apeglm-style shrinkage of the fold change and BH-adjusted independent filtering at alpha 0.05 to call DE genes; (4) TF activity inference with decoupleR's univariate linear model (ulm) run on the DESeq2 Wald statistic of every tested gene against the CollecTRI human regulon staged in the reference store — this is the central deliverable, since a prior-knowledge regulon on 6-vs-6 counts is the only sound TF-activity method at this sample size (an ARACNe/VIPER-style network needs far more replicates); (5) a Hallmark GSEA pass on the same ranked statistic for pathway-level context around the TF findings; (6) a consolidated report with QC/fit diagnostics, the DE table (raw and shrunken LFC), the ranked TF activity table (top TFs by |ulm score| with FDR), enrichment results, and full reproducibility metadata (package versions, regulon version, seed).",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 6 aldosterone-treated and 6 vehicle-control kidney samples separate by condition on a variance-stabilized expression matrix, and are there outlier samples or library-size problems before differential testing?",
+              "description": "Load counts.csv (12000 genes x 12 samples) and metadata.csv (condition: aldosterone vs vehicle). Build a DESeq2-style size-factor/variance-stabilizing transform via pydeseq2, compute PCA on the top 500 most-variable genes, plot a sample-to-sample Euclidean distance heatmap, and plot per-sample library sizes, all colored by condition.",
+              "acceptance_criteria": [
+                "PCA plot and sample-distance heatmap produced, colored by condition",
+                "Library size bar plot produced for all 12 samples",
+                "Any sample that fails to cluster with its condition group or has markedly low library size is flagged and reported, not silently dropped"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 x 12 raw integer Salmon gene counts, single batch, no known confounders.",
+              "constraints": [
+                "Use vst(blind) equivalent (variance-stabilizing transform ignoring the design) for QC only, never for the DE test itself",
+                "Top 500 variable genes for PCA per grounded default"
+              ],
+              "caveats": [
+                "A PCA/heatmap view is descriptive only; do not draw a DE conclusion from it"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-python@1.0.0",
+                "reason": "Sample structure QC (blind VST, PCA top-500, sample distance heatmap) grounded by R-0033@40bf; template tpl-qc-python@1.0.0"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2-style differential expression (pydeseq2 Wald test + apeglm shrinkage)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between aldosterone-treated (n=6) and vehicle-control (n=6) kidney samples, with control as the reference level?",
+              "description": "Pre-filter to genes with >=10 counts in at least 6 samples (the smallest group size). Fit pydeseq2 DeseqDataSet with design ~condition, condition releveled so 'control' is the reference. Run the Wald test for the contrast condition treated vs control, at alpha=0.05 with independent filtering on. Apply apeglm shrinkage to the log2 fold change via pydeseq2's lfc_shrink. Inspect and plot the raw p-value histogram before BH adjustment, and produce MA and dispersion diagnostic plots. Flag genes with an NA p-value from Cook's-distance outlier detection separately from genes removed by independent filtering.",
+              "acceptance_criteria": [
+                "DE results table with baseMean, unshrunken log2FoldChange, shrunken log2FoldChange (apeglm), lfcSE, stat, pvalue, padj for every tested gene",
+                "Explicit contrast reported as condition: aldosterone vs vehicle (vehicle = reference)",
+                "p-value histogram, MA plot and dispersion plot saved",
+                "Number of genes tested after pre-filter and number of DE genes at padj<0.05 reported",
+                "Genes flagged NA by the Cook's outlier policy reported separately from independent-filter dropouts"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 genes x 12 samples, 6 vs 6 unpaired, single batch, raw Salmon gene counts.",
+              "constraints": [
+                "Pre-filter: keep gene with >=10 counts in >=6 samples (smallest group)",
+                "Do not pre-normalize counts; normalization (median-of-ratios) happens inside pydeseq2",
+                "Explicit reference level: vehicle/control is the reference, contrast named condition[aldosterone vs vehicle]",
+                "Shrink log2FoldChange with apeglm (or ashr if a non-reference contrast is needed); keep the unshrunken estimate and SE in the table too",
+                "Select DE genes by BH-adjusted p-value (padj<0.05) with independent filtering on, never by raw p-value or fold change alone"
+              ],
+              "caveats": [
+                "With 6 replicates per group, DESeq2's outlier-replacement runs at cells with >=7 replicates; here it flags-and-NAs Cook's-distance outliers instead — report those genes explicitly"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-pydeseq2-two-group@1.0.0",
+                "reason": "pydeseq2 Wald test with apeglm shrinkage, minimal pre-filter, explicit reference level, BH+independent filtering per R-0001/R-0029/R-0009/R-0010; apeglm shrink confirmed permitted by knowledge_check"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Transcription factor activity inference (decoupleR ulm on CollecTRI)",
+              "track": "T2",
+              "step_type": "tf_activity",
+              "question": "Which transcription factors show significantly increased or decreased inferred activity in aldosterone-treated versus control kidney samples, ranked by activity score?",
+              "description": "Load the CollecTRI human regulatory network staged in the reference store (source TF, target gene, signed weight). Run decoupler's univariate linear model (run_ulm / method_ulm) using the DESeq2 Wald statistic (from T1S2, for every tested gene, not only the significant ones) as the gene-level score, against the CollecTRI regulons. Require at least 5 targets per TF present among tested genes for a TF to be scored. Report all TFs with their ulm activity score, p-value and BH-adjusted p-value, sorted by |score|, and select the top 6 activated and top 6 inhibited (12 total, satisfying the 'six per group' request) as the headline TF list. Also report which CollecTRI-listed target genes of each top TF were themselves DE (padj<0.05) as supporting evidence.",
+              "acceptance_criteria": [
+                "CollecTRI human regulon loaded from the reference store with its version recorded (2.0, Zenodo record 8192729)",
+                "Full TF activity table produced (TF, ulm score, p-value, padj, n_targets_tested) for every TF with >=5 tested targets",
+                "Top 6 TFs with the most positive activity score and top 6 with the most negative activity score explicitly reported as the answer to the research question",
+                "For each of the 12 headline TFs, the count and identity of its CollecTRI targets that are DE at padj<0.05 is reported as corroborating evidence",
+                "Report states this is a prior-knowledge-network inference (not a de novo regulatory network), appropriate given only 6 samples per group"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "context": "CollecTRI human TF-target network (source, target, signed weight; ~1186 regulators) staged at /mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv. DoRothEA human regulons (confidence A-E) staged as a fallback/comparison at /mnt/refs/managed/dorothea-human/current/dorothea_hs.rda if CollecTRI proves insufficient for coverage.",
+              "constraints": [
+                "Use decoupleR ulm (method_ulm/run_ulm) as the primary activity method, per the grounded procedure",
+                "Score on the Wald statistic ('stat' column) of every tested gene from the DE step, not a thresholded subset",
+                "Minimum regulon size = 5 targets among tested genes to score a TF",
+                "Keep the sign/mode of regulation (activating +1 / repressing -1) of each CollecTRI edge",
+                "State that a generic prior-knowledge network can miss a kidney/mineralocorticoid-specific regulator and can add noise from targets silent in kidney; this is stated as a caveat, not corrected for"
+              ],
+              "caveats": [
+                "An ARACNe/VIPER-style tissue-specific regulon inference needs roughly 100+ samples and cannot be run on 6 vs 6; CollecTRI/DoRothEA prior networks are the only sound substitute here",
+                "If CollecTRI coverage of a biologically expected regulator (e.g. NR3C2/mineralocorticoid receptor) is thin, note it explicitly rather than omitting the regulator silently"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0111@b668",
+                  "R-0113@7a4d",
+                  "R-0114@9db7",
+                  "R-0121@5f27"
+                ],
+                "template": "tpl-decoupler-py-tf-activity@1.0.0",
+                "reason": "decoupleR ulm on CollecTRI regulons using the Wald statistic of all tested genes per R-0111@b668; R-0121@5f27 rules out a de novo network at n=6/group; environment confirms decoupleR 2.2.0 present and CollecTRI_regulons.csv staged"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Hallmark pathway enrichment (context for the TF findings)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB Hallmark pathways are enriched among genes ranked by the aldosterone-vs-control Wald statistic, and do they support the TF activity findings?",
+              "description": "Rank all tested genes by the DESeq2 Wald statistic ('stat') from T1S2. Run gseapy prerank against the MSigDB human Hallmark gene sets staged in the reference store (50 sets), with a min/max set size window of 15-500 genes among the tested genes, BH-adjusted FDR, and collapse of redundant leading-edge overlaps. Report the leading-edge genes of each significant Hallmark set and cross-reference them against the top TF targets from T2S1.",
+              "acceptance_criteria": [
+                "Ranked list uses the Wald statistic for every tested gene (no pre-threshold)",
+                "Hallmark gene set version (2026.1) and gseapy version recorded",
+                "Significant Hallmark sets (FDR<0.25 per standard GSEA convention, stated explicitly) reported with NES, p-value, FDR and leading-edge genes",
+                "Redundant/overlapping significant sets noted and not double-counted as independent findings"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "MSigDB human Hallmark gene sets (50 sets) staged at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt.",
+              "constraints": [
+                "Rank metric = Wald statistic (stat), stated explicitly per the disputed-choice rule",
+                "Gene set size window 15-500 among tested genes",
+                "BH adjustment for multiple testing across gene sets"
+              ],
+              "caveats": [
+                "Enrichment result is method-dependent; treat as a hypothesis-generating, secondary line of evidence to the TF activity analysis, not a proof of mechanism"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0045@f652",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77",
+                  "R-0108@409f"
+                ],
+                "template": "tpl-gseapy-preranked@1.0.0",
+                "reason": "gseapy preranked GSEA on the Wald statistic against Hallmark human per R-0107/R-0048/R-0099; rank metric choice (stat) stated explicitly per disputed rule R-0108"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Consolidated report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the integrated answer to 'which transcription factors drive the aldosterone-vs-control response', supported by QC, DE and pathway evidence, with full reproducibility metadata?",
+              "description": "Assemble a single report combining: QC plots and any flagged samples (T1S1); DE summary (design, contrast, thresholds, n tested, n DE genes, MA/dispersion/p-value-histogram plots) (T1S2); the headline TF activity result — top 6 activated and top 6 inhibited TFs with scores, FDR, and DE-target support (T2S1); Hallmark enrichment context (T2S2); and a reproducibility section (package versions for pydeseq2/decoupler/gseapy, CollecTRI network version 2.0, MSigDB Hallmark version 2026.1, random seeds used).",
+              "acceptance_criteria": [
+                "Report states the design formula, reference level, and contrast in plain language",
+                "Report presents the 6 top-activated and 6 top-inhibited TFs as the direct answer to the research question, each with its ulm score, padj, n targets tested, and n DE targets",
+                "Report lists package versions, reference dataset versions, and any random seeds",
+                "Report explicitly states the sample size (6 vs 6) as a limitation for both the DE outlier handling and the choice of a prior-knowledge TF network over a de novo one"
+              ],
+              "packages": [
+                "pandas",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Synthesis step drawing only on outputs already produced by T1S1, T1S2, T2S1, T2S2.",
+              "constraints": [
+                "Do not introduce new statistical tests in the report step; synthesize only"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report structure/content rules apply generically but no single method is being selected here; grounding tags carried over for traceability"
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e"
+  }
+}

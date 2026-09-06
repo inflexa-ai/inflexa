@@ -1,0 +1,48 @@
+id: R-0149
+title: "Harmony is a single-cell integration method and not a batch correction for a bulk design"
+assertion: >-
+  With a batch in a bulk design, do not use Harmony as the batch
+  correction. Harmony corrects the principal component embedding of
+  thousands of cells by an iterative clustering across the batches, and it
+  returns a corrected embedding and not a corrected expression matrix. A
+  bulk design holds tens of samples and not thousands of cells, the
+  differential expression test needs the counts or the log values and not
+  an embedding, and a corrected embedding gives no input to a test. The
+  route for the batch of a bulk design comes from the rule of its batch
+  state.
+modality: bulk_rna_seq
+conditions:
+  - field: batch
+    op: ne
+    value: none
+action:
+  step_type: normalize
+  parameters:
+    - name: harmony_use
+      value: not_for_bulk_batch_correction
+      default_source: "doi:10.1038/s41592-019-0619-0"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:citesAsAuthority
+    source: S-0134
+    paraphrase: >-
+      Harmony integrates single-cell data sets by an iterative soft
+      clustering of the cells in the principal component space and a
+      correction of the embedding of each cell toward the cluster centroids
+      across the data sets. Its output is the corrected embedding, which
+      feeds a clustering or a visualization of the cells, and the paper
+      evaluates it on single-cell experiments with thousands of cells.
+    anchor: "Abstract; Results, Overview of Harmony; Methods"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [batch, normalization, tool-scope]

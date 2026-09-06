@@ -1,0 +1,82 @@
+id: R-0115
+title: "Pathway activity with the PROGENy footprint model: mlm on the top responsive genes, read as a footprint and not as a membership"
+assertion: >-
+  Infer the activity of the signaling pathways with the PROGENy model and the
+  decoupleR multivariate linear model (mlm) on the contrast statistic of every
+  tested gene, or on the log matrix when the question asks for a score per
+  sample. PROGENy gives each pathway a weighted set of the genes that respond
+  to a perturbation of the pathway, learned from public perturbation
+  experiments. Use the top 100 to 500 responsive genes per pathway, and state
+  the number. Read the score as the transcriptional footprint of the pathway
+  and not as the expression of its members, because a pathway member can
+  change without a change in the pathway activity and the reverse. The
+  univariate model (ulm) is the second estimator.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: pathway_activity
+  method: M-0036
+  parameters:
+    - name: activity_method
+      value: mlm
+      default_source: "doi:10.1093/bioadv/vbac016"
+    - name: footprint_model
+      value: progeny_human
+      default_source: "doi:10.1038/s41467-017-02391-6"
+    - name: top_responsive_genes
+      value: 500
+      default_source: "rule:R-0115"
+    - name: interpretation
+      value: footprint_not_membership
+      default_source: "doi:10.1038/s41467-017-02391-6"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0094
+    paraphrase: >-
+      PROGENy learns, from a large compendium of public perturbation
+      experiments, a common core of the genes that respond to the
+      perturbation of each pathway, and it scores a pathway from these
+      responsive genes. Unlike a method that maps expression onto the pathway
+      members, it recovers the effect of known driver mutations, gives
+      markers for drug indications, and separates oncogenic from tumor
+      suppressor pathways for patient survival.
+    anchor: "Abstract; Results, Model construction; Results, Comparison with pathway member methods"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0091
+    paraphrase: >-
+      decoupleR takes a weighted network, such as the PROGENy model through
+      OmniPath, and infers the pathway activities with the same estimators as
+      the transcription factor activities, among them the multivariate linear
+      model that fits all pathways at once.
+    anchor: "Results, Overview of decoupleR; Methods, Resources"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0096
+    paraphrase: >-
+      The study tests PROGENy on single-cell data with different numbers of
+      responsive genes per pathway and finds that the activity stays robust
+      over a range of that number and over a low gene coverage. It states no
+      single number for bulk data.
+    anchor: "Results, Robustness of PROGENy"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [pathway-activity, progeny, decoupler, method-selection, needs-source]

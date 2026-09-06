@@ -1,0 +1,203 @@
+id: tpl-lifelines-cox
+version: 1.0.0
+label: "lifelines Cox proportional hazards model on a standardized signature score with clinical covariates, a Schoenfeld test, and a Kaplan-Meier curve by the median split"
+language: python
+method: M-0053
+step_types: [survival]
+edam_operations: [EDAM:operation_3659]
+citations: [S-0114, S-0004, S-0041]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates, two_group_paired, two_group_with_blocking_factor]
+  min_replicates: 10
+  conditions:
+    - field: data_state
+      op: eq
+      value: counts
+  notes: >-
+    The Python mirror of tpl-survival-cox. A count matrix whose first column is
+    the gene identifier and whose header holds the sample identifiers, plus a
+    sample table with one row per sample that holds a positive follow-up time
+    and a 0/1 event, plus a list of signature genes whose identifiers match the
+    gene column. The script takes the library sizes and the scaling factors
+    from the genes that pass the filterByExpr port of decoupler, with the TMM,
+    RLE, or upper quartile factors of edgeR computed in numpy, and computes the
+    log-CPM of edgeR for every gene of the count matrix, thus a fixed signature
+    keeps each member that the matrix holds. The signature score of a sample is
+    the mean log-CPM of the signature genes, standardized across the samples to
+    mean 0 and standard deviation 1. A lifelines Cox model of the time to event
+    holds the standardized score as a continuous term and each covariate column
+    as a fixed term, thus the hazard ratio of the score is per one standard
+    deviation. lifelines fits the Efron approximation for tied times only. The
+    proportional hazards assumption is tested on the scaled Schoenfeld residuals
+    of each term, and the summary flags a failure at alpha. lifelines gives no
+    global test, thus the ph_test table holds the per-term rows only. The
+    Kaplan-Meier curve by the median split of the score and the log-rank
+    p-value of that split are for the picture only. The inference stays in the
+    continuous model. A cohort with fewer than 10 events gives an unstable
+    hazard ratio, thus the log carries a caution.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample, with the time and the event columns."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: time_column
+    type: string
+    description: "The column of the sample table that holds the positive follow-up time of each sample."
+    adaptable: true
+    default: time
+  - name: event_column
+    type: string
+    description: "The column of the sample table that holds the event indicator: 1 for an event, 0 for a censored sample."
+    adaptable: true
+    default: event
+  - name: signature_genes
+    type: string_list
+    description: "The gene identifiers of the signature. The score of a sample is the mean log-CPM of these genes."
+    adaptable: true
+  - name: covariates
+    type: string_list
+    description: "The columns of the sample table that enter the Cox model as fixed terms beside the score, for example age, stage, or treatment. Absent, the model holds the score only."
+    adaptable: true
+    required: false
+  - name: min_count
+    type: integer
+    description: "The min_count of filter_by_expr: a gene stays when it has at least this many counts, on the CPM scale of the median library, in enough samples."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 0
+  - name: min_total_count
+    type: integer
+    description: "The min_total_count of filter_by_expr: a gene also needs at least this many counts over all samples."
+    adaptable: true
+    default: 15
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 0
+  - name: normalization_method
+    type: string
+    description: "The library size scaling method of calcNormFactors of edgeR, computed in numpy and applied before the log-CPM."
+    adaptable: true
+    default: TMM
+    default_source: "doi:10.12688/f1000research.9005.3"
+    enum: [TMM, RLE, upperquartile, none]
+  - name: min_signature_genes
+    type: integer
+    description: "The script stops when fewer than this many signature genes are in the count matrix."
+    adaptable: true
+    default: 2
+    default_source: "rule:R-0153"
+    minimum: 1
+  - name: ties
+    type: string
+    description: "The method for tied event times. lifelines CoxPHFitter fits the Efron approximation only."
+    adaptable: false
+    default: efron
+    default_source: "guide:lifelines/0.30.0#coxphfitter"
+    enum: [efron]
+  - name: alpha
+    type: number
+    description: "The p-value cutoff at which the summary flags a failure of the proportional hazards assumption."
+    adaptable: false
+    default: 0.05
+    default_source: "rule:R-0153"
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example survival or signature_os."
+    adaptable: true
+    default: survival
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table with the time and the event columns, CSV."
+outputs:
+  - name: cox
+    path: "output/{prefix}_cox.csv"
+    format: EDAM:format_3752
+    description: "One row per model term: term, hazard_ratio, ci_low, ci_high, pvalue. The signature_score row is the hazard ratio per one standard deviation of the score."
+  - name: ph_test
+    path: "output/{prefix}_ph_test.csv"
+    format: EDAM:format_3752
+    description: "The scaled Schoenfeld residual test of each term: term, chisq, df, p. No global row, because lifelines gives no global test."
+  - name: scores
+    path: "output/{prefix}_scores.csv"
+    format: EDAM:format_3752
+    description: "One row per sample: sample, signature_score_raw (mean log-CPM), signature_score (standardized), risk_group (the median split), time, event."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The model, the sample and event counts, the signature hazard ratio with its interval and p-value, the concordance, the proportional hazards p-value, the log-rank p-value of the median split, the thresholds, the package versions."
+  - name: km
+    path: "figures/{prefix}_km.png"
+    description: "Kaplan-Meier curves of the median split of the score with the at-risk counts, for the picture only (and PDF)."
+  - name: schoenfeld
+    path: "figures/{prefix}_schoenfeld.png"
+    description: "The scaled Schoenfeld residuals of the score against the transformed time, with the proportional hazards test (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "The Python version and the package versions for the record."
+environment:
+  - name: lifelines
+    version: "0.30.0"
+    track: python
+  - name: decoupler
+    version: "2.2.0"
+    track: python
+  - name: anndata
+    version: "0.13.3.post0"
+    track: python
+  - name: pandas
+    version: "3.0.5"
+    track: python
+  - name: numpy
+    version: "2.5.2"
+    track: python
+  - name: scipy
+    version: "1.16.3"
+    track: python
+  - name: matplotlib
+    version: "3.11.1"
+    track: python
+bioconductor: "3.23"
+body_file: body.py
+tests:
+  - name: survival-n60-signature
+    dataset: survival_n60/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      signature_genes: [PMAIP1, ATAD2, APLP1, FZD5, NDUFS4, GENE00073, GENE01819, GENE02579, GENE02592, GENE02715, GENE02743, GENE02844, GENE03702, GENE03869, GENE04390, GENE04461, GENE05140, GENE05318, GENE05522, GENE07471]
+      covariates: [condition]
+    expect:
+      - "exists output/survival_cox.csv"
+      - "exists output/survival_summary.json"
+      - "exists output/survival_ph_test.csv"
+      - "exists output/survival_scores.csv"
+      - "exists output/session_info.txt"
+      - "exists figures/survival_km.png"
+      - "exists figures/survival_km.pdf"
+      - "exists figures/survival_schoenfeld.png"
+      - "exists figures/survival_schoenfeld.pdf"
+      - "csv_rows output/survival_cox.csv >= 2"
+      - "json output/survival_summary.json n_samples == 120"
+      - "json output/survival_summary.json n_events >= 30"
+      - "json output/survival_summary.json n_signature_genes_found == 20"
+      - "json output/survival_summary.json signature_pvalue <= 0.05"
+      - "json output/survival_summary.json signature_hazard_ratio > 1"

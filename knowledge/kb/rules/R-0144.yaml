@@ -1,0 +1,55 @@
+id: R-0144
+title: "NMF is the tool of record for metagene discovery and is absent here: consensus clustering and PCA loadings stand in"
+assertion: >-
+  Non-negative matrix factorization (NMF) is the tool of record for the
+  discovery of metagenes, a small set of non-negative gene weight vectors
+  whose combination reconstructs each sample, with the rank selected by the
+  cophenetic coefficient of the consensus matrix across runs. The NMF
+  package is absent from this pool. Do not name it as the executable step.
+  For a subgroup of the samples, run consensus clustering. For a set of
+  gene programs, take the loadings of the leading principal components of
+  the centered log values as a descriptive substitute, and state that a
+  principal component mixes positive and negative weights and is not a
+  metagene. If the question needs metagenes, state that NMF is absent and
+  ask for it.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: clustering
+  parameters:
+    - name: metagene_tool_of_record
+      value: NMF_absent_from_pool
+      default_source: "doi:10.1073/pnas.0308531101"
+    - name: metagene_substitute
+      value: consensus_clustering_or_pca_loadings_descriptive
+      default_source: "rule:R-0144"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:citesAsAuthority
+    source: S-0135
+    paraphrase: >-
+      NMF factors the expression matrix into a small number of non-negative
+      metagenes and a matrix of metagene expression per sample, and the
+      paper selects the number of metagenes from the stability of the
+      sample assignment across many runs, measured by the cophenetic
+      correlation coefficient of the consensus matrix. It compares NMF with
+      hierarchical clustering and self-organizing maps, and it reports that
+      NMF is less sensitive to the selection of genes and to the initial
+      conditions.
+    anchor: "Abstract; Methods, NMF; Model selection"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [clustering, tool-absent, nmf]

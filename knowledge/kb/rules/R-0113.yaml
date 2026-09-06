@@ -1,0 +1,59 @@
+id: R-0113
+title: "DoRothEA is the alternative regulon set, with the confidence levels A to C, and CollecTRI stays the first choice"
+assertion: >-
+  DoRothEA is the alternative regulon set for a transcription factor activity
+  inference. Each of its interactions carries a confidence level from A to E,
+  and an analysis keeps the levels A to C, because the lower levels hold
+  interactions with weaker support. CollecTRI stays the first choice, because
+  it gives a signed edge to 1186 regulators and it outperforms the other
+  public collections on the benchmark of perturbation experiments. Use
+  DoRothEA when the result must compare with a published DoRothEA analysis,
+  and state the confidence levels that entered the regulons.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: tf_activity
+  parameters:
+    - name: alternative_regulon
+      value: dorothea_confidence_A_to_C
+      default_source: "doi:10.1101/gr.240663.118"
+    - name: regulon_preference
+      value: collectri_first
+      default_source: "doi:10.1093/nar/gkad841"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0093
+    paraphrase: >-
+      DoRothEA collects regulons from curated resources, ChIP-seq, motif
+      predictions, and reverse-engineered regulons, and it gives each
+      interaction a confidence score by the evidence behind it. The benchmark
+      finds the best performance from the curated interactions, then from
+      ChIP-seq, thus the higher confidence levels rest on the better sources.
+    anchor: "Abstract; Results, Consensus transcription factor regulons"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0092
+    paraphrase: >-
+      CollecTRI gives a signed interaction to 1186 regulators, and the signed
+      regulons outperform the other public collections of regulatory
+      interactions, among them DoRothEA, on the perturbation benchmark.
+    anchor: "Abstract; Results, Comparison with DoRothEA"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [tf-activity, dorothea, collectri, alternative]

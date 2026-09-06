@@ -1,0 +1,14 @@
+id: M-0044
+label: "quanTIseq absolute fractions of ten immune cell types from TPM"
+edam_operation: EDAM:operation_3629
+description: >-
+  A constrained least squares deconvolution of a TPM profile against the TIL10
+  signature matrix of ten immune cell types, with an mRNA content scaling,
+  that returns an absolute fraction per cell type and the fraction of other
+  cells. The input is a linear-scale TPM matrix of human samples, and the
+  Bioconductor package quantiseqr runs the deconvolution step of the pipeline.
+packages:
+  - name: quantiseqr
+    track: bioconductor
+    version_range: ">=1.10"
+    bioconductor: "3.23"

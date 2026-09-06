@@ -9,7 +9,13 @@
 # Patterns:
 #   two_group_n3, two_group_n6, paired_n5, batch_balanced_n6, interaction_2x2_n4,
 #   timecourse_2x4_n3, confounded_batch_n6, no_replicates_1v1, multi_group_3x4,
-#   outlier_n5, two_group_n60, covariates_n6, timecourse_2x2_n3, paired_3groups_n4
+#   outlier_n5, two_group_n60, covariates_n6, timecourse_2x2_n3, paired_3groups_n4,
+#   survival_n60, regulons_n6, coexpression_n60
+#
+# Regulons: when --regulons names a CollecTRI-style CSV (source,target,weight),
+# three regulators with enough targets in the gene universe are planted with a
+# coherent target response in the treated group, thus a regulator activity step
+# has a truth (planted_set "TF:<name>").
 #
 # Every pattern also writes log_expr.csv (log2(TPM + 1)) for the templates that
 # take log-scale input.
@@ -34,6 +40,7 @@ PATTERN <- option("--pattern", "two_group_n6")
 SEED <- as.integer(option("--seed", "1"))
 OUT <- option("--out", file.path("eval", "data", PATTERN, paste0("seed-", SEED)))
 HALLMARK <- option("--hallmark", NULL)
+REGULONS <- option("--regulons", NULL)
 N_GENES <- as.integer(option("--n-genes", "12000"))
 set.seed(SEED)
 dir.create(OUT, showWarnings = FALSE, recursive = TRUE)
@@ -83,6 +90,12 @@ make_design <- function(pattern) {
   } else if (pattern == "timecourse_2x2_n3") {
     meta <- expand.grid(replicate = 1:3, time = c("t0", "t1"), condition = c("control", "treated"), stringsAsFactors = FALSE)[, c("condition", "time")]
     meta$time_hours <- as.integer(factor(meta$time)) - 1L
+  } else if (pattern == "survival_n60") {
+    meta <- data.frame(condition = rep(c("control", "treated"), each = 60))
+  } else if (pattern == "regulons_n6") {
+    meta <- data.frame(condition = rep(c("control", "treated"), each = 6))
+  } else if (pattern == "coexpression_n60") {
+    meta <- data.frame(condition = rep(c("control", "treated"), each = 60))
   } else if (pattern == "paired_3groups_n4") {
     meta <- data.frame(subject = rep(sprintf("S%02d", 1:4), times = 3), condition = rep(c("control", "treated_a", "treated_b"), each = 4))
   } else {
@@ -128,7 +141,35 @@ plant_hallmark <- function(condition_column, test_level) {
   }
 }
 
-if (PATTERN %in% c("two_group_n3", "two_group_n6", "batch_balanced_n6", "confounded_batch_n6", "no_replicates_1v1", "paired_n5", "outlier_n5", "two_group_n60", "covariates_n6")) {
+# ── Regulons ──────────────────────────────────────────────────────────────────
+regulons <- list()
+if (!is.null(REGULONS) && file.exists(REGULONS)) {
+  reg <- read.csv(REGULONS, stringsAsFactors = FALSE)
+  reg <- reg[reg$target %in% genes, c("source", "target", "weight")]
+  for (tf in unique(reg$source)) regulons[[tf]] <- reg[reg$source == tf, ]
+}
+plant_regulons <- function(condition_column, test_level) {
+  if (length(regulons) == 0) return(invisible(NULL))
+  sizes <- vapply(regulons, function(r) sum(baseline_mean[match(r$target, genes)] >= 8), 0L)
+  eligible <- names(sizes)[sizes >= 20 & sizes <= 200]
+  if (length(eligible) < 3) return(invisible(NULL))
+  chosen <- sample(eligible, 3)
+  in_test <- meta[[condition_column]] == test_level
+  for (tf in chosen) {
+    r <- regulons[[tf]]
+    r <- r[baseline_mean[match(r$target, genes)] >= 8, ]
+    hit <- r[sample(seq_len(nrow(r)), size = round(0.7 * nrow(r))), ]
+    index <- match(hit$target, genes)
+    # The regulator is active in the test group: each target moves with the sign of its edge.
+    lfc <- sign(hit$weight) * (0.8 + abs(rnorm(length(index), sd = 0.5)))
+    log_mu[index, in_test] <<- log_mu[index, in_test] + lfc
+    truth$de[index] <<- 1L
+    truth$lfc[index] <<- lfc
+    truth$planted_set[index] <<- ifelse(truth$planted_set[index] == "", paste0("TF:", tf), truth$planted_set[index])
+  }
+}
+
+if (PATTERN %in% c("two_group_n3", "two_group_n6", "batch_balanced_n6", "confounded_batch_n6", "no_replicates_1v1", "paired_n5", "outlier_n5", "two_group_n60", "covariates_n6", "survival_n60", "regulons_n6", "coexpression_n60")) {
   de_index <- sample_expressed(0.10)
   lfc <- effect_size(length(de_index))
   treated <- meta$condition == "treated"
@@ -136,6 +177,8 @@ if (PATTERN %in% c("two_group_n3", "two_group_n6", "batch_balanced_n6", "confoun
   truth$de[de_index] <- 1L
   truth$lfc[de_index] <- lfc
   plant_hallmark("condition", "treated")
+  # Only the regulons pattern plants regulators, thus the counts of every other pattern stay as they were.
+  if (PATTERN == "regulons_n6") plant_regulons("condition", "treated")
 }
 if (PATTERN == "paired_n5") {
   subject_effect <- matrix(rnorm(n_genes * 5, sd = 0.45), nrow = n_genes)
@@ -234,6 +277,17 @@ if (PATTERN == "timecourse_2x4_n3") {
   truth$planted_set[interaction_index] <- "condition_by_time"
 }
 
+# ── Co-expression modules (three latent sample factors, independent of the condition) ──
+if (PATTERN == "coexpression_n60") {
+  for (k in 1:3) {
+    members <- sample(setdiff(expressed, which(truth$de == 1L)), 150)
+    factor_score <- rnorm(n_samples, sd = 1)
+    loading <- 0.6 + abs(rnorm(length(members), sd = 0.3))
+    for (i in seq_len(n_samples)) log_mu[members, i] <- log_mu[members, i] + loading * factor_score[i]
+    truth$planted_set[members] <- paste0("MODULE_", k)
+  }
+}
+
 # ── One outlier sample ────────────────────────────────────────────────────────
 # A control sample with a gene-wise shift of its expected expression, the
 # pattern of a degraded or mishandled library: the sample stays in its group
@@ -261,6 +315,22 @@ for (i in seq_len(n_samples)) {
   counts[, i] <- rnbinom(n_genes, mu = mu, size = 1 / dispersion)
 }
 
+# ── Survival outcome (drawn after the counts, thus the counts stay) ──────────
+if (PATTERN == "survival_n60") {
+  # A 20-gene signature drives the hazard: a higher score, a shorter time.
+  sig <- sample(expressed, 20)
+  # The score is depth-free: the counts are divided by the size factors before the log.
+  corrected <- sweep(counts[sig, , drop = FALSE], 2, size_factors, "/")
+  score <- colMeans(log2(corrected + 1))
+  score <- (score - mean(score)) / sd(score)
+  hazard <- exp(1.2 * score)
+  time <- round(rexp(n_samples, rate = hazard / 24), 1)
+  censor <- round(runif(n_samples, 6, 36), 1)
+  meta$time <- pmin(time, censor)
+  meta$event <- as.integer(time <= censor)
+  truth$planted_set[sig] <- "SURVIVAL_SIGNATURE"
+}
+
 # ── Gene lengths and TPM (drawn after the counts, thus the counts stay) ───────
 gene_lengths <- pmax(200L, as.integer(round(exp(rnorm(n_genes, mean = log(2000), sd = 0.6)))))
 rpk <- counts / (gene_lengths / 1000)
@@ -273,6 +343,7 @@ write.csv(data.frame(gene = genes, round(log2(tpm + 1), 4), check.names = FALSE)
 write.csv(data.frame(gene = genes, length = gene_lengths), file.path(OUT, "gene_lengths.csv"), row.names = FALSE)
 write.csv(meta, file.path(OUT, "metadata.csv"), row.names = FALSE)
 write.csv(truth, file.path(OUT, "truth.csv"), row.names = FALSE)
+if (PATTERN == "survival_n60") write.csv(data.frame(gene = genes[sig]), file.path(OUT, "signature_genes.csv"), row.names = FALSE)
 record <- list(
   pattern = PATTERN, seed = SEED, n_genes = n_genes, n_samples = n_samples,
   n_de = sum(truth$de), planted_sets = unique(truth$planted_set[truth$planted_set != ""]),

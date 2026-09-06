@@ -1,0 +1,18 @@
+id: M-0054
+label: "Penalized Cox regression with glmnet and a cross-validated lambda"
+description: >-
+  An elastic net or lasso penalty on the Cox partial likelihood over many
+  candidate genes, fitted along the regularization path by coordinate descent.
+  Cross-validation on the partial-likelihood deviance selects the lambda, and
+  the genes with a nonzero coefficient at that lambda form the signature. The
+  fitted linear predictor is the risk score of a sample.
+packages:
+  - name: glmnet
+    track: cran
+    version_range: ">=4.1"
+  - name: survival
+    track: cran
+    version_range: ">=3.5"
+  - name: scikit-survival
+    track: python
+    version_range: ">=0.22"

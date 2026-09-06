@@ -1,0 +1,68 @@
+id: R-0143
+title: "Variance partition: the share of the variance of each gene explained by each factor with a mixed model, as the design diagnostic before the test"
+assertion: >-
+  Before the differential expression test, fit a linear mixed model per gene
+  with variancePartition on the log-scale expression, with each categorical
+  variable of the metadata as a random effect and each continuous variable
+  as a fixed effect. Report the share of the variance of each gene that each
+  variable explains and the residual share, as a distribution across the
+  genes. The result shows whether the condition, a batch, a subject, or a
+  technical variable drives the expression, and it guides which variables
+  the design keeps. On counts, give the model the log-CPM with the voom
+  precision weights.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: variance_partition
+  method: M-0049
+  parameters:
+    - name: categorical_terms
+      value: random_effects
+      default_source: "doi:10.1186/s12859-016-1323-z"
+    - name: continuous_terms
+      value: fixed_effects
+      default_source: "doi:10.1186/s12859-016-1323-z"
+    - name: count_input
+      value: voom_log_cpm_with_weights
+      default_source: "doi:10.1186/s12859-016-1323-z"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0118
+    paraphrase: >-
+      variancePartition fits a linear mixed model to each gene, with the
+      categorical variables as random effects and the continuous variables
+      as fixed effects, and it reports the fraction of the variance of each
+      gene that each variable explains. The paper presents the result as a
+      way to find the drivers of variation in a complex study, to detect a
+      batch or a technical variable, and to inform the design of the
+      downstream analysis. On RNA-seq counts the input is the log-CPM with
+      the voom precision weights.
+    anchor: "Abstract; Methods, Linear mixed model; Results, Interpreting drivers of variation"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0089
+    paraphrase: >-
+      The dream method extends the linear mixed model to hypothesis tests in
+      a repeated measures design, and the software ships inside the
+      variancePartition package, thus the variance partition and the test
+      share one model framework.
+    anchor: "Abstract; Availability"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [variance-partition, design, method-selection]

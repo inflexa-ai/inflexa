@@ -1,0 +1,57 @@
+id: R-0114
+title: "VIPER on an ARACNe regulon is the tool of record for a context-specific regulator activity, and it is absent here"
+assertion: >-
+  VIPER is the tool of record for a regulator activity from a regulon that
+  ARACNe infers from the expression of a cohort of the same tissue, with a
+  mode and a likelihood on each edge. VIPER is absent from this environment,
+  and so is ARACNe. The substitute is the decoupleR linear model on a prior
+  network, CollecTRI or DoRothEA. State the difference in the report: a prior
+  network is the same for every tissue, thus a regulator that acts only in
+  the tissue of the study can be missed, and a target that is silent there
+  adds noise. When a published ARACNe regulon of the tissue is delivered as a
+  signed table, the decoupleR model can take it in place of CollecTRI.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: tf_activity
+  parameters:
+    - name: aracne_regulon_policy
+      value: viper_absent_prior_network_with_decoupler_instead
+      default_source: "doi:10.1038/ng.3593"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0095
+    paraphrase: >-
+      VIPER infers the activity of a regulatory protein from the expression
+      of the targets in its regulon, and the study runs it with ARACNe
+      regulons on the tumor samples of TCGA, where the inferred activity
+      predicts the sensitivity to a targeted inhibitor better than the
+      mutation status does.
+    anchor: "Abstract; Results, The VIPER algorithm; Methods"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0097
+    paraphrase: >-
+      ARACNe-AP infers a regulatory network from the mutual information of
+      the expression profiles of a cohort, and the network is the input of a
+      regulator activity inference.
+    anchor: "Abstract; Implementation"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [tf-activity, viper, aracne, absent-tool]

@@ -1,0 +1,76 @@
+id: R-0148
+title: "Log-scale input with a balanced known batch: the batch term in the limma design, and ComBat on the log values only for a downstream use, with the condition in the covariate model"
+assertion: >-
+  With a TPM, FPKM, or log-scale table and a known batch that is balanced
+  across the conditions, the linear model takes the batch as a term in the
+  design and needs no adjusted values. Run ComBat on the log values only
+  when a downstream use needs adjusted values, for example a clustering, a
+  heatmap, or a tool without a batch term. In that call, give the condition
+  to the covariate model, so that the adjustment keeps the condition effect.
+  Do not give the adjusted values to the test, because a test on adjusted
+  values reports confidence that the data does not support. ComBat is the
+  method for the log scale, and ComBat-seq is its count version, thus never
+  run ComBat-seq on a table that is not a count table.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [tpm_or_fpkm, log_normalized]
+  - field: batch
+    op: eq
+    value: known_balanced
+action:
+  step_type: normalize
+  parameters:
+    - name: batch_adjusted_values
+      value: only_for_downstream
+      default_source: "doi:10.1093/biostatistics/kxv027"
+    - name: combat_covariate_model
+      value: condition
+      default_source: "doi:10.1093/biostatistics/kxj037"
+    - name: combat_scale
+      value: log_values_not_counts
+      default_source: "doi:10.1093/biostatistics/kxj037"
+    - name: batch_adjusted_counts
+      value: not_applicable_no_count_table
+      default_source: "rule:R-0148"
+    - name: combat_seq_group
+      value: not_applicable_use_combat_on_log_values
+      default_source: "rule:R-0148"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0133
+    paraphrase: >-
+      ComBat adjusts a log-scale expression matrix for a batch by a
+      location and scale model per gene, with an empirical Bayes shrinkage
+      of the batch parameters across the genes, which makes the estimate
+      stable for a small batch. The model takes covariates of interest, so
+      that the adjustment keeps their effect, and the paper presents the
+      method for microarray log intensities.
+    anchor: "Abstract; Methods, The empirical Bayes model; Covariates"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0016
+    paraphrase: >-
+      A batch adjustment that keeps the group difference, followed by a test
+      on the adjusted data, gives p-values that are too small, because the
+      adjustment uses information that the later test does not account for.
+      The paper favors a batch term in the model and shows the bias with
+      ComBat as the example.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [batch, normalization, combat, log-scale]

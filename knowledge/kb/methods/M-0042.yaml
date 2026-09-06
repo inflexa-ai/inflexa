@@ -1,0 +1,18 @@
+id: M-0042
+label: "xCell enrichment scores of 64 cell types with spillover compensation"
+edam_operation: EDAM:operation_3629
+description: >-
+  A rank-based enrichment score per sample for 64 immune and stromal cell
+  types, from gene signatures learned across many pure cell type profiles,
+  with a spillover compensation between related types. The score is an
+  enrichment score and not a proportion. xCell installs from its GitHub
+  repository, thus the track here is the nearest R track. xCell2 is the
+  Bioconductor successor that trains a signature set on a custom reference.
+packages:
+  - name: xCell
+    track: cran
+    version_range: ">=1.1"
+  - name: xCell2
+    track: bioconductor
+    version_range: ">=1.2"
+    bioconductor: "3.23"

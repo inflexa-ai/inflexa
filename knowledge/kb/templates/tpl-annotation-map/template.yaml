@@ -1,0 +1,153 @@
+id: tpl-annotation-map
+version: 1.0.0
+label: "Gene identifier annotation with AnnotationDbi and the organism package, offline: symbol, Entrez, and Ensembl in one table"
+language: R
+method: M-0057
+step_types: [annotation]
+edam_operations: [EDAM:operation_3282]
+citations: [S-0076, S-0053]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  conditions:
+    - field: organism
+      op: in
+      value: [human, mouse]
+  notes: >-
+    A CSV table whose gene column holds one identifier per row: a count
+    matrix, a TPM matrix, or a results table. The script detects the
+    identifier space of the column from its pattern (an Ensembl gene id, a
+    plain integer Entrez id, or a symbol otherwise) and maps each identifier
+    to the two other spaces with AnnotationDbi::mapIds on the organism
+    package, org.Hs.eg.db for human or org.Mm.eg.db for mouse, without a
+    network. Each column of the output holds one identifier space. A symbol
+    that the package does not know as a current symbol is looked up as an
+    alias when the alias fallback is on, and the symbol column then carries
+    the current symbol. A one-to-many map keeps the first target or sets the
+    cell to NA, by the multi-map rule, and every case is listed in its own
+    table. An identifier that the package does not know stays in the table
+    with NA in the other columns; the summary reports the unmapped share and
+    the release dates of the package sources. A low mapped share is a
+    property of the input, not a failure: a placeholder or a non-current
+    identifier does not map.
+parameters:
+  - name: matrix_path
+    type: string
+    description: "Path of the CSV table whose gene column holds the identifiers to map: a count matrix, a TPM matrix, or a results table."
+    adaptable: true
+  - name: gene_column
+    type: string
+    description: "The column of the table that holds the gene identifiers."
+    adaptable: true
+    default: gene
+  - name: organism
+    type: string
+    description: "The organism of the identifiers: human selects org.Hs.eg.db, mouse selects org.Mm.eg.db."
+    adaptable: true
+    default: human
+    default_source: "doi:10.1016/j.xinn.2021.100141"
+    enum: [human, mouse]
+  - name: input_space
+    type: string
+    description: "The identifier space of the gene column. auto detects it from the pattern of the identifiers: ensembl for an Ensembl gene id, entrez for a plain integer, symbol otherwise."
+    adaptable: true
+    default: auto
+    default_source: "doi:10.1038/nprot.2009.97"
+    enum: [auto, symbol, entrez, ensembl]
+  - name: strip_ensembl_version
+    type: boolean
+    description: "true removes the version suffix of an Ensembl gene id, for example .12 in ENSG00000141510.12, before the lookup, because the package keys hold no version."
+    adaptable: true
+    default: true
+    default_source: "doi:10.1038/nprot.2009.97"
+  - name: alias_fallback
+    type: boolean
+    description: "true looks up a symbol that is not a current symbol of the package as an alias, and reports the current symbol. false leaves such a symbol unmapped."
+    adaptable: true
+    default: true
+    default_source: "doi:10.1038/nprot.2009.97"
+  - name: multi_map_rule
+    type: string
+    description: "The rule for an identifier that maps to more than one target in a space: first keeps the first target of the package, asNA sets the cell to NA. Every case is listed in the multi table either way."
+    adaptable: true
+    default: first
+    default_source: "doi:10.1038/nprot.2009.97"
+    enum: [first, asNA]
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example annotation."
+    adaptable: true
+    default: annotation
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: matrix
+    path: "{{matrix_path}}"
+    format: EDAM:format_3752
+    description: "A CSV table with one gene identifier per row in the gene column."
+outputs:
+  - name: mapping
+    path: "output/{prefix}_mapping.csv"
+    format: EDAM:format_3752
+    description: "One row per input row, in the input order: input_id, symbol, entrez_id, ensembl_id, mapped. One identifier space per column. The input column stays as it is; the two other columns come from the package, and the symbol column carries the current symbol."
+  - name: multi
+    path: "output/{prefix}_multi.csv"
+    format: EDAM:format_3752
+    description: "One row per one-to-many case: input_id, target_space, n_targets, targets (joined with a semicolon), kept."
+  - name: unmapped
+    path: "output/{prefix}_unmapped.csv"
+    format: EDAM:format_3752
+    description: "The input identifiers that the package does not know, one per row."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The input, the organism package and its release dates, the detected input space with the share of each pattern, n_input, the mapped share, the unmapped share, n_multi with the multi-map rule, the package versions."
+  - name: mapping_status
+    path: "figures/{prefix}_mapping_status.png"
+    description: "Stacked bars of the map outcome per target space: one-to-one, one-to-many, unmapped (and PDF)."
+  - name: input_patterns
+    path: "figures/{prefix}_input_patterns.png"
+    description: "Bars of the share of the input identifiers that match each identifier pattern (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: AnnotationDbi
+    version: "1.74.0"
+    track: bioconductor
+  - name: org.Hs.eg.db
+    version: "3.23.1"
+    track: bioconductor
+  - name: org.Mm.eg.db
+    version: "3.23.0"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n6-symbols
+    dataset: two_group_n6/seed-1
+    slots:
+      matrix_path: /work/data/counts.csv
+    expect:
+      - "exists output/annotation_mapping.csv"
+      - "csv_rows output/annotation_mapping.csv >= 5000"
+      - "json output/annotation_summary.json mapped_share >= 0.3"
+      - "exists output/annotation_summary.json"
+      - "exists output/annotation_multi.csv"
+      - "exists output/annotation_unmapped.csv"
+      - "exists output/session_info.txt"
+      - "exists figures/annotation_mapping_status.png"
+      - "exists figures/annotation_mapping_status.pdf"
+      - "exists figures/annotation_input_patterns.png"
+      - "exists figures/annotation_input_patterns.pdf"
+      - "csv_rows output/annotation_mapping.csv >= 12000"
+      - "json output/annotation_summary.json input_space == symbol"
+      - "json output/annotation_summary.json n_input == 12000"
+      - "json output/annotation_summary.json organism_package == org.Hs.eg.db"
+      - "json output/annotation_summary.json mapped_share <= 0.5"
+      - "json output/annotation_summary.json n_unmapped >= 7000"

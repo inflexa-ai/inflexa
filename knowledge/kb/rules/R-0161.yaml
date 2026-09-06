@@ -1,0 +1,63 @@
+id: R-0161
+title: "Tissue context for human data: HPA and GTEx give the expected tissue expression of the reported genes, and the top expressed genes confirm the tissue identity"
+assertion: >-
+  For human samples, use the Human Protein Atlas tissue expression and the
+  GTEx tissue expression of the reference store as the reference for the
+  expected expression of the reported genes in the tissue of the study.
+  Before the interpretation, compare the top expressed genes of each sample
+  with the tissue-enriched genes of the declared tissue, and flag a sample
+  whose top genes point to another tissue or to blood, because a tissue
+  mismatch is a sample identity or a contamination problem and not a
+  biological finding. In the report, mark a differentially expressed gene
+  that the reference does not express in the tissue, and state the release
+  of each reference.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: human
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: annotation
+  parameters:
+    - name: tissue_reference
+      value: hpa_and_gtex_with_release
+      default_source: "doi:10.1126/science.1260419"
+    - name: tissue_identity_check
+      value: top_expressed_genes_against_tissue_enriched_genes
+      default_source: "doi:10.1126/science.1260419"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0144
+    paraphrase: >-
+      The atlas profiles the transcriptome of 32 human tissues with RNA-seq
+      and classifies each gene by its tissue distribution, with a class of
+      genes enriched in one tissue, thus it gives a reference of the genes
+      that a tissue is expected to express.
+    anchor: "Abstract; Tissue-specific expression"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0145
+    paraphrase: >-
+      GTEx gives gene expression across 49 human tissues from hundreds of
+      donors, as the reference of the expression of each gene in each tissue
+      and of the tissue specificity of genetic regulation.
+    anchor: "Abstract; The GTEx v8 dataset"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [annotation, tissue, hpa, gtex]

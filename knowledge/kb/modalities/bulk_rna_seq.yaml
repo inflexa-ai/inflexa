@@ -9,6 +9,16 @@ step_order:
   - shrink_lfc
   - multiple_testing
   - enrichment
+  - variance_partition
+  - tf_activity
+  - pathway_activity
+  - signature_scoring
+  - deconvolution
+  - coexpression
+  - clustering
+  - survival
+  - transcript_level
+  - annotation
   - report
 question_steps:
   qc:
@@ -35,4 +45,40 @@ question_steps:
     - shrink_lfc
     - multiple_testing
     - enrichment
+    - report
+  tf_activity:
+    - qc_sample_structure
+    - tf_activity
+    - pathway_activity
+    - report
+  deconvolution:
+    - qc_sample_structure
+    - filter_low_counts
+    - normalize
+    - deconvolution
+    - report
+  coexpression:
+    - qc_sample_structure
+    - filter_low_counts
+    - normalize
+    - coexpression
+    - report
+  clustering:
+    - qc_sample_structure
+    - filter_low_counts
+    - normalize
+    - clustering
+    - report
+  survival:
+    - qc_sample_structure
+    - filter_low_counts
+    - normalize
+    - signature_scoring
+    - survival
+    - report
+  signature_scoring:
+    - qc_sample_structure
+    - filter_low_counts
+    - normalize
+    - signature_scoring
     - report

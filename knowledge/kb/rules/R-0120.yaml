@@ -1,0 +1,65 @@
+id: R-0120
+title: "Motif enrichment in the promoters of the DE genes with TFBSTools and JASPAR on hg38, with a background of the tested genes"
+assertion: >-
+  For a human dataset, a motif enrichment in the promoters of the
+  differentially expressed genes is the sequence-level complement to a
+  regulon inference. Extract a promoter window per gene from the hg38 genome
+  with the coordinates of the annotation, scan the JASPAR vertebrate matrices
+  across the windows with TFBSTools, and test the hit frequency of each motif
+  in the DE promoters against a background of the promoters of the other
+  tested genes. The background must be the tested genes and not the genome,
+  because the expressed genes differ in promoter composition. The scan here
+  uses the JASPAR 2020 data package, thus state that release. Read the motif
+  result beside the regulon result: a motif hit is a binding possibility, and
+  an activity is an inference from the targets.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: human
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: tf_activity
+  parameters:
+    - name: motif_complement
+      value: tfbstools_jaspar2020_hg38_promoters
+      default_source: "doi:10.1093/bioinformatics/btw024"
+    - name: motif_background
+      value: promoters_of_tested_genes
+      default_source: "rule:R-0120"
+severity: info
+strength: common_practice
+evidence_quality: low
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0138
+    paraphrase: >-
+      TFBSTools reads position frequency and position weight matrices, among
+      them the JASPAR profiles, and scans a set of DNA sequences for the
+      matches of each matrix above a score threshold, thus it gives the hits
+      of a motif per sequence.
+    anchor: "Abstract; Implementation, Sequence scanning"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0137
+    paraphrase: >-
+      JASPAR is an open database of curated transcription factor binding
+      profiles as position frequency matrices, with a vertebrate collection,
+      and each release adds and revises profiles, thus a release is a version
+      to state.
+    anchor: "Abstract; Database content"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [tf-activity, motif, jaspar, promoter, needs-source]

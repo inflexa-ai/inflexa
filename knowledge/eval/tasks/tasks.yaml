@@ -24,8 +24,8 @@
     QC (PCA, sample distances) precedes the test. The plan states that power is
     low at three replicates and does not lower alpha to compensate. TPM or
     pre-normalized values, ComBat, or a t-test on counts are wrong.
-  must_match: ["DESeq2|edgeR", "(PCA|principal component)", "(adjusted p|padj|FDR|false discovery)"]
-  must_not_match: ["ComBat", "t-test on (the )?counts"]
+  must_match: ["DESeq2|edgeR", "(PCA|principal component)", "(adjusted p|padj|FDR|false discovery|Benjamini|\\bBH\\b)"]
+  must_not_match: ["(run|apply|use)s? ComBat[- ]?(seq)? (on|to) (the )?(counts|matrix|expression)", "(run|apply|use|perform)s? (a |the )?t-test on (the )?(raw )?counts"]
 
 - id: two-group-n6-enrich
   pattern: two_group_n6
@@ -61,7 +61,7 @@
     within subject. A model that ignores the pairing, or a paired t-test on
     counts, is wrong. QC, filter, BH, shrinkage as usual.
   must_match: ["(subject|block|pair)", "DESeq2|edgeR|limma"]
-  must_not_match: ["paired t-test on (the )?(raw )?counts"]
+  must_not_match: ["(run|apply|use|perform)s? (a |the )?paired t-test on (the )?(raw )?counts"]
 
 - id: batch-balanced-n6
   pattern: batch_balanced_n6
@@ -150,7 +150,7 @@
     and produces no p-values. A DESeq2 or edgeR run with p-values, or a fold
     change cutoff presented as significance, is wrong.
   must_match: ["(no|without|lack of|absence of) (biological )?replicat", "(descriptive|fold change)"]
-  must_not_match: ["adjusted p-value cutoff", "padj < 0\\.05", "FDR < 0\\.05", "Wald test"]
+  must_not_match: ["adjusted p-value cutoff", "padj < 0\\.05", "FDR < 0\\.05", "(run|apply|perform|use)s? (a |the )?(DESeq2 )?Wald test"]
 
 - id: gene-list-ora
   pattern: two_group_n6
@@ -322,7 +322,7 @@
     fits the model on the counts as delivered, with no strandedness check, is
     wrong.
   must_match: ["strand", "(infer_experiment|RSeQC|libType|salmon|re-?count|featureCounts)", "DESeq2|edgeR", "(PCA|principal component)"]
-  must_not_match: ["ComBat", "t-test on (the )?counts"]
+  must_not_match: ["(run|apply|use)s? ComBat[- ]?(seq)? (on|to) (the )?(counts|matrix|expression)", "(run|apply|use|perform)s? (a |the )?t-test on (the )?(raw )?counts"]
 
 - id: two-timepoints-n3
   pattern: timecourse_2x2_n3
@@ -367,7 +367,7 @@
     the shared dispersion. QC with PCA colored by subject and by condition, a
     low count filter.
   must_match: ["subject", "(likelihood ratio|LRT|joint|F-test|ANOVA|any condition)", "(pairwise|contrast)", "DESeq2|edgeR|limma"]
-  must_not_match: ["paired t-test on (the )?(raw )?counts", "subset (the counts|the samples|the data) (to|for) each (pair|contrast|comparison)"]
+  must_not_match: ["(run|apply|use|perform)s? (a |the )?paired t-test on (the )?(raw )?counts", "subset (the counts|the samples|the data) (to|for) each (pair|contrast|comparison)"]
 
 - id: population-n60
   pattern: two_group_n60
@@ -392,7 +392,7 @@
     search for hidden structure with the candidate factors reported, not fitted
     blind. filterByExpr, TMM normalization, BH at 0.05.
   must_match: ["limma|voom", "(fixed[- ]effects?|~ ?condition|design)", "(camera|fgsea|preranked|moderated t)", "(effect size|fold change|confidence interval|TREAT)"]
-  must_not_match: ["t-test on (the )?counts", "power is low"]
+  must_not_match: ["(run|apply|use|perform)s? (a |the )?t-test on (the )?(raw )?counts", "power is low"]
 
 - id: covariates-n6
   pattern: covariates_n6
@@ -414,7 +414,7 @@
     QC: PCA colored by condition, by sex, and by age, and a sex check against
     XIST and Y-linked genes.
   must_match: ["sex", "age", "(center|centre|scale)", "(design|formula|covariate|~)", "DESeq2|edgeR|limma"]
-  must_not_match: ["regress(es|ed)? (out )?(the )?(sex|age|covariates?)[^.]* (from|out of) the counts", "ComBat"]
+  must_not_match: ["regress(es|ed)? (out )?(the )?(sex|age|covariates?)[^.]* (from|out of) the counts", "(run|apply|use)s? ComBat[- ]?(seq)? (on|to) (the )?(counts|matrix|expression)"]
 
 - id: enrichment-only-ranked
   pattern: two_group_n6
@@ -741,3 +741,442 @@
     the four groups without the interaction contrast, or an R script, is wrong.
   must_match: ["interaction", "genotype", "treatment", "PyDESeq2", "python"]
   must_not_match: ["Rscript [^ ]*\\.R\\b", "library\\((DESeq2|edgeR|limma)\\)", "suppressPackageStartupMessages"]
+
+- id: coexpression-n60
+  pattern: two_group_n60
+  question: "Which co-expression modules do the genes form across the 120 samples, and which of those modules track the case versus control status?"
+  tissue: whole blood
+  condition: "case vs control cohort"
+  experimental_design: "60 cases vs 60 controls, unpaired human cohort, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: []
+  organism: human
+  reference: >-
+    A co-expression module question on 120 samples, enough for a correlation
+    network. The counts are filtered with a low count floor and variance
+    stabilized (vst in DESeq2, or log2 CPM after TMM), the sample clustering
+    tree flags an outlier sample before the network, and the network runs on
+    the top variable genes, about 5000, never on the raw counts. The method is
+    WGCNA with a signed network, the soft-thresholding power chosen as the
+    lowest power at which the scale-free topology fit index passes 0.8 or
+    0.85, with the fit curve reported, a topological overlap matrix, a dynamic
+    tree cut with a minimum module size about 30, and a merge of the modules
+    whose eigengenes correlate above 0.75. The module eigengene of each module
+    is correlated with the condition as a binary trait, the module p-values
+    are corrected for the number of modules, and the hub genes of each
+    trait-related module come from the module membership and the gene
+    significance. The report gives the power and its fit, the module count and
+    the module sizes, the eigengene-trait table, and a functional enrichment
+    of each trait-related module against MSigDB Hallmark with the network
+    genes as the universe. A network on the raw counts, an unsigned adjacency
+    with no reason stated, or a power chosen with no fit curve is wrong.
+  must_match: ["WGCNA", "\\bsigned[- ](network|adjacency|hybrid)", "(soft[- ]?threshold|soft power|scale[- ]free)", "(eigengene|module[- ]trait)", "(vst|variance[- ]stabiliz|log2 ?CPM|rlog)"]
+  must_not_match: ["(build|construct|run|fit)s? (the )?network on (the )?raw counts", "networkType ?= ?\"unsigned\""]
+
+- id: coexpression-too-few-n3
+  pattern: two_group_n3
+  question: "Which co-expression modules do the genes form across the samples, and which of those modules track the treatment? Three treated and three control."
+  tissue: liver
+  condition: "drug treatment"
+  experimental_design: "3 treated vs 3 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: []
+  reference: >-
+    A co-expression module question on six samples, and six samples cannot
+    support a correlation network. A gene-gene correlation on six points has a
+    standard error near 0.45, the scale-free fit is one that every power passes
+    or none does, and WGCNA needs at least 15 to 20 samples, thus a network
+    built here is noise dressed as modules. The plan says so in the narrative
+    and stops the network step, or it replaces the data-driven network with a
+    prior network: STRING protein interactions, or a curated pathway
+    collection, projected onto the genes that a DESeq2 or edgeR test (BH at
+    0.05, apeglm shrinkage, the low power at three per group stated) finds
+    changed, with the STRING version and the confidence cutoff named. The
+    report gives the reason that the six samples cannot yield modules, the
+    sample size that a network needs, and the prior-network result as a
+    substitute, not as the answer to the module question. A plan that fits a
+    WGCNA network to the six samples and reports modules that track the
+    treatment is wrong.
+  must_match: ["(too few|not enough|insufficient|cannot support|(at least|minimum of) (15|20|fifteen|twenty))", "(STRING|prior network|curated|stop)", "(noise|unstable|unreliable|not (be )?reliable)", "(six|6) samples"]
+  must_not_match: ["(run|build|construct)s? WGCNA on (the |these )?(six|6)? ?samples", "pickSoftThreshold\\("]
+
+- id: clustering-n60
+  pattern: two_group_n60
+  question: "Do the 120 samples fall into subgroups beyond the known case versus control split, and if so, how many subgroups and how stable are they?"
+  tissue: whole blood
+  condition: "case vs control cohort"
+  experimental_design: "60 cases vs 60 controls, unpaired human cohort, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: []
+  organism: human
+  reference: >-
+    An unsupervised sample structure question on 120 samples. The counts are
+    filtered, variance stabilized (vst or log2 CPM after TMM), and reduced to
+    the top variable genes, about 2000 to 5000, centered by gene, after a QC
+    that reports the library sizes and the PCA. The method is consensus
+    clustering (ConsensusClusterPlus) with resampling of 80 percent of the
+    samples and of the genes over at least 1000 iterations, hierarchical or
+    partitioning around medoids with a correlation or Euclidean distance, and
+    k from 2 to about 8. The number of clusters comes from the delta area of
+    the consensus cumulative distribution function, the consensus matrix
+    heatmaps, and the item consensus and the cluster consensus, with the
+    proportion of ambiguous clustering reported, not from the largest
+    silhouette alone. The agreement of the clusters with the condition is
+    tabulated and tested (adjusted Rand index, a chi-squared or Fisher test),
+    and a cluster that follows the condition is not a new subgroup. The plan
+    states that consensus clustering finds structure in noise, so a null
+    comparison with a permuted or simulated matrix decides whether the
+    structure is real. The library size, the sequencing depth, and any batch
+    or processing date are tabulated against the clusters as confounders
+    before a subgroup is claimed. A single k-means at a fixed k with no
+    stability, or clusters reported with no check against the condition and
+    the depth, is wrong.
+  must_match: ["(consensus|ConsensusClusterPlus)", "(resampl|subsampl|bootstrap)", "(delta area|CDF|cumulative distribution)", "(agreement|Rand index|contingency|cross-?tab|tabulat)[^.]{0,80}condition|condition[^.]{0,80}(agreement|Rand index|contingency|cross-?tab|tabulat)", "(structure in noise|noise|spurious|confound)"]
+  must_not_match: ["(run|fit|apply)s? (a |one |single )?k-?means (at|with) (a )?(fixed|single|chosen) k", "(select|choose|pick)s? (the )?(number of clusters|k) (by|from|using|with) (the )?silhouette (alone|only)"]
+
+- id: survival-n60
+  pattern: survival_n60
+  question: "Does the score of our 20-gene signature associate with the time to the event in this cohort, once we account for the case versus control status?"
+  tissue: tumor biopsy
+  condition: "case vs control cohort with follow-up"
+  experimental_design: "60 cases vs 60 controls, unpaired human cohort, single batch, a follow-up time and an event indicator per sample, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: []
+  organism: human
+  extra_inputs: [signature]
+  reference: >-
+    An outcome association question on 120 samples with a follow-up time and
+    an event indicator. The plan first counts the events and the censored
+    samples and reports the median follow-up, because the events, not the
+    samples, give the power of a Cox model, about ten events per term. The
+    counts are filtered and variance stabilized (vst or log2 CPM after TMM),
+    and the signature score per sample comes from singscore, UCell, or GSVA
+    over the 20 genes, with the number of the 20 genes present in the matrix
+    reported, or from a mean of the z-scored genes with the choice stated. The
+    model is a Cox proportional hazards model (survival::coxph) with the score
+    as a continuous term, standardized, plus the condition as a covariate, and
+    the report gives the hazard ratio per standard deviation of the score with
+    its 95 percent confidence interval and the likelihood ratio p-value. The
+    proportional hazards assumption is tested with the scaled Schoenfeld
+    residuals (cox.zph), and a violation is reported with a stratified or a
+    time-dependent term as the remedy. The Kaplan-Meier curves by a score
+    tertile are a display after the model, not the test; a median split
+    before the model discards information and inflates the false positive
+    rate when the cut is chosen on the outcome. A log-rank test on a split as
+    the primary result, or a Cox model with no event count and no
+    proportional hazards check, is wrong.
+  must_match: ["(Cox|coxph|proportional hazards)", "continuous", "(Schoenfeld|cox\\.zph|proportional hazards (assumption|check|test))", "(hazard ratio|\\bHR\\b)", "(number of events|events? (count|are counted)|counts? the events)"]
+  must_not_match: ["(split|dichotomi[sz]e|cut)s? (the )?(samples|patients|cohort|score) (at|by|on) (the )?median (before|prior to|then|and then)", "(high|low)[- ]score groups? (by|at) (the )?median[^.]{0,60}(log-?rank|Kaplan)"]
+
+- id: variance-partition-n6
+  pattern: covariates_n6
+  question: "Before we test treated against control, how much of the expression variance does each of the condition, the sex, and the age explain? Then which genes differ between treated and control?"
+  tissue: adipose
+  condition: "treatment"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, sex (F/M) and age (years) recorded per sample, raw counts from Salmon"
+  count_source: salmon
+  concerns: []
+  reference: >-
+    A variance partition beside a differential expression, on twelve samples
+    with two covariates. The counts are filtered (filterByExpr) and
+    transformed to log2 CPM with voom precision weights, or to vst values,
+    before the partition, because a mixed model on the raw counts does not
+    apply. The partition is variancePartition (fitExtractVarPartModel) with
+    the condition and the sex as random effects and the age as a fixed
+    continuous term (~ (1 | condition) + (1 | sex) + age), which gives the
+    fraction of the variance of each gene that each term explains and the
+    residual, and the report shows the violin plot of the fractions and the
+    genes with the largest condition fraction. With twelve samples the
+    fractions are noisy, and the plan says so, and a term whose fraction is
+    near zero across the genes can leave the design of the test. The plan
+    first tabulates sex and age by group and reports the balance. Then the
+    differential expression: DESeq2 Wald or edgeR QL, or limma-voom, with sex
+    and centered age as fixed terms before the condition (~ sex + age +
+    condition), the condition coefficient as the contrast, BH at 0.05, apeglm
+    shrinkage. A partition on the raw counts, a partition presented as the
+    test of the condition, or a count model that drops the covariates with no
+    reason from the partition, is wrong.
+  must_match: ["variancePartition", "(random effect|random term|\\(1 ?\\| ?)", "(fraction|proportion|percent)[^.]{0,60}variance|variance[^.]{0,60}(explained|fraction|proportion)", "(vst|voom|log2 ?CPM)", "DESeq2|edgeR|limma"]
+  must_not_match: ["(run|fit|apply)s? variancePartition on (the )?raw counts", "fitExtractVarPartModel\\((counts|raw)"]
+
+- id: transcript-usage-n6
+  pattern: two_group_n6
+  question: "Which genes switch their dominant isoform between treated and control? Six per group; one sample looks shallow."
+  tissue: skin
+  condition: "atopic dermatitis lesional vs control"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: ["Sample sample_01 has a library size about 4x below the median"]
+  data_state: counts
+  expected_outcome: clarification_needed
+  reference: >-
+    A transcript usage question on a gene-level count matrix. A gene-level
+    count sums the transcripts of a gene, thus the matrix holds no information
+    about which isoform carries the expression, and no method on the gene
+    counts can answer the question. The correct outcome is a stop with a
+    question: the plan asks for the transcript-level quantifications, the
+    Salmon quant.sf file per sample (the transcript-level counts and the
+    effective lengths), and the transcript-to-gene map of the annotation with
+    its version. Once those arrive, the method of record is DRIMSeq (a
+    Dirichlet-multinomial model of the transcript proportions per gene) or
+    DEXSeq on the transcript counts imported with tximport at scaledTPM or
+    dtuScaledTPM, with a filter on the transcript expression and the
+    proportion (dmFilter), a gene-level and a transcript-level test, stageR
+    for the two-stage error control at an overall FDR of 0.05, and the low
+    depth sample_01 kept and inspected. The report names the switch per gene
+    as the change in proportion, not the change in expression. A plan that
+    fits DESeq2 or edgeR on the gene counts and reports the differential
+    genes as isoform switches, or that invents a transcript matrix, is wrong.
+  must_match: ["(transcript|isoform)", "(quant\\.sf|transcript-level|transcript level|per-transcript)", "(DEXSeq|DRIMSeq)", "(ask|clarif|question|request|provide|not (present|available|in hand|delivered)|cannot (answer|be performed|be done)|missing)"]
+  must_not_match: ["(run|fit)s? (DESeq2|edgeR|limma) on (the )?gene(-level)? counts (and|then) report", "inputs/counts/counts\\.csv as (the )?transcript"]
+
+- id: classifier-n60
+  pattern: two_group_n60
+  question: "Can we build a gene expression classifier that tells a case from a control, and how accurate would it be on a new sample?"
+  tissue: whole blood
+  condition: "case vs control cohort"
+  experimental_design: "60 cases vs 60 controls, unpaired human cohort, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: []
+  organism: human
+  reference: >-
+    A supervised classification question on 120 samples, 60 per class. The
+    counts are filtered and transformed to log2 CPM after TMM or to vst
+    values, and every transformation that learns from the data (the gene
+    filter by variance, the scaling, the feature selection) sits inside the
+    cross-validation folds, fitted on the training fold only. The model is a
+    penalized logistic regression (glmnet, elastic net or lasso) on the genes,
+    with the penalty chosen by an inner cross-validation inside an outer
+    cross-validation of five or ten folds, stratified by class, repeated with
+    a fixed seed, because a penalty tuned and evaluated on the same folds is
+    optimistic. The performance is the ROC curve and the area under it from
+    the outer folds with a bootstrap or DeLong 95 percent confidence interval,
+    plus the balanced accuracy or the Brier score, and never a test on the
+    samples that trained the model. A final model refitted on all 120 samples
+    is reported with the selected genes and their coefficients, with the
+    caution that the genes of a penalized model are unstable across folds,
+    reported as the selection frequency. The report states that the estimate
+    is internal, that an external cohort with the same library type and
+    quantifier must validate it before any use, and that a batch or depth
+    signal that separates the classes inflates the accuracy. A single train
+    and test split at this size, or an accuracy on the training samples, is
+    wrong.
+  must_match: ["(penali[sz]ed|glmnet|lasso|elastic net|ridge|regulari[sz]ed)", "nested|inner[^.]{0,40}outer|outer[^.]{0,40}inner", "(ROC|AUC|area under)", "(confidence interval|\\bCI\\b|bootstrap)", "(external|independent) (cohort|validation|data ?set)"]
+  must_not_match: ["(evaluate|test|assess|report)s? (the )?(accuracy|performance|AUC) on (the )?(training|same|train) (samples|set|data)", "(train|fit)s? and (test|evaluate)s? on (the )?same samples"]
+
+- id: tf-activity-n6
+  pattern: regulons_n6
+  question: "Which transcription factors drive the response of the treated samples compared with the controls? Six per group."
+  tissue: kidney
+  condition: "aldosterone treatment vs vehicle"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: []
+  reference: >-
+    A regulator activity question on raw counts, six per group. The count model
+    comes first (DESeq2 Wald or edgeR quasi-likelihood, a low count filter,
+    normalization inside the model, BH at 0.05) because the activity inference
+    needs a statistic per gene for the treated vs control contrast. That input
+    is the Wald statistic (or the moderated t) of every tested gene, never a
+    cutoff list and never a shrunken fold change. decoupleR ulm regresses the
+    statistic on the signed target weights of each CollecTRI regulon, with the
+    mode of regulation kept, a minimum regulon size of five targets among the
+    tested genes, and BH across the regulators tested; mlm over all regulators
+    at once is the second estimator of the same package. A per-sample activity
+    matrix, ulm on the vst or log2 CPM matrix with limma on the scores, shows
+    whether a regulator is consistent across the six replicates and gives the
+    heatmap. The report names CollecTRI and its version, the input statistic,
+    the estimator, the minimum regulon size, the number of regulators tested,
+    and the caution that an activity is an inference from the targets, not a
+    measurement of the factor. An over-representation test that takes the
+    targets of each factor as a gene set, or an inference on the significant
+    genes alone, is wrong.
+  must_match: ["CollecTRI", "decoupl", "(Wald statistic|\\bstat\\b|t[- ]statistic|moderated t|contrast statistic)", "(regulon size|min_n|minsize|minimum (number of )?targets|at least (five|5) targets)", "(per[- ]sample|each sample|every sample|sample[- ]level)"]
+  must_not_match: ["(run|apply|use)s? (a |an |the )?(hypergeometric|Fisher|over-representation|ORA)[^.]{0,30}(targets|regulons?)", "(run|apply|feed)s? (decoupleR |the )?(ulm|mlm|activity inference) on (the )?(significant|DE|differentially expressed) genes (only|alone)"]
+
+- id: tf-activity-python-n6
+  pattern: regulons_n6
+  question: "Which transcription factors drive the response of the treated samples compared with the controls? Six per group."
+  tissue: kidney
+  condition: "aldosterone treatment vs vehicle"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: []
+  constraints: "Use Python for every script, not R."
+  reference: >-
+    The regulator activity question under a Python constraint. PyDESeq2 fits
+    the count model (a low count filter, the Wald test, BH at 0.05) and gives
+    the Wald statistic of every tested gene, which is the input of the
+    inference, never a cutoff list and never a shrunken fold change. The
+    inference is decoupler-py (the decoupler package) ulm on the CollecTRI
+    network read from the local CSV with its source, target, and weight
+    columns, because a download from OmniPath needs network access and is not
+    reproducible; the sign of each edge is kept, a regulator enters the test
+    with at least five targets among the tested genes, and BH across the
+    regulators runs through statsmodels. A per-sample activity matrix, ulm on
+    log2 CPM or on a variance-stabilized matrix from PyDESeq2, with a t-test
+    or a statsmodels OLS per regulator and BH, shows the consistency across
+    the replicates and gives the heatmap with seaborn. The report names
+    CollecTRI and its version, the input statistic, the estimator, the
+    minimum regulon size, the number of regulators tested, and the caution
+    that an activity is an inference from the targets. An R package (DESeq2,
+    edgeR, limma, decoupleR, OmnipathR) or an R script breaks the constraint,
+    and an over-representation test that takes the targets as a gene set is
+    wrong.
+  must_match: ["PyDESeq2", "decoupler", "CollecTRI", "python", "(csv|local (copy|file|network|table)|offline)"]
+  must_not_match: ["library\\((DESeq2|edgeR|limma|decoupleR|OmnipathR)\\)", "Rscript [^ ]*\\.R\\b|BiocManager::install", "(download|fetch|pull)s? (the )?(CollecTRI|network|regulons?) (from|via|through) (OmniPath|the internet|the web)"]
+
+- id: de-plus-tf-activity-n6
+  pattern: regulons_n6
+  question: "Which genes change between the treated and the control samples, and which transcription factors sit behind those changes? Six per group."
+  tissue: kidney
+  condition: "aldosterone treatment vs vehicle"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: []
+  reference: >-
+    Two questions on one contrast: the differential genes, then the regulators
+    behind them. QC first (library sizes, a PCA, a sample distance heatmap),
+    then DESeq2 Wald or edgeR quasi-likelihood with a low count filter,
+    normalization inside the model, BH at 0.05, and apeglm shrinkage of the
+    reported fold change. The activity step reuses the same fit: decoupleR ulm
+    on the unshrunken Wald statistic (the stat column, or the moderated t) of
+    every tested gene against the CollecTRI regulons, with the mode of
+    regulation kept, a minimum regulon size of five, and BH across the
+    regulators; a per-sample activity matrix on the vst or log2 CPM values,
+    with limma on the scores, checks the consistency of each regulator across
+    the replicates. The report puts the two tables side by side: the gene table
+    with the shrunken fold change and the adjusted p-value, and the regulator
+    table with the score, the adjusted p-value, the number of targets, plus the
+    network name and version, the input statistic, the estimator, and the
+    caution that an activity is an inference from the targets. An activity
+    inference that takes the apeglm fold change as its input, a second fit of
+    the count model for the activity step, or an over-representation test that
+    takes the targets of each factor as a gene set, is wrong.
+  must_match: ["DESeq2|edgeR|limma", "CollecTRI", "decoupl", "(adjusted p|padj|FDR|Benjamini|\\bBH\\b)", "(Wald statistic|\\bstat\\b|t[- ]statistic|moderated t|contrast statistic)"]
+  must_not_match: ["(run|apply|use)s? (a |an |the )?(hypergeometric|Fisher|over-representation|ORA)[^.]{0,30}(targets|regulons?)", "(run|apply|feed)s? (decoupleR |the )?(ulm|mlm|activity inference) on (the )?(apeglm|ashr|shrunk(en)?) (log2 ?)?fold|(feed|pass|use)s? (the )?(apeglm|ashr|shrunk(en)?) (log2 ?)?fold[- ]changes? (as|to|into) (the )?(input|ulm|mlm|decoupl|activity)"]
+
+- id: pathway-activity-n6
+  pattern: two_group_n6
+  question: "Which signaling pathways are active in the treated samples versus the controls, judged by the footprint they leave on the transcriptome rather than by which pathway members are expressed? One sample looks shallow."
+  tissue: bronchial epithelium
+  condition: "cytokine stimulation vs vehicle"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: ["Sample sample_01 has a library size about 4x below the median"]
+  reference: >-
+    A pathway activity question by footprint, six per group, one low depth
+    sample. The count model comes first (DESeq2 Wald or edgeR quasi-likelihood,
+    a low count filter, BH at 0.05) and gives the Wald statistic of every
+    tested gene for the treated vs control contrast. The inference is
+    decoupleR mlm with the human PROGENy model, the top 500 responsive genes
+    per pathway with their signed weights, BH across the fourteen pathways.
+    The score of a pathway is read as a footprint: the downstream
+    transcriptional response that the pathway leaves, not the expression of the
+    pathway members, thus a pathway can be active while its own genes do not
+    change, and the report says so. A per-sample activity matrix, mlm or ulm on
+    the vst or log2 CPM values with limma on the scores, shows the consistency
+    across the replicates and gives the heatmap. QC keeps the low depth
+    sample_01, inspects it on the PCA and the score matrix, and reports its
+    library size; removal only with a stated reason. The report names PROGENy
+    and its version, the number of top genes, the input statistic, the
+    estimator, and the caution. An enrichment of the KEGG or Reactome
+    membership presented as the pathway activity, or a plan that reads the
+    score as the expression of the pathway genes, is wrong.
+  must_match: ["PROGENy", "decoupl", "footprint", "(mlm|multivariate linear|ulm|univariate linear|wmean)", "(downstream|responsive genes|target genes|not (the )?(membership|members))"]
+  must_not_match: ["remove sample_01 (before|prior)", "(run|apply|use)s? (fgsea|GSEA|ORA|enrichGO|enrichKEGG|clusterProfiler) (on|against|with) (the )?(KEGG|Reactome)"]
+
+- id: deconvolution-tpm-n6
+  pattern: two_group_n6
+  data_state: tpm_or_fpkm
+  question: "What is the immune and stromal cell composition of every sample, and does it differ between the treated and the control samples? The core sent a TPM table only."
+  tissue: melanoma biopsy
+  condition: "anti-PD-1 treated vs untreated"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, gene-level TPM table from Salmon with human gene symbols; no raw counts were delivered"
+  count_source: salmon
+  concerns: ["Only a TPM table was delivered: no raw counts and no quantification directories", "Sample sample_01 was sequenced at about a quarter of the median depth"]
+  reference: >-
+    A cell composition question on a TPM table, six per group. A TPM matrix on
+    the linear scale with gene symbols is the input that the absolute methods
+    expect: EPIC (with the reference profiles matched to a tumor biopsy, the
+    match stated in the report) or quanTIseq (the TIL10 signature) returns an
+    absolute fraction per cell type and the uncharacterized fraction of tumor
+    and other cells, and a log-scale matrix must never enter either of them.
+    MCP-counter on log2(TPM + 1) is the alternative: a score per population,
+    comparable across samples within one population and never across
+    populations, and not a fraction. QC first reports the share of the
+    signature genes present in the matrix, the depth of sample_01, and keeps
+    sample_01 unless a stated reason removes it. Then one test per cell type
+    between the groups, a Wilcoxon rank-sum or a t-test on the fractions (or
+    on the MCP-counter scores), with BH across the cell types and the
+    difference of the group means reported beside the adjusted p-value. The
+    report gives the method and its version, the reference or signature, a
+    stacked bar of the fractions per sample, and the caution that a fraction is
+    an estimate that depends on the reference. EPIC or quanTIseq fed with a
+    log-transformed matrix, a comparison of MCP-counter scores between cell
+    types, or a CIBERSORT run through the web portal, is wrong.
+  must_match: ["(EPIC|quanTIseq|quantiseqr)", "TPM", "(fraction|proportion)", "(per cell type|each cell type|every cell type|across (the )?cell types|per population|each population)", "(adjusted p|padj|FDR|Benjamini|\\bBH\\b)"]
+  must_not_match: ["(feed|pass|give|run|use|supply)s? (the )?(log2? ?\\(TPM ?\\+ ?1\\)|log[- ]transformed|log[- ]scale|log2 ?TPM)[^.;:]{0,30}(into|to|through|with) (EPIC|quanTIseq|quantiseqr)|(EPIC|quanTIseq|quantiseqr) on (the )?(log2? ?\\(TPM ?\\+ ?1\\)|log[- ]transformed|log[- ]scale|log2 ?TPM)", "remove sample_01 (before|prior)", "(compare|rank)s? (the )?(MCP-?counter )?scores (across|between) (the )?(cell types|populations)"]
+
+- id: deconvolution-mouse-n6
+  pattern: two_group_n6
+  organism: mouse
+  data_state: counts
+  question: "What is the immune and stromal cell composition of every sample, and does it differ between the treated and the control tumors? These are mouse samples."
+  tissue: subcutaneous tumor
+  condition: "anti-PD-1 vs isotype control"
+  experimental_design: "6 treated vs 6 control mice, unpaired, single batch, raw gene-level counts from Salmon with mouse gene symbols"
+  count_source: salmon
+  concerns: ["Sample sample_01 has a library size about 4x below the median"]
+  reference: >-
+    A cell composition question on mouse counts, six per group, one low depth
+    sample. The counts go to a linear scale first, CPM or TPM if the gene
+    lengths are at hand, because a deconvolution reads an abundance and not a
+    count. The human reference profiles do not apply: EPIC, quanTIseq, the
+    LM22 matrix, and the human MCP-counter markers were built on human cells,
+    and a mouse symbol that matches a human symbol by case alone is not an
+    ortholog map. The species-matched tool is mMCP-counter (mouse marker genes,
+    a score per population on log2 CPM), or a mouse signature matrix such as
+    seq-ImmuCC; if none is installed, the plan stops and asks for one, or it
+    reports the expression of the mouse marker genes per population (Cd3e,
+    Cd8a, Cd19, Adgre1, Pecam1, Col1a1) as a descriptive view and claims no
+    fraction. A score is comparable across samples within one population and
+    never across populations. Then one test per population between the groups,
+    a Wilcoxon rank-sum or a t-test, with BH across the populations and the
+    difference reported beside the adjusted p-value. QC keeps sample_01,
+    inspects it on the PCA and the score matrix, and reports its depth. The
+    report names the tool and its version, the marker set, the share of markers
+    present, and the caution. A plan that gives the mouse symbols to EPIC,
+    quanTIseq, or the human MCP-counter, that upper-cases the symbols as a map,
+    or that feeds log values to an absolute method, is wrong.
+  must_match: ["(mMCP-?counter|ImmuCC|mouse|Mus musculus|murine|species[- ]matched)", "(per (cell type|population)|each (cell type|population)|every (cell type|population)|across (the )?(cell types|populations))", "(adjusted p|padj|FDR|Benjamini|\\bBH\\b)", "(CPM|TPM|linear)"]
+  must_not_match: ["remove sample_01 (before|prior)", "toupper\\(", "(run|apply|use)s? (the )?(human )?(EPIC|quanTIseq|quantiseqr|CIBERSORT|LM22|TIL10|\\bMCP-?counter) (on|with|against|to) (the )?mouse"]
+
+- id: signature-scores-n6
+  pattern: two_group_n6
+  question: "Can we get a score for every hallmark signature in every sample, and see which signatures differ between the inflamed and the control samples? One sample looks shallow."
+  tissue: ileum
+  condition: "Crohn disease inflamed vs control"
+  experimental_design: "6 treated vs 6 control, unpaired, single batch, raw gene-level counts from Salmon"
+  count_source: salmon
+  concerns: ["Sample sample_01 has a library size about 4x below the median"]
+  reference: >-
+    A per-sample signature question, six per group, one low depth sample. The
+    counts are filtered for low counts, normalized, and log transformed (vst or
+    log2 CPM) because the scoring methods expect a continuous matrix. The score
+    per sample and signature comes from UCell (a rank-based Mann-Whitney U
+    score, robust to the depth), singscore (a mean rank score, signed when a
+    signature has an up and a down set), or GSVA (on the log matrix, or on the
+    counts with the Poisson kernel), over the MSigDB Hallmark collection with
+    its version named and the share of each signature present in the matrix
+    reported. The score matrix then goes to limma with the two-group design
+    (lmFit, eBayes, trend as the scores need), or to a t-test per signature,
+    with BH across the fifty signatures and the difference of the mean scores
+    reported beside the adjusted p-value. The heatmap shows the score per
+    sample, scaled by row, with the condition annotated. QC keeps the low depth
+    sample_01, inspects it on the PCA and the score matrix, and reports its
+    library size; removal only with a stated reason. A GSEA on a ranked gene
+    list answers a different question and gives no per-sample score, and a
+    gene-level test presented as the signature answer is wrong.
+  must_match: ["(UCell|singscore|GSVA|ssGSEA)", "hallmark", "(per[- ]sample|each sample|every sample|single[- ]sample)", "(limma|t-test|moderated)", "(adjusted p|padj|FDR|Benjamini|\\bBH\\b)"]
+  must_not_match: ["remove sample_01 (before|prior)", "(fgsea|GSEA)[^.]{0,40}(in place of|instead of|as) (the )?(per[- ]sample|sample[- ]level|signature) scores?"]

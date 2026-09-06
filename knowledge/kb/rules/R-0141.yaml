@@ -1,0 +1,89 @@
+id: R-0141
+title: "Sample subgroups: consensus clustering with resampling, k from the consensus CDF, the delta area, and the PAC, with the caution that the method finds structure in noise"
+assertion: >-
+  For a clustering question on the samples, run consensus clustering with
+  ConsensusClusterPlus: cluster many subsamples of the samples and of the
+  genes, and read the consensus matrix as the share of the subsamples in
+  which two samples cluster together. Select the number of clusters k from
+  the consensus cumulative distribution function and the relative change in
+  its area, and confirm the choice with the proportion of ambiguous
+  clustering, because the delta area alone points to an apparent structure
+  in data without clusters. Report the consensus matrix, the item-consensus
+  values, and the cluster-consensus values at the chosen k. State in the
+  plan that a consensus clustering returns clusters on random data, thus a
+  cluster is a hypothesis until an independent variable or an external
+  cohort supports it.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: clustering
+  method: M-0048
+  parameters:
+    - name: resampling_reps
+      value: 1000
+      default_source: "doi:10.1093/bioinformatics/btq170"
+    - name: item_subsample_share
+      value: 0.8
+      default_source: "doi:10.1093/bioinformatics/btq170"
+    - name: k_criterion
+      value: consensus_cdf_delta_area_and_pac
+      default_source: "doi:10.1038/srep06207"
+    - name: null_structure_caution
+      value: stated_in_plan
+      default_source: "doi:10.1038/srep06207"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0109
+    paraphrase: >-
+      Consensus clustering runs a clustering algorithm many times on
+      subsamples of the data, records for each pair of items the share of the
+      runs in which the pair falls into the same cluster, and reads the
+      stability of this consensus across the number of clusters as the
+      evidence for the number of classes. The paper introduces the consensus
+      cumulative distribution function and the area under it as the tool for
+      the choice of the number of clusters.
+    anchor: "Abstract; Consensus clustering; Determining the number of clusters"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0110
+    paraphrase: >-
+      The package implements consensus clustering with subsampling of the
+      items and of the features, a choice of the clustering algorithm and the
+      distance, and it adds the item-consensus and the cluster-consensus
+      values and the tracking of the items across the values of k. It draws
+      the consensus matrices, the consensus cumulative distribution function,
+      and the relative change in the area under the curve as the evidence for
+      a number of clusters.
+    anchor: "Abstract; Features; Implementation"
+    retrieved: "2026-09-06"
+  - direction: disputes
+    eco: ECO:0000033
+    cito: cito:disagreesWith
+    source: S-0111
+    paraphrase: >-
+      The study shows by simulation that consensus clustering divides random
+      unimodal data into apparently stable clusters over a range of k, and
+      that the common implementations find the true number of clusters
+      poorly on data with a known structure. It proposes the proportion of
+      ambiguously clustered pairs as the metric for k, with a null
+      distribution built from the observed gene-gene correlation structure.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [clustering, consensus-clustering, method-selection]

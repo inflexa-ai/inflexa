@@ -1,0 +1,70 @@
+id: R-0162
+title: "Two or three replicates: the design step states the expected power from the replicate count, the depth, and the dispersion, because the power tools are absent here"
+assertion: >-
+  With two or three replicates per group, the design step states the
+  expected power of the test before the model. The tools of record for a
+  power and sample size calculation, RNASeqPower and PROPER, are not in the
+  pool here. Compute the power from the closed form of the sample size in
+  terms of the depth, the biological coefficient of variation, the fold
+  change, and the significance level, or take the dispersion from a pilot
+  or a public dataset of the same tissue, and state the fold change that
+  the design can find with 80 percent power. State that a larger replicate
+  count raises the power more than a deeper sequencing does. The statement
+  is a caution on the plan and not a reason to loosen the threshold.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_per_group_min
+    op: gte
+    value: 2
+  - field: n_per_group_min
+    op: lte
+    value: 3
+action:
+  step_type: model_design
+  parameters:
+    - name: power_plan
+      value: expected_power_from_replicates_depth_and_dispersion
+      default_source: "doi:10.1089/cmb.2012.0283"
+    - name: power_tools_of_record
+      value: RNASeqPower_and_PROPER_absent_closed_form_instead
+      default_source: "rule:R-0162"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0140
+    paraphrase: >-
+      The paper gives a closed form for the sample size of an RNA-seq
+      comparison in terms of the sequencing depth, the biological
+      coefficient of variation, the fold change, the significance level, and
+      the power, and it estimates the biological and the technical variation
+      from a large set of public RNA-seq experiments. The paper gives R code
+      and a worksheet for the calculation.
+    anchor: "Abstract; Methods, Sample size formula; Results"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0077
+    paraphrase: >-
+      The paper evaluates the power of a differential expression test by
+      simulation from six public datasets as a function of the sample size
+      and the depth, finds that a larger sample size raises the power more
+      than a deeper sequencing does, and gives a power calculator tool. It
+      does not give the PROPER package.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [design, power, replicates, absent-tool]

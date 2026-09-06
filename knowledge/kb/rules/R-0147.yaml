@@ -1,0 +1,84 @@
+id: R-0147
+title: "GC content and gene length bias: cqn and EDASeq are the tools of record and are absent here, and the diagnostic is the count ratio against the GC content"
+assertion: >-
+  With counts from an aligner and a counter, no bias model runs at the
+  quantification, thus a sample-specific effect of the GC content and of
+  the gene length can remain in the counts, and such an effect adds a
+  difference between samples that the between-sample normalization does not
+  remove. Draw the diagnostic: for each pair of samples, or for each sample
+  against the median sample, plot the log ratio of the counts against the
+  GC content of the genes and against the gene length, and report a trend.
+  For a 3' tag library, the count does not depend on the gene length, thus
+  plot the GC content only.
+  Conditional quantile normalization (cqn) and the GC-content normalization
+  of EDASeq are the tools of record for the correction, and both are absent
+  from this pool. If the diagnostic shows a trend, state it in the plan and
+  ask for cqn, or for a new quantification with a bias-aware quantifier such
+  as Salmon with its GC bias model. If the diagnostic shows no trend, state
+  the check and continue.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: count_source
+    op: in
+    value: [star_featurecounts, unknown]
+action:
+  step_type: normalize
+  parameters:
+    - name: gc_length_bias_diagnostic
+      value: log_count_ratio_against_gc_and_length
+      default_source: "doi:10.1186/1471-2105-12-480"
+    - name: gc_bias_tool_of_record
+      value: cqn_or_EDASeq_absent_from_pool
+      default_source: "doi:10.1093/biostatistics/kxr054"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0132
+    paraphrase: >-
+      The study shows that the GC content of a gene affects its read count,
+      that the effect differs between samples and between library
+      preparations, and thus that a between-sample scaling does not remove
+      it. It proposes a within-sample GC-content normalization by regression
+      or by full quantile normalization within GC-content strata, and it
+      diagnoses the bias with a plot of the counts against the GC content.
+    anchor: "Abstract; Results, GC-content effects; Methods, Within-lane normalization"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0131
+    paraphrase: >-
+      Conditional quantile normalization models the dependence of the counts
+      on the GC content and on the gene length as a smooth function per
+      sample, and it removes this technical variability with an offset that
+      a count model takes. The paper shows that the GC-content effect varies
+      from sample to sample, which makes it a source of false differences
+      between samples.
+    anchor: "Abstract; Methods; Results"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0033
+    paraphrase: >-
+      Salmon models the fragment GC-content bias and the sequence-specific
+      bias at the quantification when the option is on, and the paper shows
+      that the correction reduces the false differences between samples with
+      different GC-content effects.
+    anchor: "Abstract; Results, Bias modeling"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [normalization, gc-bias, tool-absent, warn]

@@ -501,6 +501,93 @@ tasks, and the interval touches zero. The three-point gain over the earlier
 Sonnet arm is inside its interval. The gap to Opus 5 with the plane stays at
 about seven points.
 
+## The wider computations
+
+The tree now covers the computations of a bulk transcriptome beyond the
+count model and the enrichment. The expansion touched six parts.
+
+- **Step types and questions.** Ten step types joined the order of the
+  modality: variance partition, regulator activity, pathway activity,
+  signature scoring, deconvolution, co-expression, clustering, survival,
+  transcript level, and annotation. Six question kinds walk to them. A
+  caller adds a step of the order to any question with the new
+  `extra_analyses` field of the situation.
+- **Rules.** The tree holds 161 rules, 53 of them new, in four groups:
+  regulator and pathway activity, deconvolution and signature scores,
+  co-expression and clustering and variance partition, and survival and
+  prediction and transcripts and annotation. Ten rules name a tool of record
+  that the package store does not hold, for example VIPER, SPIA, CIBERSORT,
+  ESTIMATE, NMF, and OUTRIDER. Each such rule states the substitute and its
+  limit. Two rules remove the inference from an activity score when the
+  design has no replication, in the same way as the count model.
+- **Methods and templates.** Twenty methods and eleven templates are new.
+  The templates cover decoupleR on the CollecTRI regulons in R and in
+  Python, PROGENy, immunedeconv, and the three signature scorers. They also
+  cover WGCNA, consensus clustering, variancePartition, a Cox model in R and
+  in Python, and an offline identifier annotation. The tree holds 40 templates, 30 in R
+  and 10 in Python.
+- **Sources.** The sources file holds 145 sources, 55 of them new, and each
+  DOI resolves.
+- **The reference store.** The store holds CollecTRI, DoRothEA, PROGENy,
+  the MSigDB collections C2 to C7, Reactome, WikiPathways, and STRING. It
+  also holds the NCBI gene table, UniProt, GENCODE, the Human Protein Atlas,
+  GTEx, and PanglaoDB. The environment join of the recommend tool tells the planner
+  which of them is on disk.
+- **The simulator and the tasks.** The simulator holds seventeen patterns.
+  The three new patterns plant three regulators with their targets, a
+  time-to-event outcome on a 20-gene signature, and three latent
+  co-expression modules. The test grammar gained a regulon recall. The task
+  set holds 46 tasks, 14 of them new. They cover each new question, the
+  Python path, the mouse path, the TPM path, and the too-few-samples stop.
+
+Three template tests failed on the first run, and each fault was in the
+simulation, not in the script. WGCNA found two modules on a cohort with no
+planted module, thus the new co-expression pattern plants three. The
+survival score carried the library depth of each sample, and its hazard was
+weak, thus the score is now depth-free with a stronger coefficient. Every
+template test passes on the repaired data.
+
+### The validation run of the wider tasks
+
+Campaign `wider-check` in `results/`: each of the 14 new tasks ran once with
+Sonnet 5 and the plane, under the host of the total budget check, judged by
+Fable.
+
+| Measure | Value |
+| --- | --- |
+| Runs that reached the expected outcome | 14 of 14 |
+| Deterministic expectations met | 98 of 98 |
+| Rubric, Fable, all 14 runs | 81.2 |
+| Rubric, Fable, the 13 submitted plans | 85.1 |
+| Method steps with a grounding | 85% |
+| Claims that resolve | 295 of 296 |
+| Time and output tokens per plan | 97 s, 7,767 |
+
+The transcript-usage task ended in the expected clarification. The planner
+asked for the Salmon quant.sf files and named DRIMSeq and DEXSeq, with no
+call to the plane. The judge scores such a stop at 33, as it scored the
+FASTQ stop.
+
+The survival task first ended in a clarification too: the planner asked
+which genes the signature holds, because the task named a signature and
+gave no gene list. That is a fault of the task, not of the
+planner. A task now carries the gene list as an extra input in the profile,
+and the rerun submitted its plan in 53 s. The first record is in
+`results/wider-check-superseded/`.
+
+One claim does not resolve. The planner wrote the hash of R-0017 as a472,
+and the snapshot holds 8a47. A wrong hash marks the step for review, which
+is the intent. The mouse deconvolution run used the whole search budget of
+40 calls and still submitted at 89. The pathway activity run took 226 s.
+
+The judge marked the same kind of gap in the three lowest plans: a
+parameter that the template pins but the plan does not state. The
+co-expression plan gives no minimum module size and no merge threshold. The
+survival plan does not standardize the score, and it does not count the
+events before the model. The classifier plan fits the filter and the
+scaling outside the folds. Each of these is a parameter of a rule or a
+template, thus the check can ask for it in a later snapshot.
+
 ## What the campaign does not show
 
 - One frontier model and one mid-size model, two runs per task. The design

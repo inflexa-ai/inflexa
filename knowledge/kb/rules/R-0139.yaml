@@ -1,0 +1,73 @@
+id: R-0139
+title: "Co-expression modules: a signed WGCNA network on the variance-stabilized matrix, the soft threshold by the scale-free fit, eigengenes against the traits, hubs by module membership"
+assertion: >-
+  For a co-expression question, build a signed weighted network with WGCNA
+  on the variance-stabilized counts, or on the log values of a table that is
+  not a count table, after the low count filter. Select the soft-threshold
+  power as the lowest power at which the scale-free fit index reaches about
+  0.8 or more, and report the power and the fit. Cut the topological overlap
+  dendrogram into modules, compute the module eigengenes, and correlate each
+  eigengene with each trait of the sample metadata. Rank the genes of a
+  module by their module membership, the correlation of the gene with the
+  eigengene, and report the top genes as the hubs. A small cohort gives
+  unstable correlations, thus state the sample count beside every module.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: coexpression
+  method: M-0047
+  parameters:
+    - name: network_type
+      value: signed
+      default_source: "doi:10.1186/1471-2105-9-559"
+    - name: soft_threshold_criterion
+      value: scale_free_fit_index_0.8
+      default_source: "doi:10.2202/1544-6115.1128"
+    - name: module_detection
+      value: topological_overlap_dynamic_tree_cut
+      default_source: "doi:10.1186/1471-2105-9-559"
+    - name: hub_ranking
+      value: module_membership_kME
+      default_source: "doi:10.1186/1471-2105-9-559"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0107
+    paraphrase: >-
+      The package builds a weighted network from the pairwise correlations of
+      the genes across the samples, with an unsigned or a signed adjacency
+      raised to a soft-threshold power. It finds modules as branches of the
+      hierarchical clustering of the topological overlap dissimilarity with a
+      dynamic tree cut. It summarizes each module by its eigengene, the first
+      principal component of the module, relates the eigengenes to the sample
+      traits, and measures the module membership of a gene as its correlation
+      with the eigengene, which identifies the hub genes.
+    anchor: "Implementation; Network construction; Module detection; Module eigengene; Module membership and intramodular connectivity"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0108
+    paraphrase: >-
+      The framework proposes the scale-free topology criterion for the choice
+      of the soft-threshold power: the power is the lowest value at which the
+      fit of the connectivity distribution to a scale-free law reaches a high
+      value, and the paper argues that a weighted network with a soft
+      threshold keeps the information that a hard cutoff discards.
+    anchor: "Choice of the parameters; The scale-free topology criterion"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [coexpression, wgcna, method-selection]

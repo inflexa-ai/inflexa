@@ -9,6 +9,31 @@
 import { join } from "node:path";
 import { z } from "zod";
 
+/** The profile entry of each extra input, by kind. The planner reads the profile, never the file. */
+const EXTRA_INPUTS: Record<"de_results" | "signature", (rows: number) => { path: string; description: string; dataType: string; format: string; rows: number; cols: number }> = {
+    de_results: (rows) => ({
+        path: "data/inputs/results/de_results.csv",
+        description: "DESeq2 results table of the treated vs control contrast: gene, base_mean, log2_fold_change, log2_fold_change_unshrunken, lfc_se, stat, pvalue, adjusted_pvalue (every tested gene, no cutoff applied)",
+        dataType: "results-table",
+        format: "CSV",
+        rows,
+        cols: 8,
+    }),
+    signature: () => ({
+        path: "data/inputs/signature/signature_genes.csv",
+        description: "The gene list of the 20-gene signature of the study: one gene symbol per row (column gene), no weights and no direction",
+        dataType: "gene-list",
+        format: "CSV",
+        rows: 20,
+        cols: 1,
+    }),
+};
+
+const EXTRA_SUMMARY: Record<"de_results" | "signature", string> = {
+    de_results: "A DESeq2 results table of the primary contrast is included.",
+    signature: "The gene list of the 20-gene signature is included as a one-column file.",
+};
+
 const ORGANISMS = {
     human: { scientificName: "Homo sapiens", taxonId: "9606" },
     mouse: { scientificName: "Mus musculus", taxonId: "10090" },
@@ -31,8 +56,8 @@ export const TaskSchema = z.object({
     organism: z.enum(["human", "mouse", "zebrafish"]).default("human"),
     /** The state of the primary matrix the profile describes. `fastq` describes read files and no matrix. */
     data_state: z.enum(["counts", "tpm_or_fpkm", "log_normalized", "fastq"]).default("counts"),
-    /** Extra inputs beside the matrix: a DESeq2 results table for an enrichment-only question. */
-    extra_inputs: z.array(z.enum(["de_results"])).default([]),
+    /** Extra inputs beside the matrix: a DESeq2 results table for an enrichment-only question, or the gene list of a signature. */
+    extra_inputs: z.array(z.enum(["de_results", "signature"])).default([]),
     /** Metadata columns the profile does not describe, for example a batch column the analyst did not record. */
     hide_columns: z.array(z.string()).default([]),
     /** A user constraint the planner receives as it is, for example a language. */
@@ -83,17 +108,10 @@ export async function buildProfile(task: Task, seed = 1): Promise<Record<string,
         task.data_state === "fastq"
             ? { path: matrix.path, description: `${matrix.describe(task.count_source)} (${shape.cols - 1} samples)`, dataType: matrix.dataType, format: "FASTQ", rows: 0, cols: shape.cols - 1 }
             : { path: matrix.path, description: matrix.describe(task.count_source), dataType: matrix.dataType, format: "CSV", rows: shape.rows, cols: shape.cols };
-    const extra = task.extra_inputs.map((kind) => ({
-        path: "data/inputs/results/de_results.csv",
-        description: "DESeq2 results table of the treated vs control contrast: gene, base_mean, log2_fold_change, log2_fold_change_unshrunken, lfc_se, stat, pvalue, adjusted_pvalue (every tested gene, no cutoff applied)",
-        dataType: kind === "de_results" ? "results-table" : kind,
-        format: "CSV",
-        rows: shape.rows,
-        cols: 8,
-    }));
+    const extra = task.extra_inputs.map((kind) => EXTRA_INPUTS[kind](shape.rows));
     const summaryShape = task.data_state === "fastq" ? `${shape.cols - 1} samples` : `${shape.rows} genes x ${shape.cols - 1} samples`;
     return {
-        summary: `Bulk RNA-seq ${matrix.summary} (${summaryShape}) with a sample table (${metadata.rows} samples; columns: ${["sample", ...columns].join(", ")}).${extra.length > 0 ? " A DESeq2 results table of the primary contrast is included." : ""}`,
+        summary: `Bulk RNA-seq ${matrix.summary} (${summaryShape}) with a sample table (${metadata.rows} samples; columns: ${["sample", ...columns].join(", ")}).${task.extra_inputs.map((kind) => ` ${EXTRA_SUMMARY[kind]}`).join("")}`,
         files: [
             matrixFile,
             {

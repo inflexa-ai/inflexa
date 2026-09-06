@@ -1,0 +1,26 @@
+id: M-0037
+label: "Promoter motif scan with TFBSTools and JASPAR on hg38, with a background of the tested genes"
+edam_operation: EDAM:operation_0438
+description: >-
+  A sequence-level complement to a regulon inference. The promoter windows of
+  the differentially expressed genes and of a background of the other tested
+  genes are extracted from the hg38 genome with the gene coordinates of the
+  annotation. Each JASPAR position weight matrix of the vertebrate collection
+  is scanned across both sets with TFBSTools, and a hit count per gene and
+  motif feeds a test of the motif frequency in the DE promoters against the
+  background promoters. The result is a motif enrichment, not an activity,
+  and it is read beside the regulon result.
+packages:
+  - name: TFBSTools
+    track: bioconductor
+    biotools: tfbstools
+    version_range: ">=1.40"
+    bioconductor: "3.23"
+  - name: JASPAR2020
+    track: bioconductor
+    version_range: ">=0.99"
+    bioconductor: "3.23"
+  - name: BSgenome.Hsapiens.UCSC.hg38
+    track: bioconductor
+    version_range: ">=1.4"
+    bioconductor: "3.23"

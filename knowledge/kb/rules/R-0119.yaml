@@ -1,0 +1,55 @@
+id: R-0119
+title: "Report of an activity inference: the network and its version, the statistic, the minimum regulon size, the number of regulators, and the caution"
+assertion: >-
+  The report of a transcription factor or pathway activity states the network
+  and its version, the input statistic and its contrast, the estimator, the
+  minimum regulon size, and the number of regulators or pathways that
+  entered the test. It states that an activity is an inference from a prior
+  network and not a measurement, thus a high score is a hypothesis about the
+  regulator for a follow-up and not a proven finding. When two networks or
+  two estimators run, the report gives the overlap and the disagreement of
+  the top regulators.
+modality: bulk_rna_seq
+conditions:
+  - field: question
+    op: eq
+    value: tf_activity
+action:
+  step_type: report
+  parameters:
+    - name: activity_report_fields
+      value: [network_name, network_version, input_statistic, contrast, estimator, min_regulon_size, n_regulators_tested, inference_caution]
+      default_source: "doi:10.1371/journal.pcbi.1009935"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0027
+    paraphrase: >-
+      The survey finds that the gene set database and its version, the
+      statistic, and the background of a functional analysis are seldom
+      reported, that each choice changes the result, and it calls for a
+      report of each choice.
+    anchor: "Results; Discussion, Recommendations"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0091
+    paraphrase: >-
+      The activity that decoupleR infers depends on the estimator and on the
+      prior network, thus the benchmark runs each method with each resource
+      and reports the performance per combination.
+    anchor: "Results, Benchmark of the methods; Discussion"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [tf-activity, report, provenance]

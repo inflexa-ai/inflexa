@@ -1,0 +1,59 @@
+id: R-0135
+title: "Marker sets for a cell type from PanglaoDB or from the HPA tissue expression, with the species and the tissue stated"
+assertion: >-
+  When a signature score stands for a cell type and no reference profile
+  exists for it, take the marker set from PanglaoDB, which gives marker
+  genes per cell type for human and mouse from single-cell data, or from
+  the Human Protein Atlas, which gives the genes with an elevated expression
+  per tissue. State the species of the markers and the tissue of origin of
+  the markers, because a marker of a cell type in one tissue is not a marker
+  of that cell type in another tissue. State the number of markers present
+  in the matrix. A score from a marker set is a relative enrichment and not
+  a fraction.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: in
+    value: [human, mouse]
+action:
+  step_type: signature_scoring
+  parameters:
+    - name: marker_source
+      value: panglaodb_or_hpa_tissue
+      default_source: "doi:10.1093/database/baz046"
+    - name: marker_species_and_tissue
+      value: state_in_report
+      default_source: "doi:10.1126/science.1260419"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0127
+    paraphrase: >-
+      PanglaoDB collects single-cell RNA-seq data of human and mouse and
+      gives a curated list of marker genes per cell type, with the species
+      and the tissues where the markers were observed, for the annotation of
+      cell types.
+    anchor: "Abstract; Marker genes; Database content"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0144
+    paraphrase: >-
+      The Human Protein Atlas maps the transcriptome and the proteome across
+      the human tissues and classes the genes by their tissue expression,
+      with a set of genes with an elevated expression in each tissue.
+    anchor: "Abstract; Tissue-specific expression; Classification of the genes"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [signature-scoring, markers, resources]

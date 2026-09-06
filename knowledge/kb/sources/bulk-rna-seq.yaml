@@ -572,3 +572,338 @@
   title: "A comparison of methods for differential expression analysis of RNA-seq data"
   year: 2013
   venue: BMC Bioinformatics
+
+# ── Added 2026-09-06 for the coverage of the wider bulk transcriptomics
+# computations: regulator and pathway activity, deconvolution, signatures,
+# co-expression, clustering, survival, transcript level, annotation, and
+# the resources of the reference store. Each DOI resolves with --resolve-dois.
+
+- id: S-0091
+  doi: 10.1093/bioadv/vbac016
+  title: "decoupleR: ensemble of computational methods to infer biological activities from omics data"
+  year: 2022
+  venue: Bioinformatics Advances
+
+- id: S-0092
+  doi: 10.1093/nar/gkad841
+  title: "Expanding the coverage of regulons from high-confidence prior knowledge for accurate estimation of transcription factor activities"
+  year: 2023
+  venue: Nucleic Acids Research
+
+- id: S-0093
+  doi: 10.1101/gr.240663.118
+  title: "Benchmark and integration of resources for the estimation of human transcription factor activities"
+  year: 2019
+  venue: Genome Research
+
+- id: S-0094
+  doi: 10.1038/s41467-017-02391-6
+  title: "Perturbation-response genes reveal signaling footprints in cancer gene expression"
+  year: 2018
+  venue: Nature Communications
+
+- id: S-0095
+  doi: 10.1038/ng.3593
+  title: "Functional characterization of somatic mutations in cancer using network-based inference of protein activity"
+  year: 2016
+  venue: Nature Genetics
+
+- id: S-0096
+  doi: 10.1186/s13059-020-1949-z
+  title: "Robustness and applicability of transcription factor and pathway analysis tools on single-cell RNA-seq data"
+  year: 2020
+  venue: Genome Biology
+
+- id: S-0097
+  doi: 10.1093/bioinformatics/btw216
+  title: "ARACNe-AP: gene network reverse engineering through adaptive partitioning inference of mutual information"
+  year: 2016
+  venue: Bioinformatics
+
+- id: S-0098
+  doi: 10.1186/s13059-016-1070-5
+  title: "Estimating the population abundance of tissue-infiltrating immune and stromal cell populations using gene expression"
+  year: 2016
+  venue: Genome Biology
+
+- id: S-0099
+  doi: 10.1186/s13059-017-1349-1
+  title: "xCell: digitally portraying the tissue cellular heterogeneity landscape"
+  year: 2017
+  venue: Genome Biology
+
+- id: S-0100
+  doi: 10.7554/eLife.26476
+  title: "Simultaneous enumeration of cancer and immune cell types from bulk tumor gene expression data"
+  year: 2017
+  venue: eLife
+
+- id: S-0101
+  doi: 10.1186/s13073-019-0638-6
+  title: "Molecular and pharmacological modulators of the tumor immune contexture revealed by deconvolution of RNA-seq data"
+  year: 2019
+  venue: Genome Medicine
+
+- id: S-0102
+  doi: 10.1093/bioinformatics/btz363
+  title: "Comprehensive evaluation of transcriptome-based cell-type quantification methods for immuno-oncology"
+  year: 2019
+  venue: Bioinformatics
+
+- id: S-0103
+  doi: 10.1038/nmeth.3337
+  title: "Robust enumeration of cell subsets from tissue expression profiles"
+  year: 2015
+  venue: Nature Methods
+
+- id: S-0104
+  doi: 10.1038/s41467-020-19015-1
+  title: "Benchmarking of cell type deconvolution pipelines for transcriptomics data"
+  year: 2020
+  venue: Nature Communications
+
+- id: S-0105
+  doi: 10.1158/0008-5472.CAN-18-3560
+  title: "Comprehensive benchmarking and integration of tumor microenvironment cell estimation methods"
+  year: 2019
+  venue: Cancer Research
+
+- id: S-0106
+  doi: 10.1038/ncomms3612
+  title: "Inferring tumour purity and stromal and immune cell admixture from expression data"
+  year: 2013
+  venue: Nature Communications
+
+- id: S-0107
+  doi: 10.1186/1471-2105-9-559
+  title: "WGCNA: an R package for weighted correlation network analysis"
+  year: 2008
+  venue: BMC Bioinformatics
+
+- id: S-0108
+  doi: 10.2202/1544-6115.1128
+  title: "A general framework for weighted gene co-expression network analysis"
+  year: 2005
+  venue: Statistical Applications in Genetics and Molecular Biology
+
+- id: S-0109
+  doi: 10.1023/A:1023949509487
+  title: "Consensus clustering: a resampling-based method for class discovery and visualization of gene expression microarray data"
+  year: 2003
+  venue: Machine Learning
+
+- id: S-0110
+  doi: 10.1093/bioinformatics/btq170
+  title: "ConsensusClusterPlus: a class discovery tool with confidence assessments and item tracking"
+  year: 2010
+  venue: Bioinformatics
+
+- id: S-0111
+  doi: 10.1038/srep06207
+  title: "Critical limitations of consensus clustering in class discovery"
+  year: 2014
+  venue: Scientific Reports
+
+- id: S-0112
+  doi: 10.1016/j.csbj.2021.06.043
+  title: "UCell: robust and scalable single-cell gene signature scoring"
+  year: 2021
+  venue: Computational and Structural Biotechnology Journal
+
+- id: S-0113
+  doi: 10.1186/s12859-018-2435-4
+  title: "Single sample scoring of molecular phenotypes"
+  year: 2018
+  venue: BMC Bioinformatics
+
+- id: S-0114
+  doi: 10.1111/j.2517-6161.1972.tb00899.x
+  title: "Regression models and life-tables"
+  year: 1972
+  venue: Journal of the Royal Statistical Society, Series B
+
+- id: S-0115
+  doi: 10.18637/jss.v033.i01
+  title: "Regularization paths for generalized linear models via coordinate descent"
+  year: 2010
+  venue: Journal of Statistical Software
+
+- id: S-0116
+  doi: 10.18637/jss.v039.i05
+  title: "Regularization paths for Cox's proportional hazards model via coordinate descent"
+  year: 2011
+  venue: Journal of Statistical Software
+
+- id: S-0117
+  doi: 10.1186/1471-2105-12-77
+  title: "pROC: an open-source package for R and S+ to analyze and compare ROC curves"
+  year: 2011
+  venue: BMC Bioinformatics
+
+- id: S-0118
+  doi: 10.1186/s12859-016-1323-z
+  title: "variancePartition: interpreting drivers of variation in complex gene expression studies"
+  year: 2016
+  venue: BMC Bioinformatics
+
+- id: S-0119
+  doi: 10.1101/gr.133744.111
+  title: "Detecting differential usage of exons from RNA-seq data"
+  year: 2012
+  venue: Genome Research
+
+- id: S-0120
+  doi: 10.1186/s13059-015-0862-3
+  title: "Isoform prefiltering improves performance of count-based methods for analysis of differential transcript usage"
+  year: 2016
+  venue: Genome Biology
+
+- id: S-0121
+  doi: 10.12688/f1000research.15398.3
+  title: "Swimming downstream: statistical analysis of differential transcript usage following Salmon quantification"
+  year: 2018
+  venue: F1000Research
+
+- id: S-0122
+  doi: 10.1093/bioinformatics/btz247
+  title: "IsoformSwitchAnalyzeR: analysis of changes in genome-wide patterns of alternative splicing and its functional consequences"
+  year: 2019
+  venue: Bioinformatics
+
+- id: S-0123
+  doi: 10.1093/bioinformatics/btn577
+  title: "A novel signaling pathway impact analysis"
+  year: 2009
+  venue: Bioinformatics
+
+- id: S-0124
+  doi: 10.1093/nar/gkac1000
+  title: "The STRING database in 2023: protein-protein association networks and functional enrichment analyses for any sequenced genome of interest"
+  year: 2023
+  venue: Nucleic Acids Research
+
+- id: S-0125
+  doi: 10.1093/nar/gkad960
+  title: "WikiPathways 2024: next generation pathway database"
+  year: 2024
+  venue: Nucleic Acids Research
+
+- id: S-0126
+  doi: 10.1093/bioinformatics/btu684
+  title: "DOSE: an R/Bioconductor package for disease ontology semantic and enrichment analysis"
+  year: 2015
+  venue: Bioinformatics
+
+- id: S-0127
+  doi: 10.1093/database/baz046
+  title: "PanglaoDB: a web server for exploration of mouse and human single-cell RNA sequencing data"
+  year: 2019
+  venue: Database
+
+- id: S-0128
+  doi: 10.1093/bioinformatics/btl056
+  title: "maSigPro: a method to identify significantly differential expression profiles in time-course microarray experiments"
+  year: 2006
+  venue: Bioinformatics
+
+- id: S-0129
+  doi: 10.1093/nar/gky675
+  title: "Impulse model-based differential expression analysis of time course sequencing data"
+  year: 2018
+  venue: Nucleic Acids Research
+
+- id: S-0130
+  doi: 10.1016/j.ajhg.2018.10.025
+  title: "OUTRIDER: a statistical method for detecting aberrantly expressed genes in RNA sequencing data"
+  year: 2018
+  venue: American Journal of Human Genetics
+
+- id: S-0131
+  doi: 10.1093/biostatistics/kxr054
+  title: "Removing technical variability in RNA-seq data using conditional quantile normalization"
+  year: 2012
+  venue: Biostatistics
+
+- id: S-0132
+  doi: 10.1186/1471-2105-12-480
+  title: "GC-content normalization for RNA-Seq data"
+  year: 2011
+  venue: BMC Bioinformatics
+
+- id: S-0133
+  doi: 10.1093/biostatistics/kxj037
+  title: "Adjusting batch effects in microarray expression data using empirical Bayes methods"
+  year: 2007
+  venue: Biostatistics
+
+- id: S-0134
+  doi: 10.1038/s41592-019-0619-0
+  title: "Fast, sensitive and accurate integration of single-cell data with Harmony"
+  year: 2019
+  venue: Nature Methods
+
+- id: S-0135
+  doi: 10.1073/pnas.0308531101
+  title: "Metagenes and molecular pattern discovery using matrix factorization"
+  year: 2004
+  venue: Proceedings of the National Academy of Sciences
+
+- id: S-0136
+  doi: 10.1200/JCO.2008.18.1370
+  title: "Supervised risk predictor of breast cancer based on intrinsic subtypes"
+  year: 2009
+  venue: Journal of Clinical Oncology
+
+- id: S-0137
+  doi: 10.1093/nar/gkab1113
+  title: "JASPAR 2022: the 9th release of the open-access database of transcription factor binding profiles"
+  year: 2022
+  venue: Nucleic Acids Research
+
+- id: S-0138
+  doi: 10.1093/bioinformatics/btw024
+  title: "TFBSTools: an R/bioconductor package for transcription factor binding site analysis"
+  year: 2016
+  venue: Bioinformatics
+
+- id: S-0139
+  doi: 10.48550/arXiv.1802.03426
+  title: "UMAP: uniform manifold approximation and projection for dimension reduction"
+  year: 2018
+  venue: arXiv
+
+- id: S-0140
+  doi: 10.1089/cmb.2012.0283
+  title: "Calculating sample size estimates for RNA sequencing data"
+  year: 2013
+  venue: Journal of Computational Biology
+
+- id: S-0141
+  doi: 10.1093/bioinformatics/btr260
+  title: "Molecular signatures database (MSigDB) 3.0"
+  year: 2011
+  venue: Bioinformatics
+
+- id: S-0142
+  doi: 10.1038/s41587-019-0114-2
+  title: "Determining cell type abundance and expression from bulk tissues with digital cytometry"
+  year: 2019
+  venue: Nature Biotechnology
+
+- id: S-0143
+  doi: 10.1186/s13059-016-1028-7
+  title: "Comprehensive analyses of tumor immunity: implications for cancer immunotherapy"
+  year: 2016
+  venue: Genome Biology
+
+- id: S-0144
+  doi: 10.1126/science.1260419
+  title: "Tissue-based map of the human proteome"
+  year: 2015
+  venue: Science
+
+- id: S-0145
+  doi: 10.1126/science.aaz1776
+  title: "The GTEx Consortium atlas of genetic regulatory effects across human tissues"
+  year: 2020
+  venue: Science

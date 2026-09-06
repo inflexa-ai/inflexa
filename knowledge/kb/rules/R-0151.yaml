@@ -1,0 +1,60 @@
+id: R-0151
+title: "The report of a co-expression analysis states the sample count, the soft threshold and its fit, the modules with their sizes, the gene-to-module table, and the eigengene-trait correlations with their adjusted p-values"
+assertion: >-
+  The report of a co-expression analysis carries the elements that let a
+  reader judge each module. State the number of samples and the number of
+  genes that entered the network, the network type, the soft-threshold
+  power with the scale-free fit index and the mean connectivity at that
+  power, and the module detection parameters. List each module with its
+  size and its color label, and give the full gene-to-module table with the
+  module membership of each gene. Give the correlation of each module
+  eigengene with each trait, the p-value, and the p-value adjusted across
+  the modules and the traits, because the number of tests is the product
+  of the two counts. State that a module is a group of correlated genes and
+  not a proven pathway, and that a module-trait correlation is an
+  association in this cohort.
+modality: bulk_rna_seq
+conditions:
+  - field: question
+    op: eq
+    value: coexpression
+action:
+  step_type: report
+  parameters:
+    - name: coexpression_report
+      value: [n_samples, n_genes, network_type, soft_threshold_power, scale_free_fit, module_sizes, gene_module_table, module_membership, eigengene_trait_correlations, adjusted_p_values]
+      default_source: "doi:10.1186/1471-2105-9-559"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0107
+    paraphrase: >-
+      The package gives functions for the choice of the soft-threshold
+      power, labels each module by a color, relates the module eigengenes
+      to the sample traits, and computes the module membership of each
+      gene, and the paper presents tutorials beside the package.
+    anchor: "Implementation; Network construction; Module eigengene; Module membership and intramodular connectivity"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0108
+    paraphrase: >-
+      The framework defines a module as a group of genes with a high
+      topological overlap, and it presents the intramodular connectivity as
+      the node measure that relates a gene of a module to the biological
+      significance of the gene.
+    anchor: "Abstract; Module detection; Connectivity measures"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [report, coexpression, wgcna]

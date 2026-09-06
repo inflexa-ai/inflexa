@@ -19,6 +19,7 @@
  *   truth_fdr <results.csv> <= <fraction>      observed false discovery proportion at adjusted_pvalue < 0.05
  *   truth_set_recall <enrichment.csv> >= <fraction>   the planted sets found at padj < 0.05, by the `pathway` column
  *   truth_top_precision <results.csv> <n> >= <fraction>   the share of true DE genes among the top n rows by |log2_fold_change|
+ *   truth_regulon_recall <activity.csv> >= <fraction>   the planted regulators (planted_set "TF:<name>") found at padj < 0.05, by the `regulator` column
  */
 
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -125,6 +126,17 @@ export async function checkExpectation(expectation: string, stepDir: string, dat
                 const hits = top.filter((row) => positives.has(row.gene)).length;
                 const value = top.length === 0 ? 0 : hits / top.length;
                 return { ok: compare(value, rest[2]!, Number(rest[3])), detail: `top ${top.length} precision = ${value.toFixed(3)}` };
+            }
+            case "truth_regulon_recall": {
+                const truthRows = await csvRows(join(dataDir, "truth.csv"));
+                const planted = new Set(column(truthRows, "planted_set").filter((set) => set.startsWith("TF:")).map((set) => set.slice(3)));
+                const rows = await csvRows(join(stepDir, rest[0]!));
+                const regulators = column(rows, "regulator");
+                const padj = column(rows, "padj").map(Number);
+                const found = new Set(regulators.filter((_regulator, index) => Number.isFinite(padj[index]) && padj[index]! < 0.05));
+                const hits = [...planted].filter((tf) => found.has(tf)).length;
+                const value = planted.size === 0 ? 0 : hits / planted.size;
+                return { ok: compare(value, rest[1]!, Number(rest[2])), detail: `planted regulators found ${hits}/${planted.size}` };
             }
             case "truth_set_recall": {
                 const truthRows = await csvRows(join(dataDir, "truth.csv"));

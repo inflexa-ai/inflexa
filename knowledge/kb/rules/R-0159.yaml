@@ -1,0 +1,75 @@
+id: R-0159
+title: "Exon-level counts from featureCounts: differential exon usage with limma diffSplice"
+assertion: >-
+  When the STAR and featureCounts pipeline delivers a feature-level count
+  table, with one row per exon and the gene of each exon, test differential
+  exon usage with limma diffSplice on the voom-transformed exon counts. The
+  test compares the log fold change of each exon with the log fold change of
+  its gene, thus it finds a change in usage and not a change in the gene
+  level. Report the exon-level t-test and the gene-level F-test or Simes
+  test with the adjusted p-values, and plot the exons of each reported gene.
+  This needs a featureCounts run at the feature level with the exon
+  annotation; a gene-level count matrix has no exon rows, and the plan asks
+  for the exon-level run when it is absent.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: count_source
+    op: eq
+    value: star_featurecounts
+action:
+  step_type: transcript_level
+  method: M-0056
+  parameters:
+    - name: exon_counts
+      value: featureCounts_feature_level_with_exon_annotation
+      default_source: "doi:10.1093/bioinformatics/btt656"
+    - name: test
+      value: diffSplice_exon_t_and_gene_F_or_simes
+      default_source: "guide:limma/2026-05-19#differential-splicing"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0008
+    paraphrase: >-
+      The guide analyzes differential splicing from exon-level counts with
+      voom and diffSplice: the linear model is fitted to each exon, and
+      diffSplice tests whether the log fold change of an exon differs from
+      that of the other exons of the same gene, with a t-test per exon and
+      an F-test or a Simes test per gene.
+    anchor: "RNA-seq data; Differential splicing"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0119
+    paraphrase: >-
+      Differential exon usage is a change in the share of the reads of a
+      gene that fall on an exon between conditions, and the test needs
+      counts per exon and per sample, from a flattened exon annotation.
+    anchor: "Abstract; Methods, Counting reads"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0050
+    paraphrase: >-
+      featureCounts assigns the reads to genomic features and summarizes
+      them at the feature level, such as the exons, or at the meta-feature
+      level, such as the genes, as the caller selects.
+    anchor: "Abstract; Methods, Summarization"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [transcript-level, exon-usage, limma]

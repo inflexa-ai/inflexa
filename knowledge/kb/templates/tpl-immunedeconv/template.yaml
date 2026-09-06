@@ -1,0 +1,229 @@
+id: tpl-immunedeconv
+version: 1.0.0
+label: "Cell type deconvolution with immunedeconv: MCP-counter, xCell, EPIC, or quanTIseq"
+language: R
+method: M-0041
+step_types: [deconvolution]
+edam_operations: [EDAM:operation_3629]
+citations: [S-0098, S-0099, S-0100, S-0101, S-0102]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates, two_group_paired, two_group_with_blocking_factor, multi_group_unpaired]
+  conditions:
+    - field: organism
+      op: in
+      value: [human, mouse]
+    - field: data_state
+      op: in
+      value: [counts, tpm_or_fpkm]
+  notes: >-
+    A linear-scale expression matrix whose first column is the gene symbol
+    (HGNC for human, MGI for mouse) and whose header holds the sample
+    identifiers, plus a sample table with one row per sample. The input is
+    TPM as it is, or raw counts that the script scales to CPM; a log matrix
+    stops the script. One immunedeconv method runs: MCP-counter (the
+    default) and xCell give a score per cell type that is comparable
+    between samples for one cell type and not between cell types; EPIC and
+    quanTIseq give an absolute fraction per cell type with an uncharacterized
+    remainder. The MCP-counter marker table lives inside the script because
+    the sandbox has no network. xCell needs at least 5000 genes shared with
+    its reference, thus it stops on a small matrix. A mouse matrix is mapped
+    to the human orthologs with babelgene, one-to-one pairs only, before the
+    method runs. The condition column is renamed to `condition` inside the
+    script, and a Wilcoxon rank-sum test per cell type compares the test
+    level against the reference level, with a Benjamini-Hochberg adjustment.
+parameters:
+  - name: expression_path
+    type: string
+    description: "Path of the expression matrix CSV, first column gene symbol, header sample ids, linear TPM or raw counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the expression matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the reference of the comparison, for example Control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The level of the condition that is compared against the reference, for example Treated."
+    adaptable: true
+  - name: input_scale
+    type: string
+    description: "The scale of the expression matrix: tpm for linear TPM, counts for raw counts that become CPM. Never a log matrix."
+    adaptable: true
+    default: tpm
+    default_source: "doi:10.1093/bioinformatics/btz363"
+    enum: [tpm, counts]
+  - name: method
+    type: string
+    description: "The immunedeconv method: mcp_counter and xcell give scores, epic and quantiseq give absolute fractions."
+    adaptable: true
+    default: mcp_counter
+    default_source: "doi:10.1186/s13059-016-1070-5"
+    enum: [mcp_counter, xcell, epic, quantiseq]
+  - name: species
+    type: string
+    description: "The species of the gene symbols: human symbols are used as they are, mouse symbols are mapped to the human orthologs."
+    adaptable: true
+    default: human
+    default_source: "doi:10.1093/bioinformatics/btz363"
+    enum: [human, mouse]
+  - name: tumor
+    type: boolean
+    description: "Whether the samples are tumor tissue: EPIC then uses its tumor reference (TRef) instead of the blood reference (BRef), and quanTIseq removes the aberrant immune genes of tumors."
+    adaptable: true
+    default: false
+    default_source: "doi:10.7554/eLife.26476"
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff that marks a cell type as significant in the summary."
+    adaptable: true
+    default: 0.05
+    default_source: "doi:10.1111/j.2517-6161.1995.tb02031.x"
+    minimum: 0
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example deconvolution or epic_treated_vs_control."
+    adaptable: true
+    default: deconvolution
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: expression
+    path: "{{expression_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample linear TPM or raw counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+outputs:
+  - name: fractions
+    path: "output/{prefix}_fractions.csv"
+    format: EDAM:format_3752
+    description: "One row per cell type: cell_type, then one column per sample with the score or the fraction."
+  - name: comparison
+    path: "output/{prefix}_comparison.csv"
+    format: EDAM:format_3752
+    description: "One row per cell type: cell_type, n_reference, n_test, median_reference, median_test, difference, statistic, pvalue, padj (Wilcoxon rank-sum, BH)."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The method, whether the values are fractions or scores, the comparison scope, the reference of the method, the input scale, the species, the contrast, the counts of cell types and significant cell types, the package versions."
+  - name: heatmap
+    path: "figures/{prefix}_heatmap.png"
+    description: "Heatmap of the values per cell type and sample, scaled per cell type for scores, samples annotated by condition (and PDF)."
+  - name: composition
+    path: "figures/{prefix}_composition.png"
+    description: "Stacked bar of the cell fractions per sample, grouped by condition (and PDF). Only when the values are fractions."
+  - name: comparison_figure
+    path: "figures/{prefix}_comparison.png"
+    description: "Box plot per cell type of the values by condition (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: immunedeconv
+    version: "2.1.4"
+    track: cran
+  - name: MCPcounter
+    version: "1.2.0"
+    track: cran
+  - name: xCell
+    version: "1.1.0"
+    track: cran
+  - name: EPIC
+    version: "1.1.7"
+    track: cran
+  - name: quantiseqr
+    version: "1.20.0"
+    track: bioconductor
+  - name: babelgene
+    version: "22.9"
+    track: cran
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: pheatmap
+    version: "1.0.13"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: mcp-counter-tpm
+    dataset: two_group_n6/seed-1
+    slots:
+      expression_path: /work/data/tpm.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+    expect:
+      - "exists output/deconvolution_fractions.csv"
+      - "csv_rows output/deconvolution_fractions.csv >= 5"
+      - "exists output/deconvolution_comparison.csv"
+      - "csv_rows output/deconvolution_comparison.csv >= 5"
+      - "exists output/deconvolution_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/deconvolution_heatmap.png"
+      - "exists figures/deconvolution_heatmap.pdf"
+      - "exists figures/deconvolution_comparison.png"
+      - "exists figures/deconvolution_comparison.pdf"
+      - "json output/deconvolution_summary.json n_samples == 12"
+      - "json output/deconvolution_summary.json value_type == scores"
+      - "json output/deconvolution_summary.json tool == MCPcounter"
+  - name: epic-counts-cpm
+    dataset: two_group_n6/seed-1
+    slots:
+      expression_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+      input_scale: counts
+      method: epic
+      output_prefix: epic
+    expect:
+      - "exists output/epic_fractions.csv"
+      - "csv_rows output/epic_fractions.csv >= 5"
+      - "exists output/epic_comparison.csv"
+      - "exists output/epic_summary.json"
+      - "exists figures/epic_heatmap.png"
+      - "exists figures/epic_composition.png"
+      - "exists figures/epic_composition.pdf"
+      - "exists figures/epic_comparison.png"
+      - "json output/epic_summary.json value_type == fractions"
+      - "json output/epic_summary.json input_scale == counts"
+  - name: quantiseq-tpm
+    dataset: two_group_n6/seed-1
+    slots:
+      expression_path: /work/data/tpm.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+      method: quantiseq
+      output_prefix: quantiseq
+    expect:
+      - "exists output/quantiseq_fractions.csv"
+      - "csv_rows output/quantiseq_fractions.csv >= 5"
+      - "exists output/quantiseq_comparison.csv"
+      - "exists output/quantiseq_summary.json"
+      - "exists figures/quantiseq_composition.png"
+      - "json output/quantiseq_summary.json value_type == fractions"
+      - "json output/quantiseq_summary.json tool == quantiseqr"

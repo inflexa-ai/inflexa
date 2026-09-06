@@ -1,0 +1,183 @@
+id: tpl-variance-partition
+version: 1.0.0
+label: "variancePartition: the share of the variance of each gene explained by each factor, a mixed model on the voom log-CPM"
+language: R
+method: M-0049
+step_types: [variance_partition]
+edam_operations: [EDAM:operation_3659]
+citations: [S-0118, S-0089, S-0006, S-0004, S-0041]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates, two_group_paired, two_group_with_blocking_factor, multi_group, repeated_measures]
+  min_replicates: 2
+  conditions:
+    - field: data_state
+      op: eq
+      value: counts
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample.
+    The formula names the columns of the sample table by their own names. A
+    categorical column enters as a random effect, `(1 | column)`, and a
+    numeric column enters as a fixed effect, for example
+    `~ (1 | condition) + (1 | sex) + age`. The script removes the low count
+    genes, scales the library sizes, and fits the mixed model per gene on the
+    log-CPM with the voom precision weights from the same mixed model. The
+    share of each term and the residual share of each gene sum to one. The
+    result is a diagnostic of the design, not a test: it has no p-value. A
+    random effect needs at least two levels and more samples than levels. The
+    mixed model fits one gene at a time in a serial loop, thus the run takes
+    minutes on ten thousand genes.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: formula
+    type: string
+    description: "The variance partition formula over the columns of the sample table, as text. Put each categorical column as a random effect, (1 | column), and each numeric column as a fixed effect, for example ~ (1 | condition) + (1 | sex) + age. No response, no interaction. The slot is a string because a random term holds a bar."
+    adaptable: true
+    pattern: "^\\s*~\\s*[A-Za-z0-9_.|+()\\s-]+$"
+  - name: use_voom_weights
+    type: boolean
+    description: "true fits the model on the log-CPM with the voom precision weights from the mixed model (voomWithDreamWeights). false fits it on the plain log-CPM of edgeR with equal weights."
+    adaptable: true
+    default: true
+    default_source: "doi:10.1186/s12859-016-1323-z"
+  - name: min_count
+    type: integer
+    description: "The min.count of filterByExpr: a gene stays when it has at least this many counts, on the CPM scale of the median library, in enough samples."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 0
+  - name: min_total_count
+    type: integer
+    description: "The min.total.count of filterByExpr: a gene also needs at least this many counts over all samples."
+    adaptable: true
+    default: 15
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 0
+  - name: normalization_method
+    type: string
+    description: "The library size scaling method of normLibSizes."
+    adaptable: true
+    default: TMM
+    default_source: "doi:10.12688/f1000research.9005.3"
+    enum: [TMM, TMMwsp, RLE, upperquartile, none]
+  - name: reml
+    type: boolean
+    description: "true fits each mixed model by restricted maximum likelihood, false by maximum likelihood. The variancePartition default is false."
+    adaptable: true
+    default: false
+    default_source: "vignette:variancePartition/1.42.0#variance-partition"
+  - name: n_top_genes_bars
+    type: integer
+    description: "The number of genes with the largest explained share (one minus the residual share) in the percent bars figure."
+    adaptable: true
+    default: 20
+    default_source: "vignette:variancePartition/1.42.0#variance-partition"
+    minimum: 5
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example variance_partition."
+    adaptable: true
+    default: variance_partition
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV, with every column that the formula names."
+outputs:
+  - name: variance
+    path: "output/{prefix}.csv"
+    format: EDAM:format_3752
+    description: "One row per fitted gene: gene, one column per term of the formula in the order of the median share, Residuals. The shares of a row sum to one."
+  - name: logcpm
+    path: "output/{prefix}_logcpm.csv"
+    format: EDAM:format_3752
+    description: "The log2 CPM values that the model fits, genes by samples."
+  - name: canonical_correlation
+    path: "output/{prefix}_canonical_correlation.csv"
+    format: EDAM:format_3752
+    description: "The canonical correlation between each pair of variables of the formula, a square table with the variable in the first column. A value near one marks two variables that are confounded."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The formula, the random and the fixed terms, the input, the counts of genes, the median and the mean share per term, the number of genes that each term dominates, the package versions."
+  - name: violin
+    path: "figures/{prefix}_violin.png"
+    description: "Violin plot of the share of the variance per term across the genes (and PDF)."
+  - name: percent_bars
+    path: "figures/{prefix}_percent_bars.png"
+    description: "Stacked bars of the shares of the top genes by the explained share (and PDF)."
+  - name: canonical_correlation_figure
+    path: "figures/{prefix}_canonical_correlation.png"
+    description: "Tile map of the canonical correlation between the variables of the formula (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: variancePartition
+    version: "1.42.0"
+    track: bioconductor
+  - name: limma
+    version: "3.68.5"
+    track: bioconductor
+  - name: edgeR
+    version: "4.10.3"
+    track: bioconductor
+  - name: BiocParallel
+    version: "1.46.0"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: covariates-n6
+    dataset: covariates_n6/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      formula: "~ (1 | condition) + (1 | sex) + age"
+    expect:
+      - "exists output/variance_partition.csv"
+      - "csv_rows output/variance_partition.csv >= 5000"
+      - "exists output/variance_partition_logcpm.csv"
+      - "exists output/variance_partition_canonical_correlation.csv"
+      - "exists output/variance_partition_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/variance_partition_violin.png"
+      - "exists figures/variance_partition_violin.pdf"
+      - "exists figures/variance_partition_percent_bars.png"
+      - "exists figures/variance_partition_percent_bars.pdf"
+      - "exists figures/variance_partition_canonical_correlation.png"
+      - "exists figures/variance_partition_canonical_correlation.pdf"
+      - "json output/variance_partition_summary.json n_samples == 12"
+      - "json output/variance_partition_summary.json n_terms == 3"
+      - "json output/variance_partition_summary.json n_random_terms == 2"
+      - "json output/variance_partition_summary.json n_fixed_terms == 1"
+      - "json output/variance_partition_summary.json n_genes_fitted >= 5000"
+      - "json output/variance_partition_summary.json median_share.Residuals <= 0.95"
+      - "json output/variance_partition_summary.json n_genes_dominant.condition >= 500"

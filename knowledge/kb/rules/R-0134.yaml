@@ -1,0 +1,79 @@
+id: R-0134
+title: "A signature score compared between groups: limma or a t-test on the scores, BH across the signatures, and the signature source stated"
+assertion: >-
+  When a per-sample signature score is compared between groups, fit the
+  score matrix with limma under the same design as the gene-level model, or
+  with a t-test when the design is two groups and no covariate, and adjust
+  the p-values with the Benjamini-Hochberg procedure across the signatures
+  that the analysis tests. A score is one value per sample, thus the test
+  has the replicates of the design and not the genes as its units. The
+  report states the source of each signature, its version, and the number
+  of signature genes present in the matrix, because a signature with a
+  missing gene is a different signature.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: n_per_group_min
+    op: gte
+    value: 2
+  - field: n_groups
+    op: gte
+    value: 2
+action:
+  step_type: signature_scoring
+  parameters:
+    - name: score_test
+      value: limma_on_scores_with_the_design
+      default_source: "doi:10.1186/1471-2105-14-7"
+    - name: score_adjustment
+      value: BH_across_signatures
+      default_source: "doi:10.1186/1471-2105-14-7"
+    - name: signature_provenance
+      value: source_version_and_genes_present
+      default_source: "doi:10.1371/journal.pcbi.1009935"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0047
+    paraphrase: >-
+      The GSVA workflow tests the score matrix between the groups with a
+      limma linear model under the design of the study and adjusts the
+      p-values across the gene sets with the Benjamini-Hochberg procedure.
+    anchor: "Methods; Results, Case studies"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0113
+    paraphrase: >-
+      The singscore paper computes a score per sample without the other
+      samples and calls the gene sets that differ between two conditions
+      from the per-sample scores, thus the scores of the samples are the
+      units of the comparison.
+    anchor: "Abstract; Results, Comparison of the scores between groups"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0027
+    paraphrase: >-
+      The survey finds that the version of the gene set collection and the
+      statistical method are often not reported, that each changes the
+      result, and it recommends that a report names the collection and its
+      version.
+    anchor: "Results; Recommendations"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [signature-scoring, multiple-testing, report]

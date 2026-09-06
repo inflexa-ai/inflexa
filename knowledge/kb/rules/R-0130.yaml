@@ -1,0 +1,63 @@
+id: R-0130
+title: "Tumor purity and stromal admixture: ESTIMATE is the tool of record and is absent here, ConsensusTME stands in for the microenvironment"
+assertion: >-
+  ESTIMATE is the tool of record for a tumor purity, a stromal score, and an
+  immune score from an expression profile, by a single-sample enrichment of
+  two gene signatures. ESTIMATE is absent from this pool. Do not claim a
+  tumor purity from a substitute. For the tumor microenvironment populations,
+  use ConsensusTME, whose gene sets integrate the gene sets of the other
+  methods for a relative estimate of 18 cell types, through the immunedeconv
+  interface, and state the cancer type that the ConsensusTME call names. The immune and stroma scores of xCell are a
+  relative stand-in for the two ESTIMATE scores, and the report names them
+  as such. If the question needs the purity itself, stop and ask for
+  ESTIMATE or for a purity from the DNA data.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: human
+action:
+  step_type: deconvolution
+  parameters:
+    - name: tumor_purity_tool_of_record
+      value: estimate_absent_no_purity_claim
+      default_source: "doi:10.1038/ncomms3612"
+    - name: microenvironment_consensus
+      value: consensustme_via_immunedeconv
+      default_source: "doi:10.1158/0008-5472.CAN-18-3560"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0106
+    paraphrase: >-
+      ESTIMATE infers a stromal score and an immune score from a single-sample
+      gene set enrichment of two signatures, combines them into an ESTIMATE
+      score, and maps that score to a tumor purity that agrees with the
+      purity from DNA copy number data.
+    anchor: "Abstract; Results, ESTIMATE algorithm; Methods"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0105
+    paraphrase: >-
+      The benchmark compares seven tumor microenvironment estimation
+      methods against DNA-derived purity, leukocyte methylation, lymphocyte
+      counts, and cell-specific data, and it introduces Consensus, a method
+      that integrates the gene sets of the other methods for a relative
+      estimate of 18 cell types. No method is best in every benchmark, and
+      Consensus ranks in the top three in all cancer-related benchmarks.
+    anchor: "Abstract; Results, ConsensusTME; Discussion"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [deconvolution, tumor-purity, absent-tool]

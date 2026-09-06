@@ -1,0 +1,74 @@
+id: R-0112
+title: "Transcription factor activity as the question: one score per sample and regulator on the log matrix, then the contrast on the scores"
+assertion: >-
+  When the question is transcription factor activity and the walk holds no
+  differential expression step, infer the activity per sample. Run the
+  decoupleR univariate linear model on the log matrix, log2 CPM of the
+  filtered counts or log2 of TPM plus one, with the CollecTRI regulons, and
+  keep one score per sample and regulator. Then compare the scores between the
+  groups with limma on the score matrix with the design of the study, and
+  adjust the p-values across the regulators with Benjamini-Hochberg. Report
+  the score matrix and the per-regulator test beside each other, because a
+  score is an inference from a network and not a measurement.
+modality: bulk_rna_seq
+conditions:
+  - field: question
+    op: eq
+    value: tf_activity
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: n_per_group_min
+    op: gte
+    value: 2
+action:
+  step_type: tf_activity
+  method: M-0035
+  parameters:
+    - name: activity_input
+      value: per_sample_log_matrix
+      default_source: "doi:10.1093/bioadv/vbac016"
+    - name: activity_method
+      value: ulm
+      default_source: "doi:10.1093/bioadv/vbac016"
+    - name: score_test
+      value: limma_on_scores_bh_across_regulators
+      default_source: "rule:R-0112"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0038
+    when: "The result must compare with a published DoRothEA analysis, or a reader asks for the confidence level of each interaction: the DoRothEA regulons of confidence A to C."
+  - method: M-0037
+    when: "The organism is human and the question asks for a sequence-level complement: scan the promoters of the DE genes for the JASPAR motifs against a background of the promoters of the other tested genes."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0091
+    paraphrase: >-
+      decoupleR takes a matrix of features by samples and a prior network and
+      returns one activity score per source and sample, thus a sample-level
+      matrix of activities is a direct output of every estimator.
+    anchor: "Methods, Input and output; Results, Overview of decoupleR"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0092
+    paraphrase: >-
+      The study infers transcription factor activities with the CollecTRI
+      regulons at the level of samples, in three cancer types, and at the
+      level of single cells, thus a per-sample activity matrix is a stated
+      use of the resource.
+    anchor: "Abstract; Results, Application of CollecTRI"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [tf-activity, decoupler, per-sample]

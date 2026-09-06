@@ -1,0 +1,211 @@
+id: tpl-wgcna-modules
+version: 1.0.0
+label: "WGCNA signed co-expression modules on the variance-stabilized matrix, eigengenes against the traits, hubs by module membership"
+language: R
+method: M-0047
+step_types: [coexpression]
+edam_operations: [EDAM:operation_3766]
+citations: [S-0107, S-0108, S-0001]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates, two_group_paired, two_group_with_blocking_factor]
+  min_replicates: 8
+  conditions:
+    - field: data_state
+      op: eq
+      value: counts
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample.
+    The script removes the low count genes, applies the DESeq2 variance
+    stabilizing transformation blind to the design, and keeps the top variable
+    genes. The soft-threshold power is the lowest power at which the signed
+    scale-free fit index reaches the target R squared, with a fallback by
+    sample count when no power reaches it. One block holds every gene, thus
+    the memory grows with the square of n_top_genes. The traits are the
+    condition as a 0/1 contrast (test level 1, reference level 0) and every
+    numeric column of the sample table other than the sample identifier. The
+    grey module holds the unassigned genes: it stays in the modules table
+    and leaves the module count, the trait table, and the hubs. A cohort of
+    fewer than 15 samples gives unstable correlations, thus the summary
+    states the sample count beside every module.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest. It becomes the 0/1 condition trait."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition coded 0 in the condition trait, for example Control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The level of the condition coded 1 in the condition trait, for example Treated."
+    adaptable: true
+  - name: min_count
+    type: integer
+    description: "A gene stays when it has at least this many counts in at least min_samples samples."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 0
+  - name: min_samples
+    type: integer
+    description: "The minimum number of samples for the count filter. Absent, the script uses the smallest group size."
+    adaptable: true
+    required: false
+    minimum: 1
+  - name: n_top_genes
+    type: integer
+    description: "The number of most variable genes, by the variance of the variance-stabilized values, that enter the network."
+    adaptable: true
+    default: 5000
+    default_source: "guide:WGCNA/faq#should-i-filter-probesets-or-genes"
+    minimum: 100
+  - name: scale_free_r_squared
+    type: number
+    description: "The target scale-free fit index. The soft power is the lowest power whose signed fit reaches it with a negative slope."
+    adaptable: true
+    default: 0.85
+    default_source: "doi:10.2202/1544-6115.1128"
+    minimum: 0.5
+    maximum: 1
+  - name: network_type
+    type: string
+    description: "The adjacency type. Signed keeps the sign of the correlation, thus a module holds genes that move together in one direction."
+    adaptable: false
+    default: signed
+    default_source: "doi:10.1186/1471-2105-9-559"
+    enum: [signed]
+  - name: min_module_size
+    type: integer
+    description: "The minimum number of genes in a module for the dynamic tree cut."
+    adaptable: true
+    default: 30
+    default_source: "guide:WGCNA/2014-11-25#automatic-network-construction-and-module-detection"
+    minimum: 5
+  - name: merge_cut_height
+    type: number
+    description: "The eigengene dissimilarity below which two modules merge. 0.25 merges modules whose eigengenes correlate above 0.75."
+    adaptable: true
+    default: 0.25
+    default_source: "guide:WGCNA/2014-11-25#automatic-network-construction-and-module-detection"
+    minimum: 0
+    maximum: 1
+  - name: n_hub_genes
+    type: integer
+    description: "The number of top genes per module, by module membership, that the hub table and the summary report."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.1186/1471-2105-9-559"
+    minimum: 1
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example coexpression or wgcna."
+    adaptable: true
+    default: coexpression
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+outputs:
+  - name: modules
+    path: "output/{prefix}_modules.csv"
+    format: EDAM:format_3752
+    description: "One row per gene of the network: gene, module (a color, grey is unassigned), module_membership (the correlation of the gene with the eigengene of its module), sorted by module and membership."
+  - name: module_traits
+    path: "output/{prefix}_module_traits.csv"
+    format: EDAM:format_3752
+    description: "One row per module and trait: module, trait, correlation, pvalue, n_genes, n_samples."
+  - name: hub_genes
+    path: "output/{prefix}_hub_genes.csv"
+    format: EDAM:format_3752
+    description: "The top n_hub_genes of each module by module membership: module, rank, gene, module_membership."
+  - name: eigengenes
+    path: "output/{prefix}_eigengenes.csv"
+    format: EDAM:format_3752
+    description: "The module eigengenes: module, then one column per sample."
+  - name: soft_threshold
+    path: "output/{prefix}_soft_threshold.csv"
+    format: EDAM:format_3752
+    description: "The scale-free fit per candidate power: power, scale_free_r_squared, slope, mean_connectivity, median_connectivity, max_connectivity."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The soft power and its fit, the module count and sizes, the hub genes, the trait coding, the sample count, the thresholds, the package versions."
+  - name: dendrogram
+    path: "figures/{prefix}_dendrogram.png"
+    description: "The gene dendrogram on the topological overlap dissimilarity with the module colors below it (and PDF)."
+  - name: module_traits_heatmap
+    path: "figures/{prefix}_module_traits.png"
+    description: "Heatmap of the module eigengene against trait correlations, with the correlation and the p-value in each cell (and PDF)."
+  - name: soft_threshold_figure
+    path: "figures/{prefix}_soft_threshold.png"
+    description: "The signed scale-free fit index and the mean connectivity against the candidate powers, with the chosen power marked (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: DESeq2
+    version: "1.52.0"
+    track: bioconductor
+  - name: WGCNA
+    version: "1.74"
+    track: cran
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n60
+    dataset: coexpression_n60/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+    expect:
+      - "exists output/coexpression_modules.csv"
+      - "csv_rows output/coexpression_modules.csv >= 1000"
+      - "exists output/coexpression_module_traits.csv"
+      - "exists output/coexpression_hub_genes.csv"
+      - "exists output/coexpression_eigengenes.csv"
+      - "exists output/coexpression_soft_threshold.csv"
+      - "exists output/coexpression_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/coexpression_dendrogram.png"
+      - "exists figures/coexpression_dendrogram.pdf"
+      - "exists figures/coexpression_module_traits.png"
+      - "exists figures/coexpression_module_traits.pdf"
+      - "exists figures/coexpression_soft_threshold.png"
+      - "exists figures/coexpression_soft_threshold.pdf"
+      - "json output/coexpression_summary.json n_samples == 120"
+      - "json output/coexpression_summary.json n_genes_in_network == 5000"
+      - "json output/coexpression_summary.json soft_power >= 1"
+      - "json output/coexpression_summary.json n_modules >= 3"

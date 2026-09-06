@@ -1,0 +1,18 @@
+id: M-0050
+label: "ComBat empirical Bayes batch adjustment of log-scale expression values"
+edam_operation: EDAM:operation_3435
+description: >-
+  The location and scale batch adjustment of ComBat on a log-scale
+  expression matrix, with an empirical Bayes shrinkage of the batch
+  parameters across the genes, so that a small batch gets a stable estimate.
+  The biological condition goes into the covariate model, so that the
+  adjustment keeps the condition effect. Only for a downstream use that
+  needs adjusted values, for example a clustering or a heatmap. Never a
+  substitute for a batch term in the design of the test, and never the input
+  of the test.
+packages:
+  - name: sva
+    track: bioconductor
+    biotools: sva
+    version_range: ">=3.50"
+    bioconductor: "3.23"

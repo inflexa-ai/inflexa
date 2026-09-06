@@ -1,0 +1,31 @@
+{
+  "campaign": "wider-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "transcript-usage-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T07:30:55.476Z",
+  "elapsedMs": 9900,
+  "outcome": "clarification_needed",
+  "question": "The provided count matrix is gene-level (salmon quantified, then collapsed to gene symbols, 12000 genes × 13 columns). Detecting isoform switching between AD-lesional and control requires transcript-level (isoform-level) quantification — i.e., per-transcript counts/TPMs with transcript-to-gene mapping (e.g., salmon quant.sf files or a transcript x sample matrix), plus a tool like IsoformSwitchAnalyzeR or DEXSeq/DRIMSeq for differential transcript usage. The current inputs only have gene-level counts, so dominant-isoform-switch analysis cannot be performed on this data as provided. Can you provide transcript-level quantification files (e.g., salmon quant.sf per sample or a transcript-count/TPM matrix with a transcript-to-gene mapping), or should the plan proceed with a gene-level differential expression analysis instead?",
+  "usage": {
+    "inputTokens": 49034,
+    "outputTokens": 492,
+    "cacheCreationInputTokens": 34104,
+    "cacheReadInputTokens": 14918,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "request_clarification",
+      "input": {
+        "question": "The provided count matrix is gene-level (salmon quantified, then collapsed to gene symbols, 12000 genes × 13 columns). Detecting isoform switching between AD-lesional and control requires transcript-level (isoform-level) quantification — i.e., per-transcript counts/TPMs with transcript-to-gene mapping (e.g., salmon quant.sf files or a transcript x sample matrix), plus a tool like IsoformSwitchAnalyzeR or DEXSeq/DRIMSeq for differential transcript usage. The current inputs only have gene-level counts, so dominant-isoform-switch analysis cannot be performed on this data as provided. Can you provide transcript-level quantification files (e.g., salmon quant.sf per sample or a transcript-count/TPM matrix with a transcript-to-gene mapping), or should the plan proceed with a gene-level differential expression analysis instead?",
+        "questionContext": "Research question asks which genes switch dominant isoform between treated and control (isoform switching / differential transcript usage), but the Data Context describes only gene-level count data (counts.csv, 12000 genes x 13 samples, gene symbol rows) with no transcript-level quantification files or transcript-to-gene mapping listed among the inputs or reference data."
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e"
+  }
+}

@@ -1,0 +1,72 @@
+id: R-0125
+title: "Immune and stromal composition on log-scale input: MCP-counter scores per population, comparable across samples and not across populations"
+assertion: >-
+  For an immune and stromal composition of human samples from a count matrix
+  or a log-normalized matrix, compute MCP-counter scores on the log2
+  normalized expression, log2 CPM from the counts or the log values as they
+  are. MCP-counter gives one abundance score per sample for eight immune
+  populations and two stromal populations from population-specific marker
+  genes. A score is comparable between samples for one population, and it is
+  not comparable between populations, thus the report compares each
+  population across the samples and never ranks the populations within one
+  sample. State the marker set version and the transform of the input beside
+  the scores.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: human
+  - field: data_state
+    op: in
+    value: [counts, log_normalized]
+action:
+  step_type: deconvolution
+  method: M-0041
+  parameters:
+    - name: input_scale
+      value: log2_normalized_expression
+      default_source: "doi:10.1186/s13059-016-1070-5"
+    - name: score_comparison
+      value: across_samples_within_population
+      default_source: "doi:10.1186/s13059-016-1070-5"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0042
+    when: "The question needs many cell types beyond the ten populations of MCP-counter, and a relative enrichment score per type is enough."
+  - method: M-0043
+    when: "The question needs an absolute fraction per cell type, and a linear-scale TPM matrix of the same samples is available."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0098
+    paraphrase: >-
+      MCP-counter computes for each sample an abundance score of eight immune
+      populations and two stromal populations as the mean log2 expression of
+      the transcriptomic markers of the population. The paper states that the
+      scores permit a comparison between samples for one population, but not
+      a comparison between populations, because each marker set has its own
+      expression scale.
+    anchor: "Abstract; Results, MCP-counter; Methods, Computation of the MCP-counter scores"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0102
+    paraphrase: >-
+      The benchmark classes MCP-counter as a marker-based method whose scores
+      have no absolute meaning and permit a between-sample comparison of one
+      cell type only, and it measures the spillover between related cell
+      types for every method that it covers.
+    anchor: "Introduction; Results, Spillover; Guidelines"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [deconvolution, immune, marker-based]

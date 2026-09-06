@@ -1,0 +1,64 @@
+id: R-0126
+title: "xCell for 64 cell types: an enrichment score per type with spillover compensation, not a proportion"
+assertion: >-
+  When the composition question names cell types beyond the immune and
+  stromal populations of a marker-based score, compute xCell scores for its
+  64 cell types on the human expression matrix. xCell gives a rank-based
+  enrichment score per sample and per cell type, and it applies a spillover
+  compensation between related types. The score is an enrichment score and
+  not a proportion, thus the scores do not sum to one and a score of one type
+  is not comparable with a score of another type. Report the score as a
+  between-sample measure per type, and state that a related type can still
+  carry a share of the signal of its neighbor after the compensation. xCell2
+  is the Bioconductor successor that trains a signature set on a custom
+  reference, with the same enrichment nature of the score.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: human
+action:
+  step_type: deconvolution
+  method: M-0042
+  parameters:
+    - name: cell_types
+      value: 64_types_with_spillover_compensation
+      default_source: "doi:10.1186/s13059-017-1349-1"
+    - name: score_nature
+      value: enrichment_not_proportion
+      default_source: "doi:10.1186/s13059-017-1349-1"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0099
+    paraphrase: >-
+      xCell learns gene signatures for 64 cell types from many pure cell
+      profiles, scores each signature per sample with a rank-based
+      enrichment score, and then applies a spillover compensation that
+      removes the part of a score that comes from a related cell type. xCell
+      is a gene-signature-based method, thus a score is a signature
+      enrichment and not a fraction of the cells.
+    anchor: "Abstract; Results, Spillover compensation; Methods, xCell score"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0102
+    paraphrase: >-
+      The benchmark classes xCell as a marker-based method whose scores permit
+      a between-sample comparison only, and it measures the spillover between
+      related cell types for every method that it covers.
+    anchor: "Results, Spillover; Table 1; Guidelines"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [deconvolution, xcell, spillover]

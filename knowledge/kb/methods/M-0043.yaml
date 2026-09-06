@@ -1,0 +1,14 @@
+id: M-0043
+label: "EPIC absolute cell fractions from TPM with an uncharacterized fraction"
+edam_operation: EDAM:operation_3629
+description: >-
+  A constrained least squares fit of a TPM profile against reference profiles
+  of immune, stromal, and endothelial cells, with a correction for the mRNA
+  content per cell type, that returns an absolute fraction per cell type and
+  the fraction of uncharacterized cells such as tumor cells. The input is a
+  linear-scale TPM matrix of human samples. EPIC installs from its GitHub
+  repository, thus the track here is the nearest R track.
+packages:
+  - name: EPIC
+    track: cran
+    version_range: ">=1.1"

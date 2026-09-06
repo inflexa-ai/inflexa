@@ -1,0 +1,67 @@
+id: R-0142
+title: "Clustering input: the most variable genes after variance stabilization, a stated distance and linkage, and the batch and the depth as known confounders of a cluster"
+assertion: >-
+  Give a clustering of the samples the variance-stabilized counts, or the
+  log values of a table that is not a count table, and keep the genes with
+  the highest variance across the samples, with the number of genes stated.
+  Center each gene before the clustering. State the distance and the linkage
+  or the partition method in the plan, because each choice gives different
+  clusters on the same matrix. Before a cluster claim, tabulate the clusters
+  against the batch, the library size, and each processing variable, because
+  a batch or a depth difference forms a cluster of its own, and a cluster
+  that a technical variable explains is not a biological subgroup.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: clustering
+  parameters:
+    - name: input_transform
+      value: vst_or_log2_then_top_variable_genes_centered
+      default_source: "doi:10.1093/bioinformatics/btq170"
+    - name: n_top_genes
+      value: 2000
+      default_source: "rule:R-0142"
+    - name: distance_and_linkage
+      value: stated_in_plan
+      default_source: "rule:R-0142"
+    - name: cluster_confounder_table
+      value: [batch, library_size, processing_variables]
+      default_source: "doi:10.1038/nrg2825"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0110
+    paraphrase: >-
+      The package takes the distance, the clustering algorithm, and the
+      linkage as explicit arguments, and the documentation of the package
+      reduces the matrix to the most variable genes and centers each gene by
+      its median before the clustering.
+    anchor: "Abstract; Features; the package documentation"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0015
+    paraphrase: >-
+      Batch effects are widespread in high-throughput data, they come from
+      laboratory conditions, reagent lots, and personnel, and they lead to
+      wrong conclusions when they align with the outcome of interest. The
+      review shows samples that group by processing date, and it reviews the
+      approaches that detect a batch effect from the sample structure.
+    anchor: "Abstract; Figure 1; the approaches for the detection of batch effects"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [clustering, batch, qc]

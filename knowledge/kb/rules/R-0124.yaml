@@ -1,0 +1,55 @@
+id: R-0124
+title: "Pathway activity without replication: descriptive footprint scores only, no activity p-value"
+assertion: >-
+  If any group holds one sample, compute the pathway footprint scores as a
+  description only. Without within-group replication no between-group
+  variance can be estimated, thus a p-value on a score difference has no
+  inferential basis. Report the score per sample and pathway, or the score on
+  the descriptive log2 fold change, and state that the design has no
+  replication. Do not report an adjusted p-value on the activities.
+modality: bulk_rna_seq
+conditions:
+  - field: n_per_group_min
+    op: lt
+    value: 2
+action:
+  step_type: pathway_activity
+  method: M-0036
+  outcome: descriptive_only
+  parameters:
+    - name: activity_inference
+      value: descriptive_scores_no_p_value
+      default_source: "doi:10.1261/rna.053959.115"
+severity: flag
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0011
+    paraphrase: >-
+      The study measures how the number of replicates changes the ability of
+      each tool to find true differentially expressed genes, and it
+      recommends at least six replicates per condition, thus a design with
+      one sample per group is below every tested design.
+    anchor: "Abstract; Discussion"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0002
+    paraphrase: >-
+      The vignette states that an experiment without replicates gives no
+      valid estimate of the within-group variance, and it advises against
+      inference from such data.
+    anchor: "Experiments without replicates"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [pathway-activity, replicates, flag]

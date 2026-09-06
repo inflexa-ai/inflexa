@@ -1,0 +1,79 @@
+id: R-0158
+title: "Differential transcript usage or expression: a gene-level count matrix cannot answer it, ask for the transcript quantifications, and the tools of record are absent here"
+assertion: >-
+  A question about differential transcript usage, differential transcript
+  expression, or an isoform switch needs transcript-level quantifications,
+  and a gene-level count matrix cannot answer it, because the gene count sums
+  the isoforms. The tools of record are DEXSeq and DRIMSeq on the transcript
+  counts, with stageR for the two-stage test, and IsoformSwitchAnalyzeR for
+  the consequences of a switch. None of them is in the pool here. Stop and
+  ask for the transcript-level files: the quant.sf or abundance.h5 of Salmon
+  or kallisto, imported at the transcript level without a gene summary. With
+  STAR and featureCounts counts, ask for a feature-level count run or for
+  the alignments. If no transcript-level file exists, state in the plan that
+  the gene-level matrix cannot answer the question, and do not substitute a
+  gene-level test for it.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+action:
+  step_type: transcript_level
+  outcome: stop_ask_transcript_quantifications
+severity: flag
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0121
+    paraphrase: >-
+      The workflow imports the Salmon transcript quantifications at the
+      transcript level with tximport, filters the transcripts, and tests
+      differential transcript usage with DRIMSeq and with DEXSeq, then it
+      applies stageR for a gene-level screen and a transcript-level
+      confirmation. The gene-level summary is not the input of the test.
+    anchor: "Introduction; Import with tximport; DRIMSeq; DEXSeq; stageR"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0120
+    paraphrase: >-
+      The paper defines differential transcript usage as a change in the
+      relative abundance of the isoforms of a gene, evaluates count-based
+      methods on transcript-level estimates, and finds that a prefilter of
+      the lowly expressed isoforms improves their performance.
+    anchor: "Abstract; Background; Results"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0119
+    paraphrase: >-
+      DEXSeq tests differential usage of the exons of a gene with a
+      generalized linear model on the exon-level counts, where the test is
+      on the exon by condition interaction, thus it needs counts below the
+      gene level.
+    anchor: "Abstract; Methods"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0122
+    paraphrase: >-
+      IsoformSwitchAnalyzeR finds isoform switches from transcript-level
+      quantifications and annotates their functional consequences, such as
+      a change in the coding potential or in the protein domains.
+    anchor: "Abstract; Implementation"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [transcript-level, isoform, flag, absent-tool]

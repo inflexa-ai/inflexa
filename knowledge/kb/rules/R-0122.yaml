@@ -1,0 +1,55 @@
+id: R-0122
+title: "SPIA is the tool of record for a pathway impact with topology, and it is absent here"
+assertion: >-
+  When the question asks whether the position of the genes in the pathway
+  graph matters, signaling pathway impact analysis (SPIA) is the tool of
+  record. SPIA combines an over-representation of the differentially
+  expressed genes in the pathway with a perturbation score that propagates
+  the fold changes along the edges of the pathway graph. SPIA is absent from
+  this environment. The substitute is the footprint model of PROGENy for a
+  signaling pathway, or an enrichment of the pathway members, and the report
+  states that neither uses the topology of the graph.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: pathway_activity
+  parameters:
+    - name: topology_method
+      value: spia_absent_footprint_or_enrichment_instead
+      default_source: "doi:10.1093/bioinformatics/btn577"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0123
+    paraphrase: >-
+      SPIA combines two types of evidence for a pathway: the over-representation
+      of the differentially expressed genes among its members, and a
+      perturbation factor that propagates the measured fold changes along the
+      topology of the pathway, and it gives one global p-value per pathway.
+    anchor: "Abstract; Methods, The impact analysis"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0094
+    paraphrase: >-
+      PROGENy scores a pathway from the genes that respond to its
+      perturbation and not from the members of the pathway graph, thus it
+      uses no topology.
+    anchor: "Abstract; Discussion"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [pathway-activity, spia, topology, absent-tool]

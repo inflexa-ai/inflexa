@@ -1,0 +1,50 @@
+id: R-0157
+title: "Few events: a Cox model on a score with fewer than 30 events is underpowered, and the plan states it"
+assertion: >-
+  The information of a Cox model comes from the events, not from the number
+  of samples, because the partial likelihood is a product over the failure
+  times. If the largest group holds fewer than 30 samples, the event count of the
+  whole cohort is small, and it can fall below 30. State the number of events and the
+  number of covariates in the plan, and if the events are below 30, or below
+  about 10 per covariate (a common guideline that the listed sources do not
+  give), state that the hazard ratio is unstable and that a
+  null result is not evidence of no association. Keep the covariates few in
+  that case, and do not add a covariate per candidate gene.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+  - field: n_per_group_max
+    op: lt
+    value: 30
+action:
+  step_type: survival
+  parameters:
+    - name: event_count_statement
+      value: state_events_and_events_per_covariate
+      default_source: "rule:R-0157"
+severity: warn
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:citesAsAuthority
+    source: S-0114
+    paraphrase: >-
+      The conditional likelihood of the proportional hazards model is a
+      product of one factor per distinct failure time, where each factor
+      compares the failed individual with the individuals at risk at that
+      time. A censored individual adds no factor of its own, thus the
+      estimate of the regression coefficients rests on the failures.
+    anchor: "The conditional likelihood; Discussion"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [survival, power, events, needs-source]

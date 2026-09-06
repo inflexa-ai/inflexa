@@ -1,0 +1,56 @@
+id: R-0121
+title: "A regulatory network from expression alone needs many samples, thus a small design uses a prior network only"
+assertion: >-
+  A gene regulatory network inferred from the expression matrix alone, as
+  ARACNe does from the mutual information of the profiles, needs a cohort of
+  many samples, in practice about one hundred or more, because a mutual
+  information estimate from a few samples is noise. A design with fewer than
+  thirty samples per group thus does not support a network inference, and a
+  prior knowledge network, CollecTRI or DoRothEA, is the only sound source of
+  the regulons.
+  State this in the plan, and do not infer a network from the study itself.
+modality: bulk_rna_seq
+conditions:
+  - field: n_per_group_max
+    op: lt
+    value: 30
+action:
+  step_type: tf_activity
+  parameters:
+    - name: network_source
+      value: prior_knowledge_network_only
+      default_source: "doi:10.1093/bioinformatics/btw216"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0097
+    paraphrase: >-
+      ARACNe-AP estimates the mutual information between the expression
+      profiles of each regulator and each target with an adaptive partition
+      of the sample space, and the authors present the tool for the
+      reconstruction of a regulatory network from hundreds of gene expression
+      profiles.
+    anchor: "Abstract; Implementation; Results"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0095
+    paraphrase: >-
+      The regulons that VIPER uses come from ARACNe on the tumor cohorts of
+      TCGA, one network per tumor type, and each of these cohorts holds
+      hundreds of samples.
+    anchor: "Methods, Regulatory network inference; Results"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [tf-activity, network-inference, sample-size, needs-source]

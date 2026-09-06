@@ -11,11 +11,23 @@ import type { KnowledgeSituation, KnowledgePreferences } from "./client.js";
 
 export const SituationFieldsSchema = z.object({
     question: z
-        .enum(["differential_expression", "enrichment", "qc", "full_plan"])
+        .enum([
+            "differential_expression",
+            "enrichment",
+            "qc",
+            "full_plan",
+            "tf_activity",
+            "deconvolution",
+            "coexpression",
+            "clustering",
+            "survival",
+            "signature_scoring",
+        ])
         .describe(
             "What the plan needs a procedure for. `full_plan` returns QC, filtering, the model, the test, shrinkage, multiple testing, enrichment, and the report in one answer. " +
                 "Use `differential_expression` when the research question does not ask for pathways or gene sets; an enrichment step the user did not ask for is unasked scope. " +
-                "Use `enrichment` when a results table is the input and no new test is fitted, and `qc` when the question stops at the sample structure.",
+                "Use `enrichment` when a results table is the input and no new test is fitted, and `qc` when the question stops at the sample structure. " +
+                "Use `tf_activity` for regulator or pathway activity, `deconvolution` for cell type proportions, `coexpression` for modules, `clustering` for sample subgroups, `survival` for an outcome association, and `signature_scoring` for a per-sample score.",
         ),
     modality: z.literal("bulk_rna_seq").describe("The assay. Phase 0 serves bulk RNA-seq only."),
     data_state: z
@@ -54,6 +66,25 @@ export const SituationFieldsSchema = z.object({
         .optional()
         .describe("Whether the strandedness was verified against the quantification, declared but not verified, or unknown."),
     interaction: z.boolean().optional().describe("True when the question is the interaction of two factors (for example genotype by treatment)."),
+    extra_analyses: z
+        .array(
+            z.enum([
+                "variance_partition",
+                "tf_activity",
+                "pathway_activity",
+                "signature_scoring",
+                "deconvolution",
+                "coexpression",
+                "clustering",
+                "survival",
+                "transcript_level",
+                "annotation",
+            ]),
+        )
+        .optional()
+        .describe(
+            "Analyses the research question asks for beside the question kind, for example a regulator activity beside a differential expression. Each joins the procedure at its place. Omit when none.",
+        ),
     preferred_language: z
         .enum(["R", "python"])
         .optional()

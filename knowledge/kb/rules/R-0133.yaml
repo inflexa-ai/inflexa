@@ -1,0 +1,85 @@
+id: R-0133
+title: "Signature scores per sample: UCell, singscore, or GSVA, with the choice by the question"
+assertion: >-
+  Score a gene signature per sample with a rank-based method, because the
+  ranks within a sample do not depend on the depth of the sample. UCell
+  gives a score from the Mann-Whitney U statistic of the signature ranks,
+  and it is the default for a signature of one gene list. singscore gives a
+  signed score from the mean rank with an up set and a down set, and its
+  score of one sample does not depend on the other samples, thus it is the
+  choice when the signature has a direction or when the sample set is small
+  or changes. GSVA gives a score per set and
+  per sample from a kernel estimate of the gene distribution across the
+  samples, thus it is the choice for a matrix of many sets across samples
+  that a limma model tests, with the caution that a GSVA score of one sample
+  changes when the sample set changes. State the method, the signature, and
+  its source beside every score.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: signature_scoring
+  method: M-0045
+  parameters:
+    - name: score_method
+      value: rank_based_per_sample
+      default_source: "doi:10.1016/j.csbj.2021.06.043"
+    - name: input_scale
+      value: log_normalized_expression
+      default_source: "doi:10.1186/s12859-018-2435-4"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0046
+    when: "The signature has an up set and a down set, or the sample set is small or changes and the score of one sample must not depend on the other samples."
+  - method: M-0034
+    when: "Many gene sets are scored across the samples as one matrix that a limma model tests, and the sample set is fixed."
+  - method: M-0055
+    when: "The question is a classifier of the samples into classes from their expression, not a score per sample: a penalized logistic regression with nested cross-validation and a ROC with its confidence interval (R-0155)."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0112
+    paraphrase: >-
+      UCell scores a gene signature in each cell from the Mann-Whitney U
+      statistic of the ranks of the signature genes within the cell, and the
+      paper shows that the score depends on the relative ranks only, thus it
+      is robust to the sequencing depth and to the size of the dataset.
+    anchor: "Abstract; Methods, UCell score; Results, Robustness"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0113
+    paraphrase: >-
+      singscore scores a molecular phenotype in one sample from the mean
+      rank of the signature genes, with an up set and a down set combined
+      into one signed score, and it uses no background samples, thus the
+      paper shows that the score is stable regardless of the composition
+      and the number of the samples, where GSVA, z-score, PLAGE, and ssGSEA
+      become unstable below 25 samples.
+    anchor: "Abstract; Methods, Scoring; Results, Stability"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0047
+    paraphrase: >-
+      GSVA estimates the distribution of each gene across the samples with a
+      kernel and scores each gene set in each sample from the ranks of that
+      estimate, thus the score of one sample depends on the other samples in
+      the matrix.
+    anchor: "Methods, GSVA"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [signature-scoring, rank-based, per-sample]

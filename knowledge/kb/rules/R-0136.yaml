@@ -1,0 +1,53 @@
+id: R-0136
+title: "Mouse deconvolution: no human reference profiles on mouse data, mMCP-counter is the tool of record and is absent here"
+assertion: >-
+  Do not run a human deconvolution method on mouse data. The marker sets and
+  the reference profiles of MCP-counter, xCell, EPIC, and quanTIseq come
+  from human samples, and a mouse symbol that maps to a human marker does not
+  carry the same specificity in mouse tissue. The mouse tool of record is
+  mMCP-counter, the mouse version of MCP-counter with markers from mouse
+  data, and it is absent from this pool. Stop the deconvolution and ask for
+  mMCP-counter or for a mouse reference, or give a descriptive signature
+  score from mouse marker sets with the caution that it is not a
+  deconvolution.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: mouse
+action:
+  step_type: deconvolution
+  outcome: mouse_reference_required_or_descriptive_markers
+  forbids: [M-0041, M-0042, M-0043, M-0044]
+severity: flag
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0098
+    paraphrase: >-
+      MCP-counter selects its transcriptomic markers from a compendium of
+      human samples of purified cell populations and validates the scores on
+      human tissues, thus its marker sets are human.
+    anchor: "Results, Identification of transcriptomic markers; Methods, Data sets"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0102
+    paraphrase: >-
+      The benchmark evaluates the methods on human data, and the methods
+      that it covers carry human signature matrices and human reference
+      profiles.
+    anchor: "Methods, Benchmark datasets; Table 1"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [deconvolution, mouse, flag, absent-tool, needs-source]

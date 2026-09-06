@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: blind-VST QC with PCA, distance heatmap and library-size table that keeps sample_01 with an explicit rationale and a leave-one-out sensitivity check; a minimal justified filter (>=10 counts in >=6 samples); DESeq2 size factors with no pre-normalization; UCell rank-based scoring over the named Hallmark 2026.1 collection with per-signature coverage reported; and limma/t-test on the 12x50 score matrix with BH across 50 signatures, control as the reference level, and mean-difference reported beside adjusted p. Weaknesses are minor: no explicit alpha is stated for the BH cut, the design formula is described rather than written, and the phrase that sample_01's depth will 'widen its size factor' is imprecise. The report step names versions, design, caveats, and the full table, so it is nearly complete."
+}

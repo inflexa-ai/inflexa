@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats the TPM-only delivery as a deconvolution problem, feeds linear TPM to EPIC and quanTIseq, keeps log2(TPM+1) confined to the QC ordination, keeps sample_01 with an explicit flag and a sensitivity check, and sets condition with control as reference and treated_vs_control as the named contrast with BH across cell-type tests at 0.05. Weaknesses: the between-group test is a limma moderated t on fractions/scores (pooling variance across cell types of different scales within a method is questionable versus the reference's plain Wilcoxon or t-test), the difference of group means is not stated as a reported effect beside the adjusted p, the QC does not report the share of each method's signature genes present in the 12000-gene matrix, and the report omits the stacked bar of fractions per sample. Multi-method consensus and tissue-reference caveats are well handled; enrichment is correctly omitted."
+}

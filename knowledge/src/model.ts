@@ -11,7 +11,7 @@
 
 import { z } from "zod";
 
-export const QuestionEnum = z.enum(["differential_expression", "enrichment", "qc", "full_plan"]);
+export const QuestionEnum = z.enum(["differential_expression", "enrichment", "qc", "full_plan", "tf_activity", "deconvolution", "coexpression", "clustering", "survival", "signature_scoring"]);
 export const ModalityEnum = z.enum(["bulk_rna_seq"]);
 export const DataStateEnum = z.enum(["fastq", "counts", "tpm_or_fpkm", "log_normalized"]);
 export const CountSourceEnum = z.enum(["salmon", "kallisto", "star_featurecounts", "rsem", "unknown"]);
@@ -31,8 +31,20 @@ export const StepTypeEnum = z.enum([
     "shrink_lfc",
     "multiple_testing",
     "enrichment",
+    "variance_partition",
+    "tf_activity",
+    "pathway_activity",
+    "signature_scoring",
+    "deconvolution",
+    "coexpression",
+    "clustering",
+    "survival",
+    "transcript_level",
+    "annotation",
     "report",
 ]);
+/** The analyses a caller adds to the walk of its question, in the order of the modality. */
+export const ExtraAnalysisEnum = z.enum(["variance_partition", "tf_activity", "pathway_activity", "signature_scoring", "deconvolution", "coexpression", "clustering", "survival", "transcript_level", "annotation"]);
 export const StrengthEnum = z.enum(["consensus", "common_practice", "disputed"]);
 export const EvidenceQualityEnum = z.enum(["high", "moderate", "low"]);
 export const RecommendationStrengthEnum = z.enum(["strong", "conditional"]);
@@ -65,6 +77,7 @@ export const SituationSchema = z.object({
     interaction: z.boolean().optional(),
     quality_flags: z.array(QualityFlagEnum).optional(),
     enrichment_input: EnrichmentInputEnum.optional(),
+    extra_analyses: z.array(ExtraAnalysisEnum).optional(),
 });
 export type Situation = z.infer<typeof SituationSchema>;
 
@@ -250,7 +263,7 @@ export const ModalitySchema = z.object({
     id: ModalityEnum,
     label: z.string().min(1),
     step_order: z.array(StepTypeEnum).min(1),
-    question_steps: z.record(QuestionEnum, z.array(StepTypeEnum)),
+    question_steps: z.partialRecord(QuestionEnum, z.array(StepTypeEnum)),
 });
 export type Modality = z.infer<typeof ModalitySchema>;
 

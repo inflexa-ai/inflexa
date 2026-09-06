@@ -1,0 +1,102 @@
+id: R-0111
+title: "Transcription factor activity from a contrast: decoupleR ulm on the Wald or moderated t statistic with the CollecTRI regulons"
+assertion: >-
+  When the plan asks for transcription factor activity from a contrast,
+  infer the activity with the decoupleR univariate linear model (ulm) on the
+  Wald statistic or the moderated t of every tested gene, not on the
+  significant genes only. Use the CollecTRI regulons with the sign of each
+  edge kept, because a repressor target must lower the score, not raise it.
+  Test a regulator only when at least five of its targets are among the
+  tested genes, and state the number of regulators that entered the test. The
+  multivariate model (mlm) is the second estimator, and both are among the
+  best methods of the benchmark.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: tf_activity
+  method: M-0035
+  parameters:
+    - name: activity_method
+      value: ulm
+      default_source: "doi:10.1093/bioadv/vbac016"
+    - name: activity_input
+      value: contrast_statistic_all_tested_genes
+      default_source: "doi:10.1093/bioadv/vbac016"
+    - name: regulon_collection
+      value: collectri_human
+      default_source: "doi:10.1093/nar/gkad841"
+    - name: min_regulon_size
+      value: 5
+      default_source: "doi:10.1093/bioadv/vbac016"
+    - name: edge_sign
+      value: keep_mode_of_regulation
+      default_source: "doi:10.1093/nar/gkad841"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0038
+    when: "The result must compare with a published DoRothEA analysis, or a reader asks for the confidence level of each interaction: the DoRothEA regulons of confidence A to C."
+  - method: M-0037
+    when: "The question asks for a sequence-level complement: scan the promoters of the DE genes for the JASPAR motifs against a background of the promoters of the other tested genes."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0091
+    paraphrase: >-
+      decoupleR gives one interface to several activity estimators, among
+      them the univariate and the multivariate linear model, that take a
+      gene-level statistic and a prior network with the mode of regulation
+      and the weight of each edge. In the benchmark on perturbation
+      experiments the simple linear models and the consensus of the top
+      methods predict the perturbed regulators better than the other methods.
+    anchor: "Abstract; Results, Benchmark of the methods; Methods, Statistical methods"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0092
+    paraphrase: >-
+      CollecTRI merges the transcription factor and target interactions of
+      several resources into one signed network for 1186 regulators, with a
+      workflow that assigns the sign of regulation to each interaction. On the
+      benchmark of perturbation experiments the signed CollecTRI regulons
+      outperform the other public collections of regulatory interactions,
+      among them DoRothEA.
+    anchor: "Abstract; Results, Benchmark of CollecTRI"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0093
+    paraphrase: >-
+      The benchmark compares the sources of a regulon for 1541 human
+      transcription factors, curated repositories, ChIP-seq, motif
+      predictions, and reverse-engineered regulons, on three reference data
+      sets. It finds little overlap between the sources, and the best
+      performance from the curated interactions, then from ChIP-seq.
+    anchor: "Abstract; Results, Benchmark of the resources"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0096
+    paraphrase: >-
+      The benchmark on simulated and real single-cell data finds that
+      DoRothEA and PROGENy perform on that data as on the bulk data they come
+      from, and that the performance of the tools is more sensitive to the
+      gene sets than to the statistic.
+    anchor: "Abstract; Results, Robustness of the tools"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [tf-activity, decoupler, collectri, method-selection]

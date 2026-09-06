@@ -1,0 +1,61 @@
+id: R-0164
+title: "Human gene list: Disease Ontology over-representation with DOSE as a complement to GO, with the same universe rules"
+assertion: >-
+  For a discrete list of human genes, run a Disease Ontology
+  over-representation with DOSE beside the Gene Ontology analysis. Use the
+  same universe as the GO analysis, the tested genes and not the genome, and
+  the same Entrez gene identifiers, and reduce the redundant terms by their
+  semantic similarity before the report. The Disease Ontology is a human
+  vocabulary, thus the analysis does not apply to a mouse list without an
+  ortholog map. Report the release of the ontology and the size window of
+  the term sets, and do not present a disease term as a diagnosis of the
+  samples.
+modality: bulk_rna_seq
+conditions:
+  - field: enrichment_input
+    op: eq
+    value: gene_list
+  - field: organism
+    op: eq
+    value: human
+action:
+  step_type: enrichment
+  method: M-0058
+  parameters:
+    - name: disease_ontology_ora
+      value: enrichDO_same_universe_as_go
+      default_source: "doi:10.1093/bioinformatics/btu684"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0126
+    paraphrase: >-
+      DOSE gives an over-representation test and a gene set enrichment test
+      of a human gene list against the Disease Ontology terms, with the
+      Entrez gene identifiers as the key, and it computes a semantic
+      similarity between disease terms and between genes.
+    anchor: "Abstract; Implementation, Enrichment analysis; Semantic similarity"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0053
+    paraphrase: >-
+      clusterProfiler and DOSE share one enrichment framework, where the
+      over-representation test takes a gene list, a universe, and a
+      term-to-gene map, and the same universe rule applies to each
+      ontology.
+    anchor: "Introduction; Implementation"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [enrichment, disease-ontology, human]

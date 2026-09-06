@@ -1,0 +1,18 @@
+id: M-0055
+label: "Penalized logistic classifier with glmnet, nested cross-validation, and a pROC curve"
+description: >-
+  A lasso or elastic net logistic regression of a sample class on the
+  expression matrix. An inner cross-validation selects the lambda and an
+  outer cross-validation measures the performance, thus no sample is in the
+  training set of the model that predicts it. pROC computes the ROC curve and
+  the area under it with a confidence interval from the outer predictions.
+packages:
+  - name: glmnet
+    track: cran
+    version_range: ">=4.1"
+  - name: pROC
+    track: cran
+    version_range: ">=1.18"
+  - name: scikit-learn
+    track: python
+    version_range: ">=1.3"

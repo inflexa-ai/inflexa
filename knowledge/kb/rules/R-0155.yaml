@@ -1,0 +1,64 @@
+id: R-0155
+title: "A classifier of a sample class from expression: penalized logistic regression with nested cross-validation and a ROC with its confidence interval"
+assertion: >-
+  To classify a sample into one of two or more classes from its expression,
+  fit a penalized logistic regression with glmnet on the log-scale expression
+  of the tested genes. Never estimate the performance on the samples that
+  trained the model. Select the lambda in an inner cross-validation and
+  measure the performance in an outer cross-validation, thus each prediction
+  comes from a model that did not see that sample. Report the ROC curve and
+  the area under it with a confidence interval from the outer predictions,
+  and report the genes with a nonzero coefficient. With few samples per
+  class, state that the interval is wide and that the gene set is unstable
+  across folds. A per-sample signature score is a different task, and this
+  rule applies only when the question is a classifier of the samples.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: signature_scoring
+  parameters:
+    - name: classifier_model
+      value: penalized_logistic_regression
+      default_source: "doi:10.18637/jss.v033.i01"
+    - name: classifier_validation
+      value: nested_cross_validation
+      default_source: "rule:R-0155"
+    - name: classifier_performance
+      value: roc_auc_with_confidence_interval
+      default_source: "doi:10.1186/1471-2105-12-77"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0115
+    paraphrase: >-
+      The paper fits the lasso and the elastic net for the logistic and the
+      multinomial regression by coordinate descent over a regularization
+      path, for problems with many more predictors than samples, and it
+      selects the lambda by cross-validation.
+    anchor: "Introduction; Logistic regression; Multinomial regression; Cross-validation"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0117
+    paraphrase: >-
+      pROC computes the ROC curve and the area under it for a binary
+      classifier, gives a confidence interval for the area by bootstrap or by
+      the DeLong method, and compares two ROC curves with a test.
+    anchor: "Abstract; Implementation; Confidence intervals; Comparison of two ROC curves"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [classifier, prediction, cross-validation, needs-source]

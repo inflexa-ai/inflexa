@@ -41,6 +41,12 @@ enums:
       enrichment: {}
       qc: {}
       full_plan: {}
+      tf_activity: {}
+      deconvolution: {}
+      coexpression: {}
+      clustering: {}
+      survival: {}
+      signature_scoring: {}
 
   ModalityEnum:
     permissible_values:
@@ -118,7 +124,31 @@ enums:
       shrink_lfc: {}
       multiple_testing: {}
       enrichment: {}
+      variance_partition: {}
+      tf_activity: {}
+      pathway_activity: {}
+      signature_scoring: {}
+      deconvolution: {}
+      coexpression: {}
+      clustering: {}
+      survival: {}
+      transcript_level: {}
+      annotation: {}
       report: {}
+
+  ExtraAnalysisEnum:
+    description: An analysis a caller adds to the walk of its question.
+    permissible_values:
+      variance_partition: {}
+      tf_activity: {}
+      pathway_activity: {}
+      signature_scoring: {}
+      deconvolution: {}
+      coexpression: {}
+      clustering: {}
+      survival: {}
+      transcript_level: {}
+      annotation: {}
 
   StrengthEnum:
     permissible_values:
@@ -246,6 +276,10 @@ classes:
       enrichment_input:
         description: What the enrichment step takes. Absent when the question is not enrichment.
         range: EnrichmentInputEnum
+      extra_analyses:
+        description: The analyses the caller adds to the walk of its question.
+        range: ExtraAnalysisEnum
+        multivalued: true
       interaction:
         description: True when the question is an interaction between two factors.
         range: boolean

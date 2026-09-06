@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 1,
+    "low_count_filter": 1,
+    "normalization": 1,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 3
+  },
+  "rationale": "The planner reached the correct outcome: it recognized that a gene-level count matrix carries no isoform information, refused to fit a gene-level model as an answer to a transcript-usage question, and asked for the Salmon quant.sf files or a transcript matrix with a transcript-to-gene map, naming DRIMSeq/DEXSeq as the method of record. It fell short of the reference by not requesting the annotation version or effective lengths, and by not sketching the downstream plan (tximport scaledTPM, dmFilter, gene- and transcript-level tests, stageR at overall FDR 0.05, handling of the shallow sample_01), so nothing is stated for QC, filtering, normalization, design/contrast, or multiple testing. Enrichment is correctly omitted. The clarification message itself explains the design limitation clearly, which earns partial credit on report completeness."
+}

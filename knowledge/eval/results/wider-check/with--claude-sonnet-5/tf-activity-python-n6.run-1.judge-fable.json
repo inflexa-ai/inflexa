@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan stays in Python (pydeseq2 Wald test, decoupler ulm on the full Wald statistic against the locally staged CollecTRI 2.0 with signed edges, minimum regulon size 5, BH across regulators), which matches the reference's core inference; the QC, the >=10-in-6 filter, in-model median-of-ratios normalization, explicit vehicle reference level, BH at 0.05 with apeglm-style shrinkage kept separate from the unshrunken stat are all stated and specific to the 6-vs-6 single-batch design. It lacks the reference's per-sample activity matrix with a replicate-level test and heatmap, so consistency across replicates is not shown, and it names a DoRothEA .rda fallback that is an R serialization. The added Hallmark GSEA is optional but correctly specified (stat ranking, 15-500 window, named version, BH). The report step covers versions, design, thresholds and caveats but does not explicitly commit to reporting the number of regulators tested."
+}

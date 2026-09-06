@@ -85,6 +85,18 @@ export function centralStep(question: Situation["question"]): StepType {
             return "enrichment";
         case "qc":
             return "qc_sample_structure";
+        case "tf_activity":
+            return "tf_activity";
+        case "deconvolution":
+            return "deconvolution";
+        case "coexpression":
+            return "coexpression";
+        case "clustering":
+            return "clustering";
+        case "survival":
+            return "survival";
+        case "signature_scoring":
+            return "signature_scoring";
         default: {
             const unreachable: never = question;
             throw new Error(`unhandled question: ${String(unreachable)}`);
@@ -162,7 +174,10 @@ function flagOf(rule: Rule, claim: string): ProcedureFlag | undefined {
 }
 
 export function assembleProcedure(applicable: readonly MatchedRule[], situation: Situation, modality: Modality, catalog: Catalog, preferences?: Preferences): AssembledProcedure {
-    const walk = modality.question_steps[situation.question] ?? modality.step_order;
+    const base = modality.question_steps[situation.question] ?? modality.step_order;
+    // An extra analysis the caller asks for joins the walk at its place in the step order.
+    const extra = new Set<string>(situation.extra_analyses ?? []);
+    const walk = extra.size === 0 ? base : modality.step_order.filter((step) => base.includes(step) || extra.has(step));
     const steps: ProcedureStep[] = [];
     const uncovered: StepType[] = [];
     let flagged = false;

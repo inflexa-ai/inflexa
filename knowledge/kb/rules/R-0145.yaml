@@ -1,0 +1,49 @@
+id: R-0145
+title: "UMAP and t-SNE give a picture of the samples, never a claim of a cluster or of a distance"
+assertion: >-
+  A UMAP or a t-SNE embedding of the samples is a picture. Draw it only
+  beside the PCA, and read it only as a view. The embedding does not keep
+  the distances between the samples, the size of a gap between two groups
+  on the picture is not a measure of their difference, and the picture
+  changes with the seed, the number of neighbors, and the perplexity. Do not
+  claim a cluster, a subgroup, or a distance from the embedding. Make such a
+  claim only from a clustering with a stated method and a stability
+  estimate, or from a distance on the variance-stabilized values. State the
+  seed and the parameters of the embedding in the report.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: clustering
+  parameters:
+    - name: embedding_use
+      value: picture_only_no_cluster_or_distance_claim
+      default_source: "doi:10.48550/arXiv.1802.03426"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:citesAsAuthority
+    source: S-0139
+    paraphrase: >-
+      UMAP builds a fuzzy topological representation of the local
+      neighborhoods of the points and optimizes a low-dimensional layout
+      that matches this local structure. The paper presents the method as a
+      tool for visualization and general dimension reduction, states that it
+      keeps the local structure and only part of the global structure, and
+      shows that the layout depends on the number of neighbors and on the
+      minimum distance parameter.
+    anchor: "Abstract; Introduction; Hyper-parameters; Weaknesses"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [clustering, sample-structure, embedding]

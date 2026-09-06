@@ -1,0 +1,852 @@
+{
+  "campaign": "wider-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "pathway-activity-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T07:38:08.542Z",
+  "elapsedMs": 226236,
+  "outcome": "plan_submitted",
+  "planId": "pln-5118ecf6",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and low-depth sample characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A library-size difference alone is not a valid removal reason — DESeq2 size factors already account for depth"
+        ],
+        "context": "Input: counts.csv (12000 genes x 13 cols incl. gene symbol; 12 samples) and metadata.csv (12 samples x condition). Design: 6 cytokine-treated vs 6 vehicle, unpaired, single batch. sample_01 has library size ~4x below the median.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 12 bronchial epithelium samples (6 cytokine-treated vs 6 vehicle) separate by condition on PCA/sample-distance structure, and how does the flagged low-depth sample sample_01 (~4x below median library size) behave relative to its group — is there a stated reason to exclude it or should it be kept and down-weighted by DESeq2's size factors?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC with explicit low-depth-sample handling per R-0033/R-0008",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Do not remove sample_01 silently or by default; only with a stated reason from the QC evidence",
+          "Use vst(blind=TRUE) for the exploratory PCA/heatmap, not the design-aware transform"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the raw count matrix (12000 genes x 12 samples) and PCA run on the top 500 most variable genes",
+          "Sample-to-sample Euclidean distance heatmap produced, colored by condition",
+          "Library size (total counts) and detected-gene count reported per sample, with sample_01 explicitly compared to the cohort median",
+          "Explicit decision stated (keep vs exclude sample_01) with justification tied to its PCA/clustering position, not depth alone"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: cytokine-treated vs vehicle",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 replicates per group, DESeq2 flags count outliers via Cook's distance and sets padj to NA for affected genes in that condition cell — report these separately from independent-filtering NAs"
+        ],
+        "context": "12000 x 12 raw Salmon gene-level counts. sample_01 kept unless T1S1 established a stated reason to exclude it; if kept, its low depth is handled through its DESeq2 size factor.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes are differentially expressed between cytokine-stimulated and vehicle-treated bronchial epithelial samples, using DESeq2 with median-of-ratios normalization, a minimal pre-filter, and apeglm-shrunken log2 fold changes, with vehicle set as the explicit reference level?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248",
+            "R-0036@9786",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald + apeglm is the grounded DE method for 6-vs-6 unpaired raw counts",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not pre-normalize counts before DESeq2 — normalization is internal via median-of-ratios size factors",
+          "Rank/report genes by shrunken LFC for tables and plots but keep unshrunken p-values from the Wald test"
+        ],
+        "acceptance_criteria": [
+          "Pre-filter keeps genes with >=10 counts in >=6 samples (the smallest group size)",
+          "DESeq2 design ~condition with condition releveled so 'vehicle'/'control' is the reference; contrast named explicitly as condition, cytokine, vehicle",
+          "Wald test run; apeglm shrinkage applied to the treated-vs-vehicle coefficient; unshrunken LFC, shrunken LFC, and lfcSE all reported in the gene table",
+          "BH-adjusted p-values reported at alpha=0.05 with independent filtering on; p-value histogram inspected and reported",
+          "MA plot and dispersion plot produced as fit diagnostics",
+          "Full results table (all tested genes, including the Wald statistic column) exported for downstream footprint/enrichment steps"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Signaling pathway activity by transcriptional footprint (PROGENy + decoupleR mlm)",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "decoupleR's PROGENy activity is a prior-knowledge footprint inference; it does not use pathway topology (SPIA-style) — state this limitation",
+          "If sample_01 was retained in T1S2, its down-weighted contribution still flows through the Wald statistic used here"
+        ],
+        "context": "PROGENy human pathway weights are available in the reference store as an R serialized data frame (model_human_full: columns gene, weight, p.value, pathway) at /mnt/refs/managed/progeny-human/current/model_human_full.rda. If working in Python, load via rpy2 or an R helper step and export to CSV with source/target/weight columns for decoupler's Python API.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler"
+        ],
+        "question": "Using the PROGENy footprint model (14 signaling pathways: EGFR, MAPK, JAK-STAT, NFkB, PI3K, TNFa, TGFb, Hypoxia, p53, VEGF, WNT, Trail, Androgen, Estrogen), which pathways show a significant transcriptional footprint of activation or repression in cytokine-treated versus vehicle bronchial epithelium — judged by the coordinated response of each pathway's weighted responsive-gene set on the DESeq2 Wald statistic, NOT by whether individual pathway member genes are simply up- or down-regulated?",
+        "grounding": {
+          "claims": [
+            "R-0115@1504",
+            "R-0122@08af"
+          ],
+          "reason": "PROGENy + decoupleR mlm is the grounded footprint-based pathway activity method; environment confirms decoupleR 2.2.0 present and progeny-human reference staged",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-progeny-pathway-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "pathway_activity",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the Wald statistic column (not raw or shrunken LFC) as the gene-level input to mlm, per the ranking-metric rule chosen for this plan",
+          "Use top 100-500 responsive genes per pathway as PROGENy defines them; state the number used",
+          "Read the report as a footprint statement about the pathway, not a claim about individual member gene expression"
+        ],
+        "acceptance_criteria": [
+          "PROGENy human model (per-gene weights for 14 pathways, top 500 most responsive genes per pathway) loaded from the reference store and joined to the full DESeq2 results table by gene symbol",
+          "decoupleR multivariate linear model (mlm) run on the Wald statistic of every tested gene (not just significant genes)",
+          "One activity score (t-value/statistic) and p-value per pathway reported, BH-adjusted across the 14 pathways",
+          "Report explicitly distinguishes footprint activity from raw expression of pathway member genes (state that a member gene can be unchanged while pathway activity shifts, and vice versa)",
+          "State the PROGENy model version/source and the number of responsive genes per pathway actually present in the tested-gene set"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Transcription factor activity by footprint (CollecTRI + decoupleR ulm)",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A prior-knowledge network is tissue-agnostic: a TF acting specifically in bronchial epithelium but absent/weak in the generic CollecTRI curation could be missed"
+        ],
+        "context": "CollecTRI human regulatory network is available in the reference store as a CSV (source, target, weight, provenance columns) at /mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv, ready to pass directly as decoupler's network argument.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler"
+        ],
+        "question": "Which transcription factors show significant activity change (by target-gene footprint on the CollecTRI regulons) between cytokine-treated and vehicle bronchial epithelium — identifying the upstream regulators (e.g., NF-kB, STAT, IRF family members expected under cytokine stimulation) whose footprint, not their own expression, marks them as active?",
+        "grounding": {
+          "claims": [
+            "R-0111@b668",
+            "R-0113@7a4d",
+            "R-0121@5f27"
+          ],
+          "reason": "CollecTRI + decoupleR ulm is the grounded TF-activity method for a small unpaired cohort where de novo network inference is unsound",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-decoupler-tf-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "tf_activity",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the Wald statistic as the gene-level input, consistent with the pathway activity step",
+          "Do not attempt an ARACNe/VIPER-style tissue-specific network inference — the cohort (6 vs 6) is far too small for de novo network inference; CollecTRI prior-knowledge regulons are the only sound source here"
+        ],
+        "acceptance_criteria": [
+          "CollecTRI human regulons (source TF, target gene, signed weight) loaded from the reference store",
+          "decoupleR univariate linear model (ulm) run on the Wald statistic of every tested gene",
+          "Only TFs with >=5 targets present among tested genes are scored; number of TFs entering the test is reported",
+          "Signed activity score and BH-adjusted p-value reported per TF; edge sign (activating/repressing) preserved from CollecTRI",
+          "Top activated and top repressed TFs highlighted and cross-referenced against the pathway activity results from T2S1 for biological consistency (e.g., NFkB pathway activity alongside NFKB1/RELA TF activity)"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Preranked GSEA on Hallmark, Reactome, and WikiPathways (membership-based enrichment for comparison)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment method and gene-set collection choice both change the result; this is a hypothesis-generating view for comparison with the footprint methods, not the primary conclusion of pathway activity"
+        ],
+        "context": "Reference gene sets available in the reference store: MSigDB Hallmark human (50 sets, h.all.v2026.1.Hs.symbols.gmt), Reactome pathways (ReactomePathways.gmt, filterable to human via ReactomePathways.txt), and WikiPathways human (wikipathways_Homo_sapiens.gmt, '%'-delimited descriptor to split for set name).",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea"
+        ],
+        "question": "Which MSigDB Hallmark, Reactome, and WikiPathways gene sets are enriched among genes ranked by the cytokine-vs-vehicle Wald statistic — providing the classic membership/over-representation-style enrichment view to explicitly contrast against the footprint-based PROGENy/CollecTRI results?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0045@f652",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "fgsea preranked on Hallmark then Reactome/WikiPathways is the grounded membership-based enrichment complement, contrasted against footprint activity per the research question",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Rank on the Wald statistic ('stat' column), consistent with the other activity steps",
+          "Do not run over-representation analysis on a short significant-gene list if fewer than ~50 genes pass padj<0.05 — use the full ranked list method instead",
+          "Keep each gene-set collection's results and adjustment separate; do not merge collections into one p-value pool"
+        ],
+        "acceptance_criteria": [
+          "Full list of tested genes (post-filter) ranked by the DESeq2 Wald statistic, no pre-thresholding",
+          "fgsea preranked run against MSigDB Hallmark human (50 sets), then separately against Reactome human pathways and WikiPathways human, each with min_size=15, max_size=500 after intersecting with tested genes",
+          "BH-adjusted p-values per collection reported separately (not merged/pooled across collections)",
+          "Redundant/overlapping significant sets collapsed to representatives; leading-edge genes reported for each significant set",
+          "Report states the collection releases used, the ranking metric, and explicitly notes that this ORA/GSEA-style result reflects gene membership overlap and may diverge from the footprint-based pathway/TF activity results"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Integrated report: DE, footprint pathway/TF activity, membership enrichment, and QC caveats",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "No external validation cohort is used; conclusions are internal to this 6-vs-6 dataset"
+        ],
+        "context": "Synthesizes outputs of all prior steps into one report answering the research question, which explicitly asks for footprint-based pathway activity rather than membership expression, on the cytokine-vs-vehicle bronchial epithelium contrast.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the integrated answer to which signaling pathways are active in cytokine-treated versus vehicle bronchial epithelial samples by transcriptional footprint, how does this compare with classic gene-set enrichment on the same contrast, and what is the impact of the low-depth sample_01 on these conclusions?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report step has no single method rule; grounded by the reporting rules of each upstream step it aggregates",
+          "status": "ungrounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S1",
+          "T1S2",
+          "T2S1",
+          "T2S2",
+          "T2S3"
+        ],
+        "constraints": [
+          "Do not present the fgsea membership-based result as equivalent to the PROGENy footprint result — state the methodological difference explicitly, as the research question requires"
+        ],
+        "acceptance_criteria": [
+          "Report states DESeq2/apeglm/decoupleR/fgsea versions, the design formula, the reference level, the contrast, alpha=0.05, number of genes tested and number DE",
+          "PROGENy pathway activity table (14 pathways, activity score, adjusted p) presented as the primary answer to the research question, explicitly labeled as footprint-based",
+          "CollecTRI TF activity table presented as the upstream-regulator complement",
+          "fgsea Hallmark/Reactome/WikiPathways results presented side by side with the footprint results, with explicit discussion of agreement/disagreement between footprint-based and membership-based pathway calls",
+          "sample_01's library size, QC disposition (kept/excluded and why), and its influence on the DE and downstream activity results explicitly discussed",
+          "Reproducibility record included: session info, package versions, reference collection versions/releases, and any random seeds used"
+        ]
+      }
+    ],
+    "title": "Bronchial epithelium cytokine vs vehicle: pathway footprint activity",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The research question asks which signaling pathways show a transcriptional footprint of activity in cytokine-treated versus vehicle bronchial epithelial samples (6 vs 6, unpaired, single batch, raw Salmon gene counts), explicitly contrasting footprint-based inference against simple pathway-member expression. The plan follows the grounded procedure: QC first to characterize the flagged low-depth sample (sample_01, ~4x below median library size) without silently dropping it; DESeq2 Wald test with apeglm shrinkage for the differential expression backbone that every downstream footprint method consumes; then two complementary footprint-based activity analyses using decoupleR — mlm on the PROGENy signaling-pathway weight model (the direct answer to 'which signaling pathways are active by footprint, not by membership') and ulm on the CollecTRI TF regulons (upstream regulators driving the same footprint, since cytokine signaling acts through TFs like NF-kB/STAT/IRF). A parallel fgsea preranked GSEA on Hallmark/Reactome/WikiPathways gives a membership-based enrichment view explicitly to contrast against the footprint results, closing the loop the question asks about. All activity/enrichment steps rank on the DESeq2 Wald statistic from the full tested-gene list (never a thresholded list), per the grounded ranking-metric rule. A final report step integrates DE, pathway/TF footprint activity, enrichment, and the sample_01 QC caveat."
+  },
+  "usage": {
+    "inputTokens": 685967,
+    "outputTokens": 8937,
+    "cacheCreationInputTokens": 192763,
+    "cacheReadInputTokens": 493120,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "tf_activity",
+          "pathway_activity"
+        ],
+        "enrichment_input": "ranked_list"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "decoupler PROGENy dorothea CollecTRI human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathway-activity"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "progeny"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "annotation package Ensembl org.Hs"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR",
+          "fgsea",
+          "DESeq2",
+          "apeglm",
+          "org.Hs.eg.db",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "tf_activity",
+          "pathway_activity"
+        ],
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA + sample distance heatmap + library size QC on sample_01",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >=6 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~condition, explicit reference level = control",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage of the treated-vs-control coefficient",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "decoupleR mlm on PROGENy human footprint model, contrast Wald statistic of all tested genes",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "decoupleR ulm on CollecTRI human regulons, contrast Wald statistic of all tested genes",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the Wald statistic, MSigDB Hallmark human then Reactome and WikiPathways",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "integrated report: DE table, pathway/TF activity, enrichment, QC diagnostics, sample_01 caveat",
+            "package": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Bronchial epithelium cytokine vs vehicle: pathway footprint activity",
+          "analytical_narrative": "The research question asks which signaling pathways show a transcriptional footprint of activity in cytokine-treated versus vehicle bronchial epithelial samples (6 vs 6, unpaired, single batch, raw Salmon gene counts), explicitly contrasting footprint-based inference against simple pathway-member expression. The plan follows the grounded procedure: QC first to characterize the flagged low-depth sample (sample_01, ~4x below median library size) without silently dropping it; DESeq2 Wald test with apeglm shrinkage for the differential expression backbone that every downstream footprint method consumes; then two complementary footprint-based activity analyses using decoupleR — mlm on the PROGENy signaling-pathway weight model (the direct answer to 'which signaling pathways are active by footprint, not by membership') and ulm on the CollecTRI TF regulons (upstream regulators driving the same footprint, since cytokine signaling acts through TFs like NF-kB/STAT/IRF). A parallel fgsea preranked GSEA on Hallmark/Reactome/WikiPathways gives a membership-based enrichment view explicitly to contrast against the footprint results, closing the loop the question asks about. All activity/enrichment steps rank on the DESeq2 Wald statistic from the full tested-gene list (never a thresholded list), per the grounded ranking-metric rule. A final report step integrates DE, pathway/TF footprint activity, enrichment, and the sample_01 QC caveat.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and low-depth sample characterization",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 12 bronchial epithelium samples (6 cytokine-treated vs 6 vehicle) separate by condition on PCA/sample-distance structure, and how does the flagged low-depth sample sample_01 (~4x below median library size) behave relative to its group — is there a stated reason to exclude it or should it be kept and down-weighted by DESeq2's size factors?",
+              "acceptance_criteria": [
+                "Blind VST computed on the raw count matrix (12000 genes x 12 samples) and PCA run on the top 500 most variable genes",
+                "Sample-to-sample Euclidean distance heatmap produced, colored by condition",
+                "Library size (total counts) and detected-gene count reported per sample, with sample_01 explicitly compared to the cohort median",
+                "Explicit decision stated (keep vs exclude sample_01) with justification tied to its PCA/clustering position, not depth alone"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: counts.csv (12000 genes x 13 cols incl. gene symbol; 12 samples) and metadata.csv (12 samples x condition). Design: 6 cytokine-treated vs 6 vehicle, unpaired, single batch. sample_01 has library size ~4x below the median.",
+              "constraints": [
+                "Do not remove sample_01 silently or by default; only with a stated reason from the QC evidence",
+                "Use vst(blind=TRUE) for the exploratory PCA/heatmap, not the design-aware transform"
+              ],
+              "caveats": [
+                "A library-size difference alone is not a valid removal reason — DESeq2 size factors already account for depth"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC with explicit low-depth-sample handling per R-0033/R-0008"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: cytokine-treated vs vehicle",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between cytokine-stimulated and vehicle-treated bronchial epithelial samples, using DESeq2 with median-of-ratios normalization, a minimal pre-filter, and apeglm-shrunken log2 fold changes, with vehicle set as the explicit reference level?",
+              "acceptance_criteria": [
+                "Pre-filter keeps genes with >=10 counts in >=6 samples (the smallest group size)",
+                "DESeq2 design ~condition with condition releveled so 'vehicle'/'control' is the reference; contrast named explicitly as condition, cytokine, vehicle",
+                "Wald test run; apeglm shrinkage applied to the treated-vs-vehicle coefficient; unshrunken LFC, shrunken LFC, and lfcSE all reported in the gene table",
+                "BH-adjusted p-values reported at alpha=0.05 with independent filtering on; p-value histogram inspected and reported",
+                "MA plot and dispersion plot produced as fit diagnostics",
+                "Full results table (all tested genes, including the Wald statistic column) exported for downstream footprint/enrichment steps"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 x 12 raw Salmon gene-level counts. sample_01 kept unless T1S1 established a stated reason to exclude it; if kept, its low depth is handled through its DESeq2 size factor.",
+              "constraints": [
+                "Do not pre-normalize counts before DESeq2 — normalization is internal via median-of-ratios size factors",
+                "Rank/report genes by shrunken LFC for tables and plots but keep unshrunken p-values from the Wald test"
+              ],
+              "caveats": [
+                "With 6 replicates per group, DESeq2 flags count outliers via Cook's distance and sets padj to NA for affected genes in that condition cell — report these separately from independent-filtering NAs"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0030@2248",
+                  "R-0036@9786",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "DESeq2 Wald + apeglm is the grounded DE method for 6-vs-6 unpaired raw counts"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Signaling pathway activity by transcriptional footprint (PROGENy + decoupleR mlm)",
+              "track": "T2",
+              "step_type": "pathway_activity",
+              "question": "Using the PROGENy footprint model (14 signaling pathways: EGFR, MAPK, JAK-STAT, NFkB, PI3K, TNFa, TGFb, Hypoxia, p53, VEGF, WNT, Trail, Androgen, Estrogen), which pathways show a significant transcriptional footprint of activation or repression in cytokine-treated versus vehicle bronchial epithelium — judged by the coordinated response of each pathway's weighted responsive-gene set on the DESeq2 Wald statistic, NOT by whether individual pathway member genes are simply up- or down-regulated?",
+              "acceptance_criteria": [
+                "PROGENy human model (per-gene weights for 14 pathways, top 500 most responsive genes per pathway) loaded from the reference store and joined to the full DESeq2 results table by gene symbol",
+                "decoupleR multivariate linear model (mlm) run on the Wald statistic of every tested gene (not just significant genes)",
+                "One activity score (t-value/statistic) and p-value per pathway reported, BH-adjusted across the 14 pathways",
+                "Report explicitly distinguishes footprint activity from raw expression of pathway member genes (state that a member gene can be unchanged while pathway activity shifts, and vice versa)",
+                "State the PROGENy model version/source and the number of responsive genes per pathway actually present in the tested-gene set"
+              ],
+              "packages": [
+                "decoupler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "context": "PROGENy human pathway weights are available in the reference store as an R serialized data frame (model_human_full: columns gene, weight, p.value, pathway) at /mnt/refs/managed/progeny-human/current/model_human_full.rda. If working in Python, load via rpy2 or an R helper step and export to CSV with source/target/weight columns for decoupler's Python API.",
+              "constraints": [
+                "Use the Wald statistic column (not raw or shrunken LFC) as the gene-level input to mlm, per the ranking-metric rule chosen for this plan",
+                "Use top 100-500 responsive genes per pathway as PROGENy defines them; state the number used",
+                "Read the report as a footprint statement about the pathway, not a claim about individual member gene expression"
+              ],
+              "caveats": [
+                "decoupleR's PROGENy activity is a prior-knowledge footprint inference; it does not use pathway topology (SPIA-style) — state this limitation",
+                "If sample_01 was retained in T1S2, its down-weighted contribution still flows through the Wald statistic used here"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0115@1504",
+                  "R-0122@08af"
+                ],
+                "template": "tpl-progeny-pathway-activity@1.0.0",
+                "reason": "PROGENy + decoupleR mlm is the grounded footprint-based pathway activity method; environment confirms decoupleR 2.2.0 present and progeny-human reference staged"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Transcription factor activity by footprint (CollecTRI + decoupleR ulm)",
+              "track": "T2",
+              "step_type": "tf_activity",
+              "question": "Which transcription factors show significant activity change (by target-gene footprint on the CollecTRI regulons) between cytokine-treated and vehicle bronchial epithelium — identifying the upstream regulators (e.g., NF-kB, STAT, IRF family members expected under cytokine stimulation) whose footprint, not their own expression, marks them as active?",
+              "acceptance_criteria": [
+                "CollecTRI human regulons (source TF, target gene, signed weight) loaded from the reference store",
+                "decoupleR univariate linear model (ulm) run on the Wald statistic of every tested gene",
+                "Only TFs with >=5 targets present among tested genes are scored; number of TFs entering the test is reported",
+                "Signed activity score and BH-adjusted p-value reported per TF; edge sign (activating/repressing) preserved from CollecTRI",
+                "Top activated and top repressed TFs highlighted and cross-referenced against the pathway activity results from T2S1 for biological consistency (e.g., NFkB pathway activity alongside NFKB1/RELA TF activity)"
+              ],
+              "packages": [
+                "decoupler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "context": "CollecTRI human regulatory network is available in the reference store as a CSV (source, target, weight, provenance columns) at /mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv, ready to pass directly as decoupler's network argument.",
+              "constraints": [
+                "Use the Wald statistic as the gene-level input, consistent with the pathway activity step",
+                "Do not attempt an ARACNe/VIPER-style tissue-specific network inference — the cohort (6 vs 6) is far too small for de novo network inference; CollecTRI prior-knowledge regulons are the only sound source here"
+              ],
+              "caveats": [
+                "A prior-knowledge network is tissue-agnostic: a TF acting specifically in bronchial epithelium but absent/weak in the generic CollecTRI curation could be missed"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0111@b668",
+                  "R-0113@7a4d",
+                  "R-0121@5f27"
+                ],
+                "template": "tpl-decoupler-tf-activity@1.0.0",
+                "reason": "CollecTRI + decoupleR ulm is the grounded TF-activity method for a small unpaired cohort where de novo network inference is unsound"
+              }
+            },
+            {
+              "id": "T2S3",
+              "name": "Preranked GSEA on Hallmark, Reactome, and WikiPathways (membership-based enrichment for comparison)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB Hallmark, Reactome, and WikiPathways gene sets are enriched among genes ranked by the cytokine-vs-vehicle Wald statistic — providing the classic membership/over-representation-style enrichment view to explicitly contrast against the footprint-based PROGENy/CollecTRI results?",
+              "acceptance_criteria": [
+                "Full list of tested genes (post-filter) ranked by the DESeq2 Wald statistic, no pre-thresholding",
+                "fgsea preranked run against MSigDB Hallmark human (50 sets), then separately against Reactome human pathways and WikiPathways human, each with min_size=15, max_size=500 after intersecting with tested genes",
+                "BH-adjusted p-values per collection reported separately (not merged/pooled across collections)",
+                "Redundant/overlapping significant sets collapsed to representatives; leading-edge genes reported for each significant set",
+                "Report states the collection releases used, the ranking metric, and explicitly notes that this ORA/GSEA-style result reflects gene membership overlap and may diverge from the footprint-based pathway/TF activity results"
+              ],
+              "packages": [
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Reference gene sets available in the reference store: MSigDB Hallmark human (50 sets, h.all.v2026.1.Hs.symbols.gmt), Reactome pathways (ReactomePathways.gmt, filterable to human via ReactomePathways.txt), and WikiPathways human (wikipathways_Homo_sapiens.gmt, '%'-delimited descriptor to split for set name).",
+              "constraints": [
+                "Rank on the Wald statistic ('stat' column), consistent with the other activity steps",
+                "Do not run over-representation analysis on a short significant-gene list if fewer than ~50 genes pass padj<0.05 — use the full ranked list method instead",
+                "Keep each gene-set collection's results and adjustment separate; do not merge collections into one p-value pool"
+              ],
+              "caveats": [
+                "Enrichment method and gene-set collection choice both change the result; this is a hypothesis-generating view for comparison with the footprint methods, not the primary conclusion of pathway activity"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0045@f652",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "fgsea preranked on Hallmark then Reactome/WikiPathways is the grounded membership-based enrichment complement, contrasted against footprint activity per the research question"
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Integrated report: DE, footprint pathway/TF activity, membership enrichment, and QC caveats",
+              "track": "T3",
+              "step_type": "report",
+              "question": "What is the integrated answer to which signaling pathways are active in cytokine-treated versus vehicle bronchial epithelial samples by transcriptional footprint, how does this compare with classic gene-set enrichment on the same contrast, and what is the impact of the low-depth sample_01 on these conclusions?",
+              "acceptance_criteria": [
+                "Report states DESeq2/apeglm/decoupleR/fgsea versions, the design formula, the reference level, the contrast, alpha=0.05, number of genes tested and number DE",
+                "PROGENy pathway activity table (14 pathways, activity score, adjusted p) presented as the primary answer to the research question, explicitly labeled as footprint-based",
+                "CollecTRI TF activity table presented as the upstream-regulator complement",
+                "fgsea Hallmark/Reactome/WikiPathways results presented side by side with the footprint results, with explicit discussion of agreement/disagreement between footprint-based and membership-based pathway calls",
+                "sample_01's library size, QC disposition (kept/excluded and why), and its influence on the DE and downstream activity results explicitly discussed",
+                "Reproducibility record included: session info, package versions, reference collection versions/releases, and any random seeds used"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S1",
+                "T1S2",
+                "T2S1",
+                "T2S2",
+                "T2S3"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Synthesizes outputs of all prior steps into one report answering the research question, which explicitly asks for footprint-based pathway activity rather than membership expression, on the cytokine-vs-vehicle bronchial epithelium contrast.",
+              "constraints": [
+                "Do not present the fgsea membership-based result as equivalent to the PROGENy footprint result — state the methodological difference explicitly, as the research question requires"
+              ],
+              "caveats": [
+                "No external validation cohort is used; conclusions are internal to this 6-vs-6 dataset"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report step has no single method rule; grounded by the reporting rules of each upstream step it aggregates"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e"
+  }
+}

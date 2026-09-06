@@ -1,0 +1,56 @@
+id: R-0156
+title: "A score against a time-to-event outcome: a time-dependent ROC at stated horizons, not a plain ROC on the event indicator"
+assertion: >-
+  To measure how well a risk score separates the samples on a time-to-event
+  outcome, compute a time-dependent ROC curve and its area at stated horizons,
+  for example at 1, 3, and 5 years, with timeROC, and give a confidence
+  interval for each area. A plain ROC on the event indicator treats a
+  censored sample as an event-free sample and ignores the time, thus its
+  area can be biased. Report the horizons, the number of samples at risk at each
+  horizon, and the concordance index of the model beside the areas. pROC
+  serves the binary case only, for example a response class, and not the
+  censored outcome.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: survival
+  parameters:
+    - name: time_dependent_auc
+      value: timeROC_at_stated_horizons_with_confidence_interval
+      default_source: "rule:R-0156"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0117
+    paraphrase: >-
+      pROC computes the ROC curve, the area under it, and a confidence
+      interval for a binary outcome, where each sample has a known class.
+      The paper does not treat a censored time-to-event outcome.
+    anchor: "Abstract; Implementation"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0114
+    paraphrase: >-
+      In the proportional hazards model a censored individual contributes to
+      the risk sets up to the time of censoring and not as a failure, thus
+      the censored and the event-free samples are not the same class at a
+      given time.
+    anchor: "The model; The conditional likelihood"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [survival, roc, needs-source]

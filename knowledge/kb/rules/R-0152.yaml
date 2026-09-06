@@ -1,0 +1,61 @@
+id: R-0152
+title: "The report of a sample clustering states the input, the method, the evidence for k, the cluster of each sample with its consensus, and the table of the clusters against the technical variables"
+assertion: >-
+  The report of a clustering of the samples carries the elements that let a
+  reader judge each cluster. State the input matrix and its transform, the
+  number of genes kept and the criterion, the distance, the linkage or the
+  partition method, and the number of resamples. Give the evidence for the
+  chosen k: the consensus cumulative distribution function, the relative
+  change in its area, and the proportion of ambiguous clustering across the
+  candidate values of k. List the cluster of each sample with its item
+  consensus, and the cluster consensus of each cluster. Tabulate the
+  clusters against the batch, the library size, and each processing
+  variable, and against the condition when the design has one. State that
+  a clustering finds structure in random data, thus a cluster is a
+  hypothesis for an independent variable or an external cohort.
+modality: bulk_rna_seq
+conditions:
+  - field: question
+    op: eq
+    value: clustering
+action:
+  step_type: report
+  parameters:
+    - name: clustering_report
+      value: [input_transform, n_genes_kept, distance, linkage_or_partition, n_resamples, k_evidence_cdf_delta_area_pac, sample_cluster_with_item_consensus, cluster_consensus, cluster_confounder_table, null_structure_caution]
+      default_source: "doi:10.1093/bioinformatics/btq170"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0110
+    paraphrase: >-
+      The package returns, for each value of k, the consensus matrix, the
+      cluster assignment of each item, the item-consensus values, and the
+      cluster-consensus values, and it draws the consensus cumulative
+      distribution function and the relative change in its area, which are
+      the outputs a reader needs to judge a chosen number of clusters.
+    anchor: "Abstract; Features; Implementation"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0111
+    paraphrase: >-
+      The study shows that consensus clustering returns clusters on random
+      data without structure, and it advises a null distribution built from
+      the observed gene-gene correlation structure and the proportion of
+      ambiguously clustered pairs before a claim on the number of clusters.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [report, clustering, consensus-clustering]

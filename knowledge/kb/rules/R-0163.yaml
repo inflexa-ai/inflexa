@@ -1,0 +1,108 @@
+id: R-0163
+title: "Time course with five or more time points: a spline of time in the DESeq2 LRT or in limma, because the profile tools are absent here"
+assertion: >-
+  With five or more time points, the tools of record for a fit of the
+  expression profile over time are maSigPro, which fits a polynomial of time
+  per gene, and ImpulseDE2, which fits an impulse model. Neither is in the
+  pool here. Encode the time as a natural cubic spline with 3 to 5 degrees
+  of freedom instead of a factor with one level per time point, and test
+  the spline terms with the DESeq2 likelihood ratio test against the
+  reduced model without them, or with the limma moderated F-test on the
+  spline coefficients. With two or more conditions, the interaction of the
+  condition with the spline is the test of a different profile. The spline
+  keeps the degrees of freedom small and gives a smooth profile per gene,
+  and the report shows the fitted profiles by cluster. This rule covers the
+  unpaired course; a repeated-measures course over a subject needs the
+  subject term or a random subject effect first.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_timepoints
+    op: gte
+    value: 5
+  - field: n_per_group_min
+    op: gte
+    value: 2
+  - field: paired
+    op: eq
+    value: false
+action:
+  step_type: differential_expression
+  method: M-0002
+  parameters:
+    - name: time_encoding
+      value: natural_spline_3_to_5_df
+      default_source: "guide:limma/2026-05-19#many-time-points"
+    - name: test
+      value: LRT_on_spline_terms
+      default_source: "vignette:DESeq2/1.52.0#time-course-experiments"
+    - name: full
+      value: "~ ns(time, df)"
+      default_source: "guide:limma/2026-05-19#many-time-points"
+    - name: reduced
+      value: "~ 1"
+      default_source: "vignette:DESeq2/1.52.0#time-course-experiments"
+    - name: profile_tools_of_record
+      value: maSigPro_and_ImpulseDE2_absent_spline_instead
+      default_source: "rule:R-0163"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+alternatives:
+  - method: M-0019
+    when: "The plan is on the limma-voom path, or the sample count is large: the spline terms enter the design matrix and the moderated F-test covers them."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0008
+    paraphrase: >-
+      For a time course with many time points, the guide represents the
+      time by a natural cubic spline with a few degrees of freedom from the
+      splines package, tests the spline coefficients together, and, with
+      several groups, tests the interaction of the group with the spline as
+      the difference between the time profiles.
+    anchor: "Time course experiments; Many time points"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0128
+    paraphrase: >-
+      maSigPro fits a polynomial regression of the expression on time per
+      gene, selects the genes with a significant profile in a first
+      regression, and selects the terms of the profile in a second stepwise
+      regression, for a time course with several groups.
+    anchor: "Abstract; Methods, Two-step regression"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0129
+    paraphrase: >-
+      ImpulseDE2 fits an impulse model, a product of two sigmoid functions,
+      to the counts of each gene over time under a negative binomial noise
+      model, and it tests differential expression over time and between
+      conditions on the fitted profile.
+    anchor: "Abstract; Materials and Methods, The impulse model"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette tests a time course with the likelihood ratio test of a
+      full model against a reduced model, where the terms that the reduced
+      model drops are the terms under test.
+    anchor: "Time course experiments; Likelihood ratio test"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [time-course, spline, absent-tool]

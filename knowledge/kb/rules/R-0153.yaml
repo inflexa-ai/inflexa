@@ -1,0 +1,74 @@
+id: R-0153
+title: "Survival association of a score or a gene: a Cox model with the clinical covariates, a proportional hazards check, and the score as a continuous term"
+assertion: >-
+  To relate a per-sample expression score or one gene to a time-to-event
+  outcome, fit a Cox proportional hazards model with the score as a
+  continuous term and the clinical covariates, such as age, stage, and
+  treatment, in the same model. Do not cut the score at the median or at an
+  optimized threshold before the test, because a cut discards information
+  and an optimized cut inflates the significance. Check the proportional
+  hazards assumption on the scaled Schoenfeld residuals, and if it fails,
+  report a stratified model or a time-dependent effect instead of the single
+  hazard ratio. Report the hazard ratio per unit of the score with its
+  confidence interval, the number of events, and the covariates in the model.
+  Draw a Kaplan-Meier curve by score tertile or quartile for the picture only,
+  and keep the inference in the continuous model.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: survival
+  method: M-0053
+  parameters:
+    - name: score_term
+      value: continuous_no_cut_before_the_test
+      default_source: "doi:10.1111/j.2517-6161.1972.tb00899.x"
+    - name: covariates
+      value: clinical_covariates_in_the_model
+      default_source: "doi:10.1111/j.2517-6161.1972.tb00899.x"
+    - name: ph_check
+      value: scaled_schoenfeld_residuals
+      default_source: "doi:10.1111/j.2517-6161.1972.tb00899.x"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+alternatives:
+  - method: M-0054
+    when: "Many genes are candidates and the aim is a signature, not the test of one score: a penalized Cox model selects the genes with cross-validation."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:citesAsAuthority
+    source: S-0114
+    paraphrase: >-
+      The paper defines the proportional hazards model, where the hazard of
+      an individual is a baseline hazard times the exponential of a linear
+      combination of the explanatory variables, and it estimates the
+      regression coefficients from a conditional likelihood over the
+      distinct failure times without a model of the baseline hazard. The
+      explanatory variables can be continuous, and the paper extends the
+      model to variables that depend on time, which also gives a check of
+      the proportionality.
+    anchor: "Introduction; The model; Time-dependent explanatory variables"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0116
+    paraphrase: >-
+      The paper restates the Cox partial likelihood for a linear predictor
+      of the covariates and presents the penalized fit as the route when the
+      predictors are many, thus the plain Cox fit is the case of few
+      predictors, such as one score with the clinical covariates.
+    anchor: "Introduction; The Cox proportional hazards model"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [survival, cox, method-selection]

@@ -1,0 +1,216 @@
+id: tpl-progeny-pathway-activity
+version: 1.0.0
+label: "Pathway activity with decoupleR mlm on the PROGENy footprint model"
+language: R
+method: M-0036
+step_types: [pathway_activity]
+edam_operations: [EDAM:operation_3501]
+citations: [S-0091, S-0094, S-0096, S-0001, S-0019]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates, two_group_paired, two_group_with_blocking_factor]
+  min_replicates: 2
+  conditions:
+    - field: data_state
+      op: eq
+      value: counts
+    - field: interaction
+      op: is_null
+    - field: n_timepoints
+      op: is_null
+  notes: >-
+    A count matrix whose first column is the gene symbol and whose header
+    holds the sample identifiers, plus a sample table with one row per sample,
+    plus the PROGENy model as an R data file that holds one data frame with
+    the columns gene, pathway, weight, and p.value. The script keeps the top
+    responsive genes of each pathway by p.value and builds the decoupleR
+    network from them. The contrast statistic comes from a DESeq2 Wald fit
+    of the design inside the script, or from a results table with the columns
+    gene and stat when results_path is set. The decoupleR multivariate linear
+    model (mlm) fits the statistic on the weights of every pathway at once,
+    and the same model on the variance stabilized matrix gives one score per
+    pathway and sample. The condition column is renamed to `condition`
+    inside the script. The gene symbols must match the organism of the
+    model: give the mouse model for a mouse dataset.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene symbol, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the condition of interest."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The level of the condition that is the denominator of the contrast, for example Control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The level of the condition that is the numerator of the contrast, for example Treated."
+    adaptable: true
+  - name: design
+    type: formula
+    description: "The design formula of the DESeq2 fit. It must end with condition. Put a balanced batch or a covariate before it, for example ~ batch + condition."
+    adaptable: true
+    default: "~ condition"
+    default_source: "doi:10.1186/s13059-014-0550-8"
+    pattern: "condition\\s*$"
+  - name: results_path
+    type: string
+    description: "Path of a results table CSV with the columns gene and stat, for example the output of tpl-deseq2-two-group. When set, the script reads the contrast statistic from it and fits no model of its own."
+    adaptable: true
+    required: false
+  - name: model_path
+    type: string
+    description: "Path of the PROGENy model as an R data file (.rda) that holds one data frame with the columns gene, pathway, weight, p.value. Human symbols for the human model, mouse symbols for the mouse model."
+    adaptable: true
+  - name: top_responsive_genes
+    type: integer
+    description: "The number of most responsive genes per pathway that enter the model, by the p.value of the model. The rule says 100 to 500."
+    adaptable: true
+    default: 500
+    default_source: "vignette:decoupleR/2.17.0#pathway-activity-inference-in-bulk-rna-seq"
+    minimum: 10
+  - name: activity_method
+    type: string
+    description: "The decoupleR estimator: mlm fits all pathways at once, ulm fits one pathway at a time."
+    adaptable: true
+    default: mlm
+    default_source: "doi:10.1093/bioadv/vbac016"
+    enum: [mlm, ulm]
+  - name: min_size
+    type: integer
+    description: "A pathway enters the model when at least this many of its responsive genes are among the tested genes."
+    adaptable: true
+    default: 5
+    default_source: "vignette:decoupleR/2.17.0#pathway-activity-inference-in-bulk-rna-seq"
+    minimum: 1
+  - name: min_count
+    type: integer
+    description: "A gene stays when it has at least this many counts in at least as many samples as the smallest group."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 0
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff that marks a pathway as significant in the summary and the figures."
+    adaptable: true
+    default: 0.05
+    default_source: "doi:10.1111/j.2517-6161.1995.tb02031.x"
+    minimum: 0
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example pathway or progeny_treated_vs_control."
+    adaptable: true
+    default: pathway
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+  - name: model
+    path: "{{model_path}}"
+    description: "The PROGENy model, an R data file with one data frame: gene, pathway, weight, p.value."
+  - name: results
+    path: "{{results_path}}"
+    format: EDAM:format_3752
+    description: "Optional results table with the columns gene and stat."
+outputs:
+  - name: activity
+    path: "output/{prefix}_activity.csv"
+    format: EDAM:format_3752
+    description: "One row per scored pathway on the contrast: pathway, score, pvalue, padj, n_targets."
+  - name: scores
+    path: "output/{prefix}_scores.csv"
+    format: EDAM:format_3752
+    description: "The per-sample score matrix: pathway, then one column per sample."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The model, the estimator, the number of responsive genes, the footprint interpretation, the contrast, the counts of tested and significant pathways, the coverage, the package versions."
+  - name: activity_bar
+    path: "figures/{prefix}_activity_bar.png"
+    description: "Bar plot of the contrast activity score per pathway, colored by significance (and PDF)."
+  - name: score_heatmap
+    path: "figures/{prefix}_score_heatmap.png"
+    description: "Heatmap of the per-sample scores, scaled by pathway, samples annotated by condition (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: DESeq2
+    version: "1.52.0"
+    track: bioconductor
+  - name: decoupleR
+    version: "2.17.0"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: pheatmap
+    version: "1.0.13"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n6-fit
+    dataset: two_group_n6/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+      model_path: /work/refs/progeny_model_human_full.rda
+    expect:
+      - "exists output/pathway_activity.csv"
+      - "csv_rows output/pathway_activity.csv >= 10"
+      - "exists output/pathway_scores.csv"
+      - "exists output/pathway_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/pathway_activity_bar.png"
+      - "exists figures/pathway_activity_bar.pdf"
+      - "exists figures/pathway_score_heatmap.png"
+      - "exists figures/pathway_score_heatmap.pdf"
+      - "json output/pathway_summary.json n_samples == 12"
+      - "json output/pathway_summary.json n_pathways_tested >= 10"
+      - "json output/pathway_summary.json interpretation == footprint_not_membership"
+  - name: two-group-n6-results-table
+    dataset: two_group_n6/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+      results_path: /work/data/de_results.csv
+      model_path: /work/refs/progeny_model_human_full.rda
+      output_prefix: progeny
+    expect:
+      - "exists output/progeny_activity.csv"
+      - "csv_rows output/progeny_activity.csv >= 10"
+      - "exists output/progeny_scores.csv"
+      - "exists output/progeny_summary.json"
+      - "exists figures/progeny_activity_bar.png"
+      - "exists figures/progeny_score_heatmap.png"

@@ -1,0 +1,60 @@
+id: R-0128
+title: "immunedeconv as the common interface, and a consensus across methods for a robust composition claim"
+assertion: >-
+  Run the deconvolution methods through immunedeconv, the common interface
+  that takes one TPM matrix and returns one long table of cell type, sample,
+  and score for every method. Select the method from the benchmark ranking
+  for the cell type in question, because no method ranks first for every
+  cell type. Make a composition claim about a cell type only when two or
+  more methods agree on the direction of the difference between the samples,
+  and report the estimates of each method side by side. A claim from one
+  method for a cell type where the methods disagree is not robust.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: human
+action:
+  step_type: deconvolution
+  parameters:
+    - name: interface
+      value: immunedeconv
+      default_source: "doi:10.1093/bioinformatics/btz363"
+    - name: consensus
+      value: two_or_more_methods_agree
+      default_source: "doi:10.1038/s41467-020-19015-1"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0102
+    paraphrase: >-
+      The paper gives immunedeconv as an R package that runs the benchmarked
+      methods through one interface on one TPM matrix and maps their outputs
+      to one cell type vocabulary, and its benchmark reports the accuracy
+      per method and per cell type, with a performance that differs by cell
+      type.
+    anchor: "Results, Benchmark; Guidelines; Availability"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0104
+    paraphrase: >-
+      The benchmark of deconvolution pipelines finds that the data scale, the
+      normalization, the marker selection, and the completeness of the
+      reference change the accuracy of the estimates, and that the effect of
+      the normalization is large for some methods and small for others.
+    anchor: "Abstract; Results; Discussion"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [deconvolution, immunedeconv, consensus]

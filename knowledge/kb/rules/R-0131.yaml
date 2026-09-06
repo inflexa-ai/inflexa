@@ -1,0 +1,73 @@
+id: R-0131
+title: "CIBERSORT is the tool of record for LM22 proportions and is absent here: quanTIseq or EPIC give the proportions"
+assertion: >-
+  CIBERSORT is the tool of record for the relative proportions of the 22
+  immune cell types of the LM22 signature matrix, by support vector
+  regression, and it has an absolute mode. CIBERSORTx extends it with a
+  correction for platform variation and with the inference of
+  cell-type-specific expression. Both are distributed through their web
+  portal under a license and not as an open package, thus both are absent
+  from this pool.
+  For an immune proportion, use quanTIseq or EPIC, which return absolute
+  fractions from an open package, and state in the report that the cell
+  types differ from the 22 types of LM22. Do not present a substitute result
+  as an LM22 result.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: human
+action:
+  step_type: deconvolution
+  parameters:
+    - name: lm22_tool_of_record
+      value: cibersort_absent
+      default_source: "doi:10.1038/nmeth.3337"
+    - name: proportion_substitute
+      value: quantiseq_or_epic_with_type_set_stated
+      default_source: "doi:10.1093/bioinformatics/btz363"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0103
+    paraphrase: >-
+      CIBERSORT estimates the relative fractions of 22 immune cell types from
+      a bulk expression profile by nu-support vector regression against the
+      LM22 signature matrix, and the paper gives the method through a web
+      portal.
+    anchor: "Abstract; Results, CIBERSORT; Online Methods"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0142
+    paraphrase: >-
+      CIBERSORTx extends the CIBERSORT framework with the inference of
+      cell-type-specific expression profiles from bulk tissue and with a
+      reduction of platform-specific variation that lets a single-cell
+      reference deconvolve bulk data, and the paper presents it as a web
+      resource.
+    anchor: "Abstract; Results; Methods, Availability"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0102
+    paraphrase: >-
+      The benchmark includes CIBERSORT and its absolute mode beside the open
+      methods, and it groups quanTIseq, EPIC, and the CIBERSORT absolute
+      mode as the methods that give an absolute score.
+    anchor: "Results, Comparison of the methods; Guidelines"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [deconvolution, cibersort, absent-tool]

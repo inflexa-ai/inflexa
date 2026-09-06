@@ -1,0 +1,611 @@
+{
+  "campaign": "wider-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "signature-scores-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T07:45:56.846Z",
+  "elapsedMs": 61622,
+  "outcome": "plan_submitted",
+  "planId": "pln-f8e6b064",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and library-size characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A sample with a library size several times below the median is kept, inspected, and reported per standard practice; removal (if ever justified) is a judgment call made explicitly later, not a default at QC time"
+        ],
+        "context": "Raw Salmon gene-level counts (12000 x 13 CSV, first column gene symbol) and metadata (12 x 2 CSV, condition column) for 6 Crohn disease inflamed vs 6 control ileum samples, single batch, unpaired. sample_01 has a library size about 4x below the median.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Does sample_01 (library size ~4x below median) form an outlier on PCA/sample-distance structure among the 6 Crohn-inflamed vs 6 control ileum samples, and how do library sizes and detected-gene counts compare across all 12 samples?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf; low-depth sample handling per R-0008@440d",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use vst(..., blind=TRUE) from DESeq2, not the design-aware VST",
+          "Do not exclude sample_01 in this step regardless of its PCA position",
+          "Report sample_01's library size and detected-gene count explicitly beside the other 11 samples"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the raw counts.csv (12000 genes x 12 samples)",
+          "PCA plot on top 500 variable genes colored by condition (inflamed vs control), sample_01 labeled",
+          "Sample-distance heatmap (Euclidean distance on VST values) covering all 12 samples",
+          "Table of library size (total counts) and number of detected genes per sample, with sample_01 explicitly flagged and compared to the study median",
+          "No sample removed at this step; a stated decision (keep) is recorded with rationale"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count filter and normalization for scoring input",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A large library-size range is expected to be absorbed by the size factors; a depth difference alone is not evidence to drop sample_01"
+        ],
+        "context": "Raw Salmon gene-level counts (12000 x 12 samples after removing the gene-symbol column), single batch, unpaired 6 vs 6 design. Sample_01 is a low-depth sample retained per T1S1 decision.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "After removing genes not expressed at a minimal threshold, what are the DESeq2 median-of-ratios size factors and blind-VST-transformed expression values for all 12 ileum samples, to be used as input for hallmark signature scoring?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248"
+          ],
+          "reason": "Minimal pre-filter (10 counts / smallest group) and median-of-ratios normalization inside the model, per R-0029/R-0002/R-0026/R-0030",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Pre-filter threshold: >=10 counts in >= min(group sizes) = 6 samples, per standard DESeq2 practice",
+          "Do not pre-normalize counts before DESeq2 size factor estimation (size factors are the normalization, not an external scaling)",
+          "sample_01 stays in the matrix; its lower depth is expected to widen its size factor, not be corrected away"
+        ],
+        "acceptance_criteria": [
+          "Genes filtered to those with >=10 counts in at least 6 samples (the smallest group size)",
+          "DESeq2 size factors computed via median-of-ratios and reported per sample (sample_01's factor noted explicitly)",
+          "Blind VST matrix produced for all retained genes x 12 samples, to feed the scoring step",
+          "Filtering is minimal (not an aggressive threshold) and documented"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "UCell hallmark signature scoring per sample",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "The count matrix carries ~12000 genes, a reduced feature set relative to the full transcriptome; hallmark sets with poor overlap in this matrix will have understated/noisier scores",
+          "UCell scores are rank-based within each sample and thus not affected by sample_01's shallower depth in the way absolute-count methods would be"
+        ],
+        "context": "Reference data: MSigDB human hallmark gene sets (50 sets, GMT format, HGNC symbols) available at the human hallmark collection in the reference store. Input is the blind-VST log-scale expression matrix (rank-based scoring is depth-invariant, addressing the low-depth caveat of sample_01).",
+        "maxSteps": 200,
+        "packages": [
+          "UCell"
+        ],
+        "question": "What is the per-sample UCell score for each of the 50 MSigDB Hallmark gene sets, across all 12 Crohn's ileum samples (6 inflamed, 6 control)?",
+        "grounding": {
+          "claims": [
+            "R-0133@ce76",
+            "R-0135@f02d"
+          ],
+          "reason": "Rank-based per-sample signature scoring with UCell per R-0133@ce76; signature provenance (source, version, gene coverage) stated per R-0135@f02d",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-signature-scoring@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "signature_scoring",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use UCell (rank-based, Mann-Whitney U statistic) rather than GSVA, since GSVA scores would need to be recomputed if the sample set changes and this fixed 12-sample cohort does not require that generality",
+          "Match hallmark gene symbols to the count matrix's gene-symbol identifiers directly (no ID mapping needed since both use HGNC symbols)",
+          "Report the exact number of hallmark genes matched per signature; a signature with many missing genes in the 12000-gene matrix is a materially different (smaller) signature and must be flagged as such"
+        ],
+        "acceptance_criteria": [
+          "A sample x hallmark-signature score matrix (12 samples x 50 hallmark sets) computed with UCell's rank-based method on the blind-VST expression matrix from T1S2",
+          "Report the number of hallmark-signature genes present in the 12000-gene count matrix for each of the 50 sets (coverage may be incomplete since only ~12000 genes are quantified)",
+          "State the MSigDB Hallmark release (2026.1, human, 50 sets, HGNC symbols) used",
+          "Scores reported per sample including sample_01, with no exclusion applied"
+        ]
+      },
+      {
+        "id": "T3S2",
+        "name": "Differential hallmark signature testing: inflamed vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "With only 6 samples per group, the test has limited power; a null result for a signature is not strong evidence of no difference",
+          "Report whether sample_01's inclusion changes any significant call, given its distinct depth profile flagged in QC"
+        ],
+        "context": "Two-group unpaired comparison (6 inflamed vs 6 control), no batch, no covariates. UCell hallmark score matrix from T3S1 is the input; each signature is tested independently across 50 signatures total.",
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Which of the 50 MSigDB Hallmark signature scores differ significantly between the 6 Crohn disease inflamed and 6 control ileum samples, after multiple-testing correction across all 50 signatures?",
+        "grounding": {
+          "claims": [
+            "R-0134@0f16"
+          ],
+          "reason": "Signature score comparison between groups via limma/t-test with BH correction across signatures, per R-0134@0f16",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "tpl-signature-scoring@1.0.0"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "signature_scoring",
+        "depends_on": [
+          "T3S1"
+        ],
+        "constraints": [
+          "Fit limma (or an equivalent t-test) on the score matrix directly, not on gene-level expression",
+          "Adjust with Benjamini-Hochberg across the 50 signatures tested, not across genes",
+          "State the reference level (control) explicitly so the sign of the difference is unambiguous"
+        ],
+        "acceptance_criteria": [
+          "A linear model (limma, or equivalently a two-group t-test since the design has no covariates and a single batch) fit on the 12x50 UCell score matrix from T3S1 with condition (inflamed vs control) as the sole factor",
+          "Reference/contrast direction explicitly stated (e.g. inflamed vs control, with control as reference level)",
+          "Benjamini-Hochberg adjusted p-values reported across all 50 tested signatures (not per-signature raw p-values alone)",
+          "Results table: signature name, mean score per group, effect size/difference, raw p-value, BH-adjusted p-value, for all 50 hallmark sets, sorted by adjusted p-value",
+          "A p-value histogram across the 50 tests included as a diagnostic",
+          "Sensitivity note: since n=6 per group and one sample (sample_01) is low-depth, state whether results change when sample_01 is excluded in a leave-one-out sensitivity check"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Reproducibility report and summary",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group with one low-depth sample limits power; treat findings as hypothesis-generating pending a larger or independent cohort"
+        ],
+        "context": "Final synthesis step consolidating QC, scoring, and testing outputs into a decision-ready report for the Crohn's disease inflamed vs control ileum comparison.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the consolidated, reproducible summary of the hallmark signature scores per sample, the differential signature results between Crohn's inflamed and control ileum, and the QC handling of sample_01?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf"
+          ],
+          "reason": "Reproducibility record required in every report per R-0086@becf",
+          "status": "grounded",
+          "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+          "template": "none"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T3S2"
+        ],
+        "constraints": [
+          "Include a reproducibility record: sessionInfo, seed, package versions, gene-set collection version, per standard practice"
+        ],
+        "acceptance_criteria": [
+          "Report includes sessionInfo/package versions (DESeq2, UCell, limma), the MSigDB Hallmark 2026.1 version, and any random seed used",
+          "Report includes the QC finding on sample_01 (library size, PCA position, decision to retain) and links it to the sensitivity check in T3S2",
+          "Report includes the full 50-signature results table and highlights the BH-significant hallmark signatures with their direction (up/down in inflamed vs control)",
+          "Report states explicitly that no signature was excluded based on effect size alone (selection is by adjusted p-value, per R-0043 analog for signatures)"
+        ]
+      }
+    ],
+    "title": "Ileum Crohn's vs control: hallmark signature scores per sample",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is 12 ileum samples (6 Crohn disease inflamed, 6 control), raw gene-level Salmon counts (12000 genes x 12 samples), single batch, unpaired. The research question asks for a per-sample score for every MSigDB Hallmark signature and a test of which signatures differ between inflamed and control. Per the grounded procedure: first run sample-structure QC (blind VST, PCA, sample-distance heatmap, library sizes) to characterize sample_01's ~4x-below-median depth without silently dropping it (R-0033, R-0008); then apply a minimal low-count pre-filter and compute DESeq2 median-of-ratios size factors plus a blind VST for the scoring input (R-0029, R-0002, R-0026, R-0030) — normalization does not remove sample_01, its lower depth is reflected honestly as wider uncertainty, not exclusion; then score all 50 Hallmark gene sets per sample with UCell's rank-based method, which is depth-invariant and thus robust to the shallow sample (R-0133); then test each of the 50 signature scores between inflamed and control with a linear model (t-test equivalent, two-group unpaired, no covariates) with Benjamini-Hochberg correction across the 50 signatures (R-0134); finally assemble a reproducibility-documented report (versions, gene set version, QC caveats) (R-0086). Human MSigDB Hallmark gene sets (50 sets, HGNC symbols) are confirmed present in the reference store."
+  },
+  "usage": {
+    "inputTokens": 222311,
+    "outputTokens": 6178,
+    "cacheCreationInputTokens": 143404,
+    "cacheReadInputTokens": 78871,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "count_source": "salmon"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA, sample distance heatmap, library size QC",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with >=10 counts in >= smallest group size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors, vst for scoring input",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "UCell rank-based per-sample scores on Hallmark gene sets (vst expression)",
+            "package": "UCell",
+            "parameters": [
+              {
+                "name": "score_method",
+                "value": "rank_based_per_sample"
+              },
+              {
+                "name": "input_scale",
+                "value": "log_normalized_expression (vst)"
+              },
+              {
+                "name": "signature_source",
+                "value": "MSigDB Hallmark v2026.1, 50 sets"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "limma moderated t-test on UCell hallmark scores between inflamed and control, BH across 50 signatures",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_the_design"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH_across_signatures"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducibility record: sessionInfo, seed, package versions, gene set collection version",
+            "package": "base R"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Ileum Crohn's vs control: hallmark signature scores per sample",
+          "analytical_narrative": "The dataset is 12 ileum samples (6 Crohn disease inflamed, 6 control), raw gene-level Salmon counts (12000 genes x 12 samples), single batch, unpaired. The research question asks for a per-sample score for every MSigDB Hallmark signature and a test of which signatures differ between inflamed and control. Per the grounded procedure: first run sample-structure QC (blind VST, PCA, sample-distance heatmap, library sizes) to characterize sample_01's ~4x-below-median depth without silently dropping it (R-0033, R-0008); then apply a minimal low-count pre-filter and compute DESeq2 median-of-ratios size factors plus a blind VST for the scoring input (R-0029, R-0002, R-0026, R-0030) — normalization does not remove sample_01, its lower depth is reflected honestly as wider uncertainty, not exclusion; then score all 50 Hallmark gene sets per sample with UCell's rank-based method, which is depth-invariant and thus robust to the shallow sample (R-0133); then test each of the 50 signature scores between inflamed and control with a linear model (t-test equivalent, two-group unpaired, no covariates) with Benjamini-Hochberg correction across the 50 signatures (R-0134); finally assemble a reproducibility-documented report (versions, gene set version, QC caveats) (R-0086). Human MSigDB Hallmark gene sets (50 sets, HGNC symbols) are confirmed present in the reference store.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and library-size characterization",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Does sample_01 (library size ~4x below median) form an outlier on PCA/sample-distance structure among the 6 Crohn-inflamed vs 6 control ileum samples, and how do library sizes and detected-gene counts compare across all 12 samples?",
+              "acceptance_criteria": [
+                "Blind VST computed on the raw counts.csv (12000 genes x 12 samples)",
+                "PCA plot on top 500 variable genes colored by condition (inflamed vs control), sample_01 labeled",
+                "Sample-distance heatmap (Euclidean distance on VST values) covering all 12 samples",
+                "Table of library size (total counts) and number of detected genes per sample, with sample_01 explicitly flagged and compared to the study median",
+                "No sample removed at this step; a stated decision (keep) is recorded with rationale"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw Salmon gene-level counts (12000 x 13 CSV, first column gene symbol) and metadata (12 x 2 CSV, condition column) for 6 Crohn disease inflamed vs 6 control ileum samples, single batch, unpaired. sample_01 has a library size about 4x below the median.",
+              "constraints": [
+                "Use vst(..., blind=TRUE) from DESeq2, not the design-aware VST",
+                "Do not exclude sample_01 in this step regardless of its PCA position",
+                "Report sample_01's library size and detected-gene count explicitly beside the other 11 samples"
+              ],
+              "caveats": [
+                "A sample with a library size several times below the median is kept, inspected, and reported per standard practice; removal (if ever justified) is a judgment call made explicitly later, not a default at QC time"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf; low-depth sample handling per R-0008@440d",
+                "template": "tpl-qc-eda@1.0.0"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count filter and normalization for scoring input",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "After removing genes not expressed at a minimal threshold, what are the DESeq2 median-of-ratios size factors and blind-VST-transformed expression values for all 12 ileum samples, to be used as input for hallmark signature scoring?",
+              "acceptance_criteria": [
+                "Genes filtered to those with >=10 counts in at least 6 samples (the smallest group size)",
+                "DESeq2 size factors computed via median-of-ratios and reported per sample (sample_01's factor noted explicitly)",
+                "Blind VST matrix produced for all retained genes x 12 samples, to feed the scoring step",
+                "Filtering is minimal (not an aggressive threshold) and documented"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw Salmon gene-level counts (12000 x 12 samples after removing the gene-symbol column), single batch, unpaired 6 vs 6 design. Sample_01 is a low-depth sample retained per T1S1 decision.",
+              "constraints": [
+                "Pre-filter threshold: >=10 counts in >= min(group sizes) = 6 samples, per standard DESeq2 practice",
+                "Do not pre-normalize counts before DESeq2 size factor estimation (size factors are the normalization, not an external scaling)",
+                "sample_01 stays in the matrix; its lower depth is expected to widen its size factor, not be corrected away"
+              ],
+              "caveats": [
+                "A large library-size range is expected to be absorbed by the size factors; a depth difference alone is not evidence to drop sample_01"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0030@2248"
+                ],
+                "reason": "Minimal pre-filter (10 counts / smallest group) and median-of-ratios normalization inside the model, per R-0029/R-0002/R-0026/R-0030",
+                "template": "tpl-deseq2-two-group@1.0.0"
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "UCell hallmark signature scoring per sample",
+              "track": "T3",
+              "step_type": "signature_scoring",
+              "question": "What is the per-sample UCell score for each of the 50 MSigDB Hallmark gene sets, across all 12 Crohn's ileum samples (6 inflamed, 6 control)?",
+              "acceptance_criteria": [
+                "A sample x hallmark-signature score matrix (12 samples x 50 hallmark sets) computed with UCell's rank-based method on the blind-VST expression matrix from T1S2",
+                "Report the number of hallmark-signature genes present in the 12000-gene count matrix for each of the 50 sets (coverage may be incomplete since only ~12000 genes are quantified)",
+                "State the MSigDB Hallmark release (2026.1, human, 50 sets, HGNC symbols) used",
+                "Scores reported per sample including sample_01, with no exclusion applied"
+              ],
+              "packages": [
+                "UCell"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Reference data: MSigDB human hallmark gene sets (50 sets, GMT format, HGNC symbols) available at the human hallmark collection in the reference store. Input is the blind-VST log-scale expression matrix (rank-based scoring is depth-invariant, addressing the low-depth caveat of sample_01).",
+              "constraints": [
+                "Use UCell (rank-based, Mann-Whitney U statistic) rather than GSVA, since GSVA scores would need to be recomputed if the sample set changes and this fixed 12-sample cohort does not require that generality",
+                "Match hallmark gene symbols to the count matrix's gene-symbol identifiers directly (no ID mapping needed since both use HGNC symbols)",
+                "Report the exact number of hallmark genes matched per signature; a signature with many missing genes in the 12000-gene matrix is a materially different (smaller) signature and must be flagged as such"
+              ],
+              "caveats": [
+                "The count matrix carries ~12000 genes, a reduced feature set relative to the full transcriptome; hallmark sets with poor overlap in this matrix will have understated/noisier scores",
+                "UCell scores are rank-based within each sample and thus not affected by sample_01's shallower depth in the way absolute-count methods would be"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0133@ce76",
+                  "R-0135@f02d"
+                ],
+                "reason": "Rank-based per-sample signature scoring with UCell per R-0133@ce76; signature provenance (source, version, gene coverage) stated per R-0135@f02d",
+                "template": "tpl-signature-scoring@1.0.0"
+              }
+            },
+            {
+              "id": "T3S2",
+              "name": "Differential hallmark signature testing: inflamed vs control",
+              "track": "T3",
+              "step_type": "signature_scoring",
+              "question": "Which of the 50 MSigDB Hallmark signature scores differ significantly between the 6 Crohn disease inflamed and 6 control ileum samples, after multiple-testing correction across all 50 signatures?",
+              "acceptance_criteria": [
+                "A linear model (limma, or equivalently a two-group t-test since the design has no covariates and a single batch) fit on the 12x50 UCell score matrix from T3S1 with condition (inflamed vs control) as the sole factor",
+                "Reference/contrast direction explicitly stated (e.g. inflamed vs control, with control as reference level)",
+                "Benjamini-Hochberg adjusted p-values reported across all 50 tested signatures (not per-signature raw p-values alone)",
+                "Results table: signature name, mean score per group, effect size/difference, raw p-value, BH-adjusted p-value, for all 50 hallmark sets, sorted by adjusted p-value",
+                "A p-value histogram across the 50 tests included as a diagnostic",
+                "Sensitivity note: since n=6 per group and one sample (sample_01) is low-depth, state whether results change when sample_01 is excluded in a leave-one-out sensitivity check"
+              ],
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Two-group unpaired comparison (6 inflamed vs 6 control), no batch, no covariates. UCell hallmark score matrix from T3S1 is the input; each signature is tested independently across 50 signatures total.",
+              "constraints": [
+                "Fit limma (or an equivalent t-test) on the score matrix directly, not on gene-level expression",
+                "Adjust with Benjamini-Hochberg across the 50 signatures tested, not across genes",
+                "State the reference level (control) explicitly so the sign of the difference is unambiguous"
+              ],
+              "caveats": [
+                "With only 6 samples per group, the test has limited power; a null result for a signature is not strong evidence of no difference",
+                "Report whether sample_01's inclusion changes any significant call, given its distinct depth profile flagged in QC"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0134@0f16"
+                ],
+                "reason": "Signature score comparison between groups via limma/t-test with BH correction across signatures, per R-0134@0f16",
+                "template": "tpl-signature-scoring@1.0.0"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Reproducibility report and summary",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the consolidated, reproducible summary of the hallmark signature scores per sample, the differential signature results between Crohn's inflamed and control ileum, and the QC handling of sample_01?",
+              "acceptance_criteria": [
+                "Report includes sessionInfo/package versions (DESeq2, UCell, limma), the MSigDB Hallmark 2026.1 version, and any random seed used",
+                "Report includes the QC finding on sample_01 (library size, PCA position, decision to retain) and links it to the sensitivity check in T3S2",
+                "Report includes the full 50-signature results table and highlights the BH-significant hallmark signatures with their direction (up/down in inflamed vs control)",
+                "Report states explicitly that no signature was excluded based on effect size alone (selection is by adjusted p-value, per R-0043 analog for signatures)"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T3S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Final synthesis step consolidating QC, scoring, and testing outputs into a decision-ready report for the Crohn's disease inflamed vs control ileum comparison.",
+              "constraints": [
+                "Include a reproducibility record: sessionInfo, seed, package versions, gene-set collection version, per standard practice"
+              ],
+              "caveats": [
+                "n=6 per group with one low-depth sample limits power; treat findings as hypothesis-generating pending a larger or independent cohort"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e",
+                "claims": [
+                  "R-0086@becf"
+                ],
+                "reason": "Reproducibility record required in every report per R-0086@becf",
+                "template": "none"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:2d167d82ee65cd0369a37c9d7e15e38731cfcac1041bef8843bfcc2215475a8e"
+  }
+}

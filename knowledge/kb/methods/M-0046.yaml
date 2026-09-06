@@ -1,0 +1,16 @@
+id: M-0046
+label: "singscore rank-based single-sample scores with a direction"
+edam_operation: EDAM:operation_3501
+description: >-
+  A per-sample score from the mean rank of the signature genes within the
+  sample, centered and scaled by the theoretical range, with an up set and a
+  down set combined into one signed score. The score uses no background
+  samples, thus the score of one sample is stable regardless of the
+  composition and the number of the samples. The input is a normalized
+  expression matrix.
+packages:
+  - name: singscore
+    track: bioconductor
+    biotools: singscore
+    version_range: ">=1.30"
+    bioconductor: "3.23"

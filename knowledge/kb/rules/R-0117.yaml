@@ -1,0 +1,70 @@
+id: R-0117
+title: "Pathway activity in mouse: the mouse PROGENy model, not the human model on mouse symbols"
+assertion: >-
+  For a mouse dataset, infer the pathway activity with the mouse PROGENy
+  model, which is the human footprint model carried to the mouse genes
+  through an orthology map. Do not run the human model on the mouse symbols
+  without a map, because a responsive gene without a one-to-one ortholog then
+  enters the wrong pathway or no pathway. State the model version and the
+  number of responsive genes per pathway, and report the share of the mouse
+  genes that the model covers.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: mouse
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: pathway_activity
+  method: M-0036
+  parameters:
+    - name: footprint_model
+      value: progeny_mouse
+      default_source: "doi:10.1186/s13059-020-1949-z"
+    - name: ortholog_policy
+      value: no_human_model_on_mouse_symbols_without_ortholog_map
+      default_source: "doi:10.1093/nar/gkaa1007"
+severity: info
+strength: common_practice
+evidence_quality: low
+recommendation_strength: conditional
+evidence:
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0096
+    paraphrase: >-
+      The study uses a mouse version of the PROGENy model on single-cell data
+      of mouse origin, thus a mouse version of the model is in use. The
+      derivation of that model is not in this paper.
+    anchor: "Methods, Resources; Results, Application to mouse data"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0094
+    paraphrase: >-
+      The PROGENy model is learned from human perturbation experiments, thus
+      its responsive genes are human genes and a use on another species needs
+      a map of the genes.
+    anchor: "Results, Model construction; Methods, Data"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0086
+    paraphrase: >-
+      OMA separates one-to-one orthologs from one-to-many and many-to-many
+      relations, thus an ortholog map states which mouse genes have one human
+      counterpart.
+    anchor: "Abstract; Orthology inference"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [pathway-activity, mouse, orthology, progeny, needs-source]

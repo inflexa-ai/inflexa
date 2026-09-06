@@ -1,0 +1,59 @@
+id: R-0146
+title: "Subtype assignment by a published classifier: genefu with PAM50 is the tool of record and is absent here, and a centroid correlation is the substitute with a stated caution"
+assertion: >-
+  For a subtype of a human sample by a published classifier, for example
+  the PAM50 intrinsic subtypes of breast cancer, the tool of record is the
+  published classifier as its authors implemented it, in genefu for PAM50.
+  The genefu package is absent from this pool. Do not name it as the
+  executable step. The substitute is the nearest centroid call: correlate
+  the expression of the classifier genes of each sample with each published
+  centroid, after the gene-wise centering that the classifier expects, and
+  assign the centroid with the highest correlation. State in the plan that
+  the published classifier expects a specific platform, a specific
+  normalization, and a cohort with a balanced mix of subtypes for the
+  centering, thus a call on a different platform or on a skewed cohort is a
+  provisional label and not a validated subtype.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: eq
+    value: human
+  - field: data_state
+    op: in
+    value: [counts, tpm_or_fpkm, log_normalized]
+action:
+  step_type: clustering
+  parameters:
+    - name: subtype_classifier_tool_of_record
+      value: genefu_absent_from_pool
+      default_source: "doi:10.1200/JCO.2008.18.1370"
+    - name: subtype_substitute
+      value: nearest_centroid_correlation_with_published_centroids
+      default_source: "doi:10.1200/JCO.2008.18.1370"
+    - name: subtype_call_caution
+      value: platform_normalization_and_cohort_balance_stated
+      default_source: "rule:R-0146"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:citesAsAuthority
+    source: S-0136
+    paraphrase: >-
+      The PAM50 classifier assigns a sample to one of the intrinsic subtypes
+      with a 50-gene nearest centroid predictor. The paper trains it on 189
+      prototype samples measured on microarray and quantitative RT-PCR
+      platforms, and it reports the subtype calls together with a risk of
+      relapse score.
+    anchor: "Abstract; Patients and Methods; Results"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [clustering, tool-absent, subtype]

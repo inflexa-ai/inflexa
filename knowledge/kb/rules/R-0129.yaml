@@ -1,0 +1,56 @@
+id: R-0129
+title: "Counts into a deconvolution: convert to linear-scale TPM or CPM first, and give the absolute methods no log values"
+assertion: >-
+  A count matrix does not go into a deconvolution as it is. Convert the
+  counts to TPM with the gene lengths, or to CPM when no lengths exist, and
+  give the linear-scale values to the absolute methods. Do not give a
+  log-transformed matrix to an absolute method, because the mixture model is
+  linear in the cell fractions and a log transform breaks that linearity. A
+  marker-based score such as MCP-counter takes the log2 of the same matrix by
+  its own definition. State the transform of the input beside every result.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+action:
+  step_type: deconvolution
+  parameters:
+    - name: deconvolution_input
+      value: linear_tpm_or_cpm
+      default_source: "doi:10.1038/s41467-020-19015-1"
+    - name: log_input_for_absolute_methods
+      value: false
+      default_source: "doi:10.1093/bioinformatics/btz363"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0104
+    paraphrase: >-
+      The benchmark tests data transformations before the deconvolution and
+      finds that the bulk methods and the single-cell reference methods
+      perform best on data in the linear scale, and that the choice of the
+      normalization has a large effect on some methods and not on others.
+    anchor: "Abstract; Results, Effect of data transformation and normalization"
+    retrieved: "2026-09-06"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0102
+    paraphrase: >-
+      The benchmark gives every method a TPM matrix, and the immunedeconv
+      interface takes a TPM matrix on the linear scale as its input.
+    anchor: "Guidelines; Methods, Input data"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [deconvolution, input-scale, counts]

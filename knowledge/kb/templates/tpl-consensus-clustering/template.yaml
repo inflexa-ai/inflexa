@@ -1,0 +1,235 @@
+id: tpl-consensus-clustering
+version: 1.0.0
+label: "Consensus clustering of the samples with ConsensusClusterPlus on the variance-stabilized top variable genes, k from the delta area of the consensus CDF, confirmed by the PAC"
+language: R
+method: M-0048
+step_types: [clustering]
+edam_operations: [EDAM:operation_3432]
+citations: [S-0109, S-0110, S-0111, S-0001]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates, two_group_paired, two_group_with_blocking_factor, multi_group]
+  min_replicates: 5
+  conditions:
+    - field: data_state
+      op: eq
+      value: counts
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample.
+    The script removes the low count genes, applies the DESeq2 variance
+    stabilizing transformation blind to the design, keeps the top variable
+    genes, and centers each gene on its median. ConsensusClusterPlus clusters
+    the resampled subsets of the samples with hierarchical clustering on the
+    stated distance and linkage, for k from 2 to max_k. The chosen k is the
+    largest k whose relative change in the area under the consensus CDF is at
+    least delta_area_min. The proportion of ambiguous clustering (PAC) per k
+    is the confirmation: the summary states the k with the lowest PAC and
+    whether it agrees with the chosen k. The agreement of the chosen clusters
+    with the condition column is the adjusted Rand index. A consensus
+    clustering returns clusters on random data, thus a cluster is a hypothesis
+    until an independent variable or an external cohort supports it.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the known condition. The adjusted Rand index compares the chosen clusters with it."
+    adaptable: true
+  - name: min_count
+    type: integer
+    description: "A gene stays when it has at least this many counts in at least min_samples samples."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 0
+  - name: min_samples
+    type: integer
+    description: "The minimum number of samples for the count filter. Absent, the script uses the smallest group size of the condition column."
+    adaptable: true
+    required: false
+    minimum: 1
+  - name: n_top_genes
+    type: integer
+    description: "The number of most variable genes, by the variance of the variance-stabilized values, that enter the clustering."
+    adaptable: true
+    default: 2000
+    default_source: "vignette:ConsensusClusterPlus/1.76.0#preparing-input-data"
+    minimum: 100
+  - name: distance
+    type: string
+    description: "The distance between two samples. pearson and spearman are 1 minus the correlation."
+    adaptable: true
+    default: pearson
+    default_source: "doi:10.1093/bioinformatics/btq170"
+    enum: [pearson, spearman, euclidean]
+  - name: linkage
+    type: string
+    description: "The linkage of the hierarchical clustering, for the subsamples and for the consensus matrix."
+    adaptable: true
+    default: average
+    default_source: "doi:10.1093/bioinformatics/btq170"
+    enum: [average, complete, ward.D2, single]
+  - name: cluster_algorithm
+    type: string
+    description: "The clustering algorithm of each resampling. Hierarchical clustering, so that the distance and the linkage slots apply."
+    adaptable: false
+    default: hc
+    default_source: "doi:10.1093/bioinformatics/btq170"
+    enum: [hc]
+  - name: max_k
+    type: integer
+    description: "The largest number of clusters to evaluate. The script evaluates k from 2 to max_k."
+    adaptable: true
+    default: 6
+    default_source: "doi:10.1093/bioinformatics/btq170"
+    minimum: 2
+  - name: resampling_reps
+    type: integer
+    description: "The number of resamplings per k. 100 gives a quick answer; 1000 gives a stable consensus matrix."
+    adaptable: true
+    default: 100
+    default_source: "doi:10.1093/bioinformatics/btq170"
+    minimum: 10
+  - name: item_subsample_share
+    type: number
+    description: "The share of the samples in each resampling."
+    adaptable: true
+    default: 0.8
+    default_source: "doi:10.1093/bioinformatics/btq170"
+    minimum: 0.5
+    maximum: 1
+  - name: feature_subsample_share
+    type: number
+    description: "The share of the genes in each resampling. 1 keeps every gene in every resampling."
+    adaptable: true
+    default: 1
+    default_source: "doi:10.1093/bioinformatics/btq170"
+    minimum: 0.5
+    maximum: 1
+  - name: seed
+    type: integer
+    description: "The random seed of the resamplings."
+    adaptable: true
+    default: 20260906
+  - name: delta_area_min
+    type: number
+    description: "The chosen k is the largest k whose relative change in the area under the consensus CDF is at least this value. k = 2 always qualifies, because its change is the whole area."
+    adaptable: true
+    default: 0.1
+    default_source: "vignette:ConsensusClusterPlus/1.76.0#delta-area-plot"
+    minimum: 0
+    maximum: 1
+  - name: k_criterion
+    type: string
+    description: "The criterion of the number of clusters: the delta area of the consensus CDF, confirmed by the proportion of ambiguous clustering."
+    adaptable: false
+    default: consensus_cdf_delta_area_and_pac
+    default_source: "doi:10.1038/srep06207"
+    enum: [consensus_cdf_delta_area_and_pac]
+  - name: pac_lower
+    type: number
+    description: "The lower bound of the ambiguous consensus range of the PAC."
+    adaptable: false
+    default: 0.1
+    default_source: "doi:10.1038/srep06207"
+  - name: pac_upper
+    type: number
+    description: "The upper bound of the ambiguous consensus range of the PAC."
+    adaptable: false
+    default: 0.9
+    default_source: "doi:10.1038/srep06207"
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example clustering or subtypes."
+    adaptable: true
+    default: clustering
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+outputs:
+  - name: assignments
+    path: "output/{prefix}_assignments.csv"
+    format: EDAM:format_3752
+    description: "One row per sample: sample, condition, cluster (at the chosen k), then one column per k (k2, k3, ...)."
+  - name: cluster_consensus
+    path: "output/{prefix}_cluster_consensus.csv"
+    format: EDAM:format_3752
+    description: "One row per k and cluster: k, cluster, cluster_consensus, n_samples."
+  - name: item_consensus
+    path: "output/{prefix}_item_consensus.csv"
+    format: EDAM:format_3752
+    description: "One row per k, cluster, and sample: k, cluster, sample, item_consensus."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The chosen k and its rule, the area, the delta area, and the PAC per k, the PAC k, the adjusted Rand index against the condition, the cluster sizes, the thresholds, the package versions."
+  - name: consensus_matrix
+    path: "figures/{prefix}_consensus_matrix.png"
+    description: "Heatmap of the consensus matrix at the chosen k, ordered by the consensus tree, with the cluster and the condition as annotations (and PDF)."
+  - name: consensus_cdf
+    path: "figures/{prefix}_consensus_cdf.png"
+    description: "The empirical CDF of the consensus values, one curve per k (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: ConsensusClusterPlus
+    version: "1.76.0"
+    track: bioconductor
+  - name: DESeq2
+    version: "1.52.0"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: pheatmap
+    version: "1.0.13"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n60
+    dataset: two_group_n60/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+    expect:
+      - "exists output/clustering_assignments.csv"
+      - "csv_rows output/clustering_assignments.csv >= 100"
+      - "json output/clustering_summary.json chosen_k >= 2"
+      - "exists output/clustering_summary.json"
+      - "exists output/clustering_cluster_consensus.csv"
+      - "exists output/clustering_item_consensus.csv"
+      - "exists output/session_info.txt"
+      - "exists figures/clustering_consensus_matrix.png"
+      - "exists figures/clustering_consensus_matrix.pdf"
+      - "exists figures/clustering_consensus_cdf.png"
+      - "exists figures/clustering_consensus_cdf.pdf"
+      - "json output/clustering_summary.json n_samples == 120"
+      - "json output/clustering_summary.json n_genes_clustered == 2000"
+      - "json output/clustering_summary.json agreement.adjusted_rand_index >= 0.5"

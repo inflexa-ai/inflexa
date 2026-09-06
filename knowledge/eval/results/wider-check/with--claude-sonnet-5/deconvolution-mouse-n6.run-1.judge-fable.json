@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference: mMCP-counter as the species-matched tool on linear-scale CPM/TPM with gene length source stated, an explicit ban on human references, one Wilcoxon per population with BH across populations and direction reported, and sample_01 kept, inspected on PCA and distances, with its depth restated in the report. The DESeq2 arm is unasked for but correctly specified (reference level, ~condition contrast, >=10 in >=6 filter, apeglm, BH at 0.05), and the UCell/PanglaoDB complement is properly labeled as a relative score with the release, species filter, and marker coverage reported. Minor gaps: the share of mMCP-counter marker genes present in the matrix is not required, the caution that scores are comparable across samples but not across populations is only implied, and sample_01 is not explicitly checked on the score matrix in the composition step."
+}

@@ -1,0 +1,68 @@
+id: R-0160
+title: "Identifier annotation: map symbols, Entrez ids, and Ensembl ids with the organism package and the store tables, report the unmapped share, and never mix identifier spaces"
+assertion: >-
+  Map the gene identifiers of the result table between symbols, Entrez gene
+  identifiers, and Ensembl gene identifiers with the organism annotation
+  package, org.Hs.eg.db or org.Mm.eg.db, and with the NCBI gene info table
+  and the GENCODE GTF of the reference store, and state the release of each.
+  Keep one identifier space per column and never mix two spaces in one
+  column, because a downstream tool matches on the string. A symbol is not
+  stable across releases and one symbol can map to several Ensembl
+  identifiers, thus carry the Ensembl or the Entrez identifier as the key and
+  the symbol as a label. Report the share of the input identifiers that did
+  not map and the share that mapped to more than one target, and state the
+  rule for a one-to-many map.
+modality: bulk_rna_seq
+conditions:
+  - field: organism
+    op: in
+    value: [human, mouse]
+action:
+  step_type: annotation
+  method: M-0057
+  parameters:
+    - name: id_map_source
+      value: organism_package_and_ncbi_gene_info_with_release
+      default_source: "doi:10.1038/nprot.2009.97"
+    - name: identifier_space
+      value: one_space_per_column_stable_id_as_key
+      default_source: "doi:10.1038/nprot.2009.97"
+    - name: unmapped_share
+      value: report_unmapped_and_one_to_many
+      default_source: "doi:10.1016/j.xinn.2021.100141"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0076
+    paraphrase: >-
+      The protocol maps identifiers between the annotation databases with
+      biomaRt, because an integration of datasets needs a map between the
+      identifier sets. It states that the relations between the identifiers
+      are biologically complex and that the content of the databases is
+      dynamic, and it discusses the typical problems of a gene, transcript,
+      and protein map.
+    anchor: "Introduction; Procedure, Mapping identifiers"
+    retrieved: "2026-09-06"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0053
+    paraphrase: >-
+      clusterProfiler takes a list of gene identifiers of one key type
+      against an organism annotation package and translates the identifiers
+      between key types for the enrichment, thus the input list must hold
+      one identifier space.
+    anchor: "Implementation; Gene identifier conversion"
+    retrieved: "2026-09-06"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-06"
+tags: [annotation, identifiers, mapping]

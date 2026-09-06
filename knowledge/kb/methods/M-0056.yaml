@@ -1,0 +1,20 @@
+id: M-0056
+label: "Differential exon usage with limma diffSplice on exon-level counts"
+description: >-
+  A linear model per exon on voom-transformed exon-level counts, where each
+  exon is a row and the gene is its parent. diffSplice tests, for each gene,
+  whether the log fold change of an exon differs from the log fold change of
+  the gene, and it reports an exon-level t-test and a gene-level F-test or
+  Simes test. The input is a feature-level count table, for example from
+  featureCounts at the exon level, not the gene-level count matrix.
+packages:
+  - name: limma
+    track: bioconductor
+    biotools: limma
+    version_range: ">=3.60"
+    bioconductor: "3.23"
+  - name: edgeR
+    track: bioconductor
+    biotools: edger
+    version_range: ">=4.0"
+    bioconductor: "3.23"
