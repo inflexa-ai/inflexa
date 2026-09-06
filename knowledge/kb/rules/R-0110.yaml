@@ -1,0 +1,60 @@
+id: R-0110
+title: "Enrichment on a delivered results table: state the input contrast, the tie rule, and the pinned collection"
+assertion: >-
+  When the enrichment starts from a delivered results table and no new test
+  is fitted, the plan states the contrast of the table, its reference level,
+  and the sign convention of the log2 fold change, because the direction of
+  every enrichment result depends on them. It states the rule for tied
+  ranking values and the seed of a permutation method. It pins the
+  collection and its version, and it does not add a second collection
+  without a version. A sample-level check of the delivered counts, when the
+  counts are delivered too, precedes the enrichment and is reported as
+  inherited when the counts are absent.
+modality: bulk_rna_seq
+conditions:
+  - field: question
+    op: eq
+    value: enrichment
+action:
+  step_type: enrichment
+  parameters:
+    - name: input_contrast_statement
+      value: reference_level_and_sign_convention
+      default_source: "doi:10.1371/journal.pcbi.1009935"
+    - name: rank_ties
+      value: state_the_tie_rule
+      default_source: "doi:10.1186/s12859-017-1674-0"
+    - name: collection_pin
+      value: name_and_version_for_each_collection
+      default_source: "doi:10.1371/journal.pcbi.1009935"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0027
+    paraphrase: >-
+      The survey finds that the ranking metric, the gene set database version,
+      and the background are inconsistently reported, and that each changes
+      the result.
+    anchor: "Results; Recommendations"
+    retrieved: "2026-09-05"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0068
+    paraphrase: >-
+      The choice of the ranking metric changes which sets a preranked
+      enrichment finds, across many metrics and datasets.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, report, results_table]

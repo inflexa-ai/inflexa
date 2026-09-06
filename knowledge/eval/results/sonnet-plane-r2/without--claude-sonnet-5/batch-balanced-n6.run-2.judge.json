@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 5,
+    "normalization": 6,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The core design is right: DESeq2 with ~ batch + condition on raw counts, explicit refusal to ComBat/SVA-adjust before the model, and the treated-vs-control contrast extracted with BH. QC is limited to a PCA (colored by condition/batch) and a dispersion plot with no library-size or sample-distance check and no stated policy for an outlier or shallow sample; the low-count filter is left as an unspecified 'e.g.' and normalization (size factors) is only implied by using DESeq2 rather than stated. Fold-change shrinkage is hinted by listing apeglm but never stated in the acceptance criteria, and the |log2FC|>1 threshold is applied post hoc rather than as lfcThreshold in the test. The enrichment step names WikiPathways but gives no version, no ORA universe, no gene-set size window, and an ambiguous ranking metric (log2FC vs stat); the report omits versions and does not clearly commit to stating the number of genes tested."
+}

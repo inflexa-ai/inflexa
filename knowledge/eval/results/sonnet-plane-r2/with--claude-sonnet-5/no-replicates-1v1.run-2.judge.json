@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes n=1 per group, refuses any Wald/LRT test, p-values, FDR or shrinkage, reports median-of-ratios normalized counts with descriptive log2FC, sets control as the reference, and names the replicated design (>=3 per group) needed for inference; the report section is thorough with versions, gene counts, caveats and session info. QC is appropriate for two samples (library sizes, vst PCA, distances) with an explicit no-silent-drop policy, and the >=10-counts-in->=1-sample filter is justified by group size. The main weakness is Step 3: enrichment is not warranted on an n=1 fold-change ranking, and fgsea inherently emits set-level p-values/padj, which sits uneasily with the reference's 'no p-values' stance even though the plan labels it descriptive; the plan should have omitted it rather than running it with caveats."
+}

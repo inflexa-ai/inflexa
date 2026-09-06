@@ -1,0 +1,247 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-timepoints-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T21:34:36.954Z",
+  "elapsedMs": 25151,
+  "outcome": "plan_submitted",
+  "planId": "pln-62fe3a28",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, QC, and filter counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "data.table"
+        ],
+        "question": "Are the 12 samples in counts.csv (12000 genes x 12 samples) and metadata.csv (condition, time, time_hours columns) properly aligned, and which genes pass a minimum-expression filter for the 2x2 design (2 conditions x 2 time points x 3 replicates)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample names in counts.csv columns match metadata.csv rows exactly, order reconciled if needed",
+          "Low-count genes filtered (e.g. genes with count >=10 in at least 3 samples, matching smallest group size) prior to modeling",
+          "A DESeqDataSet or count matrix + metadata object is saved for the next step, reporting number of genes retained and confirming 3 replicates per condition x time cell"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Fit condition x time interaction model and simple effects",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "data.table"
+        ],
+        "question": "Using DESeq2 with design ~condition + time + condition:time on the filtered 12-sample count matrix, which genes show a significant condition:time interaction (treatment effect differs between t0 and t1), and how do the simple effects (treatment vs control at t0; treatment vs control at t1) compare?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 fit with full design ~condition + time + condition:time converges on all 12 samples",
+          "Interaction coefficient (condition:time) tested via results() with the appropriate name/contrast; genes ranked by interaction p-value/padj with log2FC reported",
+          "Simple effects extracted for treatment-vs-control within t0 and within t1 separately (e.g. via contrast on interaction model or nbinomWaldTest with listValues, or by comparing coefficients) for interpretability alongside the interaction test",
+          "Output table includes gene symbol, interaction log2FC, interaction padj, and both simple-effect log2FC/padj values, saved as CSV",
+          "Number of genes significant for interaction at padj<0.05 explicitly reported, including if zero (small n=3/group limits power — state this explicitly)"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on interaction-significant and simple-effect gene sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "data.table"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes with a significant condition:time interaction, and separately among genes with a significant treatment effect at t0 only vs t1 only?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the human WikiPathways gene set collection (HGNC symbols) confirmed present in the reference store",
+          "Runs enrichment (e.g. fgsea or clusterProfiler ORA) separately on: (a) interaction-significant genes, (b) t0-only treatment-responsive genes, (c) t1-only treatment-responsive genes",
+          "If the interaction gene set is empty or too small for enrichment (a real possibility given n=3/group), reports this explicitly rather than substituting a different gene list silently",
+          "Output includes pathway name, enrichment p-value/padj, and gene overlap for each of the three gene sets, saved as CSV"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "PPI subnetwork of interaction-significant genes",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "igraph",
+          "data.table"
+        ],
+        "question": "Do genes with a significant condition:time interaction (or, if too few, the top-ranked interaction genes by p-value) form a connected module in the human STRING protein-protein interaction network, suggesting a coordinated time-dependent treatment response?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "network_analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the STRING human PPI network (protein.links + protein.info for symbol mapping) confirmed present in the reference store, at the conventional combined_score >=700 high-confidence cutoff",
+          "Maps interaction-significant (or top N by interaction p-value if none pass padj<0.05, N reported explicitly) gene symbols onto STRING node IDs via the info file",
+          "Reports network size (nodes mapped, edges among them), largest connected component size, and whether this is more connected than expected by chance if a background comparison is feasible with available packages",
+          "States plainly if too few genes are available to build a meaningful subnetwork"
+        ]
+      }
+    ],
+    "title": "Treatment x Time interaction DE analysis",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "This is a 2x2 factorial bulk RNA-seq design (condition: treatment vs control-equivalent; time: t0 vs t1; n=3/group, 12 samples total, single batch) with 12000 genes in raw Salmon counts. The research question — does the treatment effect differ between the two time points — is precisely a statistical interaction question, not a set of pairwise contrasts. The correct approach is a single DESeq2 model with a condition:time interaction term, testing the interaction coefficient directly, rather than computing 'treatment vs control at t0' and 'treatment vs control at t1' separately and eyeballing the difference. Steps: (1) load counts+metadata, QC and filter low-count genes; (2) fit DESeq2 with ~condition + time + condition:time, extract the interaction term as the primary answer to the question, and additionally extract the simple effects (treatment effect within each time point) for interpretability; (3) run pathway enrichment on genes showing significant interaction (and on each simple-effect gene set for context) using human WikiPathways gene sets; (4) build a STRING PPI subnetwork of interaction-significant genes to check for connected functional modules. All steps operate on the actual 12-sample, 12-gene-count-matrix x metadata provided."
+  },
+  "usage": {
+    "inputTokens": 43255,
+    "outputTokens": 2256,
+    "cacheCreationInputTokens": 34101,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treatment x Time interaction DE analysis",
+          "analytical_narrative": "This is a 2x2 factorial bulk RNA-seq design (condition: treatment vs control-equivalent; time: t0 vs t1; n=3/group, 12 samples total, single batch) with 12000 genes in raw Salmon counts. The research question — does the treatment effect differ between the two time points — is precisely a statistical interaction question, not a set of pairwise contrasts. The correct approach is a single DESeq2 model with a condition:time interaction term, testing the interaction coefficient directly, rather than computing 'treatment vs control at t0' and 'treatment vs control at t1' separately and eyeballing the difference. Steps: (1) load counts+metadata, QC and filter low-count genes; (2) fit DESeq2 with ~condition + time + condition:time, extract the interaction term as the primary answer to the question, and additionally extract the simple effects (treatment effect within each time point) for interpretability; (3) run pathway enrichment on genes showing significant interaction (and on each simple-effect gene set for context) using human WikiPathways gene sets; (4) build a STRING PPI subnetwork of interaction-significant genes to check for connected functional modules. All steps operate on the actual 12-sample, 12-gene-count-matrix x metadata provided.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, QC, and filter counts",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Are the 12 samples in counts.csv (12000 genes x 12 samples) and metadata.csv (condition, time, time_hours columns) properly aligned, and which genes pass a minimum-expression filter for the 2x2 design (2 conditions x 2 time points x 3 replicates)?",
+              "acceptance_criteria": [
+                "Sample names in counts.csv columns match metadata.csv rows exactly, order reconciled if needed",
+                "Low-count genes filtered (e.g. genes with count >=10 in at least 3 samples, matching smallest group size) prior to modeling",
+                "A DESeqDataSet or count matrix + metadata object is saved for the next step, reporting number of genes retained and confirming 3 replicates per condition x time cell"
+              ],
+              "packages": [
+                "DESeq2",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Fit condition x time interaction model and simple effects",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using DESeq2 with design ~condition + time + condition:time on the filtered 12-sample count matrix, which genes show a significant condition:time interaction (treatment effect differs between t0 and t1), and how do the simple effects (treatment vs control at t0; treatment vs control at t1) compare?",
+              "acceptance_criteria": [
+                "DESeq2 fit with full design ~condition + time + condition:time converges on all 12 samples",
+                "Interaction coefficient (condition:time) tested via results() with the appropriate name/contrast; genes ranked by interaction p-value/padj with log2FC reported",
+                "Simple effects extracted for treatment-vs-control within t0 and within t1 separately (e.g. via contrast on interaction model or nbinomWaldTest with listValues, or by comparing coefficients) for interpretability alongside the interaction test",
+                "Output table includes gene symbol, interaction log2FC, interaction padj, and both simple-effect log2FC/padj values, saved as CSV",
+                "Number of genes significant for interaction at padj<0.05 explicitly reported, including if zero (small n=3/group limits power — state this explicitly)"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on interaction-significant and simple-effect gene sets",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes with a significant condition:time interaction, and separately among genes with a significant treatment effect at t0 only vs t1 only?",
+              "acceptance_criteria": [
+                "Uses the human WikiPathways gene set collection (HGNC symbols) confirmed present in the reference store",
+                "Runs enrichment (e.g. fgsea or clusterProfiler ORA) separately on: (a) interaction-significant genes, (b) t0-only treatment-responsive genes, (c) t1-only treatment-responsive genes",
+                "If the interaction gene set is empty or too small for enrichment (a real possibility given n=3/group), reports this explicitly rather than substituting a different gene list silently",
+                "Output includes pathway name, enrichment p-value/padj, and gene overlap for each of the three gene sets, saved as CSV"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "PPI subnetwork of interaction-significant genes",
+              "track": "T2",
+              "step_type": "network_analysis",
+              "question": "Do genes with a significant condition:time interaction (or, if too few, the top-ranked interaction genes by p-value) form a connected module in the human STRING protein-protein interaction network, suggesting a coordinated time-dependent treatment response?",
+              "acceptance_criteria": [
+                "Uses the STRING human PPI network (protein.links + protein.info for symbol mapping) confirmed present in the reference store, at the conventional combined_score >=700 high-confidence cutoff",
+                "Maps interaction-significant (or top N by interaction p-value if none pass padj<0.05, N reported explicitly) gene symbols onto STRING node IDs via the info file",
+                "Reports network size (nodes mapped, edges among them), largest connected component size, and whether this is more connected than expected by chance if a background comparison is feasible with available packages",
+                "States plainly if too few genes are available to build a meaningful subnetwork"
+              ],
+              "packages": [
+                "igraph",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "network-agent"
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

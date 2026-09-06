@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 4,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "DESeq2 with ~condition, median-of-ratios size factors on raw counts, BH at 0.05 and apeglm shrinkage is a valid fit for an unpaired single-batch 60 vs 60 cohort, though limma-voom would scale better and the reference level is never stated. The effect-size question is addressed, but the fold-change threshold is applied post hoc to shrunken LFCs rather than tested (no lfcThreshold/TREAT), no confidence intervals are reported, and the Cohen's d on VST values is a loose add-on. QC is thin: a PCA or distance plot only, with no library-size check, no sex check, no hidden-structure search, and no stated outlier policy; the low-count filter is vague rather than justified. Enrichment runs ORA on a cutoff list with a stated universe and named collection, which discards the ranking and gives no version or set-size window; the report omits software versions and design caveats beyond enrichment power."
+}

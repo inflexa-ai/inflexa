@@ -1,0 +1,1004 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "population-n60",
+  "run": 1,
+  "startedAt": "2026-09-05T21:36:32.477Z",
+  "elapsedMs": 438950,
+  "outcome": "plan_submitted",
+  "planId": "pln-5583cd18",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering, and outlier check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A 12000x120 matrix is small; do not over-filter genes to the point of losing real low-to-moderate expression signal",
+          "PCA structure not aligned with condition is expected in whole blood (immune composition, sex) and should be carried into the surrogate-variable step rather than removed as 'batch'"
+        ],
+        "context": "Input files: /eval-sonnet-plane-r2-without-population-n60-1/data/inputs/counts/counts.csv (raw integer Salmon gene counts, gene symbol rows, 12000 x 121 including header) and /eval-sonnet-plane-r2-without-population-n60-1/data/inputs/metadata/metadata.csv (120 samples x condition). Single batch per data profile, but no sex/age/technical covariates are recorded, so unsupervised structure must be inspected rather than assumed absent.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "Are the 120 whole-blood samples (60 case, 60 control) in counts.csv correctly aligned to metadata.csv, are there low-expression genes or outlier samples that should be excluded before differential testing, and does unsupervised structure track condition or something else?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not drop samples without explicit justification tied to a QC metric",
+          "Use gene symbols as-is; do not attempt Ensembl ID mapping since the data already carries symbols"
+        ],
+        "acceptance_criteria": [
+          "Sample columns in counts.csv are confirmed 1:1 matched to metadata.csv rows and the 60/60 case/control split is verified",
+          "Low-count genes are filtered (e.g. require count>=10 in at least 60 of 120 samples) and the number of genes retained is reported",
+          "Per-sample library size distribution is computed and any sample >3 SD from the cohort mean is flagged and justified for inclusion/exclusion",
+          "A VST-based PCA plot colored by condition is produced and described",
+          "Filtered count matrix and aligned metadata are saved as artifacts for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Estimate hidden covariates via surrogate variable analysis",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If svaseq finds zero surrogate variables, proceed with design ~condition alone and state that explicitly rather than forcing artificial covariates"
+        ],
+        "context": "No sex, age, or batch covariates exist in the 120x2 metadata table, yet whole-blood transcriptomes are strongly shaped by unmeasured leukocyte composition and demographics. svaseq estimates such hidden structure directly from the count data.",
+        "maxSteps": 200,
+        "packages": [
+          "sva",
+          "DESeq2"
+        ],
+        "question": "Given that metadata.csv records only case/control status, what latent structure (e.g. cell composition, demographic variation) exists in the filtered whole-blood counts that should be adjusted for so it is not mistaken for, or masks, a true case-vs-control effect?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Fit svaseq on the same filtered, aligned matrix produced in T1S1, not on raw unfiltered counts"
+        ],
+        "acceptance_criteria": [
+          "sva::svaseq is run on the filtered count matrix with null model ~1 and full model ~condition",
+          "The number of estimated surrogate variables is reported along with their correlation to the top PCs from T1S1",
+          "A sample x surrogate-variable covariate table is saved as an artifact for use in the DESeq2 design"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DESeq2 differential expression with apeglm shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If metadata's condition column uses non-obvious labels, confirm the case/control coding before interpreting fold-change sign"
+        ],
+        "context": "60 cases vs 60 controls, unpaired, single batch. apeglm shrinkage specifically targets the problem of large but unreliable fold-change estimates in low-count/high-variance genes, which is central to distinguishing 'differs' from 'differs by a lot and reliably so'.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which of the ~12,000 tested genes differ significantly between the 60 cases and 60 controls, with effect sizes (log2 fold changes) that are bias-corrected rather than inflated by low-count noise?",
+        "grounding": {
+          "claims": [],
+          "reason": "apeglm heavy-tailed shrinkage (Zhu, Ibrahim & Love, Bioinformatics 2019, PMID 30395178) is the documented method for reducing LFC estimate noise while preserving large true differences, directly relevant to separating significance from effect-size magnitude.",
+          "status": "grounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use apeglm (not normal or ashr) shrinkage as the primary effect-size estimator, consistent with its documented lower bias for RNA-seq LFCs",
+          "Report condition coding explicitly (which level is case, which is control) so fold-change direction is unambiguous"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 is fit with design = ~ surrogate_variables + condition (surrogate variables from T1S2, or condition-only if none were found) using control as the reference level",
+          "Wald test results for the condition contrast are produced for all filtered genes: baseMean, raw log2FoldChange, shrunken log2FoldChange (apeglm), lfcSE, stat, pvalue, padj (BH)",
+          "lfcShrink with type='apeglm' is applied to obtain the shrunken effect size used in all downstream steps",
+          "Dispersion plot and independent-filtering diagnostic are produced",
+          "A DESeq2 median-of-ratios normalized, log2-transformed expression matrix is saved as an artifact for downstream deconvolution"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Classify genes by significance vs effect size",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A gene with a wide lfcSE-based CI that happens to clear the fold-change threshold should be flagged as a less precise estimate even if it passes the bucket cutoff"
+        ],
+        "context": "This step is the direct answer to the 'not only significant' half of the research question: it operationalizes 'large enough to matter' as a fold-change threshold crossed with FDR-controlled significance, on top of the apeglm-shrunken estimates from T1S3.",
+        "maxSteps": 200,
+        "packages": [
+          "EnhancedVolcano",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Of the genes with padj<0.05 between case and control, how many also show a shrunken log2 fold change large enough (>=1, i.e. >=2-fold) to be a practically meaningful difference, versus statistically significant but small, given the n=60/60 sample size?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Use only the apeglm-shrunken log2FoldChange for classification, not the raw MLE fold change",
+          "State the 2-fold threshold as a convention, not a biological law, and report the 1.5-fold sensitivity result alongside it"
+        ],
+        "acceptance_criteria": [
+          "Every tested gene is classified into: significant-only (padj<0.05, |shrunken log2FC|<1), significant-and-large-effect (padj<0.05, |shrunken log2FC|>=1), large-effect-not-significant, neither",
+          "Counts per classification bucket are reported, directly answering how much of the 'significant' set is driven by sample size rather than magnitude",
+          "The same classification is repeated at a stricter 1.5-fold cutoff as a sensitivity check and results compared",
+          "An EnhancedVolcano plot (shrunken log2FC vs -log10 padj) with both cutoffs marked is produced",
+          "A ranked table of the top 50 significant-and-large-effect genes by |shrunken log2FC|, including lfcSE-based 95% CI, is saved"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Immune cell composition check for large-effect genes",
+        "agent": "immune-profiling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "MCPcounter scores are arbitrary units, not fractions; only relative case-vs-control comparisons within each population are valid, not cross-population comparisons of magnitude"
+        ],
+        "context": "Whole blood is a mixed-cell tissue; a real, reproducible expression difference can arise either from altered cell proportions or from altered per-cell regulation, and these require different biological interpretation even though both are genuine differences.",
+        "maxSteps": 200,
+        "packages": [
+          "MCPcounter"
+        ],
+        "question": "Do the genes classified as significant-and-large-effect reflect a shift in circulating immune cell proportions between case and control, rather than (or in addition to) a within-cell-type regulatory change?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3",
+          "T1S4"
+        ],
+        "constraints": [
+          "MCPcounter's marker gene sets are embedded in the package itself; no external reference file is required, but confirm the package resolves and gene symbols match before relying on output",
+          "Do not claim a gene is 'artifactual' solely because it is a cell-type marker; report the association and let it inform interpretation, not exclusion"
+        ],
+        "acceptance_criteria": [
+          "MCPcounter is run on the DESeq2 normalized, log2-transformed expression matrix (HGNC gene symbols) from T1S3 to estimate per-sample relative abundance scores for major immune/stromal populations",
+          "Case vs control is compared per population with Wilcoxon rank-sum test and BH correction; which populations differ is reported",
+          "Each gene in the significant-and-large-effect set from T1S4 is annotated as a known marker of a population that itself differs between groups, or not",
+          "A clear count/summary of how many large-effect genes are plausibly composition-associated vs not is reported"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment ranked by effect size and statistic",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "GO-scale collections are hierarchical with highly correlated sibling sets; this step deliberately uses Hallmark and WikiPathways instead, which are less redundant, to avoid reporting inflated independent pathway counts"
+        ],
+        "context": "Gene sets needed: MSigDB human Hallmark collection (50 curated biological state/process gene sets, HGNC symbols) and the WikiPathways human pathway collection (HGNC symbols), both to be resolved from the environment's managed pathway references. Gene symbols in counts.csv already match the HGNC convention used by both collections, so no ID mapping is needed.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "ggplot2"
+        ],
+        "question": "Do the case-vs-control differences concentrate in coherent biological pathways with large, coordinated shifts, or are large single-gene effects isolated outliers not reflected at the pathway level?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3",
+          "T1S4"
+        ],
+        "constraints": [
+          "Rank genes for fgsea by the DESeq2 Wald statistic (or shrunken log2FC), not by raw p-value alone, so the enrichment reflects effect-size-weighted signal",
+          "Use all filtered tested genes (not the whole genome) as the ORA background to avoid inflated enrichment from untested genes"
+        ],
+        "acceptance_criteria": [
+          "fgsea is run using the DESeq2 Wald statistic from T1S3 as the ranking metric against the MSigDB human Hallmark gene sets and the WikiPathways human pathway collection",
+          "clusterProfiler::enricher (ORA) is run on the significant-and-large-effect gene list from T1S4 against the same two gene-set collections, using all filtered tested genes as background",
+          "Leading-edge genes are reported for any fgsea pathway with padj<0.05",
+          "GSEA and ORA results are reconciled: pathways found only by ORA are flagged as likely driven by a small number of large-effect genes rather than a distributed shift",
+          "If either gene-set reference is unavailable at runtime, the step proceeds with whichever is present and states the gap explicitly rather than failing silently"
+        ]
+      }
+    ],
+    "title": "Whole blood case vs control DE: significance vs effect size",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data is a single-batch, unpaired whole-blood bulk RNA-seq cohort of 60 cases vs 60 controls, raw Salmon gene-level counts for ~12,000 genes across 120 samples, with a metadata table carrying only the condition label (no recorded sex/age/batch covariates). The research question explicitly separates two things that are often conflated: statistical significance and practical (effect-size) magnitude. The plan therefore (1) filters and QC's the count matrix and checks for outlier samples/structure before any testing; (2) because no technical or demographic covariates were recorded but whole blood is known to vary with hidden factors (cell composition, sex, age), estimates latent surrogate variables via svaseq so a condition effect is not confounded by unmodelled structure; (3) fits DESeq2 with those surrogate variables plus condition and applies apeglm shrinkage to log2 fold changes specifically because raw MLE fold changes for low-count/noisy genes are unstable and would misrepresent 'how large' a difference really is; (4) explicitly classifies genes by crossing padj<0.05 against a fold-change threshold, since with n=60/60 many genes can be significant with trivial effect sizes; (5) checks whether the large-effect genes are markers of immune cell populations whose proportions themselves differ between case and control, since a whole-blood composition shift is a real but mechanistically different explanation than an intracellular regulatory change; (6) runs pathway enrichment ranked by effect size/test statistic (not p-value alone) to see whether large, coordinated shifts implicate a coherent biology rather than a handful of outlier genes. Each step's output directly answers the stated question of which genes differ and which of those differences are large enough to matter."
+  },
+  "usage": {
+    "inputTokens": 5928999,
+    "outputTokens": 23331,
+    "cacheCreationInputTokens": 392222,
+    "cacheReadInputTokens": 5535935,
+    "reasoningTokens": 11766
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "DESeq2",
+          "apeglm",
+          "fgsea",
+          "EnhancedVolcano"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ashr",
+          "IHW",
+          "org.Hs.eg.db",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "GSVA",
+          "immunedeconv"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/bioconductor/deseq2",
+        "query": "lfcShrink apeglm effect size shrinkage for large fold change filtering"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "whole blood RNA-seq case control differential expression effect size shrinkage lfcShrink",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "apeglm shrinkage estimator RNA-seq fold change",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "deconvolution blood immune signature LM22"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune cell reference blood xCell"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "xCell",
+          "xCell2",
+          "MCPcounter",
+          "quantiseqr",
+          "EPIC"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR",
+          "STRINGdb"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene length"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "blood cell composition marker genes CIBERSORT"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune deconvolution"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "cell-typing"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "scGate"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "normal-expression"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "sva",
+          "RUVSeq"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "house keeping blood cell type marker genes signature"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathway-activity"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulatory-networks dorothea TF"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "dorothea",
+          "CellChat",
+          "pheatmap"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "effect size threshold minimum meaningful difference RNA-seq log fold change vs statistical significance",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "whole blood transcriptomics case control biomarker discovery power sample size 60",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "effect size versus statistical significance RNA-seq differential expression practical significance threshold",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "variancePartition",
+          "limma",
+          "edgeR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "biomaRt",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "statsmodels",
+          "scikit-learn",
+          "shap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ranger",
+          "glmnet"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "quantiseqr",
+          "MCPcounter",
+          "xCell2"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "quanTIseq immune deconvolution blood transcriptome",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EPIC",
+          "immunedeconv"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "GSVA gene set variation analysis bulk RNA-seq disease case control",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 apeglm effect size lfcThreshold minimum fold change practical significance whole blood biomarker",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "30395178"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "immune cell composition confounder whole blood transcriptomics disease association",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "whole blood cell composition confounding gene expression case control adjustment estimated proportions",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "effect size vs statistical significance differential expression practical significance biomarker",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "whole blood RNA-seq case control 60 vs 60",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "whole blood RNA-seq case control disease salmon counts",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "whole blood transcriptome case control",
+        "datasetType": "gse",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "effect size log fold change threshold gene expression biomarker clinical relevance not just p-value",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "random forest cross validation gene expression biomarker whole blood classification overfitting",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "42050008"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "immune cell composition CIBERSORT confounding whole blood transcriptome differential expression disease",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "cell type composition confounder blood gene expression disease association deconvolution adjustment",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "cell type composition confound differential expression whole blood adjustment deconvolution",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "immune cell deconvolution confounding differential expression blood bulk RNA-seq covariate adjustment",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 apeglm lfcShrink effect size whole blood pipeline",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "pydeseq2 differential expression pipeline",
+        "limit": 5
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/owkin/pydeseq2",
+        "query": "lfc_shrink apeglm shrinkage effect size DeseqStats"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "pydeseq2",
+        "query": "lfc shrinkage apeglm"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "pydeseq2"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2"
+        ]
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "lfcShrink apeglm"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/scanpy",
+        "query": "n/a"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "fgsea",
+        "query": "fgsea gene set enrichment analysis ranked list"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/anything/anything",
+        "query": "test"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "test",
+        "query": "test"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "a",
+        "query": "a"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "b",
+        "query": "b"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "c",
+        "query": "c"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "d",
+        "query": "d"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "e",
+        "query": "e"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "f",
+        "query": "f"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "g",
+        "query": "g"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "h",
+        "query": "h"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "i",
+        "query": "i"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole blood case vs control DE: significance vs effect size",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The data is a single-batch, unpaired whole-blood bulk RNA-seq cohort of 60 cases vs 60 controls, raw Salmon gene-level counts for ~12,000 genes across 120 samples, with a metadata table carrying only the condition label (no recorded sex/age/batch covariates). The research question explicitly separates two things that are often conflated: statistical significance and practical (effect-size) magnitude. The plan therefore (1) filters and QC's the count matrix and checks for outlier samples/structure before any testing; (2) because no technical or demographic covariates were recorded but whole blood is known to vary with hidden factors (cell composition, sex, age), estimates latent surrogate variables via svaseq so a condition effect is not confounded by unmodelled structure; (3) fits DESeq2 with those surrogate variables plus condition and applies apeglm shrinkage to log2 fold changes specifically because raw MLE fold changes for low-count/noisy genes are unstable and would misrepresent 'how large' a difference really is; (4) explicitly classifies genes by crossing padj<0.05 against a fold-change threshold, since with n=60/60 many genes can be significant with trivial effect sizes; (5) checks whether the large-effect genes are markers of immune cell populations whose proportions themselves differ between case and control, since a whole-blood composition shift is a real but mechanistically different explanation than an intracellular regulatory change; (6) runs pathway enrichment ranked by effect size/test statistic (not p-value alone) to see whether large, coordinated shifts implicate a coherent biology rather than a handful of outlier genes. Each step's output directly answers the stated question of which genes differ and which of those differences are large enough to matter.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, filtering, and outlier check",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Are the 120 whole-blood samples (60 case, 60 control) in counts.csv correctly aligned to metadata.csv, are there low-expression genes or outlier samples that should be excluded before differential testing, and does unsupervised structure track condition or something else?",
+              "acceptance_criteria": [
+                "Sample columns in counts.csv are confirmed 1:1 matched to metadata.csv rows and the 60/60 case/control split is verified",
+                "Low-count genes are filtered (e.g. require count>=10 in at least 60 of 120 samples) and the number of genes retained is reported",
+                "Per-sample library size distribution is computed and any sample >3 SD from the cohort mean is flagged and justified for inclusion/exclusion",
+                "A VST-based PCA plot colored by condition is produced and described",
+                "Filtered count matrix and aligned metadata are saved as artifacts for downstream steps"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input files: /eval-sonnet-plane-r2-without-population-n60-1/data/inputs/counts/counts.csv (raw integer Salmon gene counts, gene symbol rows, 12000 x 121 including header) and /eval-sonnet-plane-r2-without-population-n60-1/data/inputs/metadata/metadata.csv (120 samples x condition). Single batch per data profile, but no sex/age/technical covariates are recorded, so unsupervised structure must be inspected rather than assumed absent.",
+              "constraints": [
+                "Do not drop samples without explicit justification tied to a QC metric",
+                "Use gene symbols as-is; do not attempt Ensembl ID mapping since the data already carries symbols"
+              ],
+              "caveats": [
+                "A 12000x120 matrix is small; do not over-filter genes to the point of losing real low-to-moderate expression signal",
+                "PCA structure not aligned with condition is expected in whole blood (immune composition, sex) and should be carried into the surrogate-variable step rather than removed as 'batch'"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Estimate hidden covariates via surrogate variable analysis",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Given that metadata.csv records only case/control status, what latent structure (e.g. cell composition, demographic variation) exists in the filtered whole-blood counts that should be adjusted for so it is not mistaken for, or masks, a true case-vs-control effect?",
+              "acceptance_criteria": [
+                "sva::svaseq is run on the filtered count matrix with null model ~1 and full model ~condition",
+                "The number of estimated surrogate variables is reported along with their correlation to the top PCs from T1S1",
+                "A sample x surrogate-variable covariate table is saved as an artifact for use in the DESeq2 design"
+              ],
+              "packages": [
+                "sva",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "No sex, age, or batch covariates exist in the 120x2 metadata table, yet whole-blood transcriptomes are strongly shaped by unmeasured leukocyte composition and demographics. svaseq estimates such hidden structure directly from the count data.",
+              "constraints": [
+                "Fit svaseq on the same filtered, aligned matrix produced in T1S1, not on raw unfiltered counts"
+              ],
+              "caveats": [
+                "If svaseq finds zero surrogate variables, proceed with design ~condition alone and state that explicitly rather than forcing artificial covariates"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "DESeq2 differential expression with apeglm shrinkage",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the ~12,000 tested genes differ significantly between the 60 cases and 60 controls, with effect sizes (log2 fold changes) that are bias-corrected rather than inflated by low-count noise?",
+              "acceptance_criteria": [
+                "DESeq2 is fit with design = ~ surrogate_variables + condition (surrogate variables from T1S2, or condition-only if none were found) using control as the reference level",
+                "Wald test results for the condition contrast are produced for all filtered genes: baseMean, raw log2FoldChange, shrunken log2FoldChange (apeglm), lfcSE, stat, pvalue, padj (BH)",
+                "lfcShrink with type='apeglm' is applied to obtain the shrunken effect size used in all downstream steps",
+                "Dispersion plot and independent-filtering diagnostic are produced",
+                "A DESeq2 median-of-ratios normalized, log2-transformed expression matrix is saved as an artifact for downstream deconvolution"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "60 cases vs 60 controls, unpaired, single batch. apeglm shrinkage specifically targets the problem of large but unreliable fold-change estimates in low-count/high-variance genes, which is central to distinguishing 'differs' from 'differs by a lot and reliably so'.",
+              "constraints": [
+                "Use apeglm (not normal or ashr) shrinkage as the primary effect-size estimator, consistent with its documented lower bias for RNA-seq LFCs",
+                "Report condition coding explicitly (which level is case, which is control) so fold-change direction is unambiguous"
+              ],
+              "caveats": [
+                "If metadata's condition column uses non-obvious labels, confirm the case/control coding before interpreting fold-change sign"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "apeglm heavy-tailed shrinkage (Zhu, Ibrahim & Love, Bioinformatics 2019, PMID 30395178) is the documented method for reducing LFC estimate noise while preserving large true differences, directly relevant to separating significance from effect-size magnitude."
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Classify genes by significance vs effect size",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Of the genes with padj<0.05 between case and control, how many also show a shrunken log2 fold change large enough (>=1, i.e. >=2-fold) to be a practically meaningful difference, versus statistically significant but small, given the n=60/60 sample size?",
+              "acceptance_criteria": [
+                "Every tested gene is classified into: significant-only (padj<0.05, |shrunken log2FC|<1), significant-and-large-effect (padj<0.05, |shrunken log2FC|>=1), large-effect-not-significant, neither",
+                "Counts per classification bucket are reported, directly answering how much of the 'significant' set is driven by sample size rather than magnitude",
+                "The same classification is repeated at a stricter 1.5-fold cutoff as a sensitivity check and results compared",
+                "An EnhancedVolcano plot (shrunken log2FC vs -log10 padj) with both cutoffs marked is produced",
+                "A ranked table of the top 50 significant-and-large-effect genes by |shrunken log2FC|, including lfcSE-based 95% CI, is saved"
+              ],
+              "packages": [
+                "EnhancedVolcano",
+                "dplyr",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "This step is the direct answer to the 'not only significant' half of the research question: it operationalizes 'large enough to matter' as a fold-change threshold crossed with FDR-controlled significance, on top of the apeglm-shrunken estimates from T1S3.",
+              "constraints": [
+                "Use only the apeglm-shrunken log2FoldChange for classification, not the raw MLE fold change",
+                "State the 2-fold threshold as a convention, not a biological law, and report the 1.5-fold sensitivity result alongside it"
+              ],
+              "caveats": [
+                "A gene with a wide lfcSE-based CI that happens to clear the fold-change threshold should be flagged as a less precise estimate even if it passes the bucket cutoff"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Immune cell composition check for large-effect genes",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do the genes classified as significant-and-large-effect reflect a shift in circulating immune cell proportions between case and control, rather than (or in addition to) a within-cell-type regulatory change?",
+              "acceptance_criteria": [
+                "MCPcounter is run on the DESeq2 normalized, log2-transformed expression matrix (HGNC gene symbols) from T1S3 to estimate per-sample relative abundance scores for major immune/stromal populations",
+                "Case vs control is compared per population with Wilcoxon rank-sum test and BH correction; which populations differ is reported",
+                "Each gene in the significant-and-large-effect set from T1S4 is annotated as a known marker of a population that itself differs between groups, or not",
+                "A clear count/summary of how many large-effect genes are plausibly composition-associated vs not is reported"
+              ],
+              "packages": [
+                "MCPcounter"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "context": "Whole blood is a mixed-cell tissue; a real, reproducible expression difference can arise either from altered cell proportions or from altered per-cell regulation, and these require different biological interpretation even though both are genuine differences.",
+              "constraints": [
+                "MCPcounter's marker gene sets are embedded in the package itself; no external reference file is required, but confirm the package resolves and gene symbols match before relying on output",
+                "Do not claim a gene is 'artifactual' solely because it is a cell-type marker; report the association and let it inform interpretation, not exclusion"
+              ],
+              "caveats": [
+                "MCPcounter scores are arbitrary units, not fractions; only relative case-vs-control comparisons within each population are valid, not cross-population comparisons of magnitude"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment ranked by effect size and statistic",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Do the case-vs-control differences concentrate in coherent biological pathways with large, coordinated shifts, or are large single-gene effects isolated outliers not reflected at the pathway level?",
+              "acceptance_criteria": [
+                "fgsea is run using the DESeq2 Wald statistic from T1S3 as the ranking metric against the MSigDB human Hallmark gene sets and the WikiPathways human pathway collection",
+                "clusterProfiler::enricher (ORA) is run on the significant-and-large-effect gene list from T1S4 against the same two gene-set collections, using all filtered tested genes as background",
+                "Leading-edge genes are reported for any fgsea pathway with padj<0.05",
+                "GSEA and ORA results are reconciled: pathways found only by ORA are flagged as likely driven by a small number of large-effect genes rather than a distributed shift",
+                "If either gene-set reference is unavailable at runtime, the step proceeds with whichever is present and states the gap explicitly rather than failing silently"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "context": "Gene sets needed: MSigDB human Hallmark collection (50 curated biological state/process gene sets, HGNC symbols) and the WikiPathways human pathway collection (HGNC symbols), both to be resolved from the environment's managed pathway references. Gene symbols in counts.csv already match the HGNC convention used by both collections, so no ID mapping is needed.",
+              "constraints": [
+                "Rank genes for fgsea by the DESeq2 Wald statistic (or shrunken log2FC), not by raw p-value alone, so the enrichment reflects effect-size-weighted signal",
+                "Use all filtered tested genes (not the whole genome) as the ORA background to avoid inflated enrichment from untested genes"
+              ],
+              "caveats": [
+                "GO-scale collections are hierarchical with highly correlated sibling sets; this step deliberately uses Hallmark and WikiPathways instead, which are less redundant, to avoid reporting inflated independent pathway counts"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

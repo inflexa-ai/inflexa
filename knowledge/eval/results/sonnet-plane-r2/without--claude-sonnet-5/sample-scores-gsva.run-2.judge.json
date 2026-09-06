@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 4,
+    "low_count_filter": 2,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly frames this as a per-sample scoring task: DESeq2 VST on the raw counts, condition-blind GSVA with a Gaussian kernel over the 50 human Hallmark sets, then a limma moderated t-test on the 50 x 12 score matrix with BH at 0.05, and a row-scaled heatmap with condition annotation, keeping sample_01 with explicit reporting of its behavior. Sample QC is thin: sample_01's library size is tracked but no PCA or sample-distance check colored by condition is stated, and no low-count gene filter precedes VST/GSVA at all (only symbol deduplication). The limma design and reference level are not written out, the MSigDB Hallmark version and a gene-set size window are not named, and package versions are not requested in the report, though the small-n and overlap caveats are stated well."
+}

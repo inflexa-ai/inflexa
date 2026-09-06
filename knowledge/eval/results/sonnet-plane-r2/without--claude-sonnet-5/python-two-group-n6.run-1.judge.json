@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "PyDESeq2 with median-of-ratios size factors on raw counts fits the 6v6 unpaired single-batch design and respects the Python-only constraint; QC is thorough (library sizes, VST PCA/correlation colored by condition, detection rate) with an explicit keep-and-sensitivity-check policy for sample_01. The low-count filter is only all-zero removal with a thin justification, the design formula and reference level are implied rather than written out, and the |log2FC|>1 cut is applied post hoc rather than as an lfcThreshold in the test, although BH at 0.05 and shrunken LFCs are stated. Enrichment uses prerank on the full DE list but hedges between two ranking metrics and two FDR thresholds, names no MSigDB version, no set-size window, and no seed. The report plan lists counts, thresholds, and power caveats but omits package versions."
+}

@@ -1,0 +1,470 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "three-prime-n3",
+  "run": 1,
+  "startedAt": "2026-09-05T22:16:59.926Z",
+  "elapsedMs": 76325,
+  "outcome": "plan_submitted",
+  "planId": "pln-d9871354",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and DESeq2 differential expression (treated vs control)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group is small; treat borderline padj calls cautiously and do not overinterpret genes with low baseMean/high dispersion",
+          "Do not apply TPM/FPKM or any gene-length normalization — this is a 3' tag-seq library where read count already scales with transcript abundance, not length",
+          "Confirm metadata sample IDs align with counts column order before fitting the model; a silent mismatch would invalidate every downstream result",
+          "Single batch design means no batch correction step is applicable or needed"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes are differentially expressed between treated (n=3) and control (n=3) liver samples in this QuantSeq 3' tag-seq dataset?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts matrix (12000 genes x 6 samples) and metadata (6 rows) are loaded and sample order/condition labels are confirmed to match between the two files",
+          "A DESeq2 dataset is built with design ~condition (treated vs control, unpaired, single batch) and run through DESeq() with default median-of-ratios size factor normalization (no gene-length correction, consistent with 3' tag-seq)",
+          "Independent filtering and BH-adjusted p-values (padj) are reported for every tested gene",
+          "Output table has columns: gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj, sorted by padj",
+          "A shrunken log2FoldChange (apeglm or normal shrinkage) is also reported for ranking/visualization purposes",
+          "PCA plot and sample-to-sample distance heatmap on variance-stabilized counts are produced to confirm treated/control separation and flag any outlier sample",
+          "MA plot and volcano plot of the DE results are produced",
+          "Significant gene list (padj < 0.05, and separately a stricter padj < 0.05 & |log2FC| > 1 list) is saved for downstream enrichment"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Heatmap of top differentially expressed genes",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 3 replicates per group, clustering patterns are illustrative, not a statistical claim of subgroup structure"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pheatmap",
+          "ComplexHeatmap",
+          "DESeq2"
+        ],
+        "question": "What does the expression pattern of the top differentially expressed genes look like across the 6 treated/control samples?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "visualization",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "A heatmap of variance-stabilized or normalized counts for the top ~30-50 DE genes by padj is produced, with samples annotated by condition (treated/control)",
+          "Row scaling (z-score) is applied so patterns are visible across samples of different baseline expression"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Confirm the WikiPathways, Hallmark, and Reactome gene set files are present for human before running; if any is unavailable at execution time, report that collection as skipped rather than failing the whole step",
+          "GO/Reactome/WikiPathways sets overlap heavily in a nested hierarchy — expect blocks of correlated hits, not independent findings",
+          "Gene symbol case/synonym mismatches between the count matrix's gene symbols and the HGNC symbols in the gene set files should be checked and reported as an unmapped-gene count"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "fgsea",
+          "clusterProfiler",
+          "pandas"
+        ],
+        "question": "Which biological pathways and processes are enriched among genes differentially expressed between treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Over-representation analysis (or, if preferred, pre-ranked GSEA on the full DESeq2 shrunken-log2FC-ranked gene list) is run against the human WikiPathways gene set collection, the human MSigDB Hallmark collection, and the Reactome human pathway gene set collection",
+          "Each of the three enrichment runs reports pathway name, gene set size, overlap/leading-edge genes, enrichment score or odds ratio, p-value, and BH-adjusted q-value",
+          "Reactome results are restricted to Homo sapiens pathways using the accompanying Reactome pathway index before or after testing",
+          "Results are reported per-collection (not pooled) since each collection has different set sizes/multiple-testing burden",
+          "If the DE gene list from T1S1 is empty or has fewer than ~10 significant genes at padj<0.05, the step falls back to pre-ranked GSEA on the full ranked list and states this explicitly"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "PPI network context for DE genes",
+        "agent": "network-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "STRING edges are undirected and unsigned confidence scores, not evidence of direct physical interaction always — combined_score blends multiple evidence channels",
+          "The full STRING file is ~83MB gzipped/6.9M edges; must filter to combined_score>=700 (~237k edges) before loading into memory for graph construction",
+          "This is a supportive/exploratory annotation layer, not a substitute for the enrichment analysis in T2S1"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "networkx",
+          "pandas"
+        ],
+        "question": "Are the differentially expressed genes connected within the human protein-protein interaction network, suggesting coordinated modules rather than isolated hits?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "STRING human PPI edges are filtered to high-confidence (combined_score >= 700) and joined to gene symbols via the STRING protein info file",
+          "The subnetwork induced by the significant DE gene list (padj < 0.05) is extracted and its connectivity (number of edges, number of connected components, degree distribution) is reported",
+          "A network visualization or module summary highlighting DE genes with direct STRING interactions among each other is produced",
+          "If fewer than 2 DE genes have any high-confidence STRING edge among the DE list, the step reports that the DE set shows no detectable PPI module rather than forcing an interpretation"
+        ]
+      }
+    ],
+    "title": "Liver 3' tag-seq DESeq2 treated vs control DE + pathways",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is a small (12000 gene x 6 sample), single-batch, unpaired bulk RNA-seq experiment from a Lexogen QuantSeq FWD 3' tag-seq library (3 treated vs 3 control liver samples), with raw STAR/featureCounts gene-level integer counts. Because QuantSeq is a 3' tag protocol producing one read per transcript molecule regardless of transcript length, standard length-normalized quantifications (TPM/FPKM) are inappropriate and unnecessary; DESeq2's median-of-ratios normalization is the correct approach since it only corrects for library size/composition, not gene length. The plan therefore: (1) loads and QCs the count matrix and metadata, confirming sample-condition correspondence and count distribution characteristics appropriate for n=3 per group; (2) runs a single DESeq2 differential expression model (~condition, treated vs control) with standard independent filtering and Benjamini-Hochberg FDR, producing the core gene list the research question asks for; (3) visualizes the result (PCA/sample distances, MA plot, volcano, heatmap of top DE genes) to support QC judgment on this small-n design; (4) takes the significant DE gene list into pathway enrichment against human WikiPathways, MSigDB Hallmark, and Reactome gene sets (all present for Homo sapiens in the reference store), since the research question is about which genes/processes differ; (5) optionally maps DE genes onto the STRING human PPI network to highlight connected modules among the DE hits, giving an additional interpretive layer on top of enrichment alone. No translational/safety/PK step is added because the research question asks only 'which genes differ' with no clinical response, safety, or PK data present — adding those would be speculative given the data context."
+  },
+  "usage": {
+    "inputTokens": 1387990,
+    "outputTokens": 5188,
+    "cacheCreationInputTokens": 125927,
+    "cacheReadInputTokens": 1261799,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathways",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "DESeq2",
+          "rnanorm",
+          "edgeR",
+          "limma",
+          "fgsea",
+          "gseapy",
+          "decoupler"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "QuantSeq 3' tag sequencing differential expression normalization gene length bias",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "QuantSeq 3' RNA sequencing DESeq2 low input differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Lexogen QuantSeq 3prime tag RNA-seq gene expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "3' end RNA sequencing gene expression quantification pipeline",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 differential expression small sample size liver drug treatment RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 moderated dispersion estimation small sample RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Love Huber Anders DESeq2 moderated estimation fold change dispersion RNA-Seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "liver hepatotoxicity drug expression signature"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pharmacogenomics"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "liver"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "perturbation-signatures"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING human protein interaction"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "interaction-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb-canonical-pathways-mouse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "go human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "ComplexHeatmap",
+          "clusterProfiler",
+          "fgsea",
+          "pheatmap"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver 3' tag-seq DESeq2 treated vs control DE + pathways",
+          "analytical_narrative": "The dataset is a small (12000 gene x 6 sample), single-batch, unpaired bulk RNA-seq experiment from a Lexogen QuantSeq FWD 3' tag-seq library (3 treated vs 3 control liver samples), with raw STAR/featureCounts gene-level integer counts. Because QuantSeq is a 3' tag protocol producing one read per transcript molecule regardless of transcript length, standard length-normalized quantifications (TPM/FPKM) are inappropriate and unnecessary; DESeq2's median-of-ratios normalization is the correct approach since it only corrects for library size/composition, not gene length. The plan therefore: (1) loads and QCs the count matrix and metadata, confirming sample-condition correspondence and count distribution characteristics appropriate for n=3 per group; (2) runs a single DESeq2 differential expression model (~condition, treated vs control) with standard independent filtering and Benjamini-Hochberg FDR, producing the core gene list the research question asks for; (3) visualizes the result (PCA/sample distances, MA plot, volcano, heatmap of top DE genes) to support QC judgment on this small-n design; (4) takes the significant DE gene list into pathway enrichment against human WikiPathways, MSigDB Hallmark, and Reactome gene sets (all present for Homo sapiens in the reference store), since the research question is about which genes/processes differ; (5) optionally maps DE genes onto the STRING human PPI network to highlight connected modules among the DE hits, giving an additional interpretive layer on top of enrichment alone. No translational/safety/PK step is added because the research question asks only 'which genes differ' with no clinical response, safety, or PK data present — adding those would be speculative given the data context.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and DESeq2 differential expression (treated vs control)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated (n=3) and control (n=3) liver samples in this QuantSeq 3' tag-seq dataset?",
+              "acceptance_criteria": [
+                "Counts matrix (12000 genes x 6 samples) and metadata (6 rows) are loaded and sample order/condition labels are confirmed to match between the two files",
+                "A DESeq2 dataset is built with design ~condition (treated vs control, unpaired, single batch) and run through DESeq() with default median-of-ratios size factor normalization (no gene-length correction, consistent with 3' tag-seq)",
+                "Independent filtering and BH-adjusted p-values (padj) are reported for every tested gene",
+                "Output table has columns: gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj, sorted by padj",
+                "A shrunken log2FoldChange (apeglm or normal shrinkage) is also reported for ranking/visualization purposes",
+                "PCA plot and sample-to-sample distance heatmap on variance-stabilized counts are produced to confirm treated/control separation and flag any outlier sample",
+                "MA plot and volcano plot of the DE results are produced",
+                "Significant gene list (padj < 0.05, and separately a stricter padj < 0.05 & |log2FC| > 1 list) is saved for downstream enrichment"
+              ],
+              "packages": [
+                "pydeseq2",
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=3 per group is small; treat borderline padj calls cautiously and do not overinterpret genes with low baseMean/high dispersion",
+                "Do not apply TPM/FPKM or any gene-length normalization — this is a 3' tag-seq library where read count already scales with transcript abundance, not length",
+                "Confirm metadata sample IDs align with counts column order before fitting the model; a silent mismatch would invalidate every downstream result",
+                "Single batch design means no batch correction step is applicable or needed"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Heatmap of top differentially expressed genes",
+              "track": "T1",
+              "step_type": "visualization",
+              "question": "What does the expression pattern of the top differentially expressed genes look like across the 6 treated/control samples?",
+              "acceptance_criteria": [
+                "A heatmap of variance-stabilized or normalized counts for the top ~30-50 DE genes by padj is produced, with samples annotated by condition (treated/control)",
+                "Row scaling (z-score) is applied so patterns are visible across samples of different baseline expression"
+              ],
+              "packages": [
+                "pheatmap",
+                "ComplexHeatmap",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With only 3 replicates per group, clustering patterns are illustrative, not a statistical claim of subgroup structure"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on DE gene list",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which biological pathways and processes are enriched among genes differentially expressed between treated and control liver samples?",
+              "acceptance_criteria": [
+                "Over-representation analysis (or, if preferred, pre-ranked GSEA on the full DESeq2 shrunken-log2FC-ranked gene list) is run against the human WikiPathways gene set collection, the human MSigDB Hallmark collection, and the Reactome human pathway gene set collection",
+                "Each of the three enrichment runs reports pathway name, gene set size, overlap/leading-edge genes, enrichment score or odds ratio, p-value, and BH-adjusted q-value",
+                "Reactome results are restricted to Homo sapiens pathways using the accompanying Reactome pathway index before or after testing",
+                "Results are reported per-collection (not pooled) since each collection has different set sizes/multiple-testing burden",
+                "If the DE gene list from T1S1 is empty or has fewer than ~10 significant genes at padj<0.05, the step falls back to pre-ranked GSEA on the full ranked list and states this explicitly"
+              ],
+              "packages": [
+                "gseapy",
+                "fgsea",
+                "clusterProfiler",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Confirm the WikiPathways, Hallmark, and Reactome gene set files are present for human before running; if any is unavailable at execution time, report that collection as skipped rather than failing the whole step",
+                "GO/Reactome/WikiPathways sets overlap heavily in a nested hierarchy — expect blocks of correlated hits, not independent findings",
+                "Gene symbol case/synonym mismatches between the count matrix's gene symbols and the HGNC symbols in the gene set files should be checked and reported as an unmapped-gene count"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "PPI network context for DE genes",
+              "track": "T3",
+              "step_type": "analysis",
+              "question": "Are the differentially expressed genes connected within the human protein-protein interaction network, suggesting coordinated modules rather than isolated hits?",
+              "acceptance_criteria": [
+                "STRING human PPI edges are filtered to high-confidence (combined_score >= 700) and joined to gene symbols via the STRING protein info file",
+                "The subnetwork induced by the significant DE gene list (padj < 0.05) is extracted and its connectivity (number of edges, number of connected components, degree distribution) is reported",
+                "A network visualization or module summary highlighting DE genes with direct STRING interactions among each other is produced",
+                "If fewer than 2 DE genes have any high-confidence STRING edge among the DE list, the step reports that the DE set shows no detectable PPI module rather than forcing an interpretation"
+              ],
+              "packages": [
+                "networkx",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "STRING edges are undirected and unsigned confidence scores, not evidence of direct physical interaction always — combined_score blends multiple evidence channels",
+                "The full STRING file is ~83MB gzipped/6.9M edges; must filter to combined_score>=700 (~237k edges) before loading into memory for graph construction",
+                "This is a supportive/exploratory annotation layer, not a substitute for the enrichment analysis in T2S1"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

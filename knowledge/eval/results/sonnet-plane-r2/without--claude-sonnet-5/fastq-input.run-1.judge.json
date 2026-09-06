@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 1,
+    "low_count_filter": 1,
+    "normalization": 1,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 3
+  },
+  "rationale": "The planner correctly recognized that the inputs are unquantified paired-end FASTQ files with no count matrix, refused to invent one, and stopped with a precise question about whether a count table exists elsewhere or which quantifier (STAR, salmon, kallisto, HISAT2, Rsubread) should be provisioned, even identifying the available GENCODE v50/GRCh38 reference; this matches the reference's required outcome, so method_fits_design scores high. However, no downstream plan was stated: nothing on sample QC, low-count filtering, in-model normalization, the ~treatment design and contrast with reference level, BH at 0.05 with LFC shrinkage, or the low-power caveat of three-versus-three, all of which the reference expects to be sketched for once counts arrive. Enrichment was not warranted and is correctly absent, though only by virtue of no plan existing. The clarification message documents the data state and references well but is not a report of method, design, thresholds, or caveats."
+}

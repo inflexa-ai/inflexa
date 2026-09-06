@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 2,
+    "low_count_filter": 5,
+    "normalization": 6,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly refuses to refit the count model and runs gseapy prerank on the full ranked list with a stated signed -log10(p) metric, explicit handling of missing values and duplicates, a fixed seed, 1000 permutations, and FDR reporting at stated thresholds, which matches the reference's core. It falls short by not naming the MSigDB Hallmark version, not stating a gene-set size window (15-500), giving no tie rule, and not reporting the leading edge per set. It never mentions the shallow sample_01 or any check of sample structure behind the inherited DE table, and it does not verify the reference level or direction of the existing contrast. The report specifies thresholds and match rates but omits package versions and design caveats."
+}

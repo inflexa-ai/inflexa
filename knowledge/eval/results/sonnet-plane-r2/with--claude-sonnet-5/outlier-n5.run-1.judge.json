@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 9
+  },
+  "rationale": "DESeq2 Wald on raw counts with ~condition, explicit control reference, apeglm shrinkage, BH at 0.05, and a justified >=10 in >=5 samples filter fits the 5 vs 5 single-batch design exactly. The QC step characterizes sample_03 (library size, detected genes, mapping metrics, VST PCA and distance heatmap) and requires a numeric outlier criterion to be recorded before any exclusion, and both fits with and without sample_03 are reported with their overlap, matching the reference; the only gap is that the plan defers the actual criterion rather than fixing it (e.g. 3 MADs) in the plan itself. Enrichment was not asked for and the reference omits it; the plan adds ORA that is well specified (tested-gene universe, Hallmark 2026.1, 15-500 window) but rests on a dubious rejection of ranked GSEA for n=5/5 and lists Reactome as 'current' rather than a version. The report step covers method, versions, design, thresholds, tested and significant counts, the exclusion criterion, and design caveats."
+}

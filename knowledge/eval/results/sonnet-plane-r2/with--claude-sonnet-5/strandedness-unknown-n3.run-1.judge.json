@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The reference requires inferring strandedness (RSeQC infer_experiment on BAMs or salmon libType A on reads) for every sample and re-counting before any model is fit; this plan asserts reads/BAMs are unavailable, substitutes a weak count-matrix proxy, and then fits DESeq2 and edgeR on the counts as delivered, which is exactly the failure mode the reference names, though it at least declares the caveat and names the correct resolution. The sample-structure QC, the >=10-in->=3-samples filter, in-model normalization, explicit ~condition design with control as reference and a named contrast, BH at 0.05 with apeglm shrinkage and no alpha loosening are all stated correctly. The enrichment step is technically sound (Wald-stat ranking, named collections with versions, 15-500 size window) but is not asked for and inherits the unverified-count problem. The report lists design, versions, thresholds, tested/significant counts, the power caveat and the strandedness caveat, but a report built on unverified counts cannot fully compensate for skipping the re-count."
+}

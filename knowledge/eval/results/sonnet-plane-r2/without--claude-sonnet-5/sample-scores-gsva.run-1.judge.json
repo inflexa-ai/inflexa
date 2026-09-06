@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 4,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly frames this as a per-sample scoring problem: VST/log2-CPM before GSVA with the Gaussian kernel, Hallmark sets, then limma moderated t-test on the score matrix with BH, and a condition-annotated heatmap, with sample_01 flagged, inspected on the score matrix, and retained rather than silently dropped. QC is limited to library sizes with no PCA or sample-distance check stated, and the low-count filter guidance is vague and unquantified. The limma design and contrast are described in words but without an explicit formula or reference level, no alpha is stated for BH, the MSigDB version is not named, and the heatmap row scaling and package versions are not specified."
+}

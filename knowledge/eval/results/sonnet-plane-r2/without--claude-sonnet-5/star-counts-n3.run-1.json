@@ -1,0 +1,195 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "star-counts-n3",
+  "run": 1,
+  "startedAt": "2026-09-05T21:57:10.767Z",
+  "elapsedMs": 31561,
+  "outcome": "plan_submitted",
+  "planId": "pln-da2dc7d8",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and DESeq2 differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group is small; treat borderline padj calls cautiously and report that power is limited",
+          "Unpaired, single-batch design means no batch/pairing term is needed in the model, but also means no ability to control for individual-level variability beyond the two-group comparison",
+          "Confirm featureCounts output does not include a trailing summary/meta rows or non-gene feature rows (e.g. '__no_feature') before feeding into DESeq2 — filter these out if present",
+          "Gene symbol as row identifier may include duplicates or non-standard symbols; verify uniqueness before using as DESeqDataSet rownames"
+        ],
+        "context": "Input files: /eval-sonnet-plane-r2-without-star-counts-n3-1/data/inputs/counts/counts.csv (12000 genes x 6 samples, raw integer counts, gene symbol first column) and /eval-sonnet-plane-r2-without-star-counts-n3-1/data/inputs/metadata/metadata.csv (6 samples x condition: treated/control). Data explicitly comes from STAR + featureCounts, not a transcript quantifier, so counts are gene-level and integer — no tximport/effective-length correction is applicable or needed; DESeq2 consumes these raw counts directly and computes its own median-of-ratios size factors.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between treated (n=3) and control (n=3) liver samples, using raw STAR/featureCounts gene-level counts modeled with DESeq2's negative-binomial framework?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts (12000 genes x 6 samples) and metadata (6 samples x condition) are loaded and sample IDs are matched/ordered consistently between the two files",
+          "Basic QC performed: library size per sample, count distribution, PCA/sample-sample correlation to check for outliers or unexpected clustering by condition",
+          "DESeq2 run with design ~condition (treated vs control), using raw integer counts as input (no prior normalization applied)",
+          "Log2 fold changes shrunk via apeglm; results table includes gene symbol, baseMean, log2FoldChange (shrunk), lfcSE, pvalue, padj",
+          "Full results table (all ~12000 genes) and a significant-subset table (padj < 0.05) are written out",
+          "Diagnostic plots produced: PCA plot colored by condition, dispersion estimate plot, volcano plot (EnhancedVolcano) of log2FC vs -log10(padj)"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on DE results",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Verify gene symbols in the DE table match HGNC symbols used in the WikiPathways GMT; re-map if a different symbol version/case is used",
+          "With only 12000 genes profiled (a subset of the full transcriptome), background gene universe for ORA should be set to the 12000 tested genes, not a whole-genome default, to avoid enrichment bias",
+          "Report if the WikiPathways reference is unavailable at run time and fall back to reporting the ranked DE list alone"
+        ],
+        "context": "Uses the full DESeq2 results table from T1S1 (all ~12000 genes, ranked by shrunk log2FC/statistic) as input. Reference gene sets: WikiPathways human pathways GMT confirmed present at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, HGNC gene symbols matching the counts.csv gene symbol identifiers directly, one pathway per line with a '%'-delimited descriptor field to parse into a readable pathway name.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Gene-level ranking (e.g. by DESeq2 shrunk log2FC or by signed -log10(pvalue)) constructed from the full DE results table produced in T1S1",
+          "fgsea (or clusterProfiler GSEA) run against WikiPathways human gene sets, confirmed present in the reference store",
+          "A complementary over-representation test (e.g. clusterProfiler enricher) run on the padj<0.05 significant gene subset against the same WikiPathways sets, if a non-trivial number of significant genes exists",
+          "Output table includes pathway name (parsed from the '%'-delimited WikiPathways descriptor), NES/enrichment score, p-value, BH-adjusted q-value, and leading-edge/core genes",
+          "If fewer than ~10 genes pass padj<0.05, explicitly report that ORA is underpowered and rely primarily on the ranked GSEA result"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control DESeq2 DE + pathway enrichment",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is a bulk RNA-seq liver drug-treatment study with raw integer gene-level counts from STAR/featureCounts (12000 genes x 6 samples: 3 treated vs 3 control, unpaired, single batch). Raw integer counts from featureCounts are exactly the input DESeq2 expects (it models raw counts with a negative binomial and its own size-factor normalization) — no upstream transcript-level normalization (e.g. TPM/effective-length correction as needed for Salmon/kallisto via tximport) is required or appropriate here. The plan: (1) load and QC counts+metadata, (2) run DESeq2 for treated-vs-control differential expression with shrunken log2FC (apeglm) and BH-adjusted p-values, producing a full DE gene table and diagnostic plots (PCA, dispersion, volcano), (3) run pathway enrichment (fgsea/clusterProfiler) on the ranked DE gene list against WikiPathways human gene sets, which are confirmed present in the reference store. Single batch and unpaired design keep the DESeq2 model simple (~condition), with no batch term needed."
+  },
+  "usage": {
+    "inputTokens": 132202,
+    "outputTokens": 2547,
+    "cacheCreationInputTokens": 70640,
+    "cacheReadInputTokens": 61526,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways-human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "EnhancedVolcano",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control DESeq2 DE + pathway enrichment",
+          "analytical_narrative": "The dataset is a bulk RNA-seq liver drug-treatment study with raw integer gene-level counts from STAR/featureCounts (12000 genes x 6 samples: 3 treated vs 3 control, unpaired, single batch). Raw integer counts from featureCounts are exactly the input DESeq2 expects (it models raw counts with a negative binomial and its own size-factor normalization) — no upstream transcript-level normalization (e.g. TPM/effective-length correction as needed for Salmon/kallisto via tximport) is required or appropriate here. The plan: (1) load and QC counts+metadata, (2) run DESeq2 for treated-vs-control differential expression with shrunken log2FC (apeglm) and BH-adjusted p-values, producing a full DE gene table and diagnostic plots (PCA, dispersion, volcano), (3) run pathway enrichment (fgsea/clusterProfiler) on the ranked DE gene list against WikiPathways human gene sets, which are confirmed present in the reference store. Single batch and unpaired design keep the DESeq2 model simple (~condition), with no batch term needed.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and DESeq2 differential expression",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated (n=3) and control (n=3) liver samples, using raw STAR/featureCounts gene-level counts modeled with DESeq2's negative-binomial framework?",
+              "acceptance_criteria": [
+                "Counts (12000 genes x 6 samples) and metadata (6 samples x condition) are loaded and sample IDs are matched/ordered consistently between the two files",
+                "Basic QC performed: library size per sample, count distribution, PCA/sample-sample correlation to check for outliers or unexpected clustering by condition",
+                "DESeq2 run with design ~condition (treated vs control), using raw integer counts as input (no prior normalization applied)",
+                "Log2 fold changes shrunk via apeglm; results table includes gene symbol, baseMean, log2FoldChange (shrunk), lfcSE, pvalue, padj",
+                "Full results table (all ~12000 genes) and a significant-subset table (padj < 0.05) are written out",
+                "Diagnostic plots produced: PCA plot colored by condition, dispersion estimate plot, volcano plot (EnhancedVolcano) of log2FC vs -log10(padj)"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input files: /eval-sonnet-plane-r2-without-star-counts-n3-1/data/inputs/counts/counts.csv (12000 genes x 6 samples, raw integer counts, gene symbol first column) and /eval-sonnet-plane-r2-without-star-counts-n3-1/data/inputs/metadata/metadata.csv (6 samples x condition: treated/control). Data explicitly comes from STAR + featureCounts, not a transcript quantifier, so counts are gene-level and integer — no tximport/effective-length correction is applicable or needed; DESeq2 consumes these raw counts directly and computes its own median-of-ratios size factors.",
+              "caveats": [
+                "n=3 per group is small; treat borderline padj calls cautiously and report that power is limited",
+                "Unpaired, single-batch design means no batch/pairing term is needed in the model, but also means no ability to control for individual-level variability beyond the two-group comparison",
+                "Confirm featureCounts output does not include a trailing summary/meta rows or non-gene feature rows (e.g. '__no_feature') before feeding into DESeq2 — filter these out if present",
+                "Gene symbol as row identifier may include duplicates or non-standard symbols; verify uniqueness before using as DESeqDataSet rownames"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on DE results",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control liver samples?",
+              "acceptance_criteria": [
+                "Gene-level ranking (e.g. by DESeq2 shrunk log2FC or by signed -log10(pvalue)) constructed from the full DE results table produced in T1S1",
+                "fgsea (or clusterProfiler GSEA) run against WikiPathways human gene sets, confirmed present in the reference store",
+                "A complementary over-representation test (e.g. clusterProfiler enricher) run on the padj<0.05 significant gene subset against the same WikiPathways sets, if a non-trivial number of significant genes exists",
+                "Output table includes pathway name (parsed from the '%'-delimited WikiPathways descriptor), NES/enrichment score, p-value, BH-adjusted q-value, and leading-edge/core genes",
+                "If fewer than ~10 genes pass padj<0.05, explicitly report that ORA is underpowered and rely primarily on the ranked GSEA result"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Uses the full DESeq2 results table from T1S1 (all ~12000 genes, ranked by shrunk log2FC/statistic) as input. Reference gene sets: WikiPathways human pathways GMT confirmed present at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, HGNC gene symbols matching the counts.csv gene symbol identifiers directly, one pathway per line with a '%'-delimited descriptor field to parse into a readable pathway name.",
+              "caveats": [
+                "Verify gene symbols in the DE table match HGNC symbols used in the WikiPathways GMT; re-map if a different symbol version/case is used",
+                "With only 12000 genes profiled (a subset of the full transcriptome), background gene universe for ORA should be set to the 12000 tested genes, not a whole-genome default, to avoid enrichment bias",
+                "Report if the WikiPathways reference is unavailable at run time and fall back to reporting the ranked DE list alone"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

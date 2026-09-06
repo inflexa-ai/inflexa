@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 4,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly reads the question as QC-only and delivers what the reference asks: raw library sizes with sample_01's fold-difference from the median, detected-gene counts, a blind VST, PCA on the top 500 variable genes colored by condition, a Euclidean distance heatmap, and a multi-evidence keep/flag/remove verdict that explicitly refuses to drop on depth alone. It stops short of any model, p-value, or gene list, and correctly notes there is no batch to color. Its main gap is the explicit refusal to apply a minimal low-count filter before the VST, which the reference expects; it also omits a count-distribution view, gives no package version, and does not state the downstream design formula or contrast that its recommendation feeds into."
+}

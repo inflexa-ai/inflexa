@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan fits the design correctly: DESeq2 Wald on ~ sex + age_centered + condition with control releveled as reference, age mean-centered, apeglm on the condition coefficient, BH at 0.05, and an edgeR QL cross-check, with normalization kept inside the model and no pre-adjustment of counts. QC covers PCA colored by condition, sex, and age, distance heatmap, library sizes, and an outlier policy, but omits the XIST/Y-linked sex check and does not explicitly tabulate sex and age by group to test for confounding before fitting, which the reference treats as a required first step. The low-count filter is minimal and justified, and the report specifies design, thresholds, gene counts, diagnostics, versions, and design caveats. Enrichment was not requested; the GSEA specification is technically sound (full ranked list on the Wald statistic, tested-gene universe, 15-500 size window, named collections) but the Reactome version is left as 'current release' and the extra track adds unrequested scope."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 6,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly rejects count models for TPM and fits limma-trend on log2(TPM+1) with an explicit ~0+condition design and lesional-control contrast, PCA/correlation QC, and a filter keyed to the smallest group size, but it never asks the core for the raw counts or quant directories. It adds quantile normalization on top of TPM with a weak justification, which the reference does not do and which can suppress genuine global shifts between lesional and control skin. Significance is defined by a post hoc |log2FC|>=1 cutoff and a secondary nominal p<0.01 list rather than thresholds inside the test. Enrichment was not asked; the version it includes names collections and the ranking metric but omits versions and a size window and uses the unfiltered 12000-gene panel as the ORA universe instead of the tested set. Reporting covers method, design, thresholds, gene counts and caveats but not package versions."
+}

@@ -1,0 +1,187 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "no-replicates-1v1",
+  "run": 2,
+  "startedAt": "2026-09-05T21:09:14.413Z",
+  "elapsedMs": 20063,
+  "outcome": "plan_submitted",
+  "planId": "pln-538e71de",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and load counts/metadata for the single treated/control pair",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the counts.csv (12000 genes x 3 columns, gene symbol + 2 samples... note file says 3 columns total including gene id) and metadata.csv (2 samples x condition) align, and are the counts suitable for DE given exactly 1 treated and 1 control sample with no replicates?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Gene symbols in counts.csv are matched to sample columns and to metadata.csv sample IDs without mismatch",
+          "Library size, count distribution, and zero/low-count gene fraction are reported per sample",
+          "The report explicitly states n=1 per condition and flags that no within-group variance can be estimated from this design",
+          "A filtered count matrix (low-count genes removed) and a matched sample metadata table are saved for the next step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression, treated vs control, using a no-replicate-aware method",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Which of the ~12000 liver genes differ in expression between the single treated sample and the single control sample?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DE is computed using a method appropriate for a 1-vs-1 comparison without replicates (e.g., edgeR classic exactTest with a fixed/prior common dispersion such as bcv=0.4, or an equivalent fixed-dispersion GLM approach) rather than a method that silently estimates dispersion from zero residual degrees of freedom",
+          "Output table reports gene symbol, log2 fold change, and a nominal p-value/FDR for every gene passing the T1S1 filter, sorted by fold-change/significance",
+          "The report explicitly labels the p-values as approximate/assumption-driven (dispersion is fixed/assumed, not estimated from replicates) and states that conclusions from this single pair are not statistically robust and cannot generalize without biological replicates",
+          "A ranked full gene table (all genes, not just a cutoff subset) is saved for downstream enrichment"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the DE-ranked liver gene list",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes ranked by treated-vs-control fold change in this liver dataset?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Step confirms the human WikiPathways gene set file is present before running; if absent, reports the gap and skips enrichment rather than failing silently",
+          "Runs a ranked-list enrichment (e.g., pre-ranked GSEA on log2FC) or an over-representation test on a top-N subset of the T1S2 output against the WikiPathways human GMT",
+          "Reports enriched pathway names, WikiPathways IDs, normalized enrichment score or odds ratio, and FDR",
+          "States explicitly that enrichment results inherit the statistical fragility of the underlying unreplicated DE call and should be read as hypothesis-generating only"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control DE (n=1 each, no replicates)",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is 12,000 x 3 gene-level raw counts (salmon) with a 2x2 metadata table describing exactly one treated and one control liver sample — no biological replication. Standard replicate-based tools (DESeq2, edgeR with per-gene dispersion) cannot estimate within-group variance from n=1 vs n=1, so any DE call requires either (a) an explicit no-replicate workaround that borrows dispersion from a fixed prior/dispersion value (edgeR's classic approach with a manually set common dispersion, or DESeq2 run with only an intercept and a fixed dispersion) or (b) treating the result as a fold-change ranked list without valid p-values. The plan: load and QC the counts/metadata, run a no-replicate-aware DE pipeline (edgeR with a fixed/estimated dispersion prior, flagged explicitly as unreplicated) to produce a ranked gene table with logFC and nominal (not robustly powered) p/FDR, then run pathway enrichment on the resulting ranked list against WikiPathways human gene sets to give the DE result some biological context. Every downstream step and the final report must state plainly that statistical significance from a single pair is not reliable and that the result is a fold-change-driven candidate list, not a validated DE signature."
+  },
+  "usage": {
+    "inputTokens": 43230,
+    "outputTokens": 1723,
+    "cacheCreationInputTokens": 34076,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control DE (n=1 each, no replicates)",
+          "analytical_narrative": "The dataset is 12,000 x 3 gene-level raw counts (salmon) with a 2x2 metadata table describing exactly one treated and one control liver sample — no biological replication. Standard replicate-based tools (DESeq2, edgeR with per-gene dispersion) cannot estimate within-group variance from n=1 vs n=1, so any DE call requires either (a) an explicit no-replicate workaround that borrows dispersion from a fixed prior/dispersion value (edgeR's classic approach with a manually set common dispersion, or DESeq2 run with only an intercept and a fixed dispersion) or (b) treating the result as a fold-change ranked list without valid p-values. The plan: load and QC the counts/metadata, run a no-replicate-aware DE pipeline (edgeR with a fixed/estimated dispersion prior, flagged explicitly as unreplicated) to produce a ranked gene table with logFC and nominal (not robustly powered) p/FDR, then run pathway enrichment on the resulting ranked list against WikiPathways human gene sets to give the DE result some biological context. Every downstream step and the final report must state plainly that statistical significance from a single pair is not reliable and that the result is a fold-change-driven candidate list, not a validated DE signature.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and load counts/metadata for the single treated/control pair",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the counts.csv (12000 genes x 3 columns, gene symbol + 2 samples... note file says 3 columns total including gene id) and metadata.csv (2 samples x condition) align, and are the counts suitable for DE given exactly 1 treated and 1 control sample with no replicates?",
+              "acceptance_criteria": [
+                "Gene symbols in counts.csv are matched to sample columns and to metadata.csv sample IDs without mismatch",
+                "Library size, count distribution, and zero/low-count gene fraction are reported per sample",
+                "The report explicitly states n=1 per condition and flags that no within-group variance can be estimated from this design",
+                "A filtered count matrix (low-count genes removed) and a matched sample metadata table are saved for the next step"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression, treated vs control, using a no-replicate-aware method",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the ~12000 liver genes differ in expression between the single treated sample and the single control sample?",
+              "acceptance_criteria": [
+                "DE is computed using a method appropriate for a 1-vs-1 comparison without replicates (e.g., edgeR classic exactTest with a fixed/prior common dispersion such as bcv=0.4, or an equivalent fixed-dispersion GLM approach) rather than a method that silently estimates dispersion from zero residual degrees of freedom",
+                "Output table reports gene symbol, log2 fold change, and a nominal p-value/FDR for every gene passing the T1S1 filter, sorted by fold-change/significance",
+                "The report explicitly labels the p-values as approximate/assumption-driven (dispersion is fixed/assumed, not estimated from replicates) and states that conclusions from this single pair are not statistically robust and cannot generalize without biological replicates",
+                "A ranked full gene table (all genes, not just a cutoff subset) is saved for downstream enrichment"
+              ],
+              "packages": [
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of the DE-ranked liver gene list",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes ranked by treated-vs-control fold change in this liver dataset?",
+              "acceptance_criteria": [
+                "Step confirms the human WikiPathways gene set file is present before running; if absent, reports the gap and skips enrichment rather than failing silently",
+                "Runs a ranked-list enrichment (e.g., pre-ranked GSEA on log2FC) or an over-representation test on a top-N subset of the T1S2 output against the WikiPathways human GMT",
+                "Reports enriched pathway names, WikiPathways IDs, normalized enrichment score or odds ratio, and FDR",
+                "States explicitly that enrichment results inherit the statistical fragility of the underlying unreplicated DE call and should be read as hypothesis-generating only"
+              ],
+              "packages": [
+                "gseapy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

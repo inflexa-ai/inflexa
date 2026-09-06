@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The negative binomial model, replicate handling, and low-power statement fit the design, but the plan sidesteps the central concern: it asserts without basis that no BAMs or FASTQs exist, substitutes a weak count-matrix proxy for RSeQC infer_experiment or salmon libType A, and never compares the inferred protocol with the counting strand setting or re-counts, so the model is effectively fit on counts as delivered. QC, filtering, in-model normalization, the explicit ~condition design with control as reference, BH at 0.05 with apeglm shrinkage and lfcThreshold inside the test are all stated correctly. Enrichment was not requested but is specified properly (full Wald-stat ranking, named collections with versions, 15-500 window, tested-gene universe). The report is thorough on design, thresholds, counts, versions and caveats, though it cannot report a verified strand setting."
+}

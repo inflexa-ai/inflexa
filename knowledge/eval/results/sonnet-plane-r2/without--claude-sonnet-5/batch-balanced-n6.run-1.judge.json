@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly models the balanced batch as a covariate (~ batch + condition) in DESeq2 on raw counts, explicitly rejects pre-adjustment, and applies BH with apeglm/ashr shrinkage. QC covers library sizes and PCA colored by condition and batch but states no policy for outliers or shallow samples; the low-count filter is required to be documented but no concrete threshold or rationale is given; the reference level is not explicitly set. Enrichment names a human collection but leaves the method (ORA vs GSEA) undecided, gives no universe, version, or size window, and the report omits package versions."
+}

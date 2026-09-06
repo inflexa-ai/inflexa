@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 4,
+    "low_count_filter": 0,
+    "normalization": 6,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly keeps RSEM expected counts, rounds them for DESeq2, states that the length offset is lost without the genes.results files and does not substitute TPM/FPKM, but it does not ask for those files and the vague 'library size as a covariate consideration' is a wrong instinct. QC is limited to library sizes and a with/without sensitivity run; no PCA or sample-distance heatmap is planned. No low count filter is stated at all. BH at 0.05 is given but there is no apeglm or any LFC shrinkage, and the |log2FC|>1 cutoff is applied post hoc rather than in the test; the reference level is never stated. Enrichment names WikiPathways but no version, no universe, no size window, and leaves ORA vs GSEA undecided; the report lacks package versions."
+}

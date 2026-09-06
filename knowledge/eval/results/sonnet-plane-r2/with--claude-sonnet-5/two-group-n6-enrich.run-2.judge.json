@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: raw counts into DESeq2 Wald with ~condition, control explicitly releveled as reference, apeglm shrinkage, BH at 0.05 with independent filtering, and size-factor normalization inside the model with an explicit prohibition on pre-scaling. QC is design-specific (blind VST, PCA on top 500 genes, distance heatmap, library size and detected-gene table) with a stated default-retain policy for sample_01 and a requirement to justify any exclusion. The pre-filter (>=10 counts in >=6 samples, the smallest group) is minimal and tied to the design. Enrichment uses fgsea on the full Wald-stat ranked list, a named and versioned Hallmark collection, a 15-500 size window, and an explicit universe; the report step lists methods, versions, thresholds, gene counts, diagnostics, and caveats. Only minor omissions (no fgsea seed/eps or permutation settings named in the enrichment step itself) keep it just short of perfect."
+}

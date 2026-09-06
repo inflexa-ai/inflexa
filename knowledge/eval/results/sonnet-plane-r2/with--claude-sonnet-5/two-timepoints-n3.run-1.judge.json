@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 6,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the two-level time as a factor in a 2x2 interaction model (~ condition + time + condition:time), tests the interaction coefficient with a Wald test, and reports simple effects at each time point with ashr shrinkage and BH at 0.05, matching the reference. Reference levels are set explicitly, the filter (>=10 counts in >=3 samples) is tied to the smallest group, and QC covers PCA, distances and library sizes, though the outlier policy stops at flagging. Normalization is only implicit ('DESeq2 models raw counts directly') without naming size factors, so it scores lower. Enrichment was not requested but is fully specified (Wald-stat ranking, Hallmark 2026.1, tested-gene universe, 15-500 window), and the report step is thorough with versions, counts, and power caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 1,
+    "normalization": 10,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly routes raw STAR/featureCounts integer counts straight into DESeq2 with median-of-ratios normalization inside the model, explicitly rejects tximport/effective-length correction, uses ~condition with apeglm shrinkage and BH at padj<0.05, and flags the low power at n=3. It omits any low-count filter entirely (only mentions dropping featureCounts summary rows), does not set the reference level explicitly, and QC lacks a stated policy for handling an outlier or shallow library. Enrichment was not requested and the reference omits it; the plan adds a reasonably specified fgsea/ORA step (named collection with version, ranking metric, tested-gene universe) but no gene-set size window. The report specification lacks package versions and an explicit statement of tested vs significant gene counts."
+}

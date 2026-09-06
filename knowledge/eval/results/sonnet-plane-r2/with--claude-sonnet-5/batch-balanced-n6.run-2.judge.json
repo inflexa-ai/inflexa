@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 7,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference: balanced batch enters as a fixed covariate in ~ batch + condition with control as explicit reference, raw counts go into DESeq2 unadjusted, Wald test, BH at alpha 0.05 with independent filtering, and apeglm shrinkage; the filter (≥10 counts in ≥6 samples, the smallest group) is minimal and justified. QC includes PCA, distance heatmap, and library sizes colored by both factors, though the outlier/shallow-sample policy is only a 'report, don't change design' note. Normalization is implicit in DESeq() but the plan never states size-factor estimation, so it is scored on what is said. GSEA uses the full ranked list with a stated metric, named collections, and a size window, but collection versions are only promised in the output rather than pinned in the plan, and the report lists enrichment caveats but not design caveats such as n=6 or batch-related power."
+}

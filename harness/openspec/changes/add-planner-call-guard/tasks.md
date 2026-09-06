@@ -13,3 +13,7 @@
 - [x] 3.1 `stopWhen` on the run options of the agent loop, taken at the top of an iteration, with the wrap-up path.
 - [x] 3.2 The terminal salvage strips the early cap from the salvage turn.
 - [x] 3.3 The planner ends its search at `PLANNER_REFUSAL_LIMIT` refusals of the guard.
+
+## 4. The terminal text
+
+- [x] 4.1 `degenerateTerminalText` refuses a placeholder or a very short question or reason in `request_clarification` and in the blocker tool.

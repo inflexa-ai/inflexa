@@ -1,0 +1,387 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "covariates-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T21:44:27.073Z",
+  "elapsedMs": 70670,
+  "outcome": "plan_submitted",
+  "planId": "pln-37cd17ce",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering, and confounding diagnostics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group, formal collinearity tests are underpowered — report descriptive imbalance even if a formal test is not significant",
+          "Do not drop samples to force balance without explicit user instruction; report the imbalance and proceed with adjustment"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "In the 12-sample adipose counts matrix (12000 genes x 12 samples after removing the gene-symbol column), do sex and age distribute evenly across the 6 treated vs 6 control groups, or is either confounded with treatment?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports the sex (F/M) count and age distribution (mean, SD, range) per condition group from metadata.csv",
+          "Runs a two-sample test (e.g., Wilcoxon or t-test) of age between treated and control and reports whether the groups differ significantly, quantifying the degree of age imbalance the research question already states exists",
+          "Reports the sex x condition contingency table and flags any group with zero or near-zero representation of one sex",
+          "Filters low-count genes (e.g., counts >= 10 in at least 6 samples) before any downstream modeling and reports genes retained out of the original 12000",
+          "Produces a PCA or MDS plot of variance-stabilized/rlog counts colored by condition and shaped/colored by sex and age, to visually assess whether major variance components track treatment or the covariates",
+          "Explicitly states whether age/sex adjustment is statistically identifiable given the observed covariate distribution (i.e., not perfectly collinear with condition)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: covariate-adjusted vs naive model",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group with two additional covariates (sex, age) leaves few residual degrees of freedom (n=12 - 4 model terms roughly); flag that power to detect subtle effects is limited and CIs on individual covariate coefficients will be wide",
+          "If age is a continuous covariate, verify DESeq2/apeglm shrinkage is applied for interpretable log2FC estimates",
+          "If sex has near-zero cells in one condition x sex combination (from T1S1), report that the sex term may be poorly estimated and interpret cautiously rather than dropping it silently"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "EnhancedVolcano",
+          "ggplot2"
+        ],
+        "question": "Which genes differ between treated (n=6) and control (n=6) adipose samples when the model adjusts for sex and age (~sex + age + condition), and how does this adjusted gene list and effect-size ranking compare to a naive model that ignores sex and age (~condition)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Fits DESeq2 with design ~ sex + age + condition on the filtered count matrix from T1S1, using raw Salmon-derived integer counts as input",
+          "Fits a second DESeq2 model with design ~ condition only, on the identical filtered count set, as the naive comparison",
+          "Extracts the condition (treated vs control) contrast from both models with independent filtering and Benjamini-Hochberg FDR correction",
+          "Reports a full results table (log2FC, p-value, padj, base mean) per gene for both models, sorted by adjusted-model padj",
+          "Reports the number of genes significant at padj < 0.05 in each model and the overlap (Jaccard or simple intersection count) between the two gene lists, explicitly noting genes that lose or gain significance after adjustment",
+          "Includes an MA plot and a volcano plot (adjusted model) with top genes labeled",
+          "States the adjusted model as primary/reported result and the naive model as a sensitivity comparison, per the research question's explicit statement that groups are not matched on age"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on adjusted-model DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With only 6 vs 6 samples the DE gene list may be short; if fewer than ~10-15 genes reach padj<0.05, report ORA results as exploratory and prefer the pre-ranked GSEA which uses the full ranked list",
+          "WikiPathways/Reactome/KEGG file formats require the '%'-split or index-column parsing described in the reference metadata before use as GMT sets"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which biological pathways are enriched among the genes differentially expressed between treated and control adipose samples in the sex/age-adjusted DESeq2 model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the adjusted-model (~sex + age + condition) DE results from T1S2 as input, ranking genes by DESeq2 test statistic or signed -log10(p) x sign(log2FC) for a pre-ranked GSEA, and separately runs over-representation analysis on genes at padj < 0.05",
+          "Tests against human Hallmark, GO Biological Process, Reactome, WikiPathways, and KEGG MEDICUS/BioCarta/PID gene sets staged for Homo sapiens in this environment, confirming gene symbol identifier space matches the HGNC symbols in the counts matrix before running",
+          "Reports enriched terms with FDR-adjusted q-values, collapsing GO's nested-hierarchy redundancy (e.g., via semantic similarity or simply reporting top non-redundant terms) rather than listing raw hit counts",
+          "States clearly that this is the pathway-level readout of the adjusted contrast, not the naive one, consistent with T1S2's primary model"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "PPI network context for top adjusted DE genes",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "STRING links file is large (~83MB gzipped, 13.7M rows before high-confidence filtering) — filter to combined_score>=700 and to genes of interest early to keep this tractable",
+          "Every edge appears twice (once per direction) in the raw file; deduplicate before reporting edge counts"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "igraph"
+        ],
+        "question": "Do the top genes differentially expressed between treated and control (adjusted for sex and age) form a connected functional interaction module in the human STRING protein-protein interaction network?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "network",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Takes the top DE genes (e.g., padj < 0.05, or top 100 by adjusted p-value if fewer than 20 pass threshold) from T1S2's adjusted model",
+          "Joins STRING human protein IDs to gene symbols via the STRING protein.info file, then subsets the protein.links network to edges among these genes at combined_score >= 700",
+          "Reports the resulting subnetwork's node count, edge count, and whether it is more connected than expected by chance (e.g., simple permutation of random gene sets of the same size against the same background)",
+          "Visualizes the subnetwork and lists any hub genes (highest degree) as candidates for follow-up",
+          "States plainly if the DE list is too short (e.g., <5 genes) for a meaningful network test, and reports that limitation rather than forcing an analysis"
+        ]
+      }
+    ],
+    "title": "Adipose treated vs control DE adjusted for age and sex",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (Salmon-derived integer counts, 12000 genes x 13 columns => 12 samples + gene column) from human adipose tissue, 6 treated vs 6 control, unpaired, single batch. Metadata records sex (F/M) and age (years) per sample, and the design is explicitly stated as NOT matched on age between groups — age and possibly sex are candidate confounders of the treatment effect. A naive two-group DE test risks attributing age- or sex-driven variance to treatment. The plan therefore: (1) QC-filters and normalizes counts with DESeq2, (2) fits a covariate-adjusted DESeq2 model (~sex + age + condition) as the primary model, contrasting it against a naive (~condition)-only model to quantify how much the gene list and effect sizes shift when age/sex are accounted for, explicitly checking whether age is confounded with treatment group (e.g., near-complete separation) which would make adjustment unstable, (3) runs diagnostic checks (PCA/hierarchical clustering colored by condition, sex, age tertile) to visualize whether sex or age structure aligns with treatment groups, (4) performs pathway enrichment on the covariate-adjusted DE gene list using human pathway gene sets staged in this environment (Hallmark, GO BP, Reactome, WikiPathways, KEGG MEDICUS/BioCarta/PID — all human, HGNC symbols, matching the organism and gene-symbol identifier space of the counts matrix), and (5) builds a gene co-expression/PPI context view of the top adjusted DE genes using the STRING human network to flag any that cluster as an interacting module. No translational (drug/safety/PK) framing is requested in the research question, so those tracks are omitted."
+  },
+  "usage": {
+    "inputTokens": 704559,
+    "outputTokens": 4402,
+    "cacheCreationInputTokens": 114004,
+    "cacheReadInputTokens": 590399,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "DESeq2",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "adipose"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db GO.db"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathway",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "variancePartition",
+          "sva",
+          "limma"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 adjusting for age sex confounders unbalanced RNA-seq design",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "adipose tissue transcriptomics covariate adjustment sex age differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "42023419"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Adipose treated vs control DE adjusted for age and sex",
+          "analytical_narrative": "The dataset is bulk RNA-seq (Salmon-derived integer counts, 12000 genes x 13 columns => 12 samples + gene column) from human adipose tissue, 6 treated vs 6 control, unpaired, single batch. Metadata records sex (F/M) and age (years) per sample, and the design is explicitly stated as NOT matched on age between groups — age and possibly sex are candidate confounders of the treatment effect. A naive two-group DE test risks attributing age- or sex-driven variance to treatment. The plan therefore: (1) QC-filters and normalizes counts with DESeq2, (2) fits a covariate-adjusted DESeq2 model (~sex + age + condition) as the primary model, contrasting it against a naive (~condition)-only model to quantify how much the gene list and effect sizes shift when age/sex are accounted for, explicitly checking whether age is confounded with treatment group (e.g., near-complete separation) which would make adjustment unstable, (3) runs diagnostic checks (PCA/hierarchical clustering colored by condition, sex, age tertile) to visualize whether sex or age structure aligns with treatment groups, (4) performs pathway enrichment on the covariate-adjusted DE gene list using human pathway gene sets staged in this environment (Hallmark, GO BP, Reactome, WikiPathways, KEGG MEDICUS/BioCarta/PID — all human, HGNC symbols, matching the organism and gene-symbol identifier space of the counts matrix), and (5) builds a gene co-expression/PPI context view of the top adjusted DE genes using the STRING human network to flag any that cluster as an interacting module. No translational (drug/safety/PK) framing is requested in the research question, so those tracks are omitted.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, filtering, and confounding diagnostics",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "In the 12-sample adipose counts matrix (12000 genes x 12 samples after removing the gene-symbol column), do sex and age distribute evenly across the 6 treated vs 6 control groups, or is either confounded with treatment?",
+              "acceptance_criteria": [
+                "Reports the sex (F/M) count and age distribution (mean, SD, range) per condition group from metadata.csv",
+                "Runs a two-sample test (e.g., Wilcoxon or t-test) of age between treated and control and reports whether the groups differ significantly, quantifying the degree of age imbalance the research question already states exists",
+                "Reports the sex x condition contingency table and flags any group with zero or near-zero representation of one sex",
+                "Filters low-count genes (e.g., counts >= 10 in at least 6 samples) before any downstream modeling and reports genes retained out of the original 12000",
+                "Produces a PCA or MDS plot of variance-stabilized/rlog counts colored by condition and shaped/colored by sex and age, to visually assess whether major variance components track treatment or the covariates",
+                "Explicitly states whether age/sex adjustment is statistically identifiable given the observed covariate distribution (i.e., not perfectly collinear with condition)"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=6 per group, formal collinearity tests are underpowered — report descriptive imbalance even if a formal test is not significant",
+                "Do not drop samples to force balance without explicit user instruction; report the imbalance and proceed with adjustment"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: covariate-adjusted vs naive model",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes differ between treated (n=6) and control (n=6) adipose samples when the model adjusts for sex and age (~sex + age + condition), and how does this adjusted gene list and effect-size ranking compare to a naive model that ignores sex and age (~condition)?",
+              "acceptance_criteria": [
+                "Fits DESeq2 with design ~ sex + age + condition on the filtered count matrix from T1S1, using raw Salmon-derived integer counts as input",
+                "Fits a second DESeq2 model with design ~ condition only, on the identical filtered count set, as the naive comparison",
+                "Extracts the condition (treated vs control) contrast from both models with independent filtering and Benjamini-Hochberg FDR correction",
+                "Reports a full results table (log2FC, p-value, padj, base mean) per gene for both models, sorted by adjusted-model padj",
+                "Reports the number of genes significant at padj < 0.05 in each model and the overlap (Jaccard or simple intersection count) between the two gene lists, explicitly noting genes that lose or gain significance after adjustment",
+                "Includes an MA plot and a volcano plot (adjusted model) with top genes labeled",
+                "States the adjusted model as primary/reported result and the naive model as a sensitivity comparison, per the research question's explicit statement that groups are not matched on age"
+              ],
+              "packages": [
+                "DESeq2",
+                "EnhancedVolcano",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=6 per group with two additional covariates (sex, age) leaves few residual degrees of freedom (n=12 - 4 model terms roughly); flag that power to detect subtle effects is limited and CIs on individual covariate coefficients will be wide",
+                "If age is a continuous covariate, verify DESeq2/apeglm shrinkage is applied for interpretable log2FC estimates",
+                "If sex has near-zero cells in one condition x sex combination (from T1S1), report that the sex term may be poorly estimated and interpret cautiously rather than dropping it silently"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on adjusted-model DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among the genes differentially expressed between treated and control adipose samples in the sex/age-adjusted DESeq2 model?",
+              "acceptance_criteria": [
+                "Uses the adjusted-model (~sex + age + condition) DE results from T1S2 as input, ranking genes by DESeq2 test statistic or signed -log10(p) x sign(log2FC) for a pre-ranked GSEA, and separately runs over-representation analysis on genes at padj < 0.05",
+                "Tests against human Hallmark, GO Biological Process, Reactome, WikiPathways, and KEGG MEDICUS/BioCarta/PID gene sets staged for Homo sapiens in this environment, confirming gene symbol identifier space matches the HGNC symbols in the counts matrix before running",
+                "Reports enriched terms with FDR-adjusted q-values, collapsing GO's nested-hierarchy redundancy (e.g., via semantic similarity or simply reporting top non-redundant terms) rather than listing raw hit counts",
+                "States clearly that this is the pathway-level readout of the adjusted contrast, not the naive one, consistent with T1S2's primary model"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "With only 6 vs 6 samples the DE gene list may be short; if fewer than ~10-15 genes reach padj<0.05, report ORA results as exploratory and prefer the pre-ranked GSEA which uses the full ranked list",
+                "WikiPathways/Reactome/KEGG file formats require the '%'-split or index-column parsing described in the reference metadata before use as GMT sets"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "PPI network context for top adjusted DE genes",
+              "track": "T2",
+              "step_type": "network",
+              "question": "Do the top genes differentially expressed between treated and control (adjusted for sex and age) form a connected functional interaction module in the human STRING protein-protein interaction network?",
+              "acceptance_criteria": [
+                "Takes the top DE genes (e.g., padj < 0.05, or top 100 by adjusted p-value if fewer than 20 pass threshold) from T1S2's adjusted model",
+                "Joins STRING human protein IDs to gene symbols via the STRING protein.info file, then subsets the protein.links network to edges among these genes at combined_score >= 700",
+                "Reports the resulting subnetwork's node count, edge count, and whether it is more connected than expected by chance (e.g., simple permutation of random gene sets of the same size against the same background)",
+                "Visualizes the subnetwork and lists any hub genes (highest degree) as candidates for follow-up",
+                "States plainly if the DE list is too short (e.g., <5 genes) for a meaningful network test, and reports that limitation rather than forcing an analysis"
+              ],
+              "packages": [
+                "igraph"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "STRING links file is large (~83MB gzipped, 13.7M rows before high-confidence filtering) — filter to combined_score>=700 and to genes of interest early to keep this tractable",
+                "Every edge appears twice (once per direction) in the raw file; deduplicate before reporting edge counts"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

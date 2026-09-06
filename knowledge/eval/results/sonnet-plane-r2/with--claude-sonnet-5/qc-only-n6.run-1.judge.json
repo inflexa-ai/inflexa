@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly treats the question as QC-only and stops before any differential test: raw library sizes and detected-gene counts, a minimal justified filter (>=10 counts in >=6 samples), blind VST, PCA on top-500 genes colored by condition with sample_01 labeled, and a Euclidean distance heatmap with clustering, plus an explicit keep-by-default verdict on sample_01 grounded in PCA/distance position rather than depth alone. Normalization is left to DESeq2 size factors with no pre-normalization, which matches the reference. It does not state the design formula or reference level that the later test should use, nor a recommendation on thresholds or alpha for that test, so the model and FDR criteria are only partially addressed even though omitting the test itself is correct. Package versions are not stated and the recommendation for the downstream test is limited to keep-vs-exclude."
+}

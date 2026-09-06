@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "PyDESeq2 Wald with Control as reference, median-of-ratios inside the model, apeglm-style shrinkage, BH at 0.05, and a stated keep-inspect-report policy for the shallow sample_01 match the unpaired single-batch 6v6 design and the Python constraint. QC is complete (VST, PCA, distances, library sizes, detected genes) with an explicit non-removal rule. The prefilter (>=10 counts in >=6 samples) is the DESeq2 vignette convention and justified by group size, though on the stricter side of minimal, and it stacks with independent filtering. GSEA uses the full Wald-stat ranked list, names Hallmark 2026.1 and the 15-500 window, but the enrichment step itself never fixes a seed (only the report promises to record one), which weakens reproducibility of the permutation results."
+}

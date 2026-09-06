@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly recognizes the 1-vs-1 design supports no dispersion estimate, refuses DESeq()/Wald/LRT and shrinkage, computes median-of-ratios size factors and descriptive log2FC with explicit reference level and pseudocount, and names replicates as the requirement for valid inference. QC covers library size, zero counts, and a flagged-degenerate vst PCA, and the >=10-in-1-sample filter is justified. The main weakness is the enrichment step: the reference indicates enrichment is not warranted here, and the plan instead builds a discrete list from a |log2FC|>=1 cutoff on unreplicated fold changes and runs hypergeometric ORA with BH-adjusted p-values, which reintroduces inferential statistics downstream of a list with no statistical basis, despite the heavy hypothesis-generating caveats and otherwise sound universe/size-window/version handling. The report specification is thorough and leads with the design limitation."
+}

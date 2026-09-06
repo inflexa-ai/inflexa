@@ -1,0 +1,1156 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "interaction-python-n4",
+  "run": 2,
+  "startedAt": "2026-09-05T22:52:14.935Z",
+  "elapsedMs": 513343,
+  "outcome": "plan_submitted",
+  "planId": "pln-502b81ab",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A true DESeq2 rlog/vst is not implemented identically in PyDESeq2; if PyDESeq2 lacks a built-in vst/rlog method in the installed version, fall back to log2(normalized_count+1) using PyDESeq2 size factors and state this substitution in the QC output"
+        ],
+        "context": "Counts are raw integer Salmon gene-level counts (12000 genes x 16 samples, CSV, first column = gene symbol). Metadata has genotype (WT/KO), treatment (vehicle/drug), condition, one row per sample (16x4 CSV). Use PyDESeq2's variance-stabilizing transform (fit blind, i.e. without the genotype/treatment design) for the PCA and distance heatmap, matching the DESeq2 workflow convention of blind dispersion estimation for exploratory QC.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scikit-learn",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the 16 heart samples (4 WT-vehicle, 4 WT-drug, 4 KO-vehicle, 4 KO-drug) cluster by genotype and/or treatment, and are library sizes and sample distances consistent with no outlier or batch problem before fitting the interaction model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Transform must be computed blind to design (do not use the genotype+treatment design for the QC-only dispersion fit)",
+          "n_top_genes = 500 for the PCA",
+          "Do not drop or fix any sample without reporting it explicitly first"
+        ],
+        "acceptance_criteria": [
+          "Library size barplot for all 16 samples produced",
+          "PCA on the top 500 most-variable genes after a variance-stabilizing-style transform, colored by genotype and by treatment",
+          "Sample-sample Euclidean distance heatmap produced",
+          "Any sample flagged as a potential outlier is named explicitly, not just visually implied"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Interaction model fit and Wald tests (two reference parameterizations)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=4 replicates per cell the interaction coefficient (a difference of differences) has a large standard error and low power; state this directly in the results, do not overstate significance or its absence",
+          "Verify the two fits give numerically consistent interaction coefficients (up to sign convention) as a fit sanity check"
+        ],
+        "context": "This is a 2x2 factorial interaction design (n=4/cell). PyDESeq2 does not support arbitrary linear-combination contrasts as a single call the way R's DESeq2 list-contrast trick does, so both simple effects and the interaction are obtained as single model coefficients by refitting with a releveled reference factor rather than via a summed contrast — this keeps every reported quantity apeglm-shrinkable without needing R's ashr package.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Fit design ~ genotype + treatment + genotype:treatment on the filtered counts, and extract three single-coefficient Wald results: the drug-vs-vehicle simple effect in WT, the drug-vs-vehicle simple effect in KO, and the genotype x treatment interaction contrast.",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design formula is exactly genotype + treatment + genotype:treatment in both fits",
+          "Do not scale, log, or otherwise pre-normalize the raw counts before fitting; normalization is internal to PyDESeq2",
+          "Keep the count-outlier NA-flagging behavior on (do not disable it)"
+        ],
+        "acceptance_criteria": [
+          "Genes pre-filtered to keep only those with >=10 counts in >=4 samples (the smallest cell size), and the number of genes tested before/after filtering reported",
+          "Median-of-ratios size factors used internally by PyDESeq2 (no separate pre-normalization of counts)",
+          "Model 1 fit with genotype releveled so WT is the reference and treatment releveled so vehicle is the reference; the treatment coefficient from this fit reported as the WT simple drug effect and the genotype:treatment coefficient reported as the interaction contrast",
+          "Model 2 fit with the identical formula but genotype releveled so KO is the reference; the treatment coefficient from this fit reported as the KO simple drug effect",
+          "All three result tables report baseMean, unshrunken log2FoldChange, lfcSE, stat (Wald statistic), pvalue, and padj",
+          "Reference levels (genotype=WT/KO per fit, treatment=vehicle) stated explicitly beside each result table",
+          "Samples with a flagged count outlier (Cook's distance) have padj set to NA per DESeq2/PyDESeq2 default behavior, and the count of such genes is reported separately from genes removed by independent filtering"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "LFC shrinkage, multiple testing, and fit diagnostics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If fewer than ~50 genes are significant in any one contrast, note this size limitation explicitly since it affects the enrichment step choice downstream"
+        ],
+        "context": "Builds directly on the two model fits from T1S2. Do not re-fit the model here.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "For each of the three contrasts (WT simple effect, KO simple effect, interaction), what are the shrunken effect sizes and the BH-adjusted significant gene sets at alpha=0.05, and do the fit diagnostics and p-value histograms look sound?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "multiple_testing",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "alpha passed to the results/summary call must equal 0.05, the same value used for the reporting cutoff",
+          "Do not filter by unadjusted p-value or by fold-change magnitude alone"
+        ],
+        "acceptance_criteria": [
+          "Each of the three coefficients (WT simple effect, KO simple effect, interaction) shrunk with PyDESeq2's native apeglm-style single-coefficient shrinkage (lfc_shrink), since each is a single model coefficient by construction",
+          "Each result table carries unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, and unshrunken p-value/padj side by side, ranked for plotting/tables by the shrunken value",
+          "BH adjustment applied within each contrast separately (not pooled across the three), independent filtering left on, and the results filtered by padj < 0.05 (not by unadjusted p-value or fold change alone)",
+          "P-value histogram plotted and its shape (flat/left-skewed vs. irregular) described in words for each of the three contrasts, before the adjusted results are trusted",
+          "MA plot and dispersion plot produced from the fit(s) as diagnostics",
+          "Number of genes tested and number significant (padj<0.05) reported per contrast"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked pathway enrichment per contrast",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are method-dependent; treat significant sets as hypotheses for follow-up, not proven mechanism",
+          "State the Hallmark and Reactome collection versions used in the output"
+        ],
+        "context": "Counts and hence the Wald-statistic result tables use gene symbols. A curated set of MSigDB Hallmark gene sets for Homo sapiens (HGNC symbols, 50 sets) and a Reactome pathway gene set collection for human (HGNC symbols) are the reference pathway resources needed; both use the same gene-symbol identifier as the counts matrix, so no Entrez ID remapping step is required. Confirm both reference collections are present before running; if the Reactome file lacks a species-restricted view, filter it to Homo sapiens using its paired pathway index file before use.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "For each of the three contrasts (WT drug-vs-vehicle, KO drug-vs-vehicle, genotype x treatment interaction), which MSigDB Hallmark and Reactome gene sets show coordinated up- or down-regulation across the full ranked gene list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Rank metric is the Wald statistic (stat), not the unshrunken fold change alone and not a signed p-value with ties",
+          "min_size=15, max_size=500 for the gene set window",
+          "Run enrichment once per contrast; do not pool ranked lists across contrasts"
+        ],
+        "acceptance_criteria": [
+          "One preranked GSEA run per contrast (three total) against MSigDB Hallmark gene sets; genes ranked by the Wald statistic (stat column) from the corresponding unshrunken results table, using the full list of tested genes (post pre-filter, pre-significance-threshold) — no cut on padj or fold change before ranking",
+          "A second pass per contrast run against the Reactome human pathway gene sets as a follow-up collection",
+          "Gene set size window restricted to 15-500 members after intersecting with the tested gene list",
+          "BH-adjusted enrichment results (adjusted p-value) reported per gene set per contrast, with the contrast named beside every result",
+          "Leading-edge genes listed for every significant gene set",
+          "Contrasts kept in separate tables, never pooled into one ranked list",
+          "If any contrast has fewer than ~50 significant DE genes at padj<0.05 (per T1S3), state this explicitly and rely on the ranked (not over-representation) result as done here"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Synthesis report: simple effects, interaction, and pathways",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [],
+        "context": "Final synthesis step combining the DE and enrichment outputs from T1S3 and T2S1 into one interpretable report answering the stated research question.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "matplotlib"
+        ],
+        "question": "Does the drug act differently in KO than in WT — what do the WT simple effect, the KO simple effect, and the genotype x treatment interaction test say together, and what pathways are implicated in each?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S3",
+          "T2S1"
+        ],
+        "constraints": [
+          "Report the interaction result and the two simple effects as three distinct findings, never as a single number",
+          "Do not overstate statistical power at n=4 replicates/cell"
+        ],
+        "acceptance_criteria": [
+          "Report states the design formula, both reference-level parameterizations, and the three named contrasts (WT simple effect, KO simple effect, interaction) side by side with their gene counts and significant-gene counts",
+          "Report explicitly answers whether the interaction coefficient reaches significance and, separately, whether either simple effect reaches significance, without conflating the two questions",
+          "Report states the n=4/cell power limitation for the interaction test in plain terms",
+          "Report includes the MA plot, dispersion plot, and p-value histograms from T1S3, and the leading-edge tables from T2S1",
+          "Report lists package versions (pydeseq2, gseapy), gene set collection versions, and the alpha/thresholds used",
+          "Report does not claim a mechanism beyond what the enrichment step supports as a hypothesis"
+        ]
+      }
+    ],
+    "title": "Genotype x drug interaction DE + pathway enrichment (heart)",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is a 2x2 factorial bulk RNA-seq experiment (genotype: WT/KO x treatment: vehicle/drug, n=4/cell, 16 samples, 12000 genes, Salmon-derived raw counts) in heart tissue. The research question — does the drug act differently in KO than in WT — is a genotype x treatment interaction question. We fit PyDESeq2 with design ~ genotype + treatment + genotype:treatment (Python-only, per user constraint), explicit reference levels (genotype=WT, treatment=vehicle). To report the interaction and both simple effects as single, directly Wald-testable and apeglm-shrinkable model coefficients (avoiding a linear-combination contrast that PyDESeq2 does not natively support and that would otherwise require R's ashr), we fit the same formula twice: once with genotype releveled to WT (giving the WT simple drug effect and the interaction coefficient directly) and once with genotype releveled to KO (giving the KO simple drug effect directly, since the interaction coefficient is invariant to which genotype is the reference for its own significance test). QC precedes modeling to catch batch or outlier problems before any test runs. Low-count filtering is minimal (independent filtering does the rest). LFC shrinkage uses PyDESeq2's native apeglm-style single-coefficient shrinkage for all three reported quantities, since each is now a single model coefficient by construction. BH-adjusted results per contrast feed a preranked GSEA (gseapy) against MSigDB Hallmark and Reactome (both HGNC-symbol GMTs matching the counts' gene-symbol identifiers, so no Entrez remapping is needed), ranked on the Wald statistic, run separately per contrast per rule against pooling contrasts. A synthesis report presents the three results side by side (WT simple effect, KO simple effect, interaction) with diagnostics, leading-edge genes, and the low-power caveat that n=4/cell interaction tests have low sensitivity."
+  },
+  "usage": {
+    "inputTokens": 9704665,
+    "outputTokens": 23945,
+    "cacheCreationInputTokens": 661449,
+    "cacheReadInputTokens": 9042266,
+    "reasoningTokens": 10161
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 4,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "enrichment_input": "ranked_list",
+        "preferred_language": "python"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "gseapy",
+          "statsmodels",
+          "fgsea"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "mygene",
+          "pybiomart"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human gene identifier mapping symbol entrez"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping",
+        "category": "gene-identifiers"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot idmapping human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene symbol entrez mapping human annotation gtf gff"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "genome-annotation"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/ncbi-gene-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/ncbi-gene-human/current"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "mygene",
+          "pyensembl"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gseapy",
+          "fgsea",
+          "decoupler",
+          "gtfparse",
+          "biomart"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/broadinstitute/gseapy",
+        "query": "prerank gene set enrichment analysis rnk gmt"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "gseapy",
+        "query": "prerank gene set enrichment analysis"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "pydeseq2",
+        "query": "interaction design contrasts"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "pyDESeq2 interaction term Wald test python differential expression",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "PyDESeq2 python differential expression analysis re-implementation DESeq2",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "PyDESeq2 python differential expression",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "37669147"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 0
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "pydeseq2 interaction design factorial",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "pydeseq2",
+        "limit": 5
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/pydeseq2",
+        "query": "interaction design factor levels contrast Wald test wald_test"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "PyDESeq2 interaction term genotype treatment factorial design",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "fulltext",
+        "pmcId": "PMC10345592",
+        "sections": [
+          "design",
+          "interaction"
+        ]
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "PyDESeq2 python bulk RNA-seq differential expression",
+        "limit": 5
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 4,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "enrichment_input": "ranked_list",
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind), PCA on top 500 variable genes, sample distance heatmap, library size barplot",
+            "package": "PyDESeq2/scikit-learn",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in at least 4 samples (smallest group size)",
+            "package": "pandas",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 4
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "PyDESeq2 median-of-ratios size factors (internal to DeseqDataSet)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "design ~ genotype + treatment + genotype:treatment, explicit reference levels WT and vehicle",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "PyDESeq2 Wald test on interaction coefficient genotypeKO.treatmentdrug, plus simple effects (drug vs vehicle within WT, drug vs vehicle within KO)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "interaction"
+              },
+              {
+                "name": "design_terms",
+                "value": "genotype, treatment, genotype:treatment"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm-style shrinkage via pydeseq2 lfc_shrink for single coefficients; ashr not available in python so use pydeseq2 built-in shrinkage per coefficient",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "pydeseq2_default"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg within each contrast, alpha=0.05, independent filtering via pydeseq2 default",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "gseapy Prerank GSEA on Wald stat per contrast against MSigDB Hallmark then Reactome",
+            "package": "gseapy",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Combined report: simple effects + interaction contrast tables, diagnostics, enrichment tables, leading edge genes, reproducibility record",
+            "package": "pandas/matplotlib"
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "ashr"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "rpy2"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/pydeseq2",
+        "query": "lfc_shrink shrinkage apeglm interaction coefficient"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "PyDESeq2 lfc_shrink apeglm shrinkage python",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "PyDESeq2 log fold change shrinkage apeglm implementation",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "PyDESeq2 apeglm shrinkage implementation DeseqStats",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "pydeseq2 lfc_shrink apeglm",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "fulltext",
+        "pmcId": "PMC10508848"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "\"PyDESeq2\" apeglm shrinkage default coefficient",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "37669147"
+        ],
+        "maxAuthors": 5,
+        "maxMeshTerms": 10
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DefaultInference ashr apeglm shrinkage owkin PyDESeq2",
+        "limit": 10
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "PyDESeq2 DeseqStats lfc_shrink",
+        "limit": 10
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "owkin PyDESeq2",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DefaultInference lfc_shrink apeglm shrinkage log fold change",
+        "limit": 10
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "PyDESeq2 python differential expression scverse Muzellec",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "PyDESeq2 shrinkage estimator apeglm",
+        "limit": 5
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/pydeseq2",
+        "query": "lfc_shrink apeglm shrinkage single coefficient contrast"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "ashr shrinkage contrast"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 lfcShrink ashr apeglm contrast method type",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "False discovery rates a new deal ashr Stephens",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "false discovery rates new deal ashr Stephens shrinkage",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "false discovery rates new deal ashr shrinkage empirical Bayes",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "pydeseq2"
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "pydeseq2 default inference apeglm",
+        "language": "python",
+        "limit": 10
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "pydeseq2 tutorial interaction contrast simple effects",
+        "limit": 10
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "scverse PyDESeq2",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "PyDESeq2 stat_test",
+        "language": "python",
+        "limit": 10
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DeseqDataSet DeseqStats",
+        "limit": 10
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "pydeseq2 example",
+        "limit": 10
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "fulltext",
+        "pmcId": "PMC10508848",
+        "sections": [
+          "shrink"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "41479088"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 interaction ashr shrinkage contrast list vector coefficient type",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "rpy2 python R interop DESeq2 apeglm ashr shrinkage bulk RNA-seq bridge",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "pydeseq2 ashr apeglm shrinkage type",
+        "limit": 10
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "pydeseq2 apeglm lfc_shrink coefficient",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "PyDESeq2 apeglm implementation Muzellec Telenczuk Cabeli Andreux python bioinformatics",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "PyDESeq2",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "fulltext",
+        "pmcId": "PMC10345592"
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "PyDESeq2 shrinkage apeglm DeseqStats lfc_shrink",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "pydeseq2",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "pydeseq2 python package",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "pydeseq2 bulk RNA-seq differential expression Bioinformatics",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "python DESeq2 shrinkage estimator apeglm coefficient",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "test",
+        "limit": 1
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "pydeseq2 apeglm lfc shrink DeseqStats interaction wald",
+        "limit": 1
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "PyDESeq2 apeglm shrinkage coefficient contrast function",
+        "maxResults": 1
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Genotype x drug interaction DE + pathway enrichment (heart)",
+          "analytical_narrative": "The dataset is a 2x2 factorial bulk RNA-seq experiment (genotype: WT/KO x treatment: vehicle/drug, n=4/cell, 16 samples, 12000 genes, Salmon-derived raw counts) in heart tissue. The research question — does the drug act differently in KO than in WT — is a genotype x treatment interaction question. We fit PyDESeq2 with design ~ genotype + treatment + genotype:treatment (Python-only, per user constraint), explicit reference levels (genotype=WT, treatment=vehicle). To report the interaction and both simple effects as single, directly Wald-testable and apeglm-shrinkable model coefficients (avoiding a linear-combination contrast that PyDESeq2 does not natively support and that would otherwise require R's ashr), we fit the same formula twice: once with genotype releveled to WT (giving the WT simple drug effect and the interaction coefficient directly) and once with genotype releveled to KO (giving the KO simple drug effect directly, since the interaction coefficient is invariant to which genotype is the reference for its own significance test). QC precedes modeling to catch batch or outlier problems before any test runs. Low-count filtering is minimal (independent filtering does the rest). LFC shrinkage uses PyDESeq2's native apeglm-style single-coefficient shrinkage for all three reported quantities, since each is now a single model coefficient by construction. BH-adjusted results per contrast feed a preranked GSEA (gseapy) against MSigDB Hallmark and Reactome (both HGNC-symbol GMTs matching the counts' gene-symbol identifiers, so no Entrez remapping is needed), ranked on the Wald statistic, run separately per contrast per rule against pooling contrasts. A synthesis report presents the three results side by side (WT simple effect, KO simple effect, interaction) with diagnostics, leading-edge genes, and the low-power caveat that n=4/cell interaction tests have low sensitivity.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 16 heart samples (4 WT-vehicle, 4 WT-drug, 4 KO-vehicle, 4 KO-drug) cluster by genotype and/or treatment, and are library sizes and sample distances consistent with no outlier or batch problem before fitting the interaction model?",
+              "acceptance_criteria": [
+                "Library size barplot for all 16 samples produced",
+                "PCA on the top 500 most-variable genes after a variance-stabilizing-style transform, colored by genotype and by treatment",
+                "Sample-sample Euclidean distance heatmap produced",
+                "Any sample flagged as a potential outlier is named explicitly, not just visually implied"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Counts are raw integer Salmon gene-level counts (12000 genes x 16 samples, CSV, first column = gene symbol). Metadata has genotype (WT/KO), treatment (vehicle/drug), condition, one row per sample (16x4 CSV). Use PyDESeq2's variance-stabilizing transform (fit blind, i.e. without the genotype/treatment design) for the PCA and distance heatmap, matching the DESeq2 workflow convention of blind dispersion estimation for exploratory QC.",
+              "constraints": [
+                "Transform must be computed blind to design (do not use the genotype+treatment design for the QC-only dispersion fit)",
+                "n_top_genes = 500 for the PCA",
+                "Do not drop or fix any sample without reporting it explicitly first"
+              ],
+              "caveats": [
+                "A true DESeq2 rlog/vst is not implemented identically in PyDESeq2; if PyDESeq2 lacks a built-in vst/rlog method in the installed version, fall back to log2(normalized_count+1) using PyDESeq2 size factors and state this substitution in the QC output"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Interaction model fit and Wald tests (two reference parameterizations)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Fit design ~ genotype + treatment + genotype:treatment on the filtered counts, and extract three single-coefficient Wald results: the drug-vs-vehicle simple effect in WT, the drug-vs-vehicle simple effect in KO, and the genotype x treatment interaction contrast.",
+              "acceptance_criteria": [
+                "Genes pre-filtered to keep only those with >=10 counts in >=4 samples (the smallest cell size), and the number of genes tested before/after filtering reported",
+                "Median-of-ratios size factors used internally by PyDESeq2 (no separate pre-normalization of counts)",
+                "Model 1 fit with genotype releveled so WT is the reference and treatment releveled so vehicle is the reference; the treatment coefficient from this fit reported as the WT simple drug effect and the genotype:treatment coefficient reported as the interaction contrast",
+                "Model 2 fit with the identical formula but genotype releveled so KO is the reference; the treatment coefficient from this fit reported as the KO simple drug effect",
+                "All three result tables report baseMean, unshrunken log2FoldChange, lfcSE, stat (Wald statistic), pvalue, and padj",
+                "Reference levels (genotype=WT/KO per fit, treatment=vehicle) stated explicitly beside each result table",
+                "Samples with a flagged count outlier (Cook's distance) have padj set to NA per DESeq2/PyDESeq2 default behavior, and the count of such genes is reported separately from genes removed by independent filtering"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "This is a 2x2 factorial interaction design (n=4/cell). PyDESeq2 does not support arbitrary linear-combination contrasts as a single call the way R's DESeq2 list-contrast trick does, so both simple effects and the interaction are obtained as single model coefficients by refitting with a releveled reference factor rather than via a summed contrast — this keeps every reported quantity apeglm-shrinkable without needing R's ashr package.",
+              "constraints": [
+                "Design formula is exactly genotype + treatment + genotype:treatment in both fits",
+                "Do not scale, log, or otherwise pre-normalize the raw counts before fitting; normalization is internal to PyDESeq2",
+                "Keep the count-outlier NA-flagging behavior on (do not disable it)"
+              ],
+              "caveats": [
+                "With n=4 replicates per cell the interaction coefficient (a difference of differences) has a large standard error and low power; state this directly in the results, do not overstate significance or its absence",
+                "Verify the two fits give numerically consistent interaction coefficients (up to sign convention) as a fit sanity check"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "LFC shrinkage, multiple testing, and fit diagnostics",
+              "track": "T1",
+              "step_type": "multiple_testing",
+              "question": "For each of the three contrasts (WT simple effect, KO simple effect, interaction), what are the shrunken effect sizes and the BH-adjusted significant gene sets at alpha=0.05, and do the fit diagnostics and p-value histograms look sound?",
+              "acceptance_criteria": [
+                "Each of the three coefficients (WT simple effect, KO simple effect, interaction) shrunk with PyDESeq2's native apeglm-style single-coefficient shrinkage (lfc_shrink), since each is a single model coefficient by construction",
+                "Each result table carries unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, and unshrunken p-value/padj side by side, ranked for plotting/tables by the shrunken value",
+                "BH adjustment applied within each contrast separately (not pooled across the three), independent filtering left on, and the results filtered by padj < 0.05 (not by unadjusted p-value or fold change alone)",
+                "P-value histogram plotted and its shape (flat/left-skewed vs. irregular) described in words for each of the three contrasts, before the adjusted results are trusted",
+                "MA plot and dispersion plot produced from the fit(s) as diagnostics",
+                "Number of genes tested and number significant (padj<0.05) reported per contrast"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Builds directly on the two model fits from T1S2. Do not re-fit the model here.",
+              "constraints": [
+                "alpha passed to the results/summary call must equal 0.05, the same value used for the reporting cutoff",
+                "Do not filter by unadjusted p-value or by fold-change magnitude alone"
+              ],
+              "caveats": [
+                "If fewer than ~50 genes are significant in any one contrast, note this size limitation explicitly since it affects the enrichment step choice downstream"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked pathway enrichment per contrast",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "For each of the three contrasts (WT drug-vs-vehicle, KO drug-vs-vehicle, genotype x treatment interaction), which MSigDB Hallmark and Reactome gene sets show coordinated up- or down-regulation across the full ranked gene list?",
+              "acceptance_criteria": [
+                "One preranked GSEA run per contrast (three total) against MSigDB Hallmark gene sets; genes ranked by the Wald statistic (stat column) from the corresponding unshrunken results table, using the full list of tested genes (post pre-filter, pre-significance-threshold) — no cut on padj or fold change before ranking",
+                "A second pass per contrast run against the Reactome human pathway gene sets as a follow-up collection",
+                "Gene set size window restricted to 15-500 members after intersecting with the tested gene list",
+                "BH-adjusted enrichment results (adjusted p-value) reported per gene set per contrast, with the contrast named beside every result",
+                "Leading-edge genes listed for every significant gene set",
+                "Contrasts kept in separate tables, never pooled into one ranked list",
+                "If any contrast has fewer than ~50 significant DE genes at padj<0.05 (per T1S3), state this explicitly and rely on the ranked (not over-representation) result as done here"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Counts and hence the Wald-statistic result tables use gene symbols. A curated set of MSigDB Hallmark gene sets for Homo sapiens (HGNC symbols, 50 sets) and a Reactome pathway gene set collection for human (HGNC symbols) are the reference pathway resources needed; both use the same gene-symbol identifier as the counts matrix, so no Entrez ID remapping step is required. Confirm both reference collections are present before running; if the Reactome file lacks a species-restricted view, filter it to Homo sapiens using its paired pathway index file before use.",
+              "constraints": [
+                "Rank metric is the Wald statistic (stat), not the unshrunken fold change alone and not a signed p-value with ties",
+                "min_size=15, max_size=500 for the gene set window",
+                "Run enrichment once per contrast; do not pool ranked lists across contrasts"
+              ],
+              "caveats": [
+                "Enrichment results are method-dependent; treat significant sets as hypotheses for follow-up, not proven mechanism",
+                "State the Hallmark and Reactome collection versions used in the output"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Synthesis report: simple effects, interaction, and pathways",
+              "track": "T3",
+              "step_type": "report",
+              "question": "Does the drug act differently in KO than in WT — what do the WT simple effect, the KO simple effect, and the genotype x treatment interaction test say together, and what pathways are implicated in each?",
+              "acceptance_criteria": [
+                "Report states the design formula, both reference-level parameterizations, and the three named contrasts (WT simple effect, KO simple effect, interaction) side by side with their gene counts and significant-gene counts",
+                "Report explicitly answers whether the interaction coefficient reaches significance and, separately, whether either simple effect reaches significance, without conflating the two questions",
+                "Report states the n=4/cell power limitation for the interaction test in plain terms",
+                "Report includes the MA plot, dispersion plot, and p-value histograms from T1S3, and the leading-edge tables from T2S1",
+                "Report lists package versions (pydeseq2, gseapy), gene set collection versions, and the alpha/thresholds used",
+                "Report does not claim a mechanism beyond what the enrichment step supports as a hypothesis"
+              ],
+              "packages": [
+                "pandas",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Final synthesis step combining the DE and enrichment outputs from T1S3 and T2S1 into one interpretable report answering the stated research question.",
+              "constraints": [
+                "Report the interaction result and the two simple effects as three distinct findings, never as a single number",
+                "Do not overstate statistical power at n=4 replicates/cell"
+              ],
+              "caveats": []
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+  }
+}

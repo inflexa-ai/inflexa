@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 3,
+    "qc_present": 5,
+    "low_count_filter": 3,
+    "normalization": 2,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 2,
+    "report_completeness": 4
+  },
+  "rationale": "The plan correctly recognizes the 1-vs-1 design and caveats it repeatedly, but then does exactly what the reference forbids: an edgeR exactTest with an assumed bcv=0.4 that emits nominal p-values and FDR, followed by GSEA/ORA stacked on those invalid statistics. A correct plan would report normalized counts and descriptive log2 fold changes only, produce no p-values, and name the replicated design (at least 2, preferably 3+ per group) required for inference; this plan does not name that design. Normalization is never stated, the low-count filter is unspecified, no alpha or shrinkage is discussed, and the enrichment step lacks a universe, collection version, and size window and is unwarranted for this design. Per-sample QC (library size, distribution, zero fraction) is present but without an outlier or shallow-sample policy."
+}

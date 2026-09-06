@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly treats the STAR/featureCounts matrix as raw integer gene-level counts, explicitly rejects tximport and length offsets, uses DESeq2 with median-of-ratios normalization inside the model, a minimal justified filter (>=10 counts in >=3 samples), ~condition with control releveled as reference, apeglm shrinkage, BH at 0.05, and states the n=3/group power limitation. QC covers PCA, sample distances and library sizes but flags outliers without stating a handling policy for an outlier or shallow sample. The edgeR-overlap-as-higher-confidence framing is a mild statistical liberty. Enrichment was not asked but is done reasonably (full ranked list, Wald stat, Hallmark 2026.1, 15-500 window), though the Reactome version is left as 'current release' and no ORA universe is specified for the conditional ORA branch. The report step names methods, versions, design, thresholds, gene counts and caveats."
+}

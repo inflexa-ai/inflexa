@@ -1,0 +1,347 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "total-rna-highdup-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T21:59:28.679Z",
+  "elapsedMs": 63130,
+  "outcome": "plan_submitted",
+  "planId": "pln-9276d5d4",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC diagnostics: library size, duplication rate, outlier detection",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not computationally deduplicate raw counts: this is a non-UMI protocol, and Parekh et al. 2016 (PMID 27156886) show that removing computationally-identified duplicates in non-UMI RNA-seq does not improve and can worsen DE accuracy/FDR — duplication rate is a QC signal to check for confounding, not a filter to apply to the counts",
+          "12 samples total per metadata (13 columns in counts.csv includes the gene symbol column, not an extra sample) — confirm this column alignment before analysis",
+          "Do not exclude sample_01 automatically on library size alone; base any exclusion decision on the PCA/outlier evidence gathered in this step"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do sample_01's low library size and the cohort's >60% duplication rate create technical confounds (library-size/duplication correlation with condition, PCA outliers) that must be addressed before differential expression between 6 treated and 6 control heart samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Report per-sample library size (total counts), confirm sample_01 is ~4x below median",
+          "Compute correlation of duplication rate (if available in metadata) or proxy metrics with condition group to rule out confounding",
+          "PCA/hierarchical clustering on variance-stabilized counts (12000 genes x 12 samples) to check whether sample_01 or any other sample is an outlier vs its condition group",
+          "Explicit recommendation stated: keep sample_01 with caveat, or flag for down-weighting/exclusion, based on the PCA/clustering evidence — decision must be justified, not assumed"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control (DESeq2)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not use edgeR/limma-voom as the primary caller here — DESeq2 median-of-ratios normalization is more robust to the library-size outlier than TMM in small n; if T1S1 finds sample_01 is a true outlier, exclusion must be reflected in the design matrix before running DESeq()",
+          "With n=6 per group, a strict independent filtering and BH correction is standard; do not relax to unadjusted p-values in the acceptance summary"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "EnhancedVolcano",
+          "pheatmap"
+        ],
+        "question": "Which genes are significantly differentially expressed between treated (n=6) and control (n=6) heart samples, using raw Salmon gene-level counts and standard DESeq2 normalization/dispersion modeling?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run with design ~ condition on the full 12000 x 12 count matrix, treated vs control as the sole contrast (single batch, unpaired, so no covariates needed beyond condition)",
+          "Apply the QC decision from T1S1 regarding sample_01 (retain with note, down-weight, or exclude) and document which was applied",
+          "Report size factors, dispersion plot, and confirm dispersion estimation is not distorted by any retained outlier",
+          "Output full DE results table (log2FC, p-value, BH-adjusted p-value) for all tested genes, plus a summary count of genes at padj < 0.05 and |log2FC| > 1",
+          "Produce a volcano plot and PCA plot annotated by condition"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of DE genes (WikiPathways human)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways is the only pathway reference confirmed present for human in this environment; do not assume KEGG/Reactome/MSigDB hallmark sets are available without checking",
+          "Report the gene symbol match rate against the GMT explicitly — heart tissue genes with non-standard symbols could silently reduce enrichment power"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which biological pathways are enriched among genes differentially expressed between treated and control heart samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Use the significant DE gene list (padj < 0.05) from T1S2, split into up- and down-regulated in treated vs control, as input for over-representation analysis, and additionally run a pre-ranked GSEA (fgsea) on the full ranked gene list (by DESeq2 stat or log2FC) for robustness to threshold choice",
+          "Use the WikiPathways human gene sets (HGNC symbols) confirmed present in the reference store for Homo sapiens",
+          "Report enriched pathways with adjusted p-value < 0.05, ranked by significance, with leading-edge/member genes listed",
+          "If gene symbols in counts.csv do not match HGNC symbols in the GMT directly (case, aliases), document the match rate and any symbol-mapping applied"
+        ]
+      }
+    ],
+    "title": "Heart treated vs control DESeq2 with QC-aware DE and pathways",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (Salmon gene-level counts, 12000 genes x 13 columns/12 samples after metadata) from heart tissue, 6 treated vs 6 control, unpaired, single batch, rRNA-depleted total RNA libraries without UMIs. Two QC flags need explicit handling rather than default DESeq2: (1) duplication rate >60% in most libraries is expected and largely uninformative for non-UMI total RNA-seq protocols (Parekh et al. 2016, PMID 27156886, show computational dedup on non-UMI data does not improve and can worsen DE power/FDR) — so raw counts are kept as-is (no dedup), but duplication rate is checked for correlation with a known confounder (e.g. library size or condition) as a QC step rather than ignored outright. (2) sample_01's library size ~4x below median is a candidate outlier that could bias dispersion estimation and normalization; this is tested explicitly via PCA/clustering and size-factor inspection before deciding to exclude or down-weight it, rather than silently dropping it. The core comparison is treated vs control by DESeq2 (Wald test, appropriate for n=6 per group, unpaired, single batch so no batch term needed), followed by pathway enrichment against WikiPathways human gene sets (the only pathway reference confirmed present for Homo sapiens) to interpret the DE gene list mechanistically."
+  },
+  "usage": {
+    "inputTokens": 745075,
+    "outputTokens": 4070,
+    "cacheCreationInputTokens": 79675,
+    "cacheReadInputTokens": 665208,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "sva",
+          "pheatmap",
+          "EnhancedVolcano",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq duplication rate rRNA depletion differential expression QC recommendation",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "PCR duplicates RNA-seq differential expression bias total RNA library",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq PCR duplication rate impact differential expression analysis",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "27156886"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "total RNA-seq without UMI gene-level count differential expression outlier sample low library size",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 outlier sample detection RNA-seq PCA Cook's distance",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq quality control library size outlier sample exclusion best practices",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression best practices count normalization",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression best practices",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "26813401"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "high duplication rate rRNA depletion RNA-seq QC guideline",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "duplicate reads RNA-seq without UMI do not remove differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "30001700"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Heart treated vs control DESeq2 with QC-aware DE and pathways",
+          "analytical_narrative": "The dataset is bulk RNA-seq (Salmon gene-level counts, 12000 genes x 13 columns/12 samples after metadata) from heart tissue, 6 treated vs 6 control, unpaired, single batch, rRNA-depleted total RNA libraries without UMIs. Two QC flags need explicit handling rather than default DESeq2: (1) duplication rate >60% in most libraries is expected and largely uninformative for non-UMI total RNA-seq protocols (Parekh et al. 2016, PMID 27156886, show computational dedup on non-UMI data does not improve and can worsen DE power/FDR) — so raw counts are kept as-is (no dedup), but duplication rate is checked for correlation with a known confounder (e.g. library size or condition) as a QC step rather than ignored outright. (2) sample_01's library size ~4x below median is a candidate outlier that could bias dispersion estimation and normalization; this is tested explicitly via PCA/clustering and size-factor inspection before deciding to exclude or down-weight it, rather than silently dropping it. The core comparison is treated vs control by DESeq2 (Wald test, appropriate for n=6 per group, unpaired, single batch so no batch term needed), followed by pathway enrichment against WikiPathways human gene sets (the only pathway reference confirmed present for Homo sapiens) to interpret the DE gene list mechanistically.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC diagnostics: library size, duplication rate, outlier detection",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do sample_01's low library size and the cohort's >60% duplication rate create technical confounds (library-size/duplication correlation with condition, PCA outliers) that must be addressed before differential expression between 6 treated and 6 control heart samples?",
+              "acceptance_criteria": [
+                "Report per-sample library size (total counts), confirm sample_01 is ~4x below median",
+                "Compute correlation of duplication rate (if available in metadata) or proxy metrics with condition group to rule out confounding",
+                "PCA/hierarchical clustering on variance-stabilized counts (12000 genes x 12 samples) to check whether sample_01 or any other sample is an outlier vs its condition group",
+                "Explicit recommendation stated: keep sample_01 with caveat, or flag for down-weighting/exclusion, based on the PCA/clustering evidence — decision must be justified, not assumed"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do not computationally deduplicate raw counts: this is a non-UMI protocol, and Parekh et al. 2016 (PMID 27156886) show that removing computationally-identified duplicates in non-UMI RNA-seq does not improve and can worsen DE accuracy/FDR — duplication rate is a QC signal to check for confounding, not a filter to apply to the counts",
+                "12 samples total per metadata (13 columns in counts.csv includes the gene symbol column, not an extra sample) — confirm this column alignment before analysis",
+                "Do not exclude sample_01 automatically on library size alone; base any exclusion decision on the PCA/outlier evidence gathered in this step"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control (DESeq2)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are significantly differentially expressed between treated (n=6) and control (n=6) heart samples, using raw Salmon gene-level counts and standard DESeq2 normalization/dispersion modeling?",
+              "acceptance_criteria": [
+                "DESeq2 run with design ~ condition on the full 12000 x 12 count matrix, treated vs control as the sole contrast (single batch, unpaired, so no covariates needed beyond condition)",
+                "Apply the QC decision from T1S1 regarding sample_01 (retain with note, down-weight, or exclude) and document which was applied",
+                "Report size factors, dispersion plot, and confirm dispersion estimation is not distorted by any retained outlier",
+                "Output full DE results table (log2FC, p-value, BH-adjusted p-value) for all tested genes, plus a summary count of genes at padj < 0.05 and |log2FC| > 1",
+                "Produce a volcano plot and PCA plot annotated by condition"
+              ],
+              "packages": [
+                "DESeq2",
+                "EnhancedVolcano",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do not use edgeR/limma-voom as the primary caller here — DESeq2 median-of-ratios normalization is more robust to the library-size outlier than TMM in small n; if T1S1 finds sample_01 is a true outlier, exclusion must be reflected in the design matrix before running DESeq()",
+                "With n=6 per group, a strict independent filtering and BH correction is standard; do not relax to unadjusted p-values in the acceptance summary"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of DE genes (WikiPathways human)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among genes differentially expressed between treated and control heart samples?",
+              "acceptance_criteria": [
+                "Use the significant DE gene list (padj < 0.05) from T1S2, split into up- and down-regulated in treated vs control, as input for over-representation analysis, and additionally run a pre-ranked GSEA (fgsea) on the full ranked gene list (by DESeq2 stat or log2FC) for robustness to threshold choice",
+                "Use the WikiPathways human gene sets (HGNC symbols) confirmed present in the reference store for Homo sapiens",
+                "Report enriched pathways with adjusted p-value < 0.05, ranked by significance, with leading-edge/member genes listed",
+                "If gene symbols in counts.csv do not match HGNC symbols in the GMT directly (case, aliases), document the match rate and any symbol-mapping applied"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "WikiPathways is the only pathway reference confirmed present for human in this environment; do not assume KEGG/Reactome/MSigDB hallmark sets are available without checking",
+                "Report the gene symbol match rate against the GMT explicitly — heart tissue genes with non-standard symbols could silently reduce enrichment power"
+              ]
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

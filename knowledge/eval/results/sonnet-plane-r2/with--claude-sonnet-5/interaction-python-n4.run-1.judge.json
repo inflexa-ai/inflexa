@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly frames the question as a genotype:treatment interaction, fits PyDESeq2 with ~ genotype + treatment + genotype:treatment, explicit WT/vehicle reference levels, a Wald test on the interaction, and extracts within-genotype simple effects via a releveled 4-level group factor so each is a single shrinkable coefficient — a sound Python-only workaround that it states explicitly. QC is complete (library sizes, blind VST PCA, distance heatmap, colored by both factors) but the outlier policy stops at naming the sample rather than stating what happens next; the filter (>=10 counts in >=4 samples, the smallest cell) is minimal and justified. Normalization is only implied (size factors mentioned in passing) rather than stated as median-of-ratios inside the model, and Salmon counts are described as integers without addressing rounding or length offsets. Enrichment is not required by the task but is done properly if included (full Wald-ranked list, tested-gene universe, Hallmark/Reactome named, 15-500 window), though collection versions are deferred to the report rather than named; the report step covers method, versions, design, thresholds, gene counts, and the low-power interaction caveat."
+}

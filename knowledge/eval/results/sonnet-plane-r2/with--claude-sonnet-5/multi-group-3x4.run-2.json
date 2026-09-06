@@ -1,0 +1,784 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "multi-group-3x4",
+  "run": 2,
+  "startedAt": "2026-09-05T22:12:45.295Z",
+  "elapsedMs": 73825,
+  "outcome": "plan_submitted",
+  "planId": "pln-9f99d546",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (VST, PCA, sample distances)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This QC is descriptive; it does not itself test for differences — do not draw significance conclusions from PCA separation alone"
+        ],
+        "context": "Input: /eval-sonnet-plane-r2-with-multi-group-3x4-2/data/inputs/counts/counts.csv (12000 x 13, gene symbol + 12 samples, raw Salmon gene-level counts) and /eval-sonnet-plane-r2-with-multi-group-3x4-2/data/inputs/metadata/metadata.csv (12 x 2, sample + condition). Single batch, unpaired, 3 groups x 4 replicates.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 12 liver samples (4 control, 4 treated_a, 4 treated_b) separate by condition on PCA, and are there outlier samples or library-size issues before modeling?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC via blind VST + PCA + sample distance heatmap is the standard pre-model check for raw-count RNA-seq (R-0033).",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use vst(blind=TRUE) for QC only, not for the DE model",
+          "n_top_genes=500 for PCA gene selection"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the raw count matrix (12000 genes x 12 samples)",
+          "PCA plot on top 500 most-variable genes colored by condition (control/treated_a/treated_b)",
+          "Sample-to-sample Euclidean distance heatmap produced",
+          "Library size per sample reported; any sample flagged as outlier or low-depth is noted"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 low-count filter, size factors, and model setup",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "12000 raw gene-level counts x 12 samples; groups control/treated_a/treated_b, n=4 each, single batch, unpaired. Reference level must be explicitly set to 'control' since R's default alphabetical ordering coincidentally matches but must not be relied upon implicitly.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "After removing genes with insufficient counts, what is the DESeq2 dataset and design (~condition, reference=control) used for all downstream tests on the 3-group liver comparison?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0060@0ff9",
+            "R-0036@9786"
+          ],
+          "reason": "Minimal pre-filter (10 counts / smallest group of 4) plus independent filtering later; explicit reference level required for a 3-level factor (R-0002, R-0029, R-0026, R-0060, R-0036).",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count=10, min_samples=4 (smallest group size)",
+          "relevel condition factor with control as reference before DESeq()",
+          "do not pre-normalize/scale counts; size factors go inside the DESeq2 model"
+        ],
+        "acceptance_criteria": [
+          "Genes filtered to keep >=10 counts in at least 4 samples (the smallest group size)",
+          "DESeqDataSet built with design ~condition, condition releveled so 'control' is the explicit reference",
+          "Median-of-ratios size factors estimated (no external normalization applied before the model)",
+          "Number of genes retained after filtering and total genes tested reported"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DESeq2 LRT: any-group-difference test across control/treated_a/treated_b",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 4 replicates per cell, DESeq2 sets p-value to NA (does not impute) for genes flagged by Cook's distance outlier detection; report these separately from filtered-out genes"
+        ],
+        "context": "Answers the first half of the research question: genes that differ across all three groups at all, independent of which pairwise direction.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which of the ~12000 liver genes differ across the three groups (control, treated_a, treated_b) at all, testing full model ~condition against reduced model ~1?",
+        "grounding": {
+          "claims": [
+            "R-0059@023b",
+            "R-0039@e17a",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "3-group unpaired design with replication: DESeq2 LRT (full vs reduced) is the any-difference test (R-0059); outlier/NA handling and FDR rules per R-0039/R-0083/R-0010/R-0043.",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+          "template": "tpl-deseq2-multigroup@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "full = ~condition, reduced = ~1",
+          "alpha=0.05 passed to results() to match independent filtering threshold",
+          "BH adjustment"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 LRT run with full=~condition, reduced=~1 on the filtered dataset from T1S2",
+          "Results table with LRT p-value and BH-adjusted p-value (padj) per gene, independent filtering on, alpha=0.05",
+          "Count outlier flags (Cook's distance, NA p-values) reported separately from independent-filtering NAs",
+          "p-value histogram inspected and its shape reported before trusting adjusted p-values",
+          "Number of genes with padj < 0.05 reported as the 'differs across groups' gene set"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pairwise Wald contrasts: treated_a vs control and treated_b vs control, with ashr shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "FDR control here is per-contrast, not jointly across both treated_a and treated_b comparisons; state this explicitly in the report"
+        ],
+        "context": "Answers the second half of the research question: per-treatment effects vs control. Uses the same fitted DESeqDataSet as T1S3 (design ~condition, reference=control) but extracts Wald contrasts rather than the LRT.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ashr"
+        ],
+        "question": "Which genes does treated_a change relative to control, and which genes does treated_b change relative to control, in liver?",
+        "grounding": {
+          "claims": [
+            "R-0060@0ff9",
+            "R-0040@8061",
+            "R-0009@f54e",
+            "R-0061@bcab",
+            "R-0087@c53d",
+            "R-0085@c24d"
+          ],
+          "reason": "Named per-comparison contrasts against explicit reference control with ashr shrinkage and within-contrast FDR (R-0060, R-0040, R-0061); MA/dispersion diagnostics and dual LFC reporting (R-0087, R-0085).",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "contrast form: factor, numerator, denominator -> c('condition','treated_a','control') and c('condition','treated_b','control')",
+          "ashr shrinkage (not apeglm) since these are non-reference-coefficient-style named contrasts per policy",
+          "FDR adjustment within each contrast separately"
+        ],
+        "acceptance_criteria": [
+          "Two named contrasts extracted from the fitted DESeq2 model: contrast=c('condition','treated_a','control') and contrast=c('condition','treated_b','control')",
+          "Each contrast's log2FoldChange shrunk with ashr (lfcShrink type='ashr'); unshrunken LFC, shrunken LFC, and lfcSE all retained in the output table",
+          "BH-adjusted p-values computed within each contrast separately (not pooled across contrasts), alpha=0.05, independent filtering on",
+          "Number of significant genes (padj<0.05) reported per contrast, with contrast name attached to every row",
+          "MA plot and dispersion plot produced as fit diagnostics"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA per contrast (Hallmark + Reactome)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Gene length/expression-level bias can affect enrichment; universe restricted to tested (post-filter) genes to partially mitigate this",
+          "Enrichment results are method- and database-dependent — treat pathway hits as hypotheses, not proven mechanisms",
+          "KEGG legacy sets are not available in this environment; only Hallmark and Reactome are run"
+        ],
+        "context": "Reference data confirmed present: MSigDB human Hallmark gene sets (/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt, 50 sets, HGNC symbols) and Reactome pathways (/mnt/refs/managed/reactome-pathways/current/ReactomePathways.gmt, filter to Homo sapiens via ReactomePathways.txt). Gene identifiers in the input counts are HGNC symbols, matching both GMT files directly — no ID mapping to Entrez is required here since sets are symbol-keyed.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table"
+        ],
+        "question": "For the any-difference test and each pairwise contrast (treated_a vs control, treated_b vs control), which MSigDB Hallmark and Reactome pathways show coordinated enrichment among the ranked liver genes?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0103@93aa",
+            "R-0104@34a4",
+            "R-0108@409f",
+            "R-0045@f652",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "Preranked fgsea on Wald/LRT statistic against Hallmark then Reactome, run separately per contrast per R-0098/R-0107/R-0048/R-0104; ranking metric choice (stat) resolves the disputed R-0108.",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3",
+          "T1S4"
+        ],
+        "constraints": [
+          "rank_metric = stat (DESeq2 Wald/LRT statistic), not raw or shrunken log2FC alone, not signed p-value",
+          "min_size=15, max_size=500 after intersection with tested gene universe",
+          "run enrichment separately per contrast: any-difference (LRT), treated_a vs control, treated_b vs control"
+        ],
+        "acceptance_criteria": [
+          "Separate fgsea runs for: (a) the LRT gene ranking (by LRT statistic) and (b) each pairwise Wald contrast (ranked by Wald 'stat' column) — no pooling of genes across contrasts",
+          "Full ranked list of all tested genes used as input (no pre-thresholding)",
+          "Gene sets restricted to size 15-500 members after intersecting with tested genes",
+          "Run against MSigDB Hallmark human gene sets first, then Reactome human pathways as the second collection",
+          "BH-adjusted enrichment p-values reported per pathway per contrast; redundant/overlapping significant sets collapsed with one representative reported and full table kept as supplement",
+          "Leading-edge genes listed for each significant pathway per contrast",
+          "If the reference gene-set files are unavailable at run time, the step reports that fact and skips enrichment rather than failing silently"
+        ]
+      },
+      {
+        "id": "T1S5",
+        "name": "Consolidated DE + enrichment report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This step is descriptive/reporting only; it introduces no new statistical tests"
+        ],
+        "context": "Final synthesis step combining T1S3 (LRT any-difference), T1S4 (pairwise contrasts), and T2S1 (enrichment) into one decision-ready report for the liver 3-group, 4-replicate design.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "rmarkdown"
+        ],
+        "question": "What is the final, reproducible summary of genes differing across control/treated_a/treated_b, genes changed by each treatment vs control, and the pathways each signature implicates?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report-composition step; covered by reporting-content rules but not itself a modeled method step.",
+          "status": "ungrounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S4",
+          "T2S1"
+        ],
+        "constraints": [],
+        "acceptance_criteria": [
+          "Report states: design formula, reference level (control), each named contrast, filtering thresholds, alpha, number of genes tested after filtering, number of significant genes per test/contrast",
+          "MA plot and dispersion plot from T1S4 included as fit diagnostics",
+          "Gene tables include unshrunken log2FoldChange, ashr-shrunken log2FoldChange, lfcSE, p-value, padj, and contrast label for every row",
+          "Enrichment tables list gene-set database + version, rank metric, universe, size window, and leading-edge genes per significant set, per contrast",
+          "Overlap between the LRT any-difference gene set and the union of the two pairwise contrast gene sets is reported",
+          "Full reproducibility record included: sessionInfo, package versions (DESeq2, ashr, fgsea), gene-set collection versions (MSigDB Hallmark 2026.1, Reactome current), and any random seed used"
+        ]
+      }
+    ],
+    "title": "Liver 3-group DE: any-difference LRT + pairwise contrasts",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq from human liver with three unpaired groups (control, treated_a, treated_b; n=4 each), raw Salmon gene-level counts, single batch, no known covariates. The research question has two parts: (1) which genes differ across all three groups at all — answered by a DESeq2 likelihood ratio test comparing the full model (~condition) to the reduced model (~1), which is the correct 'any-difference' ANOVA-like test for a 3+ level factor; (2) which genes each treatment changes vs control — answered by two named pairwise Wald contrasts (treated_a vs control, treated_b vs control) with control set as the explicit reference level. Log2 fold changes for each pairwise contrast are shrunk with ashr (required because a contrast between two non-reference levels is not a single model coefficient, so apeglm does not apply). BH-FDR is computed within each contrast at alpha=0.05 with DESeq2 independent filtering. Downstream, per-contrast fgsea preranked GSEA (ranked on the Wald statistic) is run against MSigDB Hallmark and Reactome gene sets available in the reference store, to characterize the coordinated pathway-level signal beyond single genes. A final report step consolidates the LRT any-difference gene set, the two pairwise DE tables, fit diagnostics, and enrichment results with full reproducibility metadata. This follows the DESeq2 LRT+pairwise-Wald procedure recommended for 3-group unpaired designs with 4 replicates/group and no batch structure."
+  },
+  "usage": {
+    "inputTokens": 293369,
+    "outputTokens": 7535,
+    "cacheCreationInputTokens": 138874,
+    "cacheReadInputTokens": 154447,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 3,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 3,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) + PCA + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >= smallest group size (4)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 4
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "~condition, reference=control, named contrasts treated_a vs control and treated_b vs control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 LRT (full ~condition vs reduced ~1) for any-group-difference; pairwise Wald contrasts treated_a vs control, treated_b vs control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "LRT_then_pairwise_Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "ashr shrinkage on each pairwise contrast",
+            "package": "ashr",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "ashr"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR within each contrast, alpha=0.05, independent filtering on",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on Wald statistic, MSigDB Hallmark then Reactome, per contrast",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Integrated DE + enrichment report with diagnostics and reproducibility record",
+            "package": "DESeq2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver 3-group DE: any-difference LRT + pairwise contrasts",
+          "analytical_narrative": "The dataset is bulk RNA-seq from human liver with three unpaired groups (control, treated_a, treated_b; n=4 each), raw Salmon gene-level counts, single batch, no known covariates. The research question has two parts: (1) which genes differ across all three groups at all — answered by a DESeq2 likelihood ratio test comparing the full model (~condition) to the reduced model (~1), which is the correct 'any-difference' ANOVA-like test for a 3+ level factor; (2) which genes each treatment changes vs control — answered by two named pairwise Wald contrasts (treated_a vs control, treated_b vs control) with control set as the explicit reference level. Log2 fold changes for each pairwise contrast are shrunk with ashr (required because a contrast between two non-reference levels is not a single model coefficient, so apeglm does not apply). BH-FDR is computed within each contrast at alpha=0.05 with DESeq2 independent filtering. Downstream, per-contrast fgsea preranked GSEA (ranked on the Wald statistic) is run against MSigDB Hallmark and Reactome gene sets available in the reference store, to characterize the coordinated pathway-level signal beyond single genes. A final report step consolidates the LRT any-difference gene set, the two pairwise DE tables, fit diagnostics, and enrichment results with full reproducibility metadata. This follows the DESeq2 LRT+pairwise-Wald procedure recommended for 3-group unpaired designs with 4 replicates/group and no batch structure.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC (VST, PCA, sample distances)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 12 liver samples (4 control, 4 treated_a, 4 treated_b) separate by condition on PCA, and are there outlier samples or library-size issues before modeling?",
+              "acceptance_criteria": [
+                "Blind VST computed on the raw count matrix (12000 genes x 12 samples)",
+                "PCA plot on top 500 most-variable genes colored by condition (control/treated_a/treated_b)",
+                "Sample-to-sample Euclidean distance heatmap produced",
+                "Library size per sample reported; any sample flagged as outlier or low-depth is noted"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: /eval-sonnet-plane-r2-with-multi-group-3x4-2/data/inputs/counts/counts.csv (12000 x 13, gene symbol + 12 samples, raw Salmon gene-level counts) and /eval-sonnet-plane-r2-with-multi-group-3x4-2/data/inputs/metadata/metadata.csv (12 x 2, sample + condition). Single batch, unpaired, 3 groups x 4 replicates.",
+              "constraints": [
+                "Use vst(blind=TRUE) for QC only, not for the DE model",
+                "n_top_genes=500 for PCA gene selection"
+              ],
+              "caveats": [
+                "This QC is descriptive; it does not itself test for differences — do not draw significance conclusions from PCA separation alone"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC via blind VST + PCA + sample distance heatmap is the standard pre-model check for raw-count RNA-seq (R-0033).",
+                "template": "tpl-qc-eda@1.0.0"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 low-count filter, size factors, and model setup",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "After removing genes with insufficient counts, what is the DESeq2 dataset and design (~condition, reference=control) used for all downstream tests on the 3-group liver comparison?",
+              "acceptance_criteria": [
+                "Genes filtered to keep >=10 counts in at least 4 samples (the smallest group size)",
+                "DESeqDataSet built with design ~condition, condition releveled so 'control' is the explicit reference",
+                "Median-of-ratios size factors estimated (no external normalization applied before the model)",
+                "Number of genes retained after filtering and total genes tested reported"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 raw gene-level counts x 12 samples; groups control/treated_a/treated_b, n=4 each, single batch, unpaired. Reference level must be explicitly set to 'control' since R's default alphabetical ordering coincidentally matches but must not be relied upon implicitly.",
+              "constraints": [
+                "min_count=10, min_samples=4 (smallest group size)",
+                "relevel condition factor with control as reference before DESeq()",
+                "do not pre-normalize/scale counts; size factors go inside the DESeq2 model"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0060@0ff9",
+                  "R-0036@9786"
+                ],
+                "reason": "Minimal pre-filter (10 counts / smallest group of 4) plus independent filtering later; explicit reference level required for a 3-level factor (R-0002, R-0029, R-0026, R-0060, R-0036)."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "DESeq2 LRT: any-group-difference test across control/treated_a/treated_b",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the ~12000 liver genes differ across the three groups (control, treated_a, treated_b) at all, testing full model ~condition against reduced model ~1?",
+              "acceptance_criteria": [
+                "DESeq2 LRT run with full=~condition, reduced=~1 on the filtered dataset from T1S2",
+                "Results table with LRT p-value and BH-adjusted p-value (padj) per gene, independent filtering on, alpha=0.05",
+                "Count outlier flags (Cook's distance, NA p-values) reported separately from independent-filtering NAs",
+                "p-value histogram inspected and its shape reported before trusting adjusted p-values",
+                "Number of genes with padj < 0.05 reported as the 'differs across groups' gene set"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Answers the first half of the research question: genes that differ across all three groups at all, independent of which pairwise direction.",
+              "constraints": [
+                "full = ~condition, reduced = ~1",
+                "alpha=0.05 passed to results() to match independent filtering threshold",
+                "BH adjustment"
+              ],
+              "caveats": [
+                "With 4 replicates per cell, DESeq2 sets p-value to NA (does not impute) for genes flagged by Cook's distance outlier detection; report these separately from filtered-out genes"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0059@023b",
+                  "R-0039@e17a",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "reason": "3-group unpaired design with replication: DESeq2 LRT (full vs reduced) is the any-difference test (R-0059); outlier/NA handling and FDR rules per R-0039/R-0083/R-0010/R-0043.",
+                "template": "tpl-deseq2-multigroup@1.0.0"
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Pairwise Wald contrasts: treated_a vs control and treated_b vs control, with ashr shrinkage",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes does treated_a change relative to control, and which genes does treated_b change relative to control, in liver?",
+              "acceptance_criteria": [
+                "Two named contrasts extracted from the fitted DESeq2 model: contrast=c('condition','treated_a','control') and contrast=c('condition','treated_b','control')",
+                "Each contrast's log2FoldChange shrunk with ashr (lfcShrink type='ashr'); unshrunken LFC, shrunken LFC, and lfcSE all retained in the output table",
+                "BH-adjusted p-values computed within each contrast separately (not pooled across contrasts), alpha=0.05, independent filtering on",
+                "Number of significant genes (padj<0.05) reported per contrast, with contrast name attached to every row",
+                "MA plot and dispersion plot produced as fit diagnostics"
+              ],
+              "packages": [
+                "DESeq2",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Answers the second half of the research question: per-treatment effects vs control. Uses the same fitted DESeqDataSet as T1S3 (design ~condition, reference=control) but extracts Wald contrasts rather than the LRT.",
+              "constraints": [
+                "contrast form: factor, numerator, denominator -> c('condition','treated_a','control') and c('condition','treated_b','control')",
+                "ashr shrinkage (not apeglm) since these are non-reference-coefficient-style named contrasts per policy",
+                "FDR adjustment within each contrast separately"
+              ],
+              "caveats": [
+                "FDR control here is per-contrast, not jointly across both treated_a and treated_b comparisons; state this explicitly in the report"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0060@0ff9",
+                  "R-0040@8061",
+                  "R-0009@f54e",
+                  "R-0061@bcab",
+                  "R-0087@c53d",
+                  "R-0085@c24d"
+                ],
+                "reason": "Named per-comparison contrasts against explicit reference control with ashr shrinkage and within-contrast FDR (R-0060, R-0040, R-0061); MA/dispersion diagnostics and dual LFC reporting (R-0087, R-0085)."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA per contrast (Hallmark + Reactome)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "For the any-difference test and each pairwise contrast (treated_a vs control, treated_b vs control), which MSigDB Hallmark and Reactome pathways show coordinated enrichment among the ranked liver genes?",
+              "acceptance_criteria": [
+                "Separate fgsea runs for: (a) the LRT gene ranking (by LRT statistic) and (b) each pairwise Wald contrast (ranked by Wald 'stat' column) — no pooling of genes across contrasts",
+                "Full ranked list of all tested genes used as input (no pre-thresholding)",
+                "Gene sets restricted to size 15-500 members after intersecting with tested genes",
+                "Run against MSigDB Hallmark human gene sets first, then Reactome human pathways as the second collection",
+                "BH-adjusted enrichment p-values reported per pathway per contrast; redundant/overlapping significant sets collapsed with one representative reported and full table kept as supplement",
+                "Leading-edge genes listed for each significant pathway per contrast",
+                "If the reference gene-set files are unavailable at run time, the step reports that fact and skips enrichment rather than failing silently"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Reference data confirmed present: MSigDB human Hallmark gene sets (/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt, 50 sets, HGNC symbols) and Reactome pathways (/mnt/refs/managed/reactome-pathways/current/ReactomePathways.gmt, filter to Homo sapiens via ReactomePathways.txt). Gene identifiers in the input counts are HGNC symbols, matching both GMT files directly — no ID mapping to Entrez is required here since sets are symbol-keyed.",
+              "constraints": [
+                "rank_metric = stat (DESeq2 Wald/LRT statistic), not raw or shrunken log2FC alone, not signed p-value",
+                "min_size=15, max_size=500 after intersection with tested gene universe",
+                "run enrichment separately per contrast: any-difference (LRT), treated_a vs control, treated_b vs control"
+              ],
+              "caveats": [
+                "Gene length/expression-level bias can affect enrichment; universe restricted to tested (post-filter) genes to partially mitigate this",
+                "Enrichment results are method- and database-dependent — treat pathway hits as hypotheses, not proven mechanisms",
+                "KEGG legacy sets are not available in this environment; only Hallmark and Reactome are run"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0103@93aa",
+                  "R-0104@34a4",
+                  "R-0108@409f",
+                  "R-0045@f652",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "reason": "Preranked fgsea on Wald/LRT statistic against Hallmark then Reactome, run separately per contrast per R-0098/R-0107/R-0048/R-0104; ranking metric choice (stat) resolves the disputed R-0108.",
+                "template": "tpl-fgsea-preranked@1.0.0"
+              }
+            },
+            {
+              "id": "T1S5",
+              "name": "Consolidated DE + enrichment report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the final, reproducible summary of genes differing across control/treated_a/treated_b, genes changed by each treatment vs control, and the pathways each signature implicates?",
+              "acceptance_criteria": [
+                "Report states: design formula, reference level (control), each named contrast, filtering thresholds, alpha, number of genes tested after filtering, number of significant genes per test/contrast",
+                "MA plot and dispersion plot from T1S4 included as fit diagnostics",
+                "Gene tables include unshrunken log2FoldChange, ashr-shrunken log2FoldChange, lfcSE, p-value, padj, and contrast label for every row",
+                "Enrichment tables list gene-set database + version, rank metric, universe, size window, and leading-edge genes per significant set, per contrast",
+                "Overlap between the LRT any-difference gene set and the union of the two pairwise contrast gene sets is reported",
+                "Full reproducibility record included: sessionInfo, package versions (DESeq2, ashr, fgsea), gene-set collection versions (MSigDB Hallmark 2026.1, Reactome current), and any random seed used"
+              ],
+              "packages": [
+                "DESeq2",
+                "rmarkdown"
+              ],
+              "depends_on": [
+                "T1S4",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Final synthesis step combining T1S3 (LRT any-difference), T1S4 (pairwise contrasts), and T2S1 (enrichment) into one decision-ready report for the liver 3-group, 4-replicate design.",
+              "constraints": [],
+              "caveats": [
+                "This step is descriptive/reporting only; it introduces no new statistical tests"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report-composition step; covered by reporting-content rules but not itself a modeled method step."
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+  }
+}

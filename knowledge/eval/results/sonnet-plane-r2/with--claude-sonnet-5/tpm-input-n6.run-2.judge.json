@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on the core decision: it refuses DESeq2/edgeR/voom on TPM, fits limma lmFit+eBayes with trend=TRUE on log2(TPM+1), sets control as reference with an explicit lesional-control contrast, and uses BH at 0.05 via topTable with no size factors or TMM. QC (PCA/MDS, distance heatmap, detected-gene counts, outlier flagging policy) and the filter (TPM>=1 in at least 6 samples, the smaller group) follow the reference closely. It notes the TPM-only limitation but does not explicitly request the raw counts or quantification directories, a small omission. Enrichment was not asked but is specified well (full ranked list on moderated t, named collections, 15-500 window, BH, collapse), though the Reactome version is only 'current'."
+}

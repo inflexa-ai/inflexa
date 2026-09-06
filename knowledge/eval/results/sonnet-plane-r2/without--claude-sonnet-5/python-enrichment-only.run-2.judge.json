@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly refuses to refit the count model, ranks every tested gene by a signed -log10(p) metric with explicit rules for missing values, duplicates, and ties, and runs gseapy prerank against a local human Hallmark GMT with a fixed seed and 1000 permutations, reporting NES, FDR, and leading edge. It falls short of the reference by not naming the MSigDB version and by omitting the 15–500 gene set size window, and it does not state package versions. QC, filtering, and normalization are largely inherited from the upstream DE, which the plan states explicitly; the shallow sample_01 is acknowledged as an uncorrectable inherited caveat rather than given an active policy."
+}

@@ -23,6 +23,7 @@ question_steps:
     - multiple_testing
     - report
   enrichment:
+    - qc_sample_structure
     - enrichment
     - report
   full_plan:

@@ -1,0 +1,280 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "mouse-two-group-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T21:58:12.237Z",
+  "elapsedMs": 44094,
+  "outcome": "plan_submitted",
+  "planId": "pln-01e8bd68",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and library-size outlier diagnostics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A single severely shallow sample can distort PCA and correlation scaling — consider log/vst transform before plotting",
+          "This step is diagnostic only; do not decide exclusion unilaterally, feed the finding into the DE step's sensitivity analysis"
+        ],
+        "context": "Input: raw integer gene-level counts (counts.csv, 12000 genes x 12 samples) and metadata.csv (12 samples, condition column) at the given input paths. Data profile flags sample_01 as ~4x below median library size — this must be quantified with actual numbers, not just acknowledged.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "How does the library size and correlation structure of the 12 mouse liver samples (6 HFD, 6 chow) look, and how much of an outlier is sample_01 relative to the other 11 samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the raw counts.csv and metadata.csv exactly as provided; do not simulate or download data",
+          "Gene symbols are mouse (MGI-style); do not attempt species conversion here"
+        ],
+        "acceptance_criteria": [
+          "Report total counts per sample and confirm sample_01's library size is ~4x below the median",
+          "Produce a sample-sample correlation heatmap or PCA plot on normalized/log counts showing where sample_01 falls relative to its condition group",
+          "Report gene detection rate (genes with count>0) per sample to characterize the shallow sample's impact",
+          "Output a clear recommendation on whether sample_01 is a candidate for exclusion vs retention with normalization"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, HFD vs chow, with outlier sensitivity check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group, power to detect subtle fold changes is limited; report this rather than overinterpreting borderline padj values",
+          "A single low-depth sample can inflate dispersion estimates for the whole cohort even if its own fold-change contribution is down-weighted by size factors"
+        ],
+        "context": "Input: same counts.csv (12000 x 12) and metadata.csv (condition: HFD vs chow) as T1S1. This is an unpaired, single-batch, 6-vs-6 design, so design formula is simply ~condition. T1S1's QC output characterizes how extreme sample_01 is and should inform whether it is retained or dropped in the primary model.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr"
+        ],
+        "question": "Which genes are differentially expressed between high-fat diet and chow mouse liver samples (6 vs 6, unpaired, single batch), and how sensitive is the gene list to inclusion/exclusion of the shallow sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not drop sample_01 without running the sensitivity comparison — DESeq2 median-of-ratios normalization is by design meant to handle library-size differences via size factors, so default should be inclusion unless QC shows a qualitative deviation (e.g. very poor gene detection) beyond depth alone",
+          "Use raw integer counts directly into DESeq2 (no pre-normalization)",
+          "Mouse gene symbols only — no cross-species mapping needed at this step"
+        ],
+        "acceptance_criteria": [
+          "Fit DESeq2 with design ~condition on all 12 samples using raw counts and metadata's condition column",
+          "Report full DE table (log2FoldChange, lfcSE, stat, pvalue, padj) for all ~12000 genes, using apeglm or ashr shrinkage for effect sizes",
+          "Flag genes significant at padj < 0.05",
+          "Re-run the same DESeq2 model excluding sample_01 as a sensitivity analysis and report how many significant genes and their identities change compared to the full-sample run",
+          "State explicitly whether the primary reported gene list is from the full 12-sample run or the 11-sample sensitivity run, and justify the choice using the QC step's findings"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark pathway enrichment on the HFD vs chow gene ranking",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GSEA on ~12000 background genes (rather than full genome) may shift hallmark set coverage — report how many hallmark-set genes were actually present in the input list",
+          "Hallmark sets are broad and can co-vary; do not interpret a top hit as proof of a specific mechanism without supporting individual gene evidence from T1S2"
+        ],
+        "context": "Input: the DESeq2 differential expression result table from T1S2 (gene symbol, log2FoldChange, stat, padj for ~12000 mouse genes). Reference: MSigDB mouse hallmark gene sets (mh.all.v2026.1.Mm.symbols.gmt, MGI symbols) staged in the environment, matching the mouse gene symbols already used in the counts matrix — no ortholog mapping needed.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea"
+        ],
+        "question": "Which MSigDB hallmark pathways are enriched among genes changing between high-fat diet and chow in mouse liver, using the full DESeq2-derived gene ranking?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the mouse-specific hallmark GMT file, not the human one, since gene symbols in this dataset are mouse/MGI",
+          "Rank genes by a single deterministic statistic (DESeq2 stat or shrunken LFC) — do not re-derive ranking from raw fold change alone if shrinkage was applied upstream",
+          "Report the sensitivity-run gene list from T1S2 only as a secondary check if the primary and sensitivity DE results diverge substantially; primary enrichment should use the primary DE run"
+        ],
+        "acceptance_criteria": [
+          "Run pre-ranked GSEA (fgsea) on the full gene list ranked by DESeq2 test statistic (or shrunken log2FoldChange) from the primary DE run in T1S2",
+          "Use the MSigDB mouse hallmark gene sets (MGI symbols) matched directly against the mouse gene symbols in the counts matrix",
+          "Report normalized enrichment score (NES), p-value, and BH-adjusted q-value for all hallmark pathways tested",
+          "Identify and list hallmark pathways significant at padj < 0.05, oriented by direction (up in HFD vs up in chow)",
+          "Cross-check top pathways qualitatively against liver/metabolic biology expectations (e.g. lipid metabolism, inflammation) without overclaiming mechanism beyond what enrichment supports"
+        ]
+      }
+    ],
+    "title": "HFD vs chow mouse liver DE + hallmark pathway analysis",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "Raw Salmon gene-level counts (12000 genes x 12 mice, 6 HFD vs 6 chow, unpaired, single batch) are profiled with sample_01 flagged at ~4x below median library size. Step 1 runs QC on the count matrix to quantify and visualize the library-size outlier and correlation structure before any modeling decision is made. Step 2 runs DESeq2 differential expression (HFD vs chow) with a documented, pre-registered handling of the shallow sample (down-weighting via DESeq2's standard size-factor normalization rather than ad hoc removal, with a sensitivity check dropping the sample) so the outlier cannot silently distort the gene list report. Step 3 takes the DE result and runs hallmark gene-set enrichment (GSEA on the full ranked gene list, using the mouse MSigDB hallmark collection, MGI symbols matching the mouse gene symbols in the counts) to identify hallmark pathways shifting between diets. This progression — QC diagnosis, robust DE testing with an explicit outlier-sensitivity check, pathway-level synthesis — directly answers 'which genes and which hallmark pathways change' while treating the flagged shallow sample as a caveat to be quantified, not ignored."
+  },
+  "usage": {
+    "inputTokens": 145889,
+    "outputTokens": 3313,
+    "cacheCreationInputTokens": 84300,
+    "cacheReadInputTokens": 61553,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb mouse"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "fgsea",
+          "clusterProfiler",
+          "pydeseq2",
+          "apeglm",
+          "ashr"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "HFD vs chow mouse liver DE + hallmark pathway analysis",
+          "analytical_narrative": "Raw Salmon gene-level counts (12000 genes x 12 mice, 6 HFD vs 6 chow, unpaired, single batch) are profiled with sample_01 flagged at ~4x below median library size. Step 1 runs QC on the count matrix to quantify and visualize the library-size outlier and correlation structure before any modeling decision is made. Step 2 runs DESeq2 differential expression (HFD vs chow) with a documented, pre-registered handling of the shallow sample (down-weighting via DESeq2's standard size-factor normalization rather than ad hoc removal, with a sensitivity check dropping the sample) so the outlier cannot silently distort the gene list report. Step 3 takes the DE result and runs hallmark gene-set enrichment (GSEA on the full ranked gene list, using the mouse MSigDB hallmark collection, MGI symbols matching the mouse gene symbols in the counts) to identify hallmark pathways shifting between diets. This progression — QC diagnosis, robust DE testing with an explicit outlier-sensitivity check, pathway-level synthesis — directly answers 'which genes and which hallmark pathways change' while treating the flagged shallow sample as a caveat to be quantified, not ignored.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and library-size outlier diagnostics",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "How does the library size and correlation structure of the 12 mouse liver samples (6 HFD, 6 chow) look, and how much of an outlier is sample_01 relative to the other 11 samples?",
+              "acceptance_criteria": [
+                "Report total counts per sample and confirm sample_01's library size is ~4x below the median",
+                "Produce a sample-sample correlation heatmap or PCA plot on normalized/log counts showing where sample_01 falls relative to its condition group",
+                "Report gene detection rate (genes with count>0) per sample to characterize the shallow sample's impact",
+                "Output a clear recommendation on whether sample_01 is a candidate for exclusion vs retention with normalization"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: raw integer gene-level counts (counts.csv, 12000 genes x 12 samples) and metadata.csv (12 samples, condition column) at the given input paths. Data profile flags sample_01 as ~4x below median library size — this must be quantified with actual numbers, not just acknowledged.",
+              "constraints": [
+                "Use the raw counts.csv and metadata.csv exactly as provided; do not simulate or download data",
+                "Gene symbols are mouse (MGI-style); do not attempt species conversion here"
+              ],
+              "caveats": [
+                "A single severely shallow sample can distort PCA and correlation scaling — consider log/vst transform before plotting",
+                "This step is diagnostic only; do not decide exclusion unilaterally, feed the finding into the DE step's sensitivity analysis"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, HFD vs chow, with outlier sensitivity check",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between high-fat diet and chow mouse liver samples (6 vs 6, unpaired, single batch), and how sensitive is the gene list to inclusion/exclusion of the shallow sample_01?",
+              "acceptance_criteria": [
+                "Fit DESeq2 with design ~condition on all 12 samples using raw counts and metadata's condition column",
+                "Report full DE table (log2FoldChange, lfcSE, stat, pvalue, padj) for all ~12000 genes, using apeglm or ashr shrinkage for effect sizes",
+                "Flag genes significant at padj < 0.05",
+                "Re-run the same DESeq2 model excluding sample_01 as a sensitivity analysis and report how many significant genes and their identities change compared to the full-sample run",
+                "State explicitly whether the primary reported gene list is from the full 12-sample run or the 11-sample sensitivity run, and justify the choice using the QC step's findings"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: same counts.csv (12000 x 12) and metadata.csv (condition: HFD vs chow) as T1S1. This is an unpaired, single-batch, 6-vs-6 design, so design formula is simply ~condition. T1S1's QC output characterizes how extreme sample_01 is and should inform whether it is retained or dropped in the primary model.",
+              "constraints": [
+                "Do not drop sample_01 without running the sensitivity comparison — DESeq2 median-of-ratios normalization is by design meant to handle library-size differences via size factors, so default should be inclusion unless QC shows a qualitative deviation (e.g. very poor gene detection) beyond depth alone",
+                "Use raw integer counts directly into DESeq2 (no pre-normalization)",
+                "Mouse gene symbols only — no cross-species mapping needed at this step"
+              ],
+              "caveats": [
+                "With n=6 per group, power to detect subtle fold changes is limited; report this rather than overinterpreting borderline padj values",
+                "A single low-depth sample can inflate dispersion estimates for the whole cohort even if its own fold-change contribution is down-weighted by size factors"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark pathway enrichment on the HFD vs chow gene ranking",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB hallmark pathways are enriched among genes changing between high-fat diet and chow in mouse liver, using the full DESeq2-derived gene ranking?",
+              "acceptance_criteria": [
+                "Run pre-ranked GSEA (fgsea) on the full gene list ranked by DESeq2 test statistic (or shrunken log2FoldChange) from the primary DE run in T1S2",
+                "Use the MSigDB mouse hallmark gene sets (MGI symbols) matched directly against the mouse gene symbols in the counts matrix",
+                "Report normalized enrichment score (NES), p-value, and BH-adjusted q-value for all hallmark pathways tested",
+                "Identify and list hallmark pathways significant at padj < 0.05, oriented by direction (up in HFD vs up in chow)",
+                "Cross-check top pathways qualitatively against liver/metabolic biology expectations (e.g. lipid metabolism, inflammation) without overclaiming mechanism beyond what enrichment supports"
+              ],
+              "packages": [
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Input: the DESeq2 differential expression result table from T1S2 (gene symbol, log2FoldChange, stat, padj for ~12000 mouse genes). Reference: MSigDB mouse hallmark gene sets (mh.all.v2026.1.Mm.symbols.gmt, MGI symbols) staged in the environment, matching the mouse gene symbols already used in the counts matrix — no ortholog mapping needed.",
+              "constraints": [
+                "Use the mouse-specific hallmark GMT file, not the human one, since gene symbols in this dataset are mouse/MGI",
+                "Rank genes by a single deterministic statistic (DESeq2 stat or shrunken LFC) — do not re-derive ranking from raw fold change alone if shrinkage was applied upstream",
+                "Report the sensitivity-run gene list from T1S2 only as a secondary check if the primary and sensitivity DE results diverge substantially; primary enrichment should use the primary DE run"
+              ],
+              "caveats": [
+                "GSEA on ~12000 background genes (rather than full genome) may shift hallmark set coverage — report how many hallmark-set genes were actually present in the input list",
+                "Hallmark sets are broad and can co-vary; do not interpret a top hit as proof of a specific mechanism without supporting individual gene evidence from T1S2"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 1,
+    "normalization": 10,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "DESeq2 with ~condition on raw counts fits the unpaired 6v6 single-batch design, and the shallow sample is retained with a quantified QC (library sizes, detection rate, vst PCA/heatmap) plus a stated sensitivity policy rather than ad hoc removal. Normalization stays inside the model and apeglm/ashr shrinkage at padj<0.05 is specified, though BH is not named for the DE step, the reference level is never set, and the plan states no low-count filter at all (it proposes testing all ~12000 genes). Enrichment correctly uses the versioned mouse Hallmark MH GMT with fgsea preranked on the full list and a stated statistic (with a small ambiguity between stat and shrunken LFC) but omits the 15-500 set-size window. The report covers design, thresholds, gene counts, and power caveats but does not commit to reporting package versions."
+}

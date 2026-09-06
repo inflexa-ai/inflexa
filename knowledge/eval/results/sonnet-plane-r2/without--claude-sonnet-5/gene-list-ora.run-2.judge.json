@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly refuses to refit DESeq2, defines the foreground with an explicit padj < 0.05 and |log2FC| > 1 cutoff, uses all tested (non-NA padj) genes as the universe, names GO BP via clusterProfiler enrichGO with BH at 0.05, applies simplify() for redundancy, and reports term, gene ratio, adjusted p, and contributing genes. It falls short of the reference by not stating a gene-set size window (minGSSize/maxGSSize), not stating whether up and down genes are tested separately or pooled (step 1 counts them separately but step 2 apparently pools without saying so), and not giving package/annotation versions for org.Hs.eg.db or GO.db. The sample_01 shallow-library concern is acknowledged as an inherited caveat rather than re-examined, which is defensible given a results table is the input but leaves QC thin. Count-model criteria (filter, normalization, formula) are largely moot here and the plan handles the relevant analogs (NA-padj exclusion, reusing the given contrast) adequately."
+}

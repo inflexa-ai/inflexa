@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly rejects count models and voom for log2(TPM+1) input, fits limma-trend with an explicit ~condition design, Control reference, Treated-Control contrast, eBayes trend=TRUE, and BH at 0.05 via topTable, and it checks the value range and skips any re-normalization as the reference requires. QC on the log values (PCA/MDS, distance heatmap, detected genes, colored by condition) precedes modeling, though no explicit policy for handling a flagged outlier is given, and the low-expression filter is label-independent and minimal (>=6 samples) but the floor itself is left as 'a stated floor' rather than specified. Enrichment was not asked and the reference omits it; the plan's GSEA is nevertheless well specified (full ranked list, moderated t, named Hallmark version, 15-500 window) but the Reactome collection is only pinned to 'current'. The report covers method, versions, design, thresholds, and n tested/n DE, but does not explicitly state that it will name the core's delivered transform and the fact the values arrived pre-normalized."
+}

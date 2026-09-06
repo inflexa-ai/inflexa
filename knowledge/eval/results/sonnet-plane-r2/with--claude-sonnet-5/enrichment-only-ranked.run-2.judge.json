@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 5,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly treats this as enrichment on delivered results: preranked fgsea on the full ~12000-gene list ranked by the Wald stat, Hallmark with a named MSigDB version, size window 15-500, fixed seed, BH at 0.05, leading edges reported, and an explicit sign convention for the contrast. The QC step is design-specific (library sizes, blind VST PCA, distances, an explicit non-exclusion policy for sample_01). Weaknesses: it never states that the delivered table was checked for a padj cutoff having been applied upstream, says nothing about how the upstream DE was filtered or normalized, and does not state the permutation scheme (adaptive/multilevel). Reactome follow-up is extra but not harmful; the report spec names versions, metric, thresholds, universe, seed, and caveats."
+}

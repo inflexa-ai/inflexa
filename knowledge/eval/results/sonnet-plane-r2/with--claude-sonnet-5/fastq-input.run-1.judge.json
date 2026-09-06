@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 0,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 3
+  },
+  "rationale": "The planner reached the correct outcome for this data state: it refused to invent a count matrix, named the appropriate quantifiers (Salmon/kallisto, STAR+featureCounts/Rsubread), and flagged that the reference build and annotation version must be settled before any DE test, which matches the reference's stop-with-question. However, it did not state what happens once counts arrive (DESeq2 or edgeR, BH at 0.05, the low-power caveat for 3 vs 3), so QC, filtering, normalization, formula/contrast, and FDR/shrinkage are simply absent rather than deferred with a stated plan. Enrichment is correctly not pursued. The report portion is partial: sample count, metadata linkage, and environment inventory are named, but no design, thresholds, or method versions are given."
+}

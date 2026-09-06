@@ -19,6 +19,9 @@ action:
     - name: outlier_policy
       value: investigate_state_reason_report_both
       default_source: "doi:10.1186/s13059-016-0881-8"
+    - name: removal_criterion
+      value: pre_specified_numeric_before_the_test
+      default_source: "rule:R-0034"
 severity: warn
 strength: common_practice
 evidence_quality: moderate

@@ -1,0 +1,176 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "qc-only-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T21:37:00.884Z",
+  "elapsedMs": 26160,
+  "outcome": "plan_submitted",
+  "planId": "pln-59428601",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC: library sizes, PCA, sample distances, low-depth verdict",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Input: counts.csv (12000 genes x 12 samples, raw integer Salmon gene-level counts) and metadata.csv (12 samples x condition: 6 AD lesional, 6 control) at /eval-sonnet-plane-r2-with-qc-only-n6-1/data/inputs/. Design is unpaired, single batch, 6 vs 6. sample_01 is flagged in the data profile as having a library size approximately 4x below the median -- this must be kept in the QC, inspected specifically (not silently dropped), and given an explicit verdict with a stated reason for keep or remove.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap",
+          "RColorBrewer"
+        ],
+        "question": "Across the 12 skin samples (6 AD lesional vs 6 control, unpaired, single batch, raw Salmon gene-level counts, 12000 genes), what are the library sizes and detected-gene counts per sample, how do samples separate on PCA of variance-stabilized expression, what do pairwise sample-to-sample Euclidean distances show, and does sample_01 -- flagged as having a library size about 4x below the median -- look like an outlier or a failed library that warrants exclusion, versus a low-depth sample that DESeq2's size-factor normalization can accommodate?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC template (blind VST, PCA on top-variance genes, sample-distance heatmap) per R-0033@40bf; sample_01's low depth is kept, inspected, and reported with an explicit removal/keep decision per R-0008@440d rather than silently dropped or kept by default.",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Report of raw library size (total counts) and number of detected genes (count > 0) per sample, in a table sorted ascending by library size, with the study median and sample_01's fold-deviation from it stated explicitly",
+          "DESeq2 blind variance-stabilizing transformation (vst(blind=TRUE)) computed on the full count matrix after minimal pre-filtering (genes with >=10 counts in at least 6 samples, the smallest group size)",
+          "PCA plot on the top 500 most-variable genes post-VST, points colored by condition (AD lesional vs control), with percent variance explained on each axis, and sample_01 labeled",
+          "Sample-to-sample Euclidean distance heatmap/matrix on the VST data, samples labeled by condition and by sample ID, with hierarchical clustering",
+          "An explicit written verdict on sample_01: whether it clusters with its condition group or departs on PCA/distance measures, whether its low depth alone explains any deviation, and a stated recommendation (keep with size-factor normalization vs exclude) with the reasoning documented -- exclusion is not applied by default per the low-depth-sample handling rule",
+          "All outputs (library size table, PCA plot, distance heatmap, verdict text) saved as named files"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control skin RNA-seq: sample QC",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The research question is purely descriptive/QC: before any differential expression testing, characterize the 12-sample cohort (6 AD lesional, 6 control, unpaired, single batch, raw Salmon gene counts, 12000 genes) via library sizes, a variance-stabilized PCA, sample-to-sample distances, and a specific verdict on sample_01, flagged in the data profile as having a library size ~4x below the median. Per the grounded QC procedure (DESeq2 blind-VST + PCA on top-500-variance genes + Euclidean sample-distance heatmap), the low-depth sample is kept through QC, inspected on PCA/distance plots and library-size/detected-gene counts, and only removed with a stated reason -- removal for depth alone is not the default because DESeq2's size-factor normalization already accounts for depth differences. A single step suffices: load counts + metadata, compute raw library sizes and detected-gene counts, run DESeq2 blind VST, PCA (colored by condition), sample-distance heatmap, and produce the depth-outlier verdict as a distinct report artifact."
+  },
+  "usage": {
+    "inputTokens": 171735,
+    "outputTokens": 2489,
+    "cacheCreationInputTokens": 94669,
+    "cacheReadInputTokens": 77030,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA + sample distance heatmap + library size barplot",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control skin RNA-seq: sample QC",
+          "analytical_narrative": "The research question is purely descriptive/QC: before any differential expression testing, characterize the 12-sample cohort (6 AD lesional, 6 control, unpaired, single batch, raw Salmon gene counts, 12000 genes) via library sizes, a variance-stabilized PCA, sample-to-sample distances, and a specific verdict on sample_01, flagged in the data profile as having a library size ~4x below the median. Per the grounded QC procedure (DESeq2 blind-VST + PCA on top-500-variance genes + Euclidean sample-distance heatmap), the low-depth sample is kept through QC, inspected on PCA/distance plots and library-size/detected-gene counts, and only removed with a stated reason -- removal for depth alone is not the default because DESeq2's size-factor normalization already accounts for depth differences. A single step suffices: load counts + metadata, compute raw library sizes and detected-gene counts, run DESeq2 blind VST, PCA (colored by condition), sample-distance heatmap, and produce the depth-outlier verdict as a distinct report artifact.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC: library sizes, PCA, sample distances, low-depth verdict",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Across the 12 skin samples (6 AD lesional vs 6 control, unpaired, single batch, raw Salmon gene-level counts, 12000 genes), what are the library sizes and detected-gene counts per sample, how do samples separate on PCA of variance-stabilized expression, what do pairwise sample-to-sample Euclidean distances show, and does sample_01 -- flagged as having a library size about 4x below the median -- look like an outlier or a failed library that warrants exclusion, versus a low-depth sample that DESeq2's size-factor normalization can accommodate?",
+              "context": "Input: counts.csv (12000 genes x 12 samples, raw integer Salmon gene-level counts) and metadata.csv (12 samples x condition: 6 AD lesional, 6 control) at /eval-sonnet-plane-r2-with-qc-only-n6-1/data/inputs/. Design is unpaired, single batch, 6 vs 6. sample_01 is flagged in the data profile as having a library size approximately 4x below the median -- this must be kept in the QC, inspected specifically (not silently dropped), and given an explicit verdict with a stated reason for keep or remove.",
+              "acceptance_criteria": [
+                "Report of raw library size (total counts) and number of detected genes (count > 0) per sample, in a table sorted ascending by library size, with the study median and sample_01's fold-deviation from it stated explicitly",
+                "DESeq2 blind variance-stabilizing transformation (vst(blind=TRUE)) computed on the full count matrix after minimal pre-filtering (genes with >=10 counts in at least 6 samples, the smallest group size)",
+                "PCA plot on the top 500 most-variable genes post-VST, points colored by condition (AD lesional vs control), with percent variance explained on each axis, and sample_01 labeled",
+                "Sample-to-sample Euclidean distance heatmap/matrix on the VST data, samples labeled by condition and by sample ID, with hierarchical clustering",
+                "An explicit written verdict on sample_01: whether it clusters with its condition group or departs on PCA/distance measures, whether its low depth alone explains any deviation, and a stated recommendation (keep with size-factor normalization vs exclude) with the reasoning documented -- exclusion is not applied by default per the low-depth-sample handling rule",
+                "All outputs (library size table, PCA plot, distance heatmap, verdict text) saved as named files"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap",
+                "RColorBrewer"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "reason": "Sample structure QC template (blind VST, PCA on top-variance genes, sample-distance heatmap) per R-0033@40bf; sample_01's low depth is kept, inspected, and reported with an explicit removal/keep decision per R-0008@440d rather than silently dropped or kept by default."
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+  }
+}

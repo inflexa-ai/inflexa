@@ -1,0 +1,193 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "enrichment-only-ranked",
+  "run": 1,
+  "startedAt": "2026-09-05T21:46:19.894Z",
+  "elapsedMs": 32718,
+  "outcome": "plan_submitted",
+  "planId": "pln-c520332b",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Validate DE results table for GSEA ranking",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "sample_01 has ~4x-below-median library size; this was a raw-counts QC issue for the already-completed DESeq2 run and is not re-addressed here since only the results table is being used"
+        ],
+        "context": "de_results.csv is the DESeq2 results table for the treated (psoriasis lesional) vs control skin contrast, 12000 rows x 8 columns, first columns gene, base_mean, log2_fold_change, log2_fold_change_se(implied). This validation gates the GSEA ranking step so the rank metric and gene keys are well-formed before enrichment.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Does de_results.csv (12000 genes x 8 columns) contain the fields needed to build a pre-ranked gene list for the psoriasis lesional vs control contrast — gene symbol, log2_fold_change, and a p-value/stat column — with no duplicate or missing gene symbols that would break the hallmark gene-set join?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not re-run DESeq2 or touch raw counts.csv — DE is already computed and supplied",
+          "Do not filter genes by significance threshold here; ranking uses the full gene list"
+        ],
+        "acceptance_criteria": [
+          "Reports the exact column names/types of de_results.csv and confirms presence of gene identifier, log2_fold_change, and p-value (or Wald stat) columns",
+          "Reports count of missing/NA values in log2_fold_change and p-value columns and how they will be handled (drop vs impute)",
+          "Reports count of duplicate gene symbols and the deduplication rule applied (e.g., keep max |stat|)",
+          "Confirms gene identifiers are HGNC symbols compatible with the hallmark GMT (spot-checks a sample of known psoriasis genes e.g. KRT6A, S100A7, DEFB4A, IL17A/IL36G if present)"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pre-ranked GSEA against MSigDB hallmark gene sets",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If hallmark HGNC symbols overlap poorly with the de_results.csv gene identifiers (e.g., if de_results.csv uses Ensembl IDs instead of symbols despite the profile calling them 'gene symbol'), report the join-rate drop rather than silently proceeding on a small matched subset",
+          "Bulk tissue psoriasis lesional vs control differences (e.g., HALLMARK_INFLAMMATORY_RESPONSE, HALLMARK_INTERFERON_GAMMA_RESPONSE, HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION, HALLMARK_KRAS_SIGNALING) can reflect both immune infiltration and keratinocyte hyperproliferation — do not attribute a signal to one cell type without corroborating evidence"
+        ],
+        "context": "Use the MSigDB human hallmark gene sets GMT (50 sets, HGNC gene symbols, /mnt/refs managed msigdb-hallmark-human collection) as the pathway reference. Input is the validated, deduplicated gene ranking produced in T1S1 from de_results.csv for the psoriasis lesional (treated) vs control (6 vs 6, unpaired) contrast. Standard fgsea pre-ranked GSEA (1000+ permutations or the exact/adaptive multilevel method) is appropriate given the moderate gene universe size.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea"
+        ],
+        "question": "Using the validated DESeq2 treated (psoriasis lesional) vs control ranking (log2_fold_change signed by -log10(p-value) or Wald statistic) across all ~12,000 genes, which of the 50 MSigDB human hallmark pathways are significantly enriched (up or down) between psoriasis lesional and control skin?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use fgsea (or an equivalent pre-ranked GSEA implementation) with BH FDR correction across all 50 hallmark sets tested — do not cherry-pick a subset of pathways",
+          "Report results for all sets whether or not they reach significance, not only the significant subset",
+          "State explicitly that this is bulk skin tissue (mixed keratinocyte/immune/stromal composition), so hallmark enrichment reflects tissue-level composition and pathway shifts jointly, not a single cell type's intrinsic biology"
+        ],
+        "acceptance_criteria": [
+          "Produces a full ranked-gene-list-to-hallmark-pathway GSEA result table with pathway name, NES, p-value, and BH-adjusted FDR for all 50 hallmark sets attempted",
+          "Reports which hallmark pathways pass FDR < 0.05 with their direction (NES sign) relative to psoriasis lesional vs control",
+          "Reports the leading-edge genes for each significant pathway",
+          "States the fraction of the 12,000-gene list that matched hallmark gene symbols (join rate) so silent gene-symbol mismatches are visible",
+          "Includes a plot (barplot or dot plot) of NES vs FDR for all tested hallmark pathways"
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control: hallmark GSEA",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "DESeq2 results for the treated (psoriasis lesional) vs control skin contrast (12,000 genes, 6 vs 6, unpaired) are already computed and supplied in de_results.csv. The research question asks specifically which hallmark pathways change between groups. Since DE is done, the correct next step is a single pre-ranked GSEA against the MSigDB human hallmark gene sets (50 sets, HGNC symbols) available in the reference store, run once on a ranking metric derived from the DESeq2 statistics (e.g., sign(log2FC) * -log10(pvalue) or the Wald stat if present), producing normalized enrichment scores and FDR per hallmark pathway. A concise validation/QC step first confirms the de_results.csv columns and gene-symbol format needed for the ranking and for joining to the hallmark GMT, and flags the known low-library sample_01 caveat as already absorbed into the supplied DESeq2 model (no re-normalization needed since DE is precomputed). No further transcriptomic reprocessing is warranted because raw counts were already used to generate the DE table; re-deriving DE would duplicate work not requested."
+  },
+  "usage": {
+    "inputTokens": 139233,
+    "outputTokens": 2620,
+    "cacheCreationInputTokens": 77542,
+    "cacheReadInputTokens": 61655,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "clusterProfiler",
+          "gseapy",
+          "decoupleR",
+          "GSVA"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control: hallmark GSEA",
+          "analytical_narrative": "DESeq2 results for the treated (psoriasis lesional) vs control skin contrast (12,000 genes, 6 vs 6, unpaired) are already computed and supplied in de_results.csv. The research question asks specifically which hallmark pathways change between groups. Since DE is done, the correct next step is a single pre-ranked GSEA against the MSigDB human hallmark gene sets (50 sets, HGNC symbols) available in the reference store, run once on a ranking metric derived from the DESeq2 statistics (e.g., sign(log2FC) * -log10(pvalue) or the Wald stat if present), producing normalized enrichment scores and FDR per hallmark pathway. A concise validation/QC step first confirms the de_results.csv columns and gene-symbol format needed for the ranking and for joining to the hallmark GMT, and flags the known low-library sample_01 caveat as already absorbed into the supplied DESeq2 model (no re-normalization needed since DE is precomputed). No further transcriptomic reprocessing is warranted because raw counts were already used to generate the DE table; re-deriving DE would duplicate work not requested.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Validate DE results table for GSEA ranking",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Does de_results.csv (12000 genes x 8 columns) contain the fields needed to build a pre-ranked gene list for the psoriasis lesional vs control contrast — gene symbol, log2_fold_change, and a p-value/stat column — with no duplicate or missing gene symbols that would break the hallmark gene-set join?",
+              "acceptance_criteria": [
+                "Reports the exact column names/types of de_results.csv and confirms presence of gene identifier, log2_fold_change, and p-value (or Wald stat) columns",
+                "Reports count of missing/NA values in log2_fold_change and p-value columns and how they will be handled (drop vs impute)",
+                "Reports count of duplicate gene symbols and the deduplication rule applied (e.g., keep max |stat|)",
+                "Confirms gene identifiers are HGNC symbols compatible with the hallmark GMT (spot-checks a sample of known psoriasis genes e.g. KRT6A, S100A7, DEFB4A, IL17A/IL36G if present)"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "de_results.csv is the DESeq2 results table for the treated (psoriasis lesional) vs control skin contrast, 12000 rows x 8 columns, first columns gene, base_mean, log2_fold_change, log2_fold_change_se(implied). This validation gates the GSEA ranking step so the rank metric and gene keys are well-formed before enrichment.",
+              "constraints": [
+                "Do not re-run DESeq2 or touch raw counts.csv — DE is already computed and supplied",
+                "Do not filter genes by significance threshold here; ranking uses the full gene list"
+              ],
+              "caveats": [
+                "sample_01 has ~4x-below-median library size; this was a raw-counts QC issue for the already-completed DESeq2 run and is not re-addressed here since only the results table is being used"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pre-ranked GSEA against MSigDB hallmark gene sets",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Using the validated DESeq2 treated (psoriasis lesional) vs control ranking (log2_fold_change signed by -log10(p-value) or Wald statistic) across all ~12,000 genes, which of the 50 MSigDB human hallmark pathways are significantly enriched (up or down) between psoriasis lesional and control skin?",
+              "acceptance_criteria": [
+                "Produces a full ranked-gene-list-to-hallmark-pathway GSEA result table with pathway name, NES, p-value, and BH-adjusted FDR for all 50 hallmark sets attempted",
+                "Reports which hallmark pathways pass FDR < 0.05 with their direction (NES sign) relative to psoriasis lesional vs control",
+                "Reports the leading-edge genes for each significant pathway",
+                "States the fraction of the 12,000-gene list that matched hallmark gene symbols (join rate) so silent gene-symbol mismatches are visible",
+                "Includes a plot (barplot or dot plot) of NES vs FDR for all tested hallmark pathways"
+              ],
+              "packages": [
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Use the MSigDB human hallmark gene sets GMT (50 sets, HGNC gene symbols, /mnt/refs managed msigdb-hallmark-human collection) as the pathway reference. Input is the validated, deduplicated gene ranking produced in T1S1 from de_results.csv for the psoriasis lesional (treated) vs control (6 vs 6, unpaired) contrast. Standard fgsea pre-ranked GSEA (1000+ permutations or the exact/adaptive multilevel method) is appropriate given the moderate gene universe size.",
+              "constraints": [
+                "Use fgsea (or an equivalent pre-ranked GSEA implementation) with BH FDR correction across all 50 hallmark sets tested — do not cherry-pick a subset of pathways",
+                "Report results for all sets whether or not they reach significance, not only the significant subset",
+                "State explicitly that this is bulk skin tissue (mixed keratinocyte/immune/stromal composition), so hallmark enrichment reflects tissue-level composition and pathway shifts jointly, not a single cell type's intrinsic biology"
+              ],
+              "caveats": [
+                "If hallmark HGNC symbols overlap poorly with the de_results.csv gene identifiers (e.g., if de_results.csv uses Ensembl IDs instead of symbols despite the profile calling them 'gene symbol'), report the join-rate drop rather than silently proceeding on a small matched subset",
+                "Bulk tissue psoriasis lesional vs control differences (e.g., HALLMARK_INFLAMMATORY_RESPONSE, HALLMARK_INTERFERON_GAMMA_RESPONSE, HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION, HALLMARK_KRAS_SIGNALING) can reflect both immune infiltration and keratinocyte hyperproliferation — do not attribute a signal to one cell type without corroborating evidence"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

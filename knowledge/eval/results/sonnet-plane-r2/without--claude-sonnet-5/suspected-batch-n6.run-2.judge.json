@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 2,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the hidden structure, estimates surrogate variables with sva (n.sv from the estimator), checks them against condition, and adds them to the DESeq2 design on raw counts rather than adjusting the matrix, which matches the reference; it loses points for running sva on a vst matrix instead of svaseq on counts, for not asking the analyst for the unrecorded variable, and for spending effort on a perfect-confounding contingency the task already rules out. No low-count prefilter is stated, no reference level is set, no fold-change shrinkage is planned, and the |log2FC| threshold is applied post hoc rather than via lfcThreshold. Enrichment was not requested; the plan adds a reasonably specified fgsea run but without collection versions or a size window. The report elements cover gene counts, thresholds and the confound caveat but omit package versions."
+}

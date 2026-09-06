@@ -433,6 +433,70 @@ list, and the enrichment-only tasks score under 70 for Sonnet with the
 plane. The last three name a Python or an enrichment-only path, where the
 plan text carries less of the procedure.
 
+## The Sonnet fixes after the full campaign
+
+The full campaign showed where Sonnet with the plane lost points, and five
+changes followed.
+
+- **A placeholder text does not end a run.** Two Sonnet plans ended on a
+  terminal call with the text "Placeholder, not used" or "placeholder". The
+  clarification tool and the blocker tool now refuse such a text with a
+  retryable error, and the run continues. The guard is shared host code.
+- **An enrichment question walks the QC step.** The judge marked every
+  enrichment-only plan down for no sample-level check of the delivered
+  counts. The modality now puts the sample-structure QC before the
+  enrichment for an enrichment question, and the existing QC rule fires.
+- **Two conduct rules for enrichment.** A gene-list rule asks the plan to
+  state how it treats the up and the down genes. It keeps the
+  over-representation test as the answer. A results-table rule asks for the
+  contrast, the reference level, the sign convention, the tie rule, and a
+  pinned collection.
+- **Three rules gained a parameter.** The covariate rule centers a
+  continuous covariate. The outlier rule asks for a removal criterion fixed
+  before the test. The normalization rule names the size factors.
+- **The question field says when to use each kind.** A plan for a
+  differential expression question no longer carries an enrichment step the
+  user did not ask for.
+
+The deprecated rule R-0007 is deleted. Before the first published snapshot
+nothing refers to a claim id from outside the tree. Thus the deprecation
+discipline starts at that release, and the guide says so.
+
+### The measurement of the fixes
+
+Campaign `sonnet-plane-r2` in `results/`: Sonnet 5 with and without the
+plane over the 32 tasks, two runs per task, under the fixed host and the
+108-rule snapshot, judged by Fable. The Opus arms of the full campaign are
+the comparison, because the fixes do not touch a plan without the plane.
+
+| Arm | Submitted | Rubric, Fable | Tool calls | Time per plan |
+| --- | --- | --- | --- | --- |
+| Sonnet 5 with the plane, after the fixes | 61 of 64 | 86.2 | 17.4 | 119 s |
+| Sonnet 5 with the plane, full campaign | 60 of 64 | 83.2 | 13.7 | 95 s |
+| Sonnet 5 alone, same day | 61 of 64 | 62.5 | 16.7 | 114 s |
+| Opus 5 alone, full campaign | 62 of 64 | 82.1 | 4.1 | 97 s |
+| Opus 5 with the plane, full campaign | 62 of 64 | 93.3 | 5.1 | 128 s |
+
+| Paired contrast by task, Fable judge | All 32 tasks | Without the FASTQ task |
+| --- | --- | --- |
+| Sonnet with, after minus before | +3.0 [-1.7, 8.0] | +3.3 [-1.5, 8.4] |
+| Sonnet with, minus Opus alone | +4.1 [-0.0, 7.5] | +4.3 [0.0, 7.7] |
+| Sonnet with, minus Opus with | -7.1 [-11.0, -4.3] | -6.1 [-9.5, -4.0] |
+| Sonnet with, minus Sonnet alone | +23.7 [18.3, 28.7] | +24.7 [19.6, 29.3] |
+
+The two placeholder failures are gone: the outlier task rose from 43.8 to
+90.6 and the Python two-group task from 48.8 to 93.1. The gene-list task
+rose from 68.8 to 77.5 and the Python enrichment task from 68.8 to 80.6.
+One run failed: the second covariates run searched eight tools in a round,
+each under its budget, until the wall clock ended it. The early cap counts
+refusals, thus a round below every budget escapes it. A total search budget
+per plan is the next host fix.
+
+Sonnet 5 with the plane now sits four points above Opus 5 alone over the 32
+tasks, and the interval touches zero. The three-point gain over the earlier
+Sonnet arm is inside its interval. The gap to Opus 5 with the plane stays at
+about seven points.
+
 ## What the campaign does not show
 
 - One frontier model and one mid-size model, two runs per task. The design

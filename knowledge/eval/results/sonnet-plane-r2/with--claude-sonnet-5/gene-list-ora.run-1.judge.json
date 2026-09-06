@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats the delivered DESeq2 table as the input, does not refit a count model, and runs clusterProfiler enrichGO on GO BP with the tested-gene universe, padj<0.05 foreground, a 15-500 size window, BH correction, rrvgo reduction, and an explicit statement on pooled vs. directional testing; the GSEA is clearly framed as a secondary robustness check rather than the answer. QC is design-specific (blind VST PCA, distances, library sizes, sample_01 flagged with an inherited-caveat policy). Weaknesses: no explicit alpha for the GO-term BH cutoff, no explicit fold-change cutoff statement, the low-count filter and normalization are only implicit via the non-NA padj universe and vst, the annotation source is hedged ('whichever the environment resolves'), and per-term gene lists and gene ratios for the ORA output are not named as report items beyond 'full term table'. Step cross-references (T2S1/T2S2/T2S3) are inconsistent with the numbered steps, which slightly hurts clarity."
+}

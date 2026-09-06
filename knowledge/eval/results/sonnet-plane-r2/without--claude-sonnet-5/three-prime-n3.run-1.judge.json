@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 3,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly identifies the 3' tag-seq implication—no length correction, no TPM/FPKM, median-of-ratios inside DESeq2—and fits a ~condition Wald model with BH and apeglm shrinkage, with PCA and distance heatmap on VST counts and an honest n=3 caveat. It has no explicit low-count prefilter (only default independent filtering, with no floor or genes-kept count), the reference level and results() contrast are not stated, and the |log2FC|>1 cutoff is applied post hoc rather than via lfcThreshold. Enrichment is not warranted by the question yet is added with no explicit ORA universe, no collection versions, and no set-size window, plus an unrequested PPI step; the report spec omits package versions and counts of tested versus significant genes."
+}

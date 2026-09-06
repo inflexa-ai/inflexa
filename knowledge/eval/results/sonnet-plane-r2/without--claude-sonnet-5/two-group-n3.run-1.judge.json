@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 2,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly picks DESeq2 Wald on raw Salmon counts with design ~condition, median-of-ratios size factors inside the model, BH at 0.05, apeglm/ashr shrinkage, and honest power caveats without lowering alpha, and it sensibly forces reconciliation of the 7-vs-6 sample mismatch. It never states a low-count filter (only an aside about independent filtering in the power step), omits the reference level, and leaves the |log2FC| cutoff as a possible post hoc filter rather than an lfcThreshold in the test. QC is a VST PCA/distance plot with a vague outlier flag but no library-size check or explicit policy for a shallow sample. Enrichment was not asked and is weak for n=3 anyway; the plan adds it without a version, an explicit ORA universe, or a size window, and is ambiguous between ORA and GSEA. Software versions are not required in the report."
+}

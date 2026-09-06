@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 2,
+    "low_count_filter": 8,
+    "normalization": 3,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly frames the question as a 2x2 interaction, fits ~condition + time + condition:time in DESeq2, tests the interaction coefficient, and adds simple effects, with a justified low-count filter and an explicit padj<0.05 with a stated power caveat. It never states the reference levels, never names the interaction coefficient, and lists apeglm without describing shrinkage (apeglm cannot shrink an arbitrary interaction contrast; ashr is the right tool). QC is only a sample-name alignment check with no PCA, sample distances, library sizes, or outlier policy, and normalization is never mentioned. Enrichment and PPI steps are not warranted by the question, lack a universe, version, and size window, and conflate fgsea with ORA; versions are not reported."
+}

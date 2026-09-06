@@ -1,0 +1,810 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "strandedness-unknown-n3",
+  "run": 1,
+  "startedAt": "2026-09-05T21:20:41.898Z",
+  "elapsedMs": 453933,
+  "outcome": "plan_submitted",
+  "planId": "pln-dc6f5596",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Count matrix and metadata QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Do the raw counts.csv (12000 genes x 6 samples) and metadata.csv (6 samples, condition: 3 treated / 3 control) agree on sample identity, and do library size, gene-detection rate, sample correlation, and PCA structure look consistent with the stated unpaired single-batch 3-vs-3 design, or do they show signs of outlier/mislabeled samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample names in counts.csv columns are matched 1:1 to metadata.csv rows with no unmatched or duplicated identifiers",
+          "Per-sample library size (column sum), gene detection rate (count>0 fraction), and a log-CPM distribution are reported for all 6 samples",
+          "A sample-sample correlation matrix and a PCA (on variance-stabilized counts) are produced and visually checked against the condition labels",
+          "Any sample flagged as an outlier (e.g. >3x median library size, or clustering opposite its labeled condition) is explicitly named and the deviation quantified, without being excluded outright"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Strand-setting count-integrity diagnostic",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "rtracklayer",
+          "GenomicRanges",
+          "data.table"
+        ],
+        "question": "Given that the library's strandedness was never recorded and no BAM/FASTQ is available to run a direct strand-inference tool (e.g. RSeQC infer_experiment), does the human GENCODE GRCh38 gene annotation, applied to this liver count matrix, show any indirect signature of a strand-setting problem at counting time — specifically among genes with antisense-overlapping neighbors, and among canonical highly-expressed liver genes (ALB, APOA1, APOB, TTR, SERPINA1, HP, TF)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Gene coordinates and strand are parsed from the GENCODE GRCh38 annotation and used to flag, for every gene symbol present in counts.csv, whether it has an antisense-overlapping neighboring gene (overlap_ambiguous TRUE/FALSE)",
+          "Median log-CPM is compared between overlap-flagged and non-overlap genes across the 6 samples, reported as a table/plot",
+          "Counts for the named canonical high-expression liver genes are reported per sample and assessed for plausibility (i.e., not near-zero)",
+          "A written conclusion states whether the evidence is consistent with a plausible strand setting or shows signs of gross mis-assignment, and explicitly notes that this is an indirect check, not a substitute for BAM-level strand inference which this dataset cannot support",
+          "The overlap_ambiguous gene-level flag table is saved for use by the annotation step"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DESeq2 differential expression, treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between the 3 treated and 3 control liver samples (unpaired, single batch), using DESeq2 with design ~ condition?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "A DESeqDataSet is built from the raw integer counts and the condition column of metadata.csv, with treated vs control as the contrast",
+          "Genes with negligible counts (row sum < 10 across all 6 samples) are filtered before testing",
+          "DESeq2's Wald test is run and log2 fold changes are shrunk with apeglm",
+          "A full results table (gene, baseMean, log2FoldChange, lfcSE, pvalue, padj) is exported sorted by padj",
+          "Dispersion-estimate plot, PCA on VST-transformed counts, sample-distance heatmap, MA plot, and a volcano plot (padj<0.05, |log2FC|>1 highlighted) are produced",
+          "The report explicitly states that with n=3 per group, statistical power is limited and the gene list is a working hypothesis set"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Annotate DE results with strand-risk flag and test for confound",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "data.table"
+        ],
+        "question": "Among genes reaching padj<0.05 in the treated-vs-control DESeq2 result, are strand-risk (antisense-overlap-ambiguous) genes over-represented relative to the tested background — i.e., is the unresolved strandedness a plausible driver of the apparent differential expression signal?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3",
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "The DESeq2 results table from T1S3 is merged with the overlap_ambiguous flag from T1S2 by gene symbol",
+          "A Fisher's exact test compares the proportion of overlap_ambiguous genes among padj<0.05 hits versus the full tested background",
+          "The final annotated table (all DE statistics plus the ambiguity flag) is exported",
+          "The enrichment test result and its interpretation (confound risk high/low) are stated explicitly as a caveat on the DE result set"
+        ]
+      },
+      {
+        "id": "T1S5",
+        "name": "Pathway enrichment on DE genes, full vs strand-risk-filtered",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which WikiPathways and MSigDB Hallmark pathways are enriched among genes differentially expressed between treated and control liver samples, and do the enriched pathways change when strand-risk (antisense-overlap-ambiguous) genes are removed from the significant gene list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S4"
+        ],
+        "acceptance_criteria": [
+          "Over-representation analysis is run on the padj<0.05 DE gene set (from T1S4) against human WikiPathways gene sets and human MSigDB Hallmark gene sets",
+          "The same enrichment is repeated after excluding overlap_ambiguous genes from the significant set",
+          "Top enriched pathways (adjusted p-value, gene overlap) are reported for both runs and any pathways that appear only in the unfiltered run are flagged as strand-risk-sensitive findings",
+          "If either reference gene-set file is unavailable at run time, the step reports the gap and proceeds with whichever reference is present"
+        ]
+      }
+    ],
+    "title": "Liver drug treatment DE with strand/count-integrity QC",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The input is a bulk RNA-seq gene-level count matrix (12000 genes x 6 samples) from STAR/featureCounts, human liver, 3 treated vs 3 control, unpaired, single batch, with metadata.csv (6x2) giving condition. The library's strandedness was never recorded, and no BAM/FASTQ files are available to rerun featureCounts with an explicit strand setting or to run RSeQC infer_experiment directly on aligned reads — so strandedness cannot be measured directly, only its downstream footprint can be inspected in the count matrix itself. The plan therefore front-loads two QC passes before any DE call: (1) a general count-matrix QC (library size, detection rate, sample correlation/PCA) to catch swaps, outliers, or corrupted values, and (2) a targeted count-integrity check that uses the GENCODE GRCh38 gene annotation to flag genes with antisense-overlapping neighbors — the class of loci most sensitive to a wrong strand setting at counting time — and checks whether canonical highly-expressed liver genes look plausible. DESeq2 is then run on the full matrix (design ~ condition) with apeglm shrinkage, and its result table is annotated with the overlap-ambiguity flag so a Fisher's-exact enrichment test can check whether 'significant' genes are disproportionately drawn from strand-risk loci — direct evidence for or against a counting artifact rather than real treatment effect. Pathway enrichment (WikiPathways human, MSigDB Hallmark human) is run on both the full and the strand-risk-filtered DE gene sets so pathway conclusions are not silently driven by miscounted loci. Every step states explicitly what it can and cannot establish given the missing strandedness metadata and n=3 per group."
+  },
+  "usage": {
+    "inputTokens": 4224015,
+    "outputTokens": 17947,
+    "cacheCreationInputTokens": 333593,
+    "cacheReadInputTokens": 3889664,
+    "reasoningTokens": 8507
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GENCODE human annotation gtf"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human exon gene length"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "Rsubread",
+          "QoRTs",
+          "RSeQC"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "biomaRt",
+          "org.Hs.eg.db",
+          "EnsDb.Hsapiens.v86",
+          "apeglm",
+          "ashr",
+          "pheatmap",
+          "EnhancedVolcano",
+          "clusterProfiler",
+          "fgsea",
+          "GSVA"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways",
+        "query": "human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq strandedness unknown QC gene body coverage strand inference featureCounts",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "infer RNA-seq library strandedness from featureCounts sense antisense ratio",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSeQC infer_experiment.py strand specificity RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSeQC quality control RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 differential expression negative binomial RNA-seq count data",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "Rsubread"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene length annotation gtf human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "genome-annotation",
+        "query": "human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtf"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "liver normal expression baseline human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed/gtex-v8"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed/msigdb-hallmark-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed/gtex-v8/8"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed/msigdb-hallmark-human/2026.1"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "PCAtools",
+          "vsn",
+          "sva"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "GEOquery",
+          "readr",
+          "data.table"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "Rsamtools",
+          "GenomicFeatures",
+          "GenomicAlignments"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "txdbmaker",
+          "TxDb.Hsapiens.UCSC.hg19.knownGene"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnsDb.Hsapiens.v86"
+        ]
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "detecting mislabeled or swapped RNA-seq samples using genotype or sex-check quality control",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "verifying RNA-seq library strandedness computationally without stranded protocol metadata",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "RNA-seq strandedness inference quality control read counting",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "antisense read fraction sex-linked gene XIST RPS4Y1 sample sex check RNA-seq QC",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "XIST RPS4Y1 sample sex verification RNA-seq quality control mislabeling",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "sample swap detection RNA-seq sex-specific gene expression quality control",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq quality control checklist sample identity verification differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression best practices quality control workflow",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "23975260"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "strand-specific RNA-seq protocol dUTP featureCounts strandSpecific parameter effect gene counts",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "featureCounts subread program",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "24227677"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "rtracklayer"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "preprocessCore",
+          "matrixStats"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "reshape2",
+          "readxl",
+          "openxlsx2"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "Biostrings"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "rnanorm"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "strand-specific vs unstranded RNA-seq quantification impact on differential expression antisense transcription overlapping genes",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "RNA-seq strand specificity impact gene quantification antisense overlapping genes featureCounts",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "stranded versus unstranded RNA sequencing read counting overlapping antisense genes bias",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "HTSeq-count strand specificity option RNA-seq quantification",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "RNA-seq strand specificity infer_experiment RSeQC",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "RNA-seq gene count matrix outlier sample detection PCA clustering quality assessment",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "assessing library strandedness from gene count data XIST sex genes housekeeping antisense",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "strandedness inference RNA-seq",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "how to determine RNA-seq strand specificity",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "liver hepatotoxicity drug treatment transcriptomic biomarker",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "unstranded library protocol featureCounts strand parameter -s 0 versus 1 2 gene count differences",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "featureCounts strandSpecific option impact differential gene expression call",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "assign strandedness RNA library from expressed sex genes housekeeping gene ratio",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "count matrix quality control heteroskedasticity library size normalization dispersion estimation negative binomial small sample",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "sex chromosome gene expression sample sex mismatch detection RNA-seq XIST",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "RNA-seq QC pipeline gene count matrix biotype pseudogene mitochondrial fraction rRNA contamination quality",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "overdispersion RNA-seq small sample size differential expression false discovery rate control n=3",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "DESeq2 apeglm shrinkage log fold change estimation RNA-seq",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "estimating dispersion of RNA-seq counts empirical Bayes shrinkage negative binomial generalized linear model",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "Salmon kallisto pseudoalignment library type inference automatic detection stranded",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "antisense strand read fraction diagnostic overlapping gene pairs opposite strand quantification bias RNA-seq unstranded protocol",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "re-quantification counts.csv gene body coverage transcript overlap sense strand assessment from raw count matrix without BAM files",
+        "limit": 3
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug treatment DE with strand/count-integrity QC",
+          "analytical_narrative": "The input is a bulk RNA-seq gene-level count matrix (12000 genes x 6 samples) from STAR/featureCounts, human liver, 3 treated vs 3 control, unpaired, single batch, with metadata.csv (6x2) giving condition. The library's strandedness was never recorded, and no BAM/FASTQ files are available to rerun featureCounts with an explicit strand setting or to run RSeQC infer_experiment directly on aligned reads — so strandedness cannot be measured directly, only its downstream footprint can be inspected in the count matrix itself. The plan therefore front-loads two QC passes before any DE call: (1) a general count-matrix QC (library size, detection rate, sample correlation/PCA) to catch swaps, outliers, or corrupted values, and (2) a targeted count-integrity check that uses the GENCODE GRCh38 gene annotation to flag genes with antisense-overlapping neighbors — the class of loci most sensitive to a wrong strand setting at counting time — and checks whether canonical highly-expressed liver genes look plausible. DESeq2 is then run on the full matrix (design ~ condition) with apeglm shrinkage, and its result table is annotated with the overlap-ambiguity flag so a Fisher's-exact enrichment test can check whether 'significant' genes are disproportionately drawn from strand-risk loci — direct evidence for or against a counting artifact rather than real treatment effect. Pathway enrichment (WikiPathways human, MSigDB Hallmark human) is run on both the full and the strand-risk-filtered DE gene sets so pathway conclusions are not silently driven by miscounted loci. Every step states explicitly what it can and cannot establish given the missing strandedness metadata and n=3 per group.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Count matrix and metadata QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the raw counts.csv (12000 genes x 6 samples) and metadata.csv (6 samples, condition: 3 treated / 3 control) agree on sample identity, and do library size, gene-detection rate, sample correlation, and PCA structure look consistent with the stated unpaired single-batch 3-vs-3 design, or do they show signs of outlier/mislabeled samples?",
+              "acceptance_criteria": [
+                "Sample names in counts.csv columns are matched 1:1 to metadata.csv rows with no unmatched or duplicated identifiers",
+                "Per-sample library size (column sum), gene detection rate (count>0 fraction), and a log-CPM distribution are reported for all 6 samples",
+                "A sample-sample correlation matrix and a PCA (on variance-stabilized counts) are produced and visually checked against the condition labels",
+                "Any sample flagged as an outlier (e.g. >3x median library size, or clustering opposite its labeled condition) is explicitly named and the deviation quantified, without being excluded outright"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Strand-setting count-integrity diagnostic",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Given that the library's strandedness was never recorded and no BAM/FASTQ is available to run a direct strand-inference tool (e.g. RSeQC infer_experiment), does the human GENCODE GRCh38 gene annotation, applied to this liver count matrix, show any indirect signature of a strand-setting problem at counting time — specifically among genes with antisense-overlapping neighbors, and among canonical highly-expressed liver genes (ALB, APOA1, APOB, TTR, SERPINA1, HP, TF)?",
+              "acceptance_criteria": [
+                "Gene coordinates and strand are parsed from the GENCODE GRCh38 annotation and used to flag, for every gene symbol present in counts.csv, whether it has an antisense-overlapping neighboring gene (overlap_ambiguous TRUE/FALSE)",
+                "Median log-CPM is compared between overlap-flagged and non-overlap genes across the 6 samples, reported as a table/plot",
+                "Counts for the named canonical high-expression liver genes are reported per sample and assessed for plausibility (i.e., not near-zero)",
+                "A written conclusion states whether the evidence is consistent with a plausible strand setting or shows signs of gross mis-assignment, and explicitly notes that this is an indirect check, not a substitute for BAM-level strand inference which this dataset cannot support",
+                "The overlap_ambiguous gene-level flag table is saved for use by the annotation step"
+              ],
+              "packages": [
+                "rtracklayer",
+                "GenomicRanges",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "DESeq2 differential expression, treated vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12000 genes are differentially expressed between the 3 treated and 3 control liver samples (unpaired, single batch), using DESeq2 with design ~ condition?",
+              "acceptance_criteria": [
+                "A DESeqDataSet is built from the raw integer counts and the condition column of metadata.csv, with treated vs control as the contrast",
+                "Genes with negligible counts (row sum < 10 across all 6 samples) are filtered before testing",
+                "DESeq2's Wald test is run and log2 fold changes are shrunk with apeglm",
+                "A full results table (gene, baseMean, log2FoldChange, lfcSE, pvalue, padj) is exported sorted by padj",
+                "Dispersion-estimate plot, PCA on VST-transformed counts, sample-distance heatmap, MA plot, and a volcano plot (padj<0.05, |log2FC|>1 highlighted) are produced",
+                "The report explicitly states that with n=3 per group, statistical power is limited and the gene list is a working hypothesis set"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Annotate DE results with strand-risk flag and test for confound",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Among genes reaching padj<0.05 in the treated-vs-control DESeq2 result, are strand-risk (antisense-overlap-ambiguous) genes over-represented relative to the tested background — i.e., is the unresolved strandedness a plausible driver of the apparent differential expression signal?",
+              "acceptance_criteria": [
+                "The DESeq2 results table from T1S3 is merged with the overlap_ambiguous flag from T1S2 by gene symbol",
+                "A Fisher's exact test compares the proportion of overlap_ambiguous genes among padj<0.05 hits versus the full tested background",
+                "The final annotated table (all DE statistics plus the ambiguity flag) is exported",
+                "The enrichment test result and its interpretation (confound risk high/low) are stated explicitly as a caveat on the DE result set"
+              ],
+              "packages": [
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S5",
+              "name": "Pathway enrichment on DE genes, full vs strand-risk-filtered",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways and MSigDB Hallmark pathways are enriched among genes differentially expressed between treated and control liver samples, and do the enriched pathways change when strand-risk (antisense-overlap-ambiguous) genes are removed from the significant gene list?",
+              "acceptance_criteria": [
+                "Over-representation analysis is run on the padj<0.05 DE gene set (from T1S4) against human WikiPathways gene sets and human MSigDB Hallmark gene sets",
+                "The same enrichment is repeated after excluding overlap_ambiguous genes from the significant set",
+                "Top enriched pathways (adjusted p-value, gene overlap) are reported for both runs and any pathways that appear only in the unfiltered run are flagged as strand-risk-sensitive findings",
+                "If either reference gene-set file is unavailable at run time, the step reports the gap and proceeds with whichever reference is present"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,303 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-2x2-n4",
+  "run": 1,
+  "startedAt": "2026-09-05T20:57:53.744Z",
+  "elapsedMs": 45603,
+  "outcome": "plan_submitted",
+  "planId": "pln-aa33a013",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, load, and build DESeq2 dataset with interaction design",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the 12000x17 counts.csv and 16x4 metadata.csv align into a valid 2x2 (genotype: WT/KO x treatment: vehicle/drug, n=4/cell) DESeqDataSet, and do samples pass basic QC (library size, gene detection, sample correlation/PCA)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts matrix subset to the 16 samples present in metadata.csv (report and justify handling of the 17th column if it is not a sample used in the design)",
+          "DESeqDataSet built with design = ~genotype*treatment, factor levels releveled so WT and vehicle are references",
+          "Per-sample library size, gene detection counts, and PCA/sample-correlation plot generated and low-quality outliers flagged (not silently dropped)",
+          "Low-count gene filtering applied (e.g. rowSums or rowMeans threshold) prior to DESeq2 fitting, filter criterion reported"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Fit full interaction model and extract genotype x treatment interaction term",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes show a statistically significant genotype x treatment interaction (i.e., the drug effect differs between WT and KO), using the full ~genotype*treatment DESeq2 model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq() run on the full interaction design from T1S1",
+          "Interaction coefficient (genotypeKO.treatmentdrug) extracted via results(name=...) and reported with log2FoldChange, p-value, and BH-adjusted p-value for all filtered genes",
+          "LFC shrinkage applied (apeglm or ashr) on the interaction coefficient for effect-size ranking",
+          "Significant interaction genes defined at padj < 0.05 (report count) and exported as a full results table",
+          "MA plot and volcano plot of the interaction term produced"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Stratified drug-vs-vehicle effects within WT and within KO",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "What is the drug-vs-vehicle effect size and significance separately in WT samples and in KO samples, to characterize the direction and magnitude of any genotype-dependent drug response found in T1S2?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Two contrasts extracted from the same fitted interaction model (or an equivalent combined-factor model): drug vs vehicle within WT, and drug vs vehicle within KO",
+          "Each contrast reported with shrunken log2FoldChange, p-value, padj, and significant gene counts at padj < 0.05",
+          "Direct comparison table produced showing, for genes significant in the interaction term (T1S2), their effect size and direction in each genotype stratum (e.g. drug effect present only in KO, opposite-sign effects, or WT-only response)",
+          "Overlap of WT-drug-responsive and KO-drug-responsive gene sets visualized (e.g. Venn/UpSet) alongside the interaction gene list"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of interaction and stratum-specific drug response genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "ggplot2"
+        ],
+        "question": "Which biological pathways are enriched among genes with a significant genotype x treatment interaction, and among genes responding to drug specifically in KO vs specifically in WT?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "fgsea (preranked on shrunken log2FoldChange x -log10(p), or equivalent statistic) run separately for: the interaction term, WT drug-vs-vehicle, and KO drug-vs-vehicle results from T1S2/T1S3",
+          "Tested against human WikiPathways, Reactome, and MSigDB Hallmark gene sets confirmed present under /mnt/refs for Homo sapiens; report if a resource is absent rather than silently skipping",
+          "Enrichment results reported with NES, p-value, and BH-adjusted p-value; top pathways per contrast tabulated",
+          "Explicit note distinguishing pathways enriched only in the KO-specific drug response from those shared with WT, to directly address whether the drug engages different biology in KO vs WT"
+        ]
+      }
+    ],
+    "title": "2x2 genotype x drug interaction DE + pathway analysis",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is a 2x2 factorial bulk RNA-seq design (genotype: WT/KO x treatment: vehicle/drug, n=4/cell, 12000 genes x 16 samples used of 17 columns) in human brain tissue. The research question — does the drug act differently in KO than WT — is fundamentally a genotype x treatment interaction question, not a simple pairwise comparison. The plan therefore: (1) QC's and loads the counts/metadata into a DESeq2 object with an explicit ~genotype*treatment design; (2) fits the full interaction model and extracts the interaction term (genotypeKO.treatmentdrug) as the primary test of differential drug response between genotypes; (3) in parallel, computes the two simple drug-vs-vehicle effects within each genotype stratum (WT drug vs vehicle; KO drug vs vehicle) via contrasts, so the interaction can be interpreted directionally (e.g., drug effect present only in KO, or opposite direction); (4) runs shrinkage (apeglm/ashr as appropriate) and visualizes results (volcano, heatmap of interaction-significant genes, PCA); (5) submits the interaction gene list and each stratum's DE list to pathway enrichment (fgsea/clusterProfiler) against human WikiPathways, Reactome, and MSigDB Hallmark/GO/canonical sets staged locally, to characterize what biological processes underlie any differential drug response. All species-matched to Homo sapiens references confirmed present in /mnt/refs. No translational/PK/safety data is present in this dataset (no compound identity, no clinical outcomes), so no translational-safety or pkpd steps are added — this stays a mechanistic transcriptomics interaction analysis."
+  },
+  "usage": {
+    "inputTokens": 319931,
+    "outputTokens": 3078,
+    "cacheCreationInputTokens": 107363,
+    "cacheReadInputTokens": 212496,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways mouse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "MSigDB hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathways"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "fgsea",
+          "clusterProfiler",
+          "apeglm",
+          "IHW"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "2x2 genotype x drug interaction DE + pathway analysis",
+          "analytical_narrative": "The dataset is a 2x2 factorial bulk RNA-seq design (genotype: WT/KO x treatment: vehicle/drug, n=4/cell, 12000 genes x 16 samples used of 17 columns) in human brain tissue. The research question — does the drug act differently in KO than WT — is fundamentally a genotype x treatment interaction question, not a simple pairwise comparison. The plan therefore: (1) QC's and loads the counts/metadata into a DESeq2 object with an explicit ~genotype*treatment design; (2) fits the full interaction model and extracts the interaction term (genotypeKO.treatmentdrug) as the primary test of differential drug response between genotypes; (3) in parallel, computes the two simple drug-vs-vehicle effects within each genotype stratum (WT drug vs vehicle; KO drug vs vehicle) via contrasts, so the interaction can be interpreted directionally (e.g., drug effect present only in KO, or opposite direction); (4) runs shrinkage (apeglm/ashr as appropriate) and visualizes results (volcano, heatmap of interaction-significant genes, PCA); (5) submits the interaction gene list and each stratum's DE list to pathway enrichment (fgsea/clusterProfiler) against human WikiPathways, Reactome, and MSigDB Hallmark/GO/canonical sets staged locally, to characterize what biological processes underlie any differential drug response. All species-matched to Homo sapiens references confirmed present in /mnt/refs. No translational/PK/safety data is present in this dataset (no compound identity, no clinical outcomes), so no translational-safety or pkpd steps are added — this stays a mechanistic transcriptomics interaction analysis.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, load, and build DESeq2 dataset with interaction design",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Do the 12000x17 counts.csv and 16x4 metadata.csv align into a valid 2x2 (genotype: WT/KO x treatment: vehicle/drug, n=4/cell) DESeqDataSet, and do samples pass basic QC (library size, gene detection, sample correlation/PCA)?",
+              "acceptance_criteria": [
+                "Counts matrix subset to the 16 samples present in metadata.csv (report and justify handling of the 17th column if it is not a sample used in the design)",
+                "DESeqDataSet built with design = ~genotype*treatment, factor levels releveled so WT and vehicle are references",
+                "Per-sample library size, gene detection counts, and PCA/sample-correlation plot generated and low-quality outliers flagged (not silently dropped)",
+                "Low-count gene filtering applied (e.g. rowSums or rowMeans threshold) prior to DESeq2 fitting, filter criterion reported"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Fit full interaction model and extract genotype x treatment interaction term",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes show a statistically significant genotype x treatment interaction (i.e., the drug effect differs between WT and KO), using the full ~genotype*treatment DESeq2 model?",
+              "acceptance_criteria": [
+                "DESeq() run on the full interaction design from T1S1",
+                "Interaction coefficient (genotypeKO.treatmentdrug) extracted via results(name=...) and reported with log2FoldChange, p-value, and BH-adjusted p-value for all filtered genes",
+                "LFC shrinkage applied (apeglm or ashr) on the interaction coefficient for effect-size ranking",
+                "Significant interaction genes defined at padj < 0.05 (report count) and exported as a full results table",
+                "MA plot and volcano plot of the interaction term produced"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Stratified drug-vs-vehicle effects within WT and within KO",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "What is the drug-vs-vehicle effect size and significance separately in WT samples and in KO samples, to characterize the direction and magnitude of any genotype-dependent drug response found in T1S2?",
+              "acceptance_criteria": [
+                "Two contrasts extracted from the same fitted interaction model (or an equivalent combined-factor model): drug vs vehicle within WT, and drug vs vehicle within KO",
+                "Each contrast reported with shrunken log2FoldChange, p-value, padj, and significant gene counts at padj < 0.05",
+                "Direct comparison table produced showing, for genes significant in the interaction term (T1S2), their effect size and direction in each genotype stratum (e.g. drug effect present only in KO, opposite-sign effects, or WT-only response)",
+                "Overlap of WT-drug-responsive and KO-drug-responsive gene sets visualized (e.g. Venn/UpSet) alongside the interaction gene list"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of interaction and stratum-specific drug response genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among genes with a significant genotype x treatment interaction, and among genes responding to drug specifically in KO vs specifically in WT?",
+              "acceptance_criteria": [
+                "fgsea (preranked on shrunken log2FoldChange x -log10(p), or equivalent statistic) run separately for: the interaction term, WT drug-vs-vehicle, and KO drug-vs-vehicle results from T1S2/T1S3",
+                "Tested against human WikiPathways, Reactome, and MSigDB Hallmark gene sets confirmed present under /mnt/refs for Homo sapiens; report if a resource is absent rather than silently skipping",
+                "Enrichment results reported with NES, p-value, and BH-adjusted p-value; top pathways per contrast tabulated",
+                "Explicit note distinguishing pathways enriched only in the KO-specific drug response from those shared with WT, to directly address whether the drug engages different biology in KO vs WT"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

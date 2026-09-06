@@ -1,0 +1,253 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n6-enrich",
+  "run": 1,
+  "startedAt": "2026-09-05T20:54:43.905Z",
+  "elapsedMs": 26666,
+  "outcome": "plan_submitted",
+  "planId": "pln-a265c9d8",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and library-size assessment incl. sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "What is the library size distribution across the 12 skin samples (6 AD_lesional, 6 control), and how does sample_01's depth (~4x below median) affect gene detection and count distribution relative to the rest of the cohort?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Per-sample library size (total counts), number of genes detected, and count distribution (e.g. via boxplot or summary stats) reported for all 12 samples",
+          "sample_01 is explicitly quantified against the cohort median/other samples (fold-difference, detected-gene count) rather than just noted qualitatively",
+          "A documented recommendation is produced: retain sample_01 with the observed depth flagged as a covariate/caveat for downstream DE, or exclude it with justification — this decision must be stated explicitly for T1S2 to consume"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: AD_lesional vs Control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes are differentially expressed between the 6 AD_lesional and 6 control skin samples in counts.csv, using DESeq2 on raw Salmon gene-level counts, with sample_01's low library size handled per the QC step's recommendation?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run on the raw integer counts.csv (12000 genes x 12 samples) with condition (AD_lesional vs Control) as the sole design factor, matched to metadata.csv",
+          "Standard filtering of low-count genes prior to testing, and use of DESeq2's default size-factor normalization (robust to sample_01's shallow depth via median-of-ratios, not naive CPM)",
+          "A sensitivity check is run: DE re-computed excluding sample_01 and the two gene-list results (with vs without sample_01) are compared for concordance, reporting how many top DE genes are robust to sample_01's exclusion",
+          "Full DE table (log2FC, p-value, padj) exported for all tested genes; genes at padj < 0.05 reported as significant with count and direction (up/down in lesional)"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark pathway enrichment on the DE result",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 50 MSigDB hallmark gene sets are enriched among genes changed between AD_lesional and control skin, using the DESeq2 statistics as the ranking?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Confirms the MSigDB human hallmark gene set GMT (50 sets, HGNC symbols) staged in the reference store is present before running; reports clearly if absent rather than fabricating a set list",
+          "Runs a pre-ranked GSEA (e.g. on DESeq2 signed stat or log2FC x -log10(p)) across all tested genes, not just a padj<0.05 subset, to preserve statistical power",
+          "Reports enriched hallmark pathways with NES, p-value, and FDR, separately for pathways enriched up (lesional-high) vs down (control-high)",
+          "Cross-references top DE genes against hallmark leading-edge genes so pathway calls are traceable back to specific genes from T1S2"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Consolidated gene + hallmark pathway summary",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "What is the concise, decision-ready summary of which genes and which hallmark pathways differ between AD lesional and control skin, including the caveat status of sample_01?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "reporting",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Summary table of top significant DE genes (padj<0.05, ranked by effect size) with direction, cross-checked against the T1S2 sample_01 sensitivity analysis",
+          "Summary table of significant hallmark pathways (FDR<0.25 per standard GSEA convention, or stricter if the analyst chooses, explicitly stated) with direction and representative leading-edge genes",
+          "Explicit statement of how sample_01 was handled and whether excluding it changed the gene or pathway conclusions",
+          "No claims beyond what T1S2/T2S1 support — no mechanism or therapeutic speculation"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark enrichment",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (salmon-derived gene counts, 12000 genes x 13 columns incl. gene symbol, 12 samples) comparing 6 atopic dermatitis lesional skin samples vs 6 control skin samples, unpaired, single batch. sample_01 has a library size ~4x below the median, which threatens both normalization and dispersion estimation if left unaddressed. The plan (1) QC's the count matrix and explicitly flags/assesses sample_01 rather than silently dropping or silently keeping it, (2) runs a standard DESeq2 negative-binomial differential expression test AD_lesional vs Control with the low-depth sample handled via a documented, reasoned decision (down-weighting is not available in DESeq2, so the choice is keep-with-flag vs exclude-with-sensitivity-check), (3) takes the resulting gene-level statistics into hallmark pathway enrichment using the 50 MSigDB human hallmark gene sets staged locally, and (4) produces a consolidated, decision-ready summary of the genes and hallmark pathways that differ. No translational/therapeutic steps are added since the question is purely descriptive (genes + hallmark pathways), not target/biomarker/drug-focused."
+  },
+  "usage": {
+    "inputTokens": 90727,
+    "outputTokens": 2368,
+    "cacheCreationInputTokens": 72419,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark enrichment",
+          "analytical_narrative": "The dataset is bulk RNA-seq (salmon-derived gene counts, 12000 genes x 13 columns incl. gene symbol, 12 samples) comparing 6 atopic dermatitis lesional skin samples vs 6 control skin samples, unpaired, single batch. sample_01 has a library size ~4x below the median, which threatens both normalization and dispersion estimation if left unaddressed. The plan (1) QC's the count matrix and explicitly flags/assesses sample_01 rather than silently dropping or silently keeping it, (2) runs a standard DESeq2 negative-binomial differential expression test AD_lesional vs Control with the low-depth sample handled via a documented, reasoned decision (down-weighting is not available in DESeq2, so the choice is keep-with-flag vs exclude-with-sensitivity-check), (3) takes the resulting gene-level statistics into hallmark pathway enrichment using the 50 MSigDB human hallmark gene sets staged locally, and (4) produces a consolidated, decision-ready summary of the genes and hallmark pathways that differ. No translational/therapeutic steps are added since the question is purely descriptive (genes + hallmark pathways), not target/biomarker/drug-focused.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and library-size assessment incl. sample_01",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "What is the library size distribution across the 12 skin samples (6 AD_lesional, 6 control), and how does sample_01's depth (~4x below median) affect gene detection and count distribution relative to the rest of the cohort?",
+              "acceptance_criteria": [
+                "Per-sample library size (total counts), number of genes detected, and count distribution (e.g. via boxplot or summary stats) reported for all 12 samples",
+                "sample_01 is explicitly quantified against the cohort median/other samples (fold-difference, detected-gene count) rather than just noted qualitatively",
+                "A documented recommendation is produced: retain sample_01 with the observed depth flagged as a covariate/caveat for downstream DE, or exclude it with justification — this decision must be stated explicitly for T1S2 to consume"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: AD_lesional vs Control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between the 6 AD_lesional and 6 control skin samples in counts.csv, using DESeq2 on raw Salmon gene-level counts, with sample_01's low library size handled per the QC step's recommendation?",
+              "acceptance_criteria": [
+                "DESeq2 run on the raw integer counts.csv (12000 genes x 12 samples) with condition (AD_lesional vs Control) as the sole design factor, matched to metadata.csv",
+                "Standard filtering of low-count genes prior to testing, and use of DESeq2's default size-factor normalization (robust to sample_01's shallow depth via median-of-ratios, not naive CPM)",
+                "A sensitivity check is run: DE re-computed excluding sample_01 and the two gene-list results (with vs without sample_01) are compared for concordance, reporting how many top DE genes are robust to sample_01's exclusion",
+                "Full DE table (log2FC, p-value, padj) exported for all tested genes; genes at padj < 0.05 reported as significant with count and direction (up/down in lesional)"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark pathway enrichment on the DE result",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark gene sets are enriched among genes changed between AD_lesional and control skin, using the DESeq2 statistics as the ranking?",
+              "acceptance_criteria": [
+                "Confirms the MSigDB human hallmark gene set GMT (50 sets, HGNC symbols) staged in the reference store is present before running; reports clearly if absent rather than fabricating a set list",
+                "Runs a pre-ranked GSEA (e.g. on DESeq2 signed stat or log2FC x -log10(p)) across all tested genes, not just a padj<0.05 subset, to preserve statistical power",
+                "Reports enriched hallmark pathways with NES, p-value, and FDR, separately for pathways enriched up (lesional-high) vs down (control-high)",
+                "Cross-references top DE genes against hallmark leading-edge genes so pathway calls are traceable back to specific genes from T1S2"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Consolidated gene + hallmark pathway summary",
+              "track": "T3",
+              "step_type": "reporting",
+              "question": "What is the concise, decision-ready summary of which genes and which hallmark pathways differ between AD lesional and control skin, including the caveat status of sample_01?",
+              "acceptance_criteria": [
+                "Summary table of top significant DE genes (padj<0.05, ranked by effect size) with direction, cross-checked against the T1S2 sample_01 sensitivity analysis",
+                "Summary table of significant hallmark pathways (FDR<0.25 per standard GSEA convention, or stricter if the analyst chooses, explicitly stated) with direction and representative leading-edge genes",
+                "Explicit statement of how sample_01 was handled and whether excluding it changed the gene or pathway conclusions",
+                "No claims beyond what T1S2/T2S1 support — no mechanism or therapeutic speculation"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent"
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

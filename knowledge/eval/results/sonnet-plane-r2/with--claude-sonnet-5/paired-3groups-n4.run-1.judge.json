@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: subject as a blocking term in both full and reduced models, a DESeq2 LRT for any condition effect, then three named pairwise Wald contrasts with ashr shrinkage and BH at 0.05, with control set as the explicit reference. QC includes PCA colored by subject and condition, sample distances, and library sizes, and the low-count filter is minimal and tied to the smallest group size. Normalization is implicit (raw counts into DESeq2, vst reserved for QC) but the plan never names size factors or median-of-ratios. Enrichment was not asked for; the ORA is nonetheless specified with an explicit tested-gene universe, named collections, and a size window, though collection versions are only promised rather than given. The report step covers method, design, thresholds, gene counts, sessionInfo, and design caveats."
+}

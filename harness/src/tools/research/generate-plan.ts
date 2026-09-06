@@ -24,7 +24,7 @@
  * terminal-tool surface above.
  */
 
-import { ok, type Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 
@@ -41,6 +41,7 @@ import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { createListAvailablePackagesTool } from "../sandbox/list-available-packages.js";
 import { createListAvailableRefsTool } from "../sandbox/list-available-refs.js";
 import { createReportBlockerToolFor } from "../sandbox/report-blocker.js";
+import { degenerateTerminalText } from "../terminal-text.js";
 import { searchGeoDatasetsTool } from "../bio/search-geo-datasets.js";
 import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
 import { createKnowledgeTools, type KnowledgeClient } from "../knowledge/index.js";
@@ -611,6 +612,11 @@ function buildInnerTools(
         }),
         describeCall: "none",
         execute: async (input) => {
+            const degenerate = degenerateTerminalText(input.question);
+            if (degenerate) {
+                logger.warn("request_clarification refused a placeholder question", { question: input.question.slice(0, 80) });
+                return err({ error: `${degenerate} Ask the real question, or continue: submit the plan you have.`, retryable: true });
+            }
             if (holder.outcome !== null) {
                 trace.duplicateTerminalCalls++;
                 logger.warn("request_clarification called after a terminal outcome was recorded", {

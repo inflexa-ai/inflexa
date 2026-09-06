@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The negative binomial model (DESeq2 Wald, ~condition, apeglm/ashr, BH at 0.05, raw counts in) fits a 3 vs 3 unpaired single-batch design, and the sample QC is thorough with a stated flag-and-sensitivity policy for outliers. But the plan declares the strandedness question unresolvable and fits the model on the delivered counts; it never calls for the alignments or reads to run infer_experiment/salmon libType A and re-count, which the reference treats as mandatory before trusting the counts. The overlapping-locus flag is a reasonable mitigation but does not correct the counts. The low count filter is unspecified ('very low total counts'), the reference level is not stated explicitly, the |log2FC|>1 cut is post hoc, and enrichment was not asked for and lacks collection versions."
+}

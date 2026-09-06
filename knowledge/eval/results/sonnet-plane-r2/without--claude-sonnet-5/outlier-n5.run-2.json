@@ -1,0 +1,348 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "outlier-n5",
+  "run": 2,
+  "startedAt": "2026-09-05T21:54:53.444Z",
+  "elapsedMs": 43447,
+  "outcome": "plan_submitted",
+  "planId": "pln-117d0b12",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and outlier characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=5 per group, PCA/heatmap patterns are visually noisy; report the outlier evidence quantitatively (e.g. distance z-scores) not just by eye"
+        ],
+        "context": "Input: /eval-sonnet-plane-r2-without-outlier-n5-2/data/inputs/counts/counts.csv (12000 genes x 10 samples, raw integer Salmon gene-level counts, first column gene symbol) and /eval-sonnet-plane-r2-without-outlier-n5-2/data/inputs/metadata/metadata.csv (10 samples x condition). Profile already flags sample_03 as an outlier on PCA and the sample-distance heatmap; this step formalizes that observation with numbers rather than re-discovering it.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Given the 10 muscle samples (5 treated, 5 control) with raw Salmon gene counts, what do library size, PCA, and sample-distance metrics show about sample_03's divergence from its group, and how large is the effect relative to the treated-vs-control separation?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2's vst or rlog for the variance-stabilized PCA/heatmap, not raw or log-only counts",
+          "Do not drop sample_03 in this step — characterize it, do not remove it yet"
+        ],
+        "acceptance_criteria": [
+          "Reports per-sample library size (total counts) for all 10 samples",
+          "Produces a PCA plot (rlog or vst-transformed counts) colored by condition and labeled by sample, confirming sample_03's separation",
+          "Produces a sample-distance heatmap (e.g. Euclidean distance on transformed counts) confirming sample_03's separation",
+          "Quantifies sample_03's distance from its group centroid relative to within-group and between-group spread"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "DESeq2 differential expression — all 10 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "This result is expected to be sensitive to sample_03; treat it as one of two comparanda, not the final answer on its own"
+        ],
+        "context": "Full 10-sample cohort (5 treated vs 5 control, unpaired, single batch). This is the 'as-is' DE result, expected to be influenced by the sample_03 outlier characterized in T1S1.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Using all 5 treated and 5 control muscle samples, which genes are significantly differentially expressed between treated and control (raw Salmon gene counts, unpaired, single batch)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Filter out genes with near-zero counts across all samples before testing (e.g. rowSums > 0 or a minimal count filter) but do not otherwise pre-select genes",
+          "Use Benjamini-Hochberg FDR correction (DESeq2 default)"
+        ],
+        "acceptance_criteria": [
+          "Runs DESeq2 with design ~condition on the full 10-sample raw count matrix",
+          "Applies apeglm log fold-change shrinkage",
+          "Reports full results table with log2FoldChange, padj, baseMean for all ~12000 genes",
+          "Reports counts of genes significant at padj < 0.05 and separately with |log2FC| >= 1 & padj < 0.05"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "DESeq2 differential expression — sample_03 excluded",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Removing one of five samples per group is a large relative reduction in power for that arm; do not present the reduced-cohort result as strictly superior, only as a sensitivity check",
+          "Report both result sets to the user rather than picking one as ground truth"
+        ],
+        "context": "9-sample cohort with sample_03 removed based on the PCA/sample-distance-heatmap outlier flag from the data profile and confirmed in T1S1. Groups become unbalanced (4 vs 5).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Excluding the flagged outlier sample_03, which genes are significantly differentially expressed between treated and control muscle samples (resulting in an unbalanced 4-or-5 vs 5-or-4 design depending on sample_03's group)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1",
+          "T2S1"
+        ],
+        "constraints": [
+          "State explicitly in output which group lost a sample and the resulting n per group",
+          "Use identical DESeq2 settings (filtering threshold, shrinkage method, FDR method) as T2S1 so the two runs are comparable"
+        ],
+        "acceptance_criteria": [
+          "Identifies which condition group sample_03 belongs to from metadata.csv and removes only that sample",
+          "Runs DESeq2 with design ~condition on the resulting 9-sample matrix, with apeglm shrinkage",
+          "Reports full results table with log2FoldChange, padj, baseMean",
+          "Reports counts of genes significant at padj < 0.05 and separately with |log2FC| >= 1 & padj < 0.05",
+          "Directly compares this gene list to the all-10-sample result from T2S1: overlap count, genes gained, genes lost, and a scatter or rank-correlation of log2FC between the two runs"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment on both DE gene lists",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "With only ~12000 genes tested and a modest DE gene count expected from n=5 per group, enrichment power may be limited; report pathways that fail to reach significance as absent evidence, not evidence of absence"
+        ],
+        "context": "Uses the WikiPathways human pathway gene sets (HGNC symbols, GMT format) confirmed present in the reference store at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt. Ranks genes by DESeq2 test statistic from each of the two DE runs (T2S1 full cohort, T2S2 outlier-excluded).",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differing between treated and control muscle in the all-10-sample DE result versus the sample_03-excluded DE result, and do the two enrichment profiles agree?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "Split the GMT descriptor field on '%' to recover a readable pathway name before reporting results",
+          "Use the same ranking metric and fgsea parameters for both runs to keep the comparison fair"
+        ],
+        "acceptance_criteria": [
+          "Runs fgsea (pre-ranked by DESeq2 stat or shrunken log2FC) separately on the T2S1 and T2S2 results against WikiPathways human gene sets",
+          "Reports top enriched pathways (padj < 0.05) for each run with NES and leading-edge genes",
+          "Explicitly compares the two enrichment results: pathways enriched in both, only with outlier included, only with outlier excluded"
+        ]
+      }
+    ],
+    "title": "Treated vs control muscle DE with outlier sensitivity check",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is a small (5 vs 5, unpaired, single-batch) bulk RNA-seq experiment in human muscle tissue with raw Salmon gene-level counts (12000 genes x 10 samples). The data profile flags sample_03 as a clear outlier on both PCA and the sample-distance heatmap. With n=5 per group, one aberrant sample can dominate a standard DESeq2 Wald test, so the plan runs the differential expression contrast twice — once on all 10 samples and once with sample_03 excluded — and compares the two gene lists explicitly rather than silently dropping the sample. This directly answers 'which genes differ' while being honest about how fragile that answer is to the flagged sample. QC (library size, PCA, sample-distance heatmap) is regenerated as a deliverable artifact rather than re-explored, since the outlier call is already established in the profile. Downstream pathway enrichment on the DE result (both with and without the outlier) uses the WikiPathways human gene sets confirmed present in the reference store, contextualizing the transcriptional differences and giving a biological sanity check on whether the outlier-inclusive and outlier-exclusive DE signatures point to similar or divergent processes."
+  },
+  "usage": {
+    "inputTokens": 220848,
+    "outputTokens": 3558,
+    "cacheCreationInputTokens": 71607,
+    "cacheReadInputTokens": 149181,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human",
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control muscle DE with outlier sensitivity check",
+          "analytical_narrative": "The dataset is a small (5 vs 5, unpaired, single-batch) bulk RNA-seq experiment in human muscle tissue with raw Salmon gene-level counts (12000 genes x 10 samples). The data profile flags sample_03 as a clear outlier on both PCA and the sample-distance heatmap. With n=5 per group, one aberrant sample can dominate a standard DESeq2 Wald test, so the plan runs the differential expression contrast twice — once on all 10 samples and once with sample_03 excluded — and compares the two gene lists explicitly rather than silently dropping the sample. This directly answers 'which genes differ' while being honest about how fragile that answer is to the flagged sample. QC (library size, PCA, sample-distance heatmap) is regenerated as a deliverable artifact rather than re-explored, since the outlier call is already established in the profile. Downstream pathway enrichment on the DE result (both with and without the outlier) uses the WikiPathways human gene sets confirmed present in the reference store, contextualizing the transcriptional differences and giving a biological sanity check on whether the outlier-inclusive and outlier-exclusive DE signatures point to similar or divergent processes.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and outlier characterization",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Given the 10 muscle samples (5 treated, 5 control) with raw Salmon gene counts, what do library size, PCA, and sample-distance metrics show about sample_03's divergence from its group, and how large is the effect relative to the treated-vs-control separation?",
+              "acceptance_criteria": [
+                "Reports per-sample library size (total counts) for all 10 samples",
+                "Produces a PCA plot (rlog or vst-transformed counts) colored by condition and labeled by sample, confirming sample_03's separation",
+                "Produces a sample-distance heatmap (e.g. Euclidean distance on transformed counts) confirming sample_03's separation",
+                "Quantifies sample_03's distance from its group centroid relative to within-group and between-group spread"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: /eval-sonnet-plane-r2-without-outlier-n5-2/data/inputs/counts/counts.csv (12000 genes x 10 samples, raw integer Salmon gene-level counts, first column gene symbol) and /eval-sonnet-plane-r2-without-outlier-n5-2/data/inputs/metadata/metadata.csv (10 samples x condition). Profile already flags sample_03 as an outlier on PCA and the sample-distance heatmap; this step formalizes that observation with numbers rather than re-discovering it.",
+              "constraints": [
+                "Use DESeq2's vst or rlog for the variance-stabilized PCA/heatmap, not raw or log-only counts",
+                "Do not drop sample_03 in this step — characterize it, do not remove it yet"
+              ],
+              "caveats": [
+                "With n=5 per group, PCA/heatmap patterns are visually noisy; report the outlier evidence quantitatively (e.g. distance z-scores) not just by eye"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "DESeq2 differential expression — all 10 samples",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Using all 5 treated and 5 control muscle samples, which genes are significantly differentially expressed between treated and control (raw Salmon gene counts, unpaired, single batch)?",
+              "acceptance_criteria": [
+                "Runs DESeq2 with design ~condition on the full 10-sample raw count matrix",
+                "Applies apeglm log fold-change shrinkage",
+                "Reports full results table with log2FoldChange, padj, baseMean for all ~12000 genes",
+                "Reports counts of genes significant at padj < 0.05 and separately with |log2FC| >= 1 & padj < 0.05"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Full 10-sample cohort (5 treated vs 5 control, unpaired, single batch). This is the 'as-is' DE result, expected to be influenced by the sample_03 outlier characterized in T1S1.",
+              "constraints": [
+                "Filter out genes with near-zero counts across all samples before testing (e.g. rowSums > 0 or a minimal count filter) but do not otherwise pre-select genes",
+                "Use Benjamini-Hochberg FDR correction (DESeq2 default)"
+              ],
+              "caveats": [
+                "This result is expected to be sensitive to sample_03; treat it as one of two comparanda, not the final answer on its own"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "DESeq2 differential expression — sample_03 excluded",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Excluding the flagged outlier sample_03, which genes are significantly differentially expressed between treated and control muscle samples (resulting in an unbalanced 4-or-5 vs 5-or-4 design depending on sample_03's group)?",
+              "acceptance_criteria": [
+                "Identifies which condition group sample_03 belongs to from metadata.csv and removes only that sample",
+                "Runs DESeq2 with design ~condition on the resulting 9-sample matrix, with apeglm shrinkage",
+                "Reports full results table with log2FoldChange, padj, baseMean",
+                "Reports counts of genes significant at padj < 0.05 and separately with |log2FC| >= 1 & padj < 0.05",
+                "Directly compares this gene list to the all-10-sample result from T2S1: overlap count, genes gained, genes lost, and a scatter or rank-correlation of log2FC between the two runs"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "9-sample cohort with sample_03 removed based on the PCA/sample-distance-heatmap outlier flag from the data profile and confirmed in T1S1. Groups become unbalanced (4 vs 5).",
+              "constraints": [
+                "State explicitly in output which group lost a sample and the resulting n per group",
+                "Use identical DESeq2 settings (filtering threshold, shrinkage method, FDR method) as T2S1 so the two runs are comparable"
+              ],
+              "caveats": [
+                "Removing one of five samples per group is a large relative reduction in power for that arm; do not present the reduced-cohort result as strictly superior, only as a sensitivity check",
+                "Report both result sets to the user rather than picking one as ground truth"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment on both DE gene lists",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes differing between treated and control muscle in the all-10-sample DE result versus the sample_03-excluded DE result, and do the two enrichment profiles agree?",
+              "acceptance_criteria": [
+                "Runs fgsea (pre-ranked by DESeq2 stat or shrunken log2FC) separately on the T2S1 and T2S2 results against WikiPathways human gene sets",
+                "Reports top enriched pathways (padj < 0.05) for each run with NES and leading-edge genes",
+                "Explicitly compares the two enrichment results: pathways enriched in both, only with outlier included, only with outlier excluded"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Uses the WikiPathways human pathway gene sets (HGNC symbols, GMT format) confirmed present in the reference store at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt. Ranks genes by DESeq2 test statistic from each of the two DE runs (T2S1 full cohort, T2S2 outlier-excluded).",
+              "constraints": [
+                "Split the GMT descriptor field on '%' to recover a readable pathway name before reporting results",
+                "Use the same ranking metric and fgsea parameters for both runs to keep the comparison fair"
+              ],
+              "caveats": [
+                "With only ~12000 genes tested and a modest DE gene count expected from n=5 per group, enrichment power may be limited; report pathways that fail to reach significance as absent evidence, not evidence of absence"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

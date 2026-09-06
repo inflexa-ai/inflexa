@@ -1,0 +1,251 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "paired-n5",
+  "run": 2,
+  "startedAt": "2026-09-05T20:56:22.784Z",
+  "elapsedMs": 29733,
+  "outcome": "plan_submitted",
+  "planId": "pln-16fff3c7",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, QC, and filter paired count data",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 5 subjects, per-subject single-gene tests have essentially no replication; within-subject 'response' is only interpretable via the paired/blocked model across subjects, not per-subject p-values from n=1 pairs"
+        ],
+        "context": "Raw integer gene-level counts (12000 genes x 10 samples) from STAR/featureCounts; metadata has subject, condition columns, 10 rows. Design is fully paired (each subject has one control and one treated sample).",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the counts.csv and metadata.csv confirm 5 subjects each with matched control/treated samples, and which of the 12000 genes pass a minimum-expression filter for downstream paired testing?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not collapse or average paired samples — keep all 10 samples distinct for the paired model in the next step",
+          "Match sample column names in counts.csv exactly to metadata sample identifiers before filtering"
+        ],
+        "acceptance_criteria": [
+          "Metadata confirms 10 samples = 5 subjects x 2 conditions (control, treated) with subject IDs matching sample columns in counts.csv",
+          "Low-count genes filtered (e.g., require count >=10 in at least 5 of 10 samples) with the number of genes retained reported",
+          "Library size / total counts per sample reported and any outlier sample flagged",
+          "Output is a filtered count matrix and cleaned metadata table saved for the DE step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Paired DESeq2 differential expression (subject-blocked)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=5 pairs gives limited power; treat any gene list as a candidate set requiring the padj threshold to be stated explicitly, and report how many genes pass at padj<0.05 vs uncorrected p<0.05",
+          "Per-subject fold-changes for a single pair have no associated variance estimate and should be presented as descriptive consistency checks, not as independent statistical tests per subject"
+        ],
+        "context": "5 matched subject pairs (control, treated) is the classic paired RNA-seq design; DESeq2's GLM naturally supports this via a subject blocking term, which removes inter-subject baseline variability and increases power to detect the shared treatment effect compared to an unpaired two-group test.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which genes are significantly differentially expressed between treated and control conditions when modeling subject as a paired blocking factor (design ~subject + condition), and how consistent is the treatment log2 fold-change across the 5 subjects?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use raw integer counts as input to DESeq2, not normalized/filtered fractional values",
+          "Subject must be included as a covariate/blocking factor in the design formula, condition (control/treated) as the factor of interest",
+          "Report both the pooled paired-test DE gene list and the per-subject fold-change table; do not conflate the two as a substitute for each other"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run with design formula ~subject + condition on the filtered raw count matrix from T1S1",
+          "Results table with log2FoldChange, p-value, and BH-adjusted p-value (padj) for all tested genes, sorted by padj",
+          "Significant gene list reported at padj < 0.05 (and a note if none pass, with the nominal p<0.05 list reported as exploratory)",
+          "Per-subject log2 fold-change (treated vs control) computed directly from normalized counts for the top significant genes to show within-subject direction/consistency, distinct from the pooled paired test statistic",
+          "MA plot and PCA plot (colored by subject and by condition) saved to check the pairing structure is captured (e.g., samples pair up by subject after removing subject effect)"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of treatment-responsive genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With only 12000 profiled genes and a small input gene set from n=5 pairs, enrichment results are exploratory and should be reported as hypothesis-generating, not confirmed pathway effects"
+        ],
+        "context": "DE result gene list (or full ranked list) from the paired subject-blocked DESeq2 analysis in T1S2 (12000-gene background, human blood tissue). Reference data available: WikiPathways human GMT file (HGNC gene symbols) at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among the genes significantly associated with treatment in the paired DESeq2 analysis?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the human WikiPathways GMT specifically (not the mouse or rat file) since the dataset organism is Homo sapiens",
+          "Use the 12000 genes present in the filtered count matrix as the background/universe for over-representation testing, not a generic genome-wide background"
+        ],
+        "acceptance_criteria": [
+          "Enrichment run separately on up-regulated and down-regulated significant gene sets (or on the full ranked gene list via GSEA-style pre-ranked analysis using the DESeq2 stat/log2FC)",
+          "Uses the WikiPathways human gene set collection resolved from the reference store (HGNC gene symbols)",
+          "Output table with pathway name, WikiPathways ID, gene overlap/leading-edge genes, and multiple-testing-corrected p-value (BH/FDR)",
+          "If the significant gene list from T1S2 is empty or very small (<10 genes), report this explicitly and fall back to a pre-ranked GSEA on the full gene list rather than silently skipping enrichment"
+        ]
+      }
+    ],
+    "title": "Paired subject-level control vs treated DE in blood",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The data is a paired bulk RNA-seq design: 5 subjects, each contributing a control and a treated blood sample (10 samples, 12000 genes, raw STAR/featureCounts integer counts). The research question asks which genes respond to treatment within each subject, which is a paired comparison — the correct model is a paired DESeq2 design with subject as a blocking factor (~subject + condition), not independent group means. Step 1 loads counts and metadata, verifies the pairing structure (5 subjects x 2 conditions), and runs QC (library size, filtering low-count genes). Step 2 runs paired differential expression with DESeq2 using a subject-blocked design to isolate the treatment effect while controlling for inter-subject variability, producing a single set of treatment-response genes that generalizes across subjects (paired test), plus subject-level log2FC estimates so within-subject consistency of the response can be inspected. Step 3 takes the significant DE gene list and runs pathway enrichment against WikiPathways human gene sets (available in the reference store) to characterize the biological processes driving the treatment response. Steps are ordered as DAG: QC/DE first, enrichment depends on DE output."
+  },
+  "usage": {
+    "inputTokens": 43237,
+    "outputTokens": 2572,
+    "cacheCreationInputTokens": 34083,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Paired subject-level control vs treated DE in blood",
+          "analytical_narrative": "The data is a paired bulk RNA-seq design: 5 subjects, each contributing a control and a treated blood sample (10 samples, 12000 genes, raw STAR/featureCounts integer counts). The research question asks which genes respond to treatment within each subject, which is a paired comparison — the correct model is a paired DESeq2 design with subject as a blocking factor (~subject + condition), not independent group means. Step 1 loads counts and metadata, verifies the pairing structure (5 subjects x 2 conditions), and runs QC (library size, filtering low-count genes). Step 2 runs paired differential expression with DESeq2 using a subject-blocked design to isolate the treatment effect while controlling for inter-subject variability, producing a single set of treatment-response genes that generalizes across subjects (paired test), plus subject-level log2FC estimates so within-subject consistency of the response can be inspected. Step 3 takes the significant DE gene list and runs pathway enrichment against WikiPathways human gene sets (available in the reference store) to characterize the biological processes driving the treatment response. Steps are ordered as DAG: QC/DE first, enrichment depends on DE output.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, QC, and filter paired count data",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the counts.csv and metadata.csv confirm 5 subjects each with matched control/treated samples, and which of the 12000 genes pass a minimum-expression filter for downstream paired testing?",
+              "acceptance_criteria": [
+                "Metadata confirms 10 samples = 5 subjects x 2 conditions (control, treated) with subject IDs matching sample columns in counts.csv",
+                "Low-count genes filtered (e.g., require count >=10 in at least 5 of 10 samples) with the number of genes retained reported",
+                "Library size / total counts per sample reported and any outlier sample flagged",
+                "Output is a filtered count matrix and cleaned metadata table saved for the DE step"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level counts (12000 genes x 10 samples) from STAR/featureCounts; metadata has subject, condition columns, 10 rows. Design is fully paired (each subject has one control and one treated sample).",
+              "constraints": [
+                "Do not collapse or average paired samples — keep all 10 samples distinct for the paired model in the next step",
+                "Match sample column names in counts.csv exactly to metadata sample identifiers before filtering"
+              ],
+              "caveats": [
+                "With only 5 subjects, per-subject single-gene tests have essentially no replication; within-subject 'response' is only interpretable via the paired/blocked model across subjects, not per-subject p-values from n=1 pairs"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Paired DESeq2 differential expression (subject-blocked)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are significantly differentially expressed between treated and control conditions when modeling subject as a paired blocking factor (design ~subject + condition), and how consistent is the treatment log2 fold-change across the 5 subjects?",
+              "acceptance_criteria": [
+                "DESeq2 run with design formula ~subject + condition on the filtered raw count matrix from T1S1",
+                "Results table with log2FoldChange, p-value, and BH-adjusted p-value (padj) for all tested genes, sorted by padj",
+                "Significant gene list reported at padj < 0.05 (and a note if none pass, with the nominal p<0.05 list reported as exploratory)",
+                "Per-subject log2 fold-change (treated vs control) computed directly from normalized counts for the top significant genes to show within-subject direction/consistency, distinct from the pooled paired test statistic",
+                "MA plot and PCA plot (colored by subject and by condition) saved to check the pairing structure is captured (e.g., samples pair up by subject after removing subject effect)"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "5 matched subject pairs (control, treated) is the classic paired RNA-seq design; DESeq2's GLM naturally supports this via a subject blocking term, which removes inter-subject baseline variability and increases power to detect the shared treatment effect compared to an unpaired two-group test.",
+              "constraints": [
+                "Use raw integer counts as input to DESeq2, not normalized/filtered fractional values",
+                "Subject must be included as a covariate/blocking factor in the design formula, condition (control/treated) as the factor of interest",
+                "Report both the pooled paired-test DE gene list and the per-subject fold-change table; do not conflate the two as a substitute for each other"
+              ],
+              "caveats": [
+                "n=5 pairs gives limited power; treat any gene list as a candidate set requiring the padj threshold to be stated explicitly, and report how many genes pass at padj<0.05 vs uncorrected p<0.05",
+                "Per-subject fold-changes for a single pair have no associated variance estimate and should be presented as descriptive consistency checks, not as independent statistical tests per subject"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of treatment-responsive genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among the genes significantly associated with treatment in the paired DESeq2 analysis?",
+              "acceptance_criteria": [
+                "Enrichment run separately on up-regulated and down-regulated significant gene sets (or on the full ranked gene list via GSEA-style pre-ranked analysis using the DESeq2 stat/log2FC)",
+                "Uses the WikiPathways human gene set collection resolved from the reference store (HGNC gene symbols)",
+                "Output table with pathway name, WikiPathways ID, gene overlap/leading-edge genes, and multiple-testing-corrected p-value (BH/FDR)",
+                "If the significant gene list from T1S2 is empty or very small (<10 genes), report this explicitly and fall back to a pre-ranked GSEA on the full gene list rather than silently skipping enrichment"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "DE result gene list (or full ranked list) from the paired subject-blocked DESeq2 analysis in T1S2 (12000-gene background, human blood tissue). Reference data available: WikiPathways human GMT file (HGNC gene symbols) at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt.",
+              "constraints": [
+                "Use the human WikiPathways GMT specifically (not the mouse or rat file) since the dataset organism is Homo sapiens",
+                "Use the 12000 genes present in the filtered count matrix as the background/universe for over-representation testing, not a generic genome-wide background"
+              ],
+              "caveats": [
+                "With only 12000 profiled genes and a small input gene set from n=5 pairs, enrichment results are exploratory and should be reported as hypothesis-generating, not confirmed pathway effects"
+              ]
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

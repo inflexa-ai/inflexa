@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 3,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "DESeq2 Wald with ~condition on raw counts, apeglm shrinkage and BH at 0.05 fit the unpaired 5-vs-5 single-batch design, and the plan correctly reports both fits with and without sample_03 and their concordance. However the choice of the outlier-excluded model as primary is made before any criterion is stated: Step 1 quantifies distances but no threshold (e.g. MAD-based or a technical-metric failure) is fixed to justify removal, which is the reference's key requirement. No explicit low-count pre-filter is described (only DESeq2 independent filtering), the reference level and contrast direction are never named, the |log2FC|>1 cut is applied post hoc rather than in the test, and package versions are not requested in the report. Enrichment was not asked for; the added ORA lacks an explicit universe, collection versions and size window, and the GSEA ranking metric is left as 'stat or shrunken LFC'."
+}

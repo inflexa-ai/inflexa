@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 3,
+    "qc_present": 1,
+    "low_count_filter": 6,
+    "normalization": 2,
+    "model_formula_contrasts": 2,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 4
+  },
+  "rationale": "The plan correctly recognizes that n=1 vs n=1 precludes dispersion estimation, but then chooses the wrong option the reference explicitly forbids: a DESeq2 run with an arbitrary fixed dispersion that emits Wald p-values and FDR, merely labelled 'approximate', instead of reporting normalized counts and descriptive log2FC only; it also never names the replicated design that would support inference. No sample-structure QC (library sizes, PCA/distances) is planned, normalization is never stated (outputs raw counts), and no design formula, reference level or contrast is given. The low-count filter is minimal and justified. Enrichment is not warranted here and the plan runs it anyway, propagating invalid p-values, without a stated universe, collection version, or size window; the report lacks versions and counts of tested/significant genes."
+}

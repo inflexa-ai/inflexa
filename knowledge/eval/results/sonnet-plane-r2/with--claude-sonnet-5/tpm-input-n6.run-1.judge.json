@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses DESeq2/edgeR/voom on TPM and fits limma on log2(TPM+1) with eBayes(trend=TRUE, robust=TRUE), a two-group design with Control as the explicit reference, a named Lesional_vs_Control contrast, and BH at 0.05 via topTable, with no size factors, TMM, or rounding to counts. QC (PCA/MDS on top-500 variable genes, distance heatmap, detected genes per sample, outliers flagged not dropped) and the filter (TPM>=1 in at least 6 samples, the smaller group size) are performed on the log values and are justified. It notes the missing counts/quant directories as a caveat and recommends re-analysis, though it does not explicitly instruct requesting them from the core. Enrichment was not asked; the ORA is well specified (tested-gene universe, named Hallmark/Reactome, 15-500 window, BH), but its stated reason for rejecting preranked GSEA (that limma-on-TPM yields no usable ranking statistic) is incorrect since moderated t-statistics rank fine, so that criterion is marked down. The report specification is complete: method, versions, design, thresholds, tested/significant counts, and the TPM-only caveat."
+}

@@ -1,0 +1,590 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "zebrafish-two-group-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T22:06:59.826Z",
+  "elapsedMs": 600071,
+  "outcome": "error",
+  "error": "Plan generation timed out — the model may be overloaded.",
+  "usage": {
+    "inputTokens": 4343775,
+    "outputTokens": 7343,
+    "cacheCreationInputTokens": 147002,
+    "cacheReadInputTokens": 4195981,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "zebrafish"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Danio rerio pathway"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Dr.eg.db",
+          "clusterProfiler",
+          "gseapy",
+          "biomaRt",
+          "DESeq2"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways zebrafish"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology zebrafish danio"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/reactome-pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/ncbi-gene2ensembl"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/reactome-pathways/current"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Dr.eg.db"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "biomaRt",
+          "AnnotationDbi",
+          "KEGGREST",
+          "GO.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Dr.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "homologene",
+          "babelgene"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/decoupler",
+        "query": "org.Dr.eg.db KEGG enrichment zebrafish clusterProfiler"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "clusterProfiler",
+        "query": "enrichGO enrichKEGG with org.Dr.eg.db zebrafish gene symbols"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "zebrafish larvae drug exposure RNA-seq DESeq2 gene ontology pathway enrichment",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "zebrafish larvae toxicology transcriptomics differential expression pathway analysis",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "36530307"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 6
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "36530307"
+        ],
+        "maxAuthors": 0,
+        "maxMeshTerms": 0
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 gene-level counts n=3 unpaired zebrafish drug exposure whole larvae WGCNA org.Dr.eg.db",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "zebrafish larvae RNA-seq differential expression pathway enrichment small sample size",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "zebrafish larvae drug exposure transcriptomics pathway enrichment",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb go mouse"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "apeglm",
+          "ashr",
+          "IHW",
+          "fgsea",
+          "decoupleR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "msigdbr"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ComplexHeatmap",
+          "EnhancedVolcano",
+          "pheatmap",
+          "enrichplot",
+          "GOSemSim",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Rn.eg.db",
+          "org.Mm.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "biomart"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "mygene",
+          "pyensembl"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/msigdb-go-mouse"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "zebrafish larvae pooled n=3 whole larvae RNA-seq gene set enrichment human ortholog mapping",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "small sample RNA-seq differential expression n=3 statistical power correction",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 negative binomial RNA-seq differential expression method Love Huber Anders",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Moderated estimation fold change dispersion RNA-seq DESeq2",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "babelgene ortholog mapping cross species human mouse zebrafish gene symbol conversion",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "zebrafish human ortholog gene mapping annotation database",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "zebrafish ortholog",
+        "limit": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Dr.eg.db zebrafish annotation"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "zebrafish larvae drug exposure RNA-seq",
+        "datasetType": "gse",
+        "limit": "5",
+        "organism": "Danio rerio"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "zebrafish larvae drug exposure RNA-seq",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Danio rerio"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "zebrafish larvae chemical exposure toxicant transcriptomics treated control",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Danio rerio"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "zebrafish larvae pharmaceutical exposure whole body RNA-seq",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Danio rerio"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "zebrafish drug exposure larvae toxicity",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Danio rerio"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "zebrafish drug treatment larvae RNAseq",
+        "datasetType": "gse",
+        "limit": 10,
+        "organism": "Danio rerio"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "36475748"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "wikipathways enrichment zebrafish model organism gene set",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "clusterProfiler universal enrichment analysis omics data",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "babelgene ortholog gene identification across species comparative",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 differential expression RNA-seq n=3 small sample",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "org.Dr.eg.db zebrafish gene annotation Bioconductor",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "babelgene R package ortholog mapping human model organism genes",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "babelgene ortholog mapping cross species R package",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DOSE DisGeNET disease ontology semantic similarity enrichment zebrafish translational",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "zebrafish larvae model human disease pathway translation",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "STRING protein-protein interaction network gene set analysis",
+        "limit": 2
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "network module detection protein interaction differential expression genes",
+        "limit": 2
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "zebrafish RNA-seq DESeq2 pathway enrichment pipeline",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 zebrafish topic:rna-seq",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "clusterProfiler org.Dr.eg.db enrichKEGG zebrafish",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "pydeseq2 differential expression counts pipeline",
+        "language": "python",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "pydeseq2",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "gseapy zebrafish preranked GSEA pathway",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "STRING PPI network topological analysis python",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "gene set enrichment analysis GSEA method Subramanian preranked",
+        "limit": 2
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "gene set enrichment analysis knowledge-based approach interpreting genome-wide expression profiles",
+        "limit": 2
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "gene set enrichment analysis knowledge-based approach interpreting genome-wide expression profiles Subramanian",
+        "maxResults": 2
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "gene set enrichment analysis preranked GSEA statistics",
+        "limit": 2
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "WikiPathways human ortholog gene set pathway database",
+        "limit": 2
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "org.Dr.eg.db enrichKEGG zebrafish differential expression",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "STRINGdb network PPI R package differential expression genes",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "STRING database protein-protein interaction networks functional enrichment",
+        "limit": 2
+      }
+    }
+  ]
+}

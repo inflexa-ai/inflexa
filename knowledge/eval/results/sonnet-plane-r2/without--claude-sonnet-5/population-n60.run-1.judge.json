@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 5
+  },
+  "rationale": "DESeq2 on raw counts with an explicit ~SVs + condition design and control as reference is a valid choice for 60 vs 60, but the plan fits svaseq surrogate variables blind into the model rather than reporting candidate hidden factors, which in whole blood risks absorbing the very composition shift it later tries to interpret. QC covers alignment, library sizes with an outlier rule, and VST PCA, but omits the sex check (XIST/Y genes) and sample distances. Effect sizes are handled well with apeglm shrinkage, CIs, and BH at 0.05, yet the fold-change threshold is applied post hoc by crossing buckets instead of being tested (lfcThreshold/TREAT). Enrichment ranks by the Wald statistic against named Hallmark/WikiPathways collections with a tested-gene universe for ORA, but states no version or set-size window. Versions and a consolidated report of tested/significant counts and design caveats are not specified."
+}

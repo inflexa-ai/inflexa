@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 3,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 5
+  },
+  "rationale": "The core method is correct and design-specific: a DESeq2 LRT of ~condition+time+condition:time against ~condition+time with time as a four-level factor, plus a separate main-effect test to avoid conflating shared drift with interaction. QC is thin (PCA and dispersion plot only, no library sizes or sample distances, no outlier policy beyond the 25-vs-24 column reconciliation), and no low-count prefilter is stated—'independent filtering at defaults' is not a prefilter. Normalization is implied by feeding raw counts to DESeq2 but never named; BH at 0.05 is stated but there is no fold-change shrinkage and the single log2FoldChange from the LRT results is a poor descriptor of per-time-point patterns, which the plan replaces with z-scored vst clustering. Enrichment and STRING network steps were not asked for; the enrichment names collections and a universe but gives no versions, size window, or a coherent fgsea ranking metric (LRT statistic is unsigned). Report lacks software versions and design caveats such as the low replicate number for a 7-coefficient model."
+}

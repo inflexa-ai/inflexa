@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "DESeq2 Wald on raw counts with size factors inside the model, a minimal rowSums<10 filter justified by dispersion stability, control set as reference, padj<0.05 with apeglm/ashr shrinkage and an explicit warning against post hoc LFC cutoffs all fit the 3 vs 3 single-batch design; PCA and distance heatmap precede the test with a flag-don't-drop outlier policy, though library sizes are not plotted and the design formula and BH are implied rather than written. Enrichment correctly acknowledges sparse zebrafish annotation, does not run human sets on unmapped zebrafish symbols, states the Wald-stat ranking metric and an explicit mapped-gene universe, and reports mapping rates, but keeps many:many orthologs (collapsed by max |stat|) instead of one-to-one only, names no babelgene or gene-set versions, and gives no gene-set size window. The report omits the Ensembl release and package versions, weakening completeness."
+}

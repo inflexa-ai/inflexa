@@ -1,0 +1,239 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-timepoints-n3",
+  "run": 1,
+  "startedAt": "2026-09-05T21:34:10.748Z",
+  "elapsedMs": 26199,
+  "outcome": "plan_submitted",
+  "planId": "pln-aa034993",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 interaction model: condition x time",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "pandas"
+        ],
+        "question": "In this 2x2 factorial design (condition A vs B, time t0 vs t1, 3 replicates per cell, 12000 genes x 12 samples), which genes show a statistically significant condition:time interaction, i.e., for which genes does the treatment effect differ between t0 and t1?",
+        "grounding": {
+          "claims": [],
+          "reason": "No knowledge_recommend tool was attached in this session; interaction-term DESeq2 design chosen from standard factorial RNA-seq practice.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Metadata columns (condition, time, time_hours) are read and used to build a design matrix ~ condition + time + condition:time in DESeq2",
+          "Raw integer counts (12000 x 12) are loaded from counts.csv with gene symbols as row names and filtered for genes with near-zero counts across all samples before fitting",
+          "DESeq2 is run with the interaction term; results extracted via the interaction coefficient (condition:time) give an interaction p-value, log2FC-of-difference, and BH-adjusted p-value per gene",
+          "As secondary/diagnostic output, the condition effect is also extracted separately within time=t0 and within time=t1 (simple effects) using contrasts, to allow visual/interpretive comparison against the interaction result",
+          "A PCA or sample-distance QC plot is produced on variance-stabilized counts labeled by condition and time to confirm no confounding or outlier samples before trusting the interaction test",
+          "Output includes a full interaction results table (gene, baseMean, log2FC, pvalue, padj) and a filtered table of interaction-significant genes at padj < 0.05, ranked by padj"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of time-dependent vs time-invariant treatment response genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Which biological pathways are enriched among genes whose treatment (condition) effect is significantly time-dependent (interaction-significant), versus among genes with a consistent condition effect across both time points?",
+        "grounding": {
+          "claims": [],
+          "reason": "No knowledge_recommend tool attached; standard ORA/GSEA practice against WikiPathways confirmed present in refs.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Enrichment is run separately on (a) the interaction-significant gene list from T1S1 and (b) the union of condition-effect genes significant at t0 and/or t1 but not interaction-significant, using WikiPathways human gene sets",
+          "Step first confirms the WikiPathways human GMT file is present in the reference store before running; if absent, the step reports the enrichment could not be run rather than fabricating results",
+          "Uses a hypergeometric/Fisher over-representation test (or GSEA-style ranked test if a full ranked gene list with interaction statistic is used) with the 12000-gene panel as the appropriate background universe, not a generic genome background",
+          "Reports enriched pathway name, WikiPathways ID, gene overlap, and BH-adjusted p-value for each gene list, with a clear side-by-side comparison of pathways unique to the interaction-significant set versus the time-invariant set"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "STRING PPI subnetwork of interaction-significant genes",
+        "agent": "network-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "networkx",
+          "pandas"
+        ],
+        "question": "Do the genes showing a significant condition:time interaction (time-dependent treatment effect) form a more highly connected protein-protein interaction subnetwork than expected by chance, suggesting coordinated time-dependent regulatory modules?",
+        "grounding": {
+          "claims": [],
+          "reason": "No knowledge_recommend tool attached; standard STRING-based subnetwork construction at combined_score>=700 cutoff per ref documentation.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "network",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Confirms presence of the STRING human protein info and protein links files in the reference store before proceeding; if either file is missing, reports the network step could not be run",
+          "Maps interaction-significant gene symbols (from T1S1) to STRING protein IDs via the protein.info file (preferred_name column) before querying the links file",
+          "Builds an undirected subnetwork restricted to edges with combined_score >= 700 among the mapped genes, correctly collapsing the duplicated bidirectional edges in the links file",
+          "Reports number of nodes mapped, number of edges, network density, and largest connected component size, plus a degree-based ranking of hub genes within the interaction-significant subnetwork",
+          "States explicitly that node connectivity is corroborating evidence only, not a validation of the statistical interaction test"
+        ]
+      }
+    ],
+    "title": "Time-point-dependent treatment effect via interaction DE",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The design is a 2x2 factorial (condition x time, 3 reps/cell, 12000 genes x 12 samples, single batch, raw Salmon counts) captured in counts.csv and metadata.csv. The question — does the treatment effect differ between t0 and t1 — is a statistical interaction question, not a pair of independent contrasts. The correct approach is a single DESeq2 model with a condition:time interaction term: this tests whether the condition effect size differs by time point directly, avoids the fallacy of comparing significance of two separate contrasts, and uses all 12 samples to estimate dispersion (more power than splitting into two 6-sample analyses). Step 1 builds this full pipeline (QC, normalization, dispersion estimation, the interaction contrast, and as secondary output the condition effect within each time stratum for interpretability). Step 2 takes the interaction gene list and the time-stratified simple-effect lists forward into pathway enrichment against WikiPathways human gene sets (confirmed present in refs) to characterize the biological processes whose treatment response is time-dependent versus time-invariant. Step 3 builds a STRING PPI subnetwork of the interaction-significant genes to check whether they cluster into connected functional modules, which is corroborating (not confirmatory) evidence of coordinated time-dependent regulation."
+  },
+  "usage": {
+    "inputTokens": 43255,
+    "outputTokens": 2411,
+    "cacheCreationInputTokens": 34101,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Time-point-dependent treatment effect via interaction DE",
+          "analytical_narrative": "The design is a 2x2 factorial (condition x time, 3 reps/cell, 12000 genes x 12 samples, single batch, raw Salmon counts) captured in counts.csv and metadata.csv. The question — does the treatment effect differ between t0 and t1 — is a statistical interaction question, not a pair of independent contrasts. The correct approach is a single DESeq2 model with a condition:time interaction term: this tests whether the condition effect size differs by time point directly, avoids the fallacy of comparing significance of two separate contrasts, and uses all 12 samples to estimate dispersion (more power than splitting into two 6-sample analyses). Step 1 builds this full pipeline (QC, normalization, dispersion estimation, the interaction contrast, and as secondary output the condition effect within each time stratum for interpretability). Step 2 takes the interaction gene list and the time-stratified simple-effect lists forward into pathway enrichment against WikiPathways human gene sets (confirmed present in refs) to characterize the biological processes whose treatment response is time-dependent versus time-invariant. Step 3 builds a STRING PPI subnetwork of the interaction-significant genes to check whether they cluster into connected functional modules, which is corroborating (not confirmatory) evidence of coordinated time-dependent regulation.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DESeq2 interaction model: condition x time",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "In this 2x2 factorial design (condition A vs B, time t0 vs t1, 3 replicates per cell, 12000 genes x 12 samples), which genes show a statistically significant condition:time interaction, i.e., for which genes does the treatment effect differ between t0 and t1?",
+              "acceptance_criteria": [
+                "Metadata columns (condition, time, time_hours) are read and used to build a design matrix ~ condition + time + condition:time in DESeq2",
+                "Raw integer counts (12000 x 12) are loaded from counts.csv with gene symbols as row names and filtered for genes with near-zero counts across all samples before fitting",
+                "DESeq2 is run with the interaction term; results extracted via the interaction coefficient (condition:time) give an interaction p-value, log2FC-of-difference, and BH-adjusted p-value per gene",
+                "As secondary/diagnostic output, the condition effect is also extracted separately within time=t0 and within time=t1 (simple effects) using contrasts, to allow visual/interpretive comparison against the interaction result",
+                "A PCA or sample-distance QC plot is produced on variance-stabilized counts labeled by condition and time to confirm no confounding or outlier samples before trusting the interaction test",
+                "Output includes a full interaction results table (gene, baseMean, log2FC, pvalue, padj) and a filtered table of interaction-significant genes at padj < 0.05, ranked by padj"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "pandas"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "No knowledge_recommend tool was attached in this session; interaction-term DESeq2 design chosen from standard factorial RNA-seq practice."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of time-dependent vs time-invariant treatment response genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among genes whose treatment (condition) effect is significantly time-dependent (interaction-significant), versus among genes with a consistent condition effect across both time points?",
+              "acceptance_criteria": [
+                "Enrichment is run separately on (a) the interaction-significant gene list from T1S1 and (b) the union of condition-effect genes significant at t0 and/or t1 but not interaction-significant, using WikiPathways human gene sets",
+                "Step first confirms the WikiPathways human GMT file is present in the reference store before running; if absent, the step reports the enrichment could not be run rather than fabricating results",
+                "Uses a hypergeometric/Fisher over-representation test (or GSEA-style ranked test if a full ranked gene list with interaction statistic is used) with the 12000-gene panel as the appropriate background universe, not a generic genome background",
+                "Reports enriched pathway name, WikiPathways ID, gene overlap, and BH-adjusted p-value for each gene list, with a clear side-by-side comparison of pathways unique to the interaction-significant set versus the time-invariant set"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "No knowledge_recommend tool attached; standard ORA/GSEA practice against WikiPathways confirmed present in refs."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "STRING PPI subnetwork of interaction-significant genes",
+              "track": "T3",
+              "step_type": "network",
+              "question": "Do the genes showing a significant condition:time interaction (time-dependent treatment effect) form a more highly connected protein-protein interaction subnetwork than expected by chance, suggesting coordinated time-dependent regulatory modules?",
+              "acceptance_criteria": [
+                "Confirms presence of the STRING human protein info and protein links files in the reference store before proceeding; if either file is missing, reports the network step could not be run",
+                "Maps interaction-significant gene symbols (from T1S1) to STRING protein IDs via the protein.info file (preferred_name column) before querying the links file",
+                "Builds an undirected subnetwork restricted to edges with combined_score >= 700 among the mapped genes, correctly collapsing the duplicated bidirectional edges in the links file",
+                "Reports number of nodes mapped, number of edges, network density, and largest connected component size, plus a degree-based ranking of hub genes within the interaction-significant subnetwork",
+                "States explicitly that node connectivity is corroborating evidence only, not a validation of the statistical interaction test"
+              ],
+              "packages": [
+                "networkx",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "network-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "No knowledge_recommend tool attached; standard STRING-based subnetwork construction at combined_score>=700 cutoff per ref documentation."
+              }
+            }
+          ],
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq"
+        }
+      }
+    }
+  ]
+}

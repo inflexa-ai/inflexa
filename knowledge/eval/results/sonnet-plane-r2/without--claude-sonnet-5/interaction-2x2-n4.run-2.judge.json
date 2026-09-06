@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 5,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly frames the question as a genotype:treatment interaction, fits ~genotype + treatment + genotype:treatment in DESeq2, tests the interaction coefficient, and adds the two within-genotype simple effects with shrinkage, which matches the reference. QC is solid (library sizes, vst PCA, correlation heatmap colored by both factors, outliers flagged not dropped) but the low-count filter is left as a vague 'e.g. rowSums > 0 or a low-count filter' with no justification. The formula is explicit but reference levels are never stated, the KO simple-effect contrast construction is not spelled out, BH is not named, and thresholds-in-test versus post hoc filtering is not addressed. Enrichment names three collections and a ranking metric but gives no versions, no ORA universe, and no set-size window; report items cover counts and caveats but omit software versions."
+}

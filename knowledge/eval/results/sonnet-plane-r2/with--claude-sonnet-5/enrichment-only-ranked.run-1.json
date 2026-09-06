@@ -1,0 +1,575 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "enrichment-only-ranked",
+  "run": 1,
+  "startedAt": "2026-09-05T22:09:09.460Z",
+  "elapsedMs": 67291,
+  "outcome": "plan_submitted",
+  "planId": "pln-5b4d6ae9",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on raw counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A library size several times below median is a judgment call to keep and report, not a default removal (R-0008/R-0030); the DE results table already reflects this sample as-is."
+        ],
+        "context": "Counts file: 12000 genes x 12 samples (6 lesional/treated, 6 control), raw integer salmon counts. Metadata: condition column. Caveat from data profile: sample_01 has library size ~4x below median.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do psoriasis-lesional and control skin samples separate on PCA of the top-variance genes, and how does the low-depth sample_01 (library size ~4x below median) behave relative to its group on the sample distance heatmap and library-size distribution?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC per R-0033 with the low-depth-sample handling rule R-0008 applied to sample_01.",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2::vst(dds, blind=TRUE) for the transform, not rlog",
+          "PCA on the 500 highest-variance genes",
+          "Do not remove or downweight sample_01 in this step — QC and reporting only"
+        ],
+        "acceptance_criteria": [
+          "VST (blind=TRUE) applied to the 12000x12 raw count matrix",
+          "PCA plot on top 500 variable genes colored by condition (lesional vs control), with sample labels",
+          "Sample-to-sample Euclidean distance heatmap produced",
+          "Per-sample library size (total counts) and detected-gene count reported in a table, with sample_01 flagged and its position on PCA/heatmap explicitly described",
+          "No sample is removed; if sample_01 appears as an outlier, this is reported as a caveat for the report step, not acted on here"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "fgsea preranked GSEA on Hallmark gene sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If fewer than ~50 genes pass padj<0.05 in the delivered table, do not additionally run an over-representation test on that short list — the preranked GSEA on the full list is the primary and sufficient method here.",
+          "Symbol-to-symbol matching against Hallmark gene sets is direct (HGNC symbols on both sides); report any gene symbols in the results table that fail to match a Hallmark universe gene for transparency, but full Entrez ID mapping is not required for fgsea itself."
+        ],
+        "context": "Input is the delivered DESeq2 results table de_results.csv (12000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change shrunken, stat, pvalue, padj, etc. — treated vs control contrast, lesional=treated). Reference gene sets: MSigDB Hallmark human collection (50 sets, HGNC symbols) at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which of the 50 MSigDB Hallmark pathways are significantly enriched (up or down) between psoriasis-lesional and control skin, using the full ranked gene list from the delivered DESeq2 treated-vs-control results table?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0045@f652",
+            "R-0047@fd9d",
+            "R-0099@0a77",
+            "R-0108@409f",
+            "R-0110@41cb"
+          ],
+          "reason": "fgsea preranked GSEA on the Wald statistic against MSigDB Hallmark, per R-0107/R-0048; ranking metric choice (stat) stated per disputed rule R-0108.",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [],
+        "constraints": [
+          "Rank by the stat (Wald statistic) column, not by log2FC alone and not by a signed p-value with ties, per the ranking-metric rule",
+          "min_size=15, max_size=500 after intersecting each hallmark set with the tested gene universe",
+          "Use fgsea::fgseaMultilevel or fgsea() with a fixed random seed for reproducibility",
+          "State the collection name and version (MSigDB Hallmark 2026.1) explicitly in the output",
+          "Do not threshold the input gene list before ranking — use the full tested list"
+        ],
+        "acceptance_criteria": [
+          "All ~12000 tested genes (from de_results.csv) ranked by the DESeq2 Wald statistic (stat column); tie-breaking rule stated explicitly in output",
+          "Genes with duplicate or unmapped symbols handled and the dropped/collapsed count reported",
+          "fgsea run against MSigDB Hallmark human gene sets (h.all.v2026.1.Hs.symbols.gmt, 50 sets), restricting to sets with 15-500 members among the tested genes",
+          "Benjamini-Hochberg adjusted p-values (padj) reported for every hallmark set tested, sorted by significance",
+          "Normalized enrichment score (NES) and direction (up in lesional vs up in control) reported per set",
+          "Leading-edge genes listed for every significant set (padj < 0.05)",
+          "The contrast direction (treated=lesional vs control, positive stat = higher in lesional) is stated explicitly",
+          "Output table saved with set name, NES, padj, size, leading edge genes"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "fgsea preranked GSEA on Reactome pathways (secondary collection)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Reactome's 'current' release is not a pinned version number — note this explicitly as a reproducibility limitation in the report."
+        ],
+        "context": "Reactome pathway gene sets (ReactomePathways.gmt, all species combined) and pathway index (ReactomePathways.txt, stable ID + display name + species) at /mnt/refs/managed/reactome-pathways/current/. Must filter the GMT to Homo sapiens using the index before running fgsea.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table"
+        ],
+        "question": "Which specific Reactome pathways underlie the hallmark-level signal found between psoriasis-lesional and control skin, using the same ranked gene list?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b"
+          ],
+          "reason": "Second enrichment pass against Reactome after Hallmark, per R-0098.",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Filter ReactomePathways.gmt to Homo sapiens pathways only using ReactomePathways.txt (join on Reactome stable ID)",
+          "Use the same rank_metric (stat) and same min_size/max_size window as T2S1 for comparability",
+          "State the Reactome release is 'current' as staged in this environment (Reactome overwrites this quarterly, so exact version date should be captured from file metadata if available)"
+        ],
+        "acceptance_criteria": [
+          "Same ranked gene list (DESeq2 stat) reused from T2S1",
+          "fgsea run against Reactome human pathway gene sets, filtered to species=Homo sapiens using the Reactome pathway index, and to the 15-500 member window",
+          "Adjusted p-values (BH) and NES reported per Reactome pathway",
+          "Top significant Reactome pathways cross-referenced against the significant Hallmark sets from T2S1 to show which specific pathways drive each hallmark hit",
+          "Reactome release/version noted in the output"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Integrated enrichment report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results only as strong as the delivered DE contrast; this plan does not re-run DE, so any DE-level issues (e.g., outlier handling, independent filtering choices already baked into de_results.csv) are inherited, not re-verified."
+        ],
+        "context": "Synthesizes QC output (T1S1), Hallmark GSEA (T2S1), and Reactome GSEA (T2S2) into one report answering the research question: which hallmark pathways change between psoriasis-lesional and control skin.",
+        "maxSteps": 200,
+        "packages": [
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "What is the consolidated, reproducible summary of hallmark pathway changes (with Reactome-level detail) between psoriasis-lesional and control skin, including QC caveats?",
+        "grounding": {
+          "claims": [
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report step follows reporting rules for enrichment reproducibility, leading-edge disclosure, and method-dependence caveats.",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S1",
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "Do not present a single enrichment method's result as definitive — state the method dependence caveat",
+          "Do not silently drop the sample_01 low-depth caveat from the final summary"
+        ],
+        "acceptance_criteria": [
+          "Report lists all significant Hallmark sets (padj<0.05) with NES, direction, and leading-edge genes",
+          "Report lists corresponding significant Reactome pathways for each significant hallmark set",
+          "Report states the ranking metric (DESeq2 Wald stat), gene set database names and versions (MSigDB Hallmark 2026.1, Reactome current), universe (tested genes in de_results.csv), and size window (15-500)",
+          "Report includes the QC findings from T1S1 (sample_01 low depth) as a caveat on interpretation, without claiming it was corrected",
+          "Report explicitly states enrichment results are method-dependent (fgsea preranked) and should be treated as hypotheses, not proven mechanisms",
+          "Reproducibility record included: R/Bioconductor package versions (fgsea, DESeq2), gene set collection versions, and any random seed used"
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control hallmark GSEA",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The research question asks which hallmark pathways change between psoriasis-lesional and control skin. DE is already done (DESeq2 results table, treated=lesional vs control, 12000 genes). Because raw counts and metadata are also provided, we first run a lightweight sample-structure QC on the counts (blind VST + PCA + sample distance heatmap) to characterize sample_01's low library size (~4x below median) and confirm it does not distort the DE-derived ranking we are about to use — per knowledge-service rule R-0008/R-0030, we do not drop this sample silently, we only report it, since the DE has already been fit on it. We then take the delivered DESeq2 results table, rank the full tested gene list by the Wald statistic (stat column, not log2FC alone, not signed p-value with ties — R-0099/R-0108), and run fgsea preranked GSEA against the MSigDB Hallmark human gene set collection (2026.1, 50 sets) as the primary pass, with Reactome human pathways as a secondary collection to resolve any hallmark hit into specific pathways (R-0048/R-0098). Gene sets are filtered to the 15-500 member window intersected with the tested genes (R-0047), redundant significant sets are collapsed (R-0052), and the final report states the ranking metric, collection versions, universe, leading-edge genes per significant set, and the enrichment-method-dependence caveat (R-0051/R-0055/R-0105/R-0086)."
+  },
+  "usage": {
+    "inputTokens": 454435,
+    "outputTokens": 6133,
+    "cacheCreationInputTokens": 151806,
+    "cacheReadInputTokens": 302557,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed/org-hs-eg-db-human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "fgsea",
+          "clusterProfiler",
+          "data.table",
+          "ggplot2"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA + sample distance heatmap on raw counts",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on DESeq2 Wald statistic vs MSigDB Hallmark, followed by Reactome as second collection",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "second_collection",
+                "value": "reactome"
+              },
+              {
+                "name": "id_mapping",
+                "value": "symbols_direct_no_entrez_needed_for_fgsea"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Enrichment report with leading edge genes, method-dependence caveat, reproducibility record",
+            "package": "none",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control hallmark GSEA",
+          "analytical_narrative": "The research question asks which hallmark pathways change between psoriasis-lesional and control skin. DE is already done (DESeq2 results table, treated=lesional vs control, 12000 genes). Because raw counts and metadata are also provided, we first run a lightweight sample-structure QC on the counts (blind VST + PCA + sample distance heatmap) to characterize sample_01's low library size (~4x below median) and confirm it does not distort the DE-derived ranking we are about to use — per knowledge-service rule R-0008/R-0030, we do not drop this sample silently, we only report it, since the DE has already been fit on it. We then take the delivered DESeq2 results table, rank the full tested gene list by the Wald statistic (stat column, not log2FC alone, not signed p-value with ties — R-0099/R-0108), and run fgsea preranked GSEA against the MSigDB Hallmark human gene set collection (2026.1, 50 sets) as the primary pass, with Reactome human pathways as a secondary collection to resolve any hallmark hit into specific pathways (R-0048/R-0098). Gene sets are filtered to the 15-500 member window intersected with the tested genes (R-0047), redundant significant sets are collapsed (R-0052), and the final report states the ranking metric, collection versions, universe, leading-edge genes per significant set, and the enrichment-method-dependence caveat (R-0051/R-0055/R-0105/R-0086).",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on raw counts",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do psoriasis-lesional and control skin samples separate on PCA of the top-variance genes, and how does the low-depth sample_01 (library size ~4x below median) behave relative to its group on the sample distance heatmap and library-size distribution?",
+              "acceptance_criteria": [
+                "VST (blind=TRUE) applied to the 12000x12 raw count matrix",
+                "PCA plot on top 500 variable genes colored by condition (lesional vs control), with sample labels",
+                "Sample-to-sample Euclidean distance heatmap produced",
+                "Per-sample library size (total counts) and detected-gene count reported in a table, with sample_01 flagged and its position on PCA/heatmap explicitly described",
+                "No sample is removed; if sample_01 appears as an outlier, this is reported as a caveat for the report step, not acted on here"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Counts file: 12000 genes x 12 samples (6 lesional/treated, 6 control), raw integer salmon counts. Metadata: condition column. Caveat from data profile: sample_01 has library size ~4x below median.",
+              "constraints": [
+                "Use DESeq2::vst(dds, blind=TRUE) for the transform, not rlog",
+                "PCA on the 500 highest-variance genes",
+                "Do not remove or downweight sample_01 in this step — QC and reporting only"
+              ],
+              "caveats": [
+                "A library size several times below median is a judgment call to keep and report, not a default removal (R-0008/R-0030); the DE results table already reflects this sample as-is."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC per R-0033 with the low-depth-sample handling rule R-0008 applied to sample_01."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "fgsea preranked GSEA on Hallmark gene sets",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB Hallmark pathways are significantly enriched (up or down) between psoriasis-lesional and control skin, using the full ranked gene list from the delivered DESeq2 treated-vs-control results table?",
+              "acceptance_criteria": [
+                "All ~12000 tested genes (from de_results.csv) ranked by the DESeq2 Wald statistic (stat column); tie-breaking rule stated explicitly in output",
+                "Genes with duplicate or unmapped symbols handled and the dropped/collapsed count reported",
+                "fgsea run against MSigDB Hallmark human gene sets (h.all.v2026.1.Hs.symbols.gmt, 50 sets), restricting to sets with 15-500 members among the tested genes",
+                "Benjamini-Hochberg adjusted p-values (padj) reported for every hallmark set tested, sorted by significance",
+                "Normalized enrichment score (NES) and direction (up in lesional vs up in control) reported per set",
+                "Leading-edge genes listed for every significant set (padj < 0.05)",
+                "The contrast direction (treated=lesional vs control, positive stat = higher in lesional) is stated explicitly",
+                "Output table saved with set name, NES, padj, size, leading edge genes"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Input is the delivered DESeq2 results table de_results.csv (12000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change shrunken, stat, pvalue, padj, etc. — treated vs control contrast, lesional=treated). Reference gene sets: MSigDB Hallmark human collection (50 sets, HGNC symbols) at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt.",
+              "constraints": [
+                "Rank by the stat (Wald statistic) column, not by log2FC alone and not by a signed p-value with ties, per the ranking-metric rule",
+                "min_size=15, max_size=500 after intersecting each hallmark set with the tested gene universe",
+                "Use fgsea::fgseaMultilevel or fgsea() with a fixed random seed for reproducibility",
+                "State the collection name and version (MSigDB Hallmark 2026.1) explicitly in the output",
+                "Do not threshold the input gene list before ranking — use the full tested list"
+              ],
+              "caveats": [
+                "If fewer than ~50 genes pass padj<0.05 in the delivered table, do not additionally run an over-representation test on that short list — the preranked GSEA on the full list is the primary and sufficient method here.",
+                "Symbol-to-symbol matching against Hallmark gene sets is direct (HGNC symbols on both sides); report any gene symbols in the results table that fail to match a Hallmark universe gene for transparency, but full Entrez ID mapping is not required for fgsea itself."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0045@f652",
+                  "R-0047@fd9d",
+                  "R-0099@0a77",
+                  "R-0108@409f",
+                  "R-0110@41cb"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "fgsea preranked GSEA on the Wald statistic against MSigDB Hallmark, per R-0107/R-0048; ranking metric choice (stat) stated per disputed rule R-0108."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "fgsea preranked GSEA on Reactome pathways (secondary collection)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which specific Reactome pathways underlie the hallmark-level signal found between psoriasis-lesional and control skin, using the same ranked gene list?",
+              "acceptance_criteria": [
+                "Same ranked gene list (DESeq2 stat) reused from T2S1",
+                "fgsea run against Reactome human pathway gene sets, filtered to species=Homo sapiens using the Reactome pathway index, and to the 15-500 member window",
+                "Adjusted p-values (BH) and NES reported per Reactome pathway",
+                "Top significant Reactome pathways cross-referenced against the significant Hallmark sets from T2S1 to show which specific pathways drive each hallmark hit",
+                "Reactome release/version noted in the output"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Reactome pathway gene sets (ReactomePathways.gmt, all species combined) and pathway index (ReactomePathways.txt, stable ID + display name + species) at /mnt/refs/managed/reactome-pathways/current/. Must filter the GMT to Homo sapiens using the index before running fgsea.",
+              "constraints": [
+                "Filter ReactomePathways.gmt to Homo sapiens pathways only using ReactomePathways.txt (join on Reactome stable ID)",
+                "Use the same rank_metric (stat) and same min_size/max_size window as T2S1 for comparability",
+                "State the Reactome release is 'current' as staged in this environment (Reactome overwrites this quarterly, so exact version date should be captured from file metadata if available)"
+              ],
+              "caveats": [
+                "Reactome's 'current' release is not a pinned version number — note this explicitly as a reproducibility limitation in the report."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0098@d01b"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "Second enrichment pass against Reactome after Hallmark, per R-0098."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Integrated enrichment report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the consolidated, reproducible summary of hallmark pathway changes (with Reactome-level detail) between psoriasis-lesional and control skin, including QC caveats?",
+              "acceptance_criteria": [
+                "Report lists all significant Hallmark sets (padj<0.05) with NES, direction, and leading-edge genes",
+                "Report lists corresponding significant Reactome pathways for each significant hallmark set",
+                "Report states the ranking metric (DESeq2 Wald stat), gene set database names and versions (MSigDB Hallmark 2026.1, Reactome current), universe (tested genes in de_results.csv), and size window (15-500)",
+                "Report includes the QC findings from T1S1 (sample_01 low depth) as a caveat on interpretation, without claiming it was corrected",
+                "Report explicitly states enrichment results are method-dependent (fgsea preranked) and should be treated as hypotheses, not proven mechanisms",
+                "Reproducibility record included: R/Bioconductor package versions (fgsea, DESeq2), gene set collection versions, and any random seed used"
+              ],
+              "packages": [
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Synthesizes QC output (T1S1), Hallmark GSEA (T2S1), and Reactome GSEA (T2S2) into one report answering the research question: which hallmark pathways change between psoriasis-lesional and control skin.",
+              "constraints": [
+                "Do not present a single enrichment method's result as definitive — state the method dependence caveat",
+                "Do not silently drop the sample_01 low-depth caveat from the final summary"
+              ],
+              "caveats": [
+                "Enrichment results only as strong as the delivered DE contrast; this plan does not re-run DE, so any DE-level issues (e.g., outlier handling, independent filtering choices already baked into de_results.csv) are inherited, not re-verified."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report step follows reporting rules for enrichment reproducibility, leading-edge disclosure, and method-dependence caveats."
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+  }
+}

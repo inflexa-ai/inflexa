@@ -1,0 +1,355 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "suspected-batch-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T21:55:36.900Z",
+  "elapsedMs": 50488,
+  "outcome": "plan_submitted",
+  "planId": "pln-dc78b088",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, and cluster characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not assume the two clusters split exactly 6/6 by condition-orthogonal lines until confirmed on this data — verify computationally, do not just repeat the caveat text",
+          "If clustering is ambiguous (not a clean two-group split), report that explicitly rather than forcing a k=2 assignment"
+        ],
+        "context": "12000 x 12 raw Salmon gene counts, kidney tissue, 6 treated vs 6 control, unpaired, no recorded batch. PCA in the profiled data context shows two 6-sample clusters orthogonal to condition. This step must reproduce that finding on the actual normalized data and produce a usable covariate for downstream adjustment, since no batch variable exists in metadata.csv to use directly.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "In this 12-sample (6 treated / 6 control) kidney bulk RNA-seq count matrix (12000 genes x 13 columns incl. gene symbol), does variance-stabilized/normalized expression confirm the reported two 6-sample clusters that do not follow condition, and can a cluster label be assigned per sample?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Raw counts loaded from counts.csv (12000 genes x 12 samples) and matched to metadata.csv condition labels",
+          "Low-count genes filtered (e.g. min count/CPM threshold) before normalization",
+          "DESeq2 vst or edgeR/limma-voom normalization applied and reported",
+          "PCA computed on normalized expression; PC1/PC2 (and further PCs if needed) plotted colored by condition and by k-means/hierarchical (k=2) cluster assignment",
+          "A discrete 2-level cluster covariate (cluster A/B, 6 samples each) is produced per sample and written out alongside condition in an augmented sample table",
+          "Cross-tabulation of condition x cluster confirms the two factors are orthogonal (not confounded) as described in the caveat, or explicitly flags if they are NOT orthogonal in the actual data"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Surrogate variable estimation as an alternative confound proxy",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 12 samples, SVA may estimate 0 or 1 surrogate variables reliably — do not force extra SVs if the permutation test does not support them",
+          "If SVA and the PCA cluster label disagree substantially, report both and prefer the PCA cluster label (directly interpretable, matches the documented caveat) as the primary adjustment covariate, using SVA as corroboration only"
+        ],
+        "context": "No recorded batch variable exists. SVA offers a statistically principled, data-driven alternative to the ad-hoc PCA/k-means cluster label for capturing the unexplained structure, and cross-checking the two approaches guards against a k-means artifact driving the whole downstream design.",
+        "maxSteps": 200,
+        "packages": [
+          "sva",
+          "DESeq2"
+        ],
+        "question": "Does SVA-estimated surrogate variable analysis on the same 12-sample count matrix recover a latent factor consistent with the PCA-derived 6/6 cluster split from T1S1, providing an independent, statistically-derived covariate for the hidden structure?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "sva::svaseq (or sva on normalized/logged counts) run with condition as the variable of interest to be preserved, estimating surrogate variables under the null and full model",
+          "Number of significant surrogate variables reported",
+          "Correlation/agreement between the top surrogate variable(s) and the T1S1 cluster label is quantified and reported",
+          "Final choice of confound covariate (cluster label vs top SV, or both) for the DE model is stated with justification"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Differential expression: treated vs control, adjusted for hidden cluster structure",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If T1S1 found the cluster split is NOT fully orthogonal to condition (i.e., partial confounding), state that adjustment could partially absorb genuine treatment signal and interpret adjusted results more cautiously",
+          "With n=6 per group and an added covariate, degrees of freedom shrink — flag if power appears limited (e.g., very few or zero significant genes) and do not overinterpret an unadjusted-only signal as robust"
+        ],
+        "context": "This is the primary analysis answering the research question. Because the hidden 6/6 cluster split is orthogonal to (not confounded with) condition per the caveat, adding it as a covariate is a legitimate variance-reduction step, not a circular removal of the treatment signal — but this orthogonality must have been confirmed in T1S1 before trusting this design.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes are differentially expressed between treated and control kidney samples when the model additionally adjusts for the data-driven cluster covariate (from T1S1/T1S2) that captures the unrecorded structure orthogonal to condition, and how do these results compare to a naive condition-only model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run on raw filtered counts with design ~ cluster_covariate + condition (condition as final term, treated vs control specified explicitly as the contrast)",
+          "A second, naive DESeq2 run with design ~ condition only is also produced for direct comparison",
+          "Independent filtering / outlier handling (Cook's distance) reported per DESeq2 defaults",
+          "Full results table (log2FC, p-value, padj, base mean) exported for both models; genes significant at padj < 0.05 counted and compared between the two models (overlap, number gained/lost)",
+          "MA plot and volcano plot produced for the adjusted model",
+          "A short written comparison of adjusted vs naive gene counts and effect-size shrinkage is included, since the caveat implies the naive model risks confounding"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the adjusted DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GO-BP is a nested hierarchy — expect blocks of correlated significant terms and note this rather than reporting a raw significant-term count as independent findings",
+          "Enrichment on a short/adjusted gene list may yield few or no significant hits given n=6 per group; report this honestly rather than lowering thresholds post hoc to manufacture a positive result"
+        ],
+        "context": "Uses the staged human MSigDB Hallmark gene set file (h.all.v2026.1.Hs.symbols.gmt, 50 sets, HGNC symbols) and human GO Biological Process gene set file (c5.go.bp.v2026.1.Hs.symbols.gmt, 7538 sets, HGNC symbols) confirmed present under /mnt/refs/managed/msigdb-hallmark-human/ and /mnt/refs/managed/msigdb-go-human/. Gene symbols in counts.csv are the join key; no ID mapping step should be needed since both the data and gene sets use HGNC symbols, but verify symbol matching before enrichment.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which biological pathways (Hallmark, GO Biological Process) are enriched among genes differentially expressed between treated and control kidney samples in the cluster-adjusted model from T1S3?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Ranked gene list (by DESeq2 stat or log2FC) from the T1S3 adjusted model used for enrichment (e.g. fgsea preranked, or clusterProfiler ORA on padj<0.05 genes)",
+          "Background/universe restricted to the ~12000 genes present in the input count matrix that passed expression filtering",
+          "Enrichment run against Hallmark and GO Biological Process human gene sets",
+          "Results table of significant pathways (adjusted p-value cutoff stated, e.g. FDR<0.05) reported with leading-edge/core genes",
+          "If the reference gene sets are unavailable at run time, the step reports that explicitly rather than silently skipping enrichment"
+        ]
+      }
+    ],
+    "title": "Kidney RNA-seq: treated vs control with hidden batch",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is 6 treated vs 6 control kidney samples (12 samples x ~12,000 genes), raw Salmon gene counts, no recorded batch, but the PCA shows two clusters of six samples that do NOT align with condition — a classic sign of an unrecorded technical or biological confounder that, if ignored, will dominate any naive DE test and produce a gene list driven by the hidden factor rather than treatment. The plan first re-confirms and characterizes this structure directly on normalized counts (not trusting the prose description alone), then treats the orthogonal 6/6 split as an unknown surrogate factor: it derives a data-driven covariate (either the PCA cluster label itself, or a statistically estimated surrogate variable via SVA) and includes it in the DESeq2 design alongside condition, so the treatment effect is estimated after adjusting for the confound. Because condition and the hidden cluster are both perfectly balanced 6v6 but orthogonal to each other (not confounded with each other, per the caveat), the design matrix stays estimable and this adjustment is a legitimate use of an extra design term rather than removal of the effect of interest. Results are reported with and sensitivity-compared against the naive unadjusted model so any discrepancy is explicit. Significant genes then go to pathway enrichment (hallmark, GO-BP) using the staged human MSigDB gene sets, restricted to genes actually present in the 12,000-gene panel used as background."
+  },
+  "usage": {
+    "inputTokens": 226540,
+    "outputTokens": 4219,
+    "cacheCreationInputTokens": 76913,
+    "cacheReadInputTokens": 149567,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "sva batch surrogate variable"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "kidney"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "sva",
+          "RUVSeq",
+          "limma",
+          "DESeq2",
+          "edgeR",
+          "PCAtools"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ComplexHeatmap",
+          "pheatmap",
+          "ggplot2",
+          "org.Hs.eg.db",
+          "clusterProfiler",
+          "fgsea"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney RNA-seq: treated vs control with hidden batch",
+          "analytical_narrative": "The dataset is 6 treated vs 6 control kidney samples (12 samples x ~12,000 genes), raw Salmon gene counts, no recorded batch, but the PCA shows two clusters of six samples that do NOT align with condition — a classic sign of an unrecorded technical or biological confounder that, if ignored, will dominate any naive DE test and produce a gene list driven by the hidden factor rather than treatment. The plan first re-confirms and characterizes this structure directly on normalized counts (not trusting the prose description alone), then treats the orthogonal 6/6 split as an unknown surrogate factor: it derives a data-driven covariate (either the PCA cluster label itself, or a statistically estimated surrogate variable via SVA) and includes it in the DESeq2 design alongside condition, so the treatment effect is estimated after adjusting for the confound. Because condition and the hidden cluster are both perfectly balanced 6v6 but orthogonal to each other (not confounded with each other, per the caveat), the design matrix stays estimable and this adjustment is a legitimate use of an extra design term rather than removal of the effect of interest. Results are reported with and sensitivity-compared against the naive unadjusted model so any discrepancy is explicit. Significant genes then go to pathway enrichment (hallmark, GO-BP) using the staged human MSigDB gene sets, restricted to genes actually present in the 12,000-gene panel used as background.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization, and cluster characterization",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "In this 12-sample (6 treated / 6 control) kidney bulk RNA-seq count matrix (12000 genes x 13 columns incl. gene symbol), does variance-stabilized/normalized expression confirm the reported two 6-sample clusters that do not follow condition, and can a cluster label be assigned per sample?",
+              "acceptance_criteria": [
+                "Raw counts loaded from counts.csv (12000 genes x 12 samples) and matched to metadata.csv condition labels",
+                "Low-count genes filtered (e.g. min count/CPM threshold) before normalization",
+                "DESeq2 vst or edgeR/limma-voom normalization applied and reported",
+                "PCA computed on normalized expression; PC1/PC2 (and further PCs if needed) plotted colored by condition and by k-means/hierarchical (k=2) cluster assignment",
+                "A discrete 2-level cluster covariate (cluster A/B, 6 samples each) is produced per sample and written out alongside condition in an augmented sample table",
+                "Cross-tabulation of condition x cluster confirms the two factors are orthogonal (not confounded) as described in the caveat, or explicitly flags if they are NOT orthogonal in the actual data"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 x 12 raw Salmon gene counts, kidney tissue, 6 treated vs 6 control, unpaired, no recorded batch. PCA in the profiled data context shows two 6-sample clusters orthogonal to condition. This step must reproduce that finding on the actual normalized data and produce a usable covariate for downstream adjustment, since no batch variable exists in metadata.csv to use directly.",
+              "caveats": [
+                "Do not assume the two clusters split exactly 6/6 by condition-orthogonal lines until confirmed on this data — verify computationally, do not just repeat the caveat text",
+                "If clustering is ambiguous (not a clean two-group split), report that explicitly rather than forcing a k=2 assignment"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Surrogate variable estimation as an alternative confound proxy",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Does SVA-estimated surrogate variable analysis on the same 12-sample count matrix recover a latent factor consistent with the PCA-derived 6/6 cluster split from T1S1, providing an independent, statistically-derived covariate for the hidden structure?",
+              "acceptance_criteria": [
+                "sva::svaseq (or sva on normalized/logged counts) run with condition as the variable of interest to be preserved, estimating surrogate variables under the null and full model",
+                "Number of significant surrogate variables reported",
+                "Correlation/agreement between the top surrogate variable(s) and the T1S1 cluster label is quantified and reported",
+                "Final choice of confound covariate (cluster label vs top SV, or both) for the DE model is stated with justification"
+              ],
+              "packages": [
+                "sva",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "No recorded batch variable exists. SVA offers a statistically principled, data-driven alternative to the ad-hoc PCA/k-means cluster label for capturing the unexplained structure, and cross-checking the two approaches guards against a k-means artifact driving the whole downstream design.",
+              "caveats": [
+                "With only 12 samples, SVA may estimate 0 or 1 surrogate variables reliably — do not force extra SVs if the permutation test does not support them",
+                "If SVA and the PCA cluster label disagree substantially, report both and prefer the PCA cluster label (directly interpretable, matches the documented caveat) as the primary adjustment covariate, using SVA as corroboration only"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Differential expression: treated vs control, adjusted for hidden cluster structure",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated and control kidney samples when the model additionally adjusts for the data-driven cluster covariate (from T1S1/T1S2) that captures the unrecorded structure orthogonal to condition, and how do these results compare to a naive condition-only model?",
+              "acceptance_criteria": [
+                "DESeq2 run on raw filtered counts with design ~ cluster_covariate + condition (condition as final term, treated vs control specified explicitly as the contrast)",
+                "A second, naive DESeq2 run with design ~ condition only is also produced for direct comparison",
+                "Independent filtering / outlier handling (Cook's distance) reported per DESeq2 defaults",
+                "Full results table (log2FC, p-value, padj, base mean) exported for both models; genes significant at padj < 0.05 counted and compared between the two models (overlap, number gained/lost)",
+                "MA plot and volcano plot produced for the adjusted model",
+                "A short written comparison of adjusted vs naive gene counts and effect-size shrinkage is included, since the caveat implies the naive model risks confounding"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "This is the primary analysis answering the research question. Because the hidden 6/6 cluster split is orthogonal to (not confounded with) condition per the caveat, adding it as a covariate is a legitimate variance-reduction step, not a circular removal of the treatment signal — but this orthogonality must have been confirmed in T1S1 before trusting this design.",
+              "caveats": [
+                "If T1S1 found the cluster split is NOT fully orthogonal to condition (i.e., partial confounding), state that adjustment could partially absorb genuine treatment signal and interpret adjusted results more cautiously",
+                "With n=6 per group and an added covariate, degrees of freedom shrink — flag if power appears limited (e.g., very few or zero significant genes) and do not overinterpret an unadjusted-only signal as robust"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of the adjusted DE gene list",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which biological pathways (Hallmark, GO Biological Process) are enriched among genes differentially expressed between treated and control kidney samples in the cluster-adjusted model from T1S3?",
+              "acceptance_criteria": [
+                "Ranked gene list (by DESeq2 stat or log2FC) from the T1S3 adjusted model used for enrichment (e.g. fgsea preranked, or clusterProfiler ORA on padj<0.05 genes)",
+                "Background/universe restricted to the ~12000 genes present in the input count matrix that passed expression filtering",
+                "Enrichment run against Hallmark and GO Biological Process human gene sets",
+                "Results table of significant pathways (adjusted p-value cutoff stated, e.g. FDR<0.05) reported with leading-edge/core genes",
+                "If the reference gene sets are unavailable at run time, the step reports that explicitly rather than silently skipping enrichment"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Uses the staged human MSigDB Hallmark gene set file (h.all.v2026.1.Hs.symbols.gmt, 50 sets, HGNC symbols) and human GO Biological Process gene set file (c5.go.bp.v2026.1.Hs.symbols.gmt, 7538 sets, HGNC symbols) confirmed present under /mnt/refs/managed/msigdb-hallmark-human/ and /mnt/refs/managed/msigdb-go-human/. Gene symbols in counts.csv are the join key; no ID mapping step should be needed since both the data and gene sets use HGNC symbols, but verify symbol matching before enrichment.",
+              "caveats": [
+                "GO-BP is a nested hierarchy — expect blocks of correlated significant terms and note this rather than reporting a raw significant-term count as independent findings",
+                "Enrichment on a short/adjusted gene list may yield few or no significant hits given n=6 per group; report this honestly rather than lowering thresholds post hoc to manufacture a positive result"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the paired design and specifies DESeq2 with ~subject + condition, with a sound caveat that per-subject n=1 comparisons cannot be tested. QC includes library sizes and a PCA colored by subject and condition, but PCA is placed after the DE run and there is no stated policy for handling an outlier or shallow sample. Raw counts are correctly fed to DESeq2 and BH at padj<0.05 is stated, but the reference level and named contrast are not given and no log2FC shrinkage is mentioned. Enrichment names a versioned WikiPathways collection and an explicit filtered-gene universe, though the GSEA ranking metric is ambiguous (stat/log2FC) and no set size window is stated; the report omits package versions."
+}

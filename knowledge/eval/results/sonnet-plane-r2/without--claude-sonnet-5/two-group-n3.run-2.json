@@ -1,0 +1,255 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T20:54:14.710Z",
+  "elapsedMs": 29188,
+  "outcome": "plan_submitted",
+  "planId": "pln-55a66df1",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, QC, and harmonize counts/metadata",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 6 samples in metadata.csv (3 treated, 3 control) match the sample columns in counts.csv (12000 genes x 7 columns), and are there outlier samples or batch structure that would compromise the treated-vs-control comparison?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample names in metadata.csv are confirmed to match column names in counts.csv 1:1 (accounting for the extra gene-symbol column)",
+          "Library size, gene detection rate, and a PCA or sample-to-sample correlation heatmap on variance-stabilized/log-CPM data are produced for all 6 samples",
+          "Any sample flagged as an outlier (e.g., >2 SD from group centroid on PC1/PC2) is reported explicitly, not silently dropped",
+          "Low-count genes (e.g., rows with near-zero counts across all samples) are flagged for filtering prior to DE testing"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes are significantly differentially expressed between the 3 treated and 3 control liver samples (Salmon raw gene counts), using DESeq2 with an unpaired two-group design?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run with design ~condition on raw integer counts, condition releveled so control is the reference",
+          "Low-count genes filtered before testing (e.g., minimum count/CPM threshold across samples) and the filtering rule reported",
+          "Log2 fold changes shrunk with apeglm (or ashr as fallback) for stable effect-size estimates given n=3 per group",
+          "Results table reports baseMean, log2FoldChange, lfcSE, pvalue, and BH-adjusted padj for all tested genes, ranked by padj",
+          "A results table (CSV) and an MA plot / volcano plot are produced",
+          "The step explicitly reports the number of genes passing padj<0.05 and separately padj<0.1, and states that with n=3/group only genes with large, consistent effects are reliably detectable"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Power and confidence assessment at n=3 per group",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "statmod"
+        ],
+        "question": "Given the estimated dispersion from this dataset and n=3 replicates per arm, what minimum effect size (fold change) is this DESeq2 analysis powered to detect at FDR 0.05, and how should confidence in the DE gene list be qualified?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistical_assessment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Gene-wise and common/trended dispersion estimates from the fitted DESeq2 model are extracted and summarized (median, IQR) across the expressed gene set",
+          "A post-hoc power approximation (e.g., using the fitted mean-dispersion trend to simulate or analytically estimate detectable log2FC at alpha=0.05 for n=3 vs n=3) is reported, stating the fold-change threshold at which power is approximately 80%",
+          "The report explicitly states that unpaired n=3 vs n=3 designs are underpowered for small/moderate effects and lists genes near the significance boundary (0.05<padj<0.2) as candidates that a larger cohort could resolve either way",
+          "No claim of statistical confidence is made beyond what the dispersion/power calculation supports"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of DE genes (WikiPathways human)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which WikiPathways-defined biological pathways are enriched among genes differentially expressed between treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Enrichment (e.g., hypergeometric/ORA on padj<0.05 gene set, or GSEA-style pre-ranked on the full log2FC-ranked gene list) run against the human WikiPathways gene sets available in the reference store",
+          "If fewer than ~10 genes pass padj<0.05, the step falls back to a pre-ranked GSEA on the full DESeq2 stat/log2FC ranking rather than failing, and this fallback is reported explicitly",
+          "Gene symbols in the DESeq2 results are matched to WikiPathways HGNC symbols; unmatched genes are counted and reported",
+          "Output is a ranked table of enriched pathways with adjusted p-values and leading-edge/member genes, plus a bar or dot plot of the top pathways",
+          "If the WikiPathways human reference is unavailable at run time, the step reports this gap rather than silently skipping enrichment"
+        ]
+      }
+    ],
+    "title": "Liver DE: treated vs control (n=3/group)",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The input is a bulk RNA-seq gene-level count matrix (12000 genes x 7 columns, 6 samples per metadata) from Salmon, human liver, 3 treated vs 3 control, unpaired, single batch. Note: counts.csv is described as 12000 x 7 (likely gene column + 6 samples) while metadata.csv is 6 x 2 (sample + condition) — consistent with 6 samples total, 3 per group. With n=3 per group, statistical power is inherently limited: DESeq2's negative-binomial model with empirical Bayes shrinkage of dispersion is the appropriate tool (it is designed for exactly this small-n regime), but the plan must be explicit that at n=3 the analysis can detect only large, consistent effects, dispersion estimates are highly uncertain, and any single-gene call should be interpreted with corresponding caution. The plan: (1) load and QC counts/metadata, harmonize sample identifiers, run PCA/sample correlation to check for outliers or mislabeling; (2) run DESeq2 differential expression treated-vs-control with standard filtering and independent filtering, apply apeglm shrinkage for stable fold-change estimates given small n, report FDR (BH) with explicit power caveats; (3) run functional enrichment (WikiPathways human gene sets, confirmed present) on the DE gene list to contextualize the transcriptional program affected; (4) produce a power/confidence assessment step quantifying what effect sizes are detectable at n=3 per group (e.g., via dispersion estimates and post-hoc power approximation) so the confidence question is answered quantitatively rather than asserted qualitatively."
+  },
+  "usage": {
+    "inputTokens": 43233,
+    "outputTokens": 2545,
+    "cacheCreationInputTokens": 34079,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver DE: treated vs control (n=3/group)",
+          "analytical_narrative": "The input is a bulk RNA-seq gene-level count matrix (12000 genes x 7 columns, 6 samples per metadata) from Salmon, human liver, 3 treated vs 3 control, unpaired, single batch. Note: counts.csv is described as 12000 x 7 (likely gene column + 6 samples) while metadata.csv is 6 x 2 (sample + condition) — consistent with 6 samples total, 3 per group. With n=3 per group, statistical power is inherently limited: DESeq2's negative-binomial model with empirical Bayes shrinkage of dispersion is the appropriate tool (it is designed for exactly this small-n regime), but the plan must be explicit that at n=3 the analysis can detect only large, consistent effects, dispersion estimates are highly uncertain, and any single-gene call should be interpreted with corresponding caution. The plan: (1) load and QC counts/metadata, harmonize sample identifiers, run PCA/sample correlation to check for outliers or mislabeling; (2) run DESeq2 differential expression treated-vs-control with standard filtering and independent filtering, apply apeglm shrinkage for stable fold-change estimates given small n, report FDR (BH) with explicit power caveats; (3) run functional enrichment (WikiPathways human gene sets, confirmed present) on the DE gene list to contextualize the transcriptional program affected; (4) produce a power/confidence assessment step quantifying what effect sizes are detectable at n=3 per group (e.g., via dispersion estimates and post-hoc power approximation) so the confidence question is answered quantitatively rather than asserted qualitatively.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, QC, and harmonize counts/metadata",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 samples in metadata.csv (3 treated, 3 control) match the sample columns in counts.csv (12000 genes x 7 columns), and are there outlier samples or batch structure that would compromise the treated-vs-control comparison?",
+              "acceptance_criteria": [
+                "Sample names in metadata.csv are confirmed to match column names in counts.csv 1:1 (accounting for the extra gene-symbol column)",
+                "Library size, gene detection rate, and a PCA or sample-to-sample correlation heatmap on variance-stabilized/log-CPM data are produced for all 6 samples",
+                "Any sample flagged as an outlier (e.g., >2 SD from group centroid on PC1/PC2) is reported explicitly, not silently dropped",
+                "Low-count genes (e.g., rows with near-zero counts across all samples) are flagged for filtering prior to DE testing"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are significantly differentially expressed between the 3 treated and 3 control liver samples (Salmon raw gene counts), using DESeq2 with an unpaired two-group design?",
+              "acceptance_criteria": [
+                "DESeq2 run with design ~condition on raw integer counts, condition releveled so control is the reference",
+                "Low-count genes filtered before testing (e.g., minimum count/CPM threshold across samples) and the filtering rule reported",
+                "Log2 fold changes shrunk with apeglm (or ashr as fallback) for stable effect-size estimates given n=3 per group",
+                "Results table reports baseMean, log2FoldChange, lfcSE, pvalue, and BH-adjusted padj for all tested genes, ranked by padj",
+                "A results table (CSV) and an MA plot / volcano plot are produced",
+                "The step explicitly reports the number of genes passing padj<0.05 and separately padj<0.1, and states that with n=3/group only genes with large, consistent effects are reliably detectable"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Power and confidence assessment at n=3 per group",
+              "track": "T1",
+              "step_type": "statistical_assessment",
+              "question": "Given the estimated dispersion from this dataset and n=3 replicates per arm, what minimum effect size (fold change) is this DESeq2 analysis powered to detect at FDR 0.05, and how should confidence in the DE gene list be qualified?",
+              "acceptance_criteria": [
+                "Gene-wise and common/trended dispersion estimates from the fitted DESeq2 model are extracted and summarized (median, IQR) across the expressed gene set",
+                "A post-hoc power approximation (e.g., using the fitted mean-dispersion trend to simulate or analytically estimate detectable log2FC at alpha=0.05 for n=3 vs n=3) is reported, stating the fold-change threshold at which power is approximately 80%",
+                "The report explicitly states that unpaired n=3 vs n=3 designs are underpowered for small/moderate effects and lists genes near the significance boundary (0.05<padj<0.2) as candidates that a larger cohort could resolve either way",
+                "No claim of statistical confidence is made beyond what the dispersion/power calculation supports"
+              ],
+              "packages": [
+                "DESeq2",
+                "statmod"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of DE genes (WikiPathways human)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways-defined biological pathways are enriched among genes differentially expressed between treated and control liver samples?",
+              "acceptance_criteria": [
+                "Enrichment (e.g., hypergeometric/ORA on padj<0.05 gene set, or GSEA-style pre-ranked on the full log2FC-ranked gene list) run against the human WikiPathways gene sets available in the reference store",
+                "If fewer than ~10 genes pass padj<0.05, the step falls back to a pre-ranked GSEA on the full DESeq2 stat/log2FC ranking rather than failing, and this fallback is reported explicitly",
+                "Gene symbols in the DESeq2 results are matched to WikiPathways HGNC symbols; unmatched genes are counted and reported",
+                "Output is a ranked table of enriched pathways with adjusted p-values and leading-edge/member genes, plus a bar or dot plot of the top pathways",
+                "If the WikiPathways human reference is unavailable at run time, the step reports this gap rather than silently skipping enrichment"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

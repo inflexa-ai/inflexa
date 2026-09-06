@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 3,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 5
+  },
+  "rationale": "DESeq2 on raw counts with median-of-ratios normalization is explicitly stated and fits the unpaired single-batch six-vs-six design, and the shallow sample gets a documented keep-vs-exclude decision plus a sensitivity rerun. However the QC omits PCA and a sample-distance heatmap, the low-count filter is only 'standard' with no threshold or justification, the design is described in prose without a written formula or reference level, and no fold-change shrinkage (apeglm) is mentioned while BH is only implied by padj. Enrichment correctly uses a preranked GSEA on the full list with the Hallmark collection, but gives no MSigDB version, no set-size window, and hedges on the ranking statistic; the final report lists no software or gene-set versions."
+}

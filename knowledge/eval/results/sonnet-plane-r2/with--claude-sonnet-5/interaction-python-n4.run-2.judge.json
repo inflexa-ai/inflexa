@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the interaction question, fits ~ genotype + treatment + genotype:treatment in PyDESeq2 with explicit reference levels, and obtains the interaction and both simple effects as single Wald-testable, shrinkable coefficients by releveling, with a sanity check that the interaction is consistent across parameterizations. QC (blind VST, PCA colored by both factors, distance heatmap, library sizes, explicit outlier naming) precedes modeling, though no explicit policy for a shallow-library sample is stated; the filter (>=10 counts in >=4 samples, the cell size) is minimal and justified; normalization is explicitly internal; BH at alpha=0.05 with apeglm-style shrinkage is specified. Enrichment was not asked for, but the preranked GSEA is well specified (Wald statistic, full tested list, named collections, 15-500 window, per-contrast), with only the collection versions left to be stated at runtime rather than fixed in the plan. The report step names method, versions, design, thresholds, gene counts, and the n=4 interaction power caveat."
+}

@@ -1,0 +1,345 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "paired-3groups-n4",
+  "run": 1,
+  "startedAt": "2026-09-05T21:35:02.115Z",
+  "elapsedMs": 52880,
+  "outcome": "plan_submitted",
+  "planId": "pln-f64fc5ab",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Paired DESeq2 model and three contrasts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=4 subjects per condition is small; power to detect modest effect sizes will be limited, especially for the treated_a vs treated_b contrast where within-subject variance may be similar in magnitude to the control contrasts",
+          "Check dispersion estimates and PCA for any subject behaving as an outlier before trusting the paired model"
+        ],
+        "context": "Raw integer Salmon gene-level counts, 12000 genes x 12 samples (4 subjects x {control, treated_a, treated_b}), single batch. Files: counts.csv (gene symbol rows, sample columns) and metadata.csv (subject, condition per sample). This is a within-subject repeated-measures design, not two independent groups — subject must be included as a covariate in the design formula to remove between-subject variance and gain power, and to make the treated_a-vs-treated_b comparison biologically meaningful.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "EnhancedVolcano",
+          "ggplot2"
+        ],
+        "question": "Within each of 4 subjects, which of the 12000 genes respond to treated_a vs control, to treated_b vs control, and do treated_a and treated_b differ from each other, after accounting for subject-to-subject variability?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [],
+        "constraints": [
+          "Design formula must be ~ subject + condition, not ~ condition alone, given the paired/repeated-measures structure",
+          "Do not drop or ignore the subject blocking factor even though the question focuses on condition effects",
+          "Verify sample name matching between counts.csv columns and metadata.csv rows explicitly before constructing the DESeqDataSet"
+        ],
+        "acceptance_criteria": [
+          "Counts (12000 genes x 12 samples) and metadata (12 samples: subject, condition) are loaded and sample order/names are matched between the two files before building the DESeq2 dataset",
+          "DESeqDataSet is built with design ~ subject + condition (condition releveled so 'control' is the reference level), fit with DESeq()",
+          "Three results tables are extracted: treated_a vs control, treated_b vs control, and treated_a vs treated_b, each with log2FoldChange, p-value, and BH-adjusted p-value (padj) for all ~12000 genes",
+          "Independent filtering / outlier flags from DESeq2 are retained in the output (not stripped)",
+          "Results are written as three CSV files (one per contrast) plus a combined table, and a PCA or sample-distance plot colored by subject and shaped/faceted by condition is produced to visually confirm the pairing structure and check for outlier samples",
+          "Report the count of genes at padj < 0.05 for each of the three contrasts"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Compare treatment-responsive gene sets",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A gene can be non-significant in the direct A-vs-B contrast yet appear in only one of the vs-control sets purely from being near the significance threshold in the other — treat 'unique to A/B' as a soft category, not proof the other treatment has zero effect"
+        ],
+        "context": "Three DESeq2 contrast tables from T1S1 (treated_a vs control, treated_b vs control, treated_a vs treated_b), each covering ~12000 genes. This step operates purely on the resulting gene-level statistics tables (a generic list/matrix comparison), not on the count matrix itself.",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Which genes are shared responders to both treated_a and treated_b (vs control), which are unique to one treatment, and how concordant are their effect directions and magnitudes given the direct treated_a vs treated_b contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "comparative_analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the same padj threshold (0.05) consistently across all three contrasts for defining 'significant'",
+          "Report both the loose (padj<0.05) and effect-size-aware (padj<0.05 & |log2FC|>1) gene sets since 12000-gene panels with n=4 can have many small-effect significant hits"
+        ],
+        "acceptance_criteria": [
+          "Significant gene sets (padj < 0.05, and separately a stricter padj<0.05 & |log2FC|>1 set) are derived from the treated_a-vs-control and treated_b-vs-control result tables",
+          "Overlap (shared vs unique-to-A vs unique-to-B) is quantified and visualized (Venn/UpSet-style summary)",
+          "For the shared responder genes, log2FC(treated_a vs control) is plotted against log2FC(treated_b vs control) with a concordance/correlation statistic to assess whether shared responders move in the same direction and magnitude",
+          "Genes significant in the direct treated_a vs treated_b contrast are cross-referenced against the shared/unique categories to flag genes that respond similarly in magnitude to control but still differ significantly between the two treatments",
+          "Output is a single annotated table (gene, category, log2FC and padj for all three contrasts) plus the overlap and concordance plots"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment of treatment-responsive genes",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "With only ~12000 genes profiled (not full transcriptome) and small per-contrast gene-set sizes from n=4 subjects, enrichment power is limited — treat results as hypothesis-generating"
+        ],
+        "context": "Gene-level DESeq2 results (log2FC, padj) for three contrasts among ~12000 human blood-tissue genes. Reference: WikiPathways human pathway gene sets (GMT, HGNC symbols) confirmed present in the environment at /mnt/refs/managed/wikipathways-human/2026.07.10/. Gene symbols in counts.csv are the join key against the GMT's HGNC symbols; confirm symbol overlap before enrichment.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "dplyr"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes responding to treated_a, treated_b, and among genes that differ between the two treatments?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Parse the GMT's '%'-delimited first field to recover a readable pathway name alongside the WikiPathways ID",
+          "Use the same significant-gene definition (padj<0.05) as T2S1 for consistency across the plan"
+        ],
+        "acceptance_criteria": [
+          "Enrichment (over-representation or GSEA-style ranked) is run separately for: treated_a-vs-control significant genes, treated_b-vs-control significant genes, and treated_a-vs-treatment_b significant genes, each against the full ~12000-gene panel as background",
+          "Uses the WikiPathways human gene set collection (HGNC symbols) available in the reference store; if the reference file is absent at runtime, the step reports that pathway context could not be generated rather than failing silently",
+          "Output includes enriched pathway name, WikiPathways ID, gene ratio, and BH-adjusted p-value for each of the three gene lists, plus a comparison noting pathways shared between the treated_a and treated_b enrichment results versus pathways unique to one"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "PPI network context of shared and divergent responders",
+        "agent": "network-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "This network analysis reflects general human PPI, not blood-tissue- or treatment-specific interactions, and should be interpreted as generic mechanistic context rather than tissue-validated biology",
+          "Small input gene lists (from n=4 subjects) may map to very few or zero STRING nodes; report this plainly if the mapped set is too small for component analysis to be meaningful"
+        ],
+        "context": "Gene lists from T2S1 (shared treatment responders; genes differing between treated_a and treated_b). Reference: STRING human PPI network (9606.protein.links.v12.0.txt.gz, ~13.7M directed-pair rows / ~6.9M edges full graph, space-delimited despite .txt extension) joined via 9606.protein.info.v12.0.txt.gz (STRING id to preferred_name/gene symbol) confirmed present in the environment.",
+        "maxSteps": 200,
+        "packages": [
+          "igraph",
+          "dplyr"
+        ],
+        "question": "Do the genes shared between the treated_a and treated_b responses, and the genes that distinguish treated_a from treated_b, form connected modules in the human protein-protein interaction network rather than being scattered unrelated genes?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "network_analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Join protein.links to protein.info on both protein1 and protein2 to recover gene symbols before intersecting with the input gene lists",
+          "Apply combined_score >= 700 before any connectivity/component analysis — the full unfiltered graph (6.9M edges) is too dense for meaningful distance measures",
+          "Account for the STRING file's double-counted (bidirectional) edges when reporting edge counts"
+        ],
+        "acceptance_criteria": [
+          "Maps the shared-responder gene set and the treated_a-vs-treated_b-significant gene set (from T2S1) onto the STRING human PPI network using the protein.info name-to-STRING-id join",
+          "Applies the conventional high-confidence edge threshold (combined_score >= 700) and reports network size (nodes/edges), the largest connected component size, and whether it is larger than expected by chance (e.g., via a simple degree-preserving permutation or comparison to the STRING background)",
+          "Produces a network visualization or module summary table for each gene set, noting any genes with unusually high connectivity (hubs) within the mapped subnetwork",
+          "If STRING info/links files load with a mismatch or empty overlap after symbol mapping, report the mapping rate explicitly rather than silently proceeding on a near-empty network"
+        ]
+      }
+    ],
+    "title": "Paired DESeq2: treatment A/B vs control within subject",
+    "created_at": "2026-09-06",
+    "analytical_narrative": "This is a paired bulk RNA-seq design: 4 subjects, each contributing a control, treated_a, and treated_b sample (12 samples total, single batch, 12000 genes, raw Salmon counts). The paired structure lets us model subject as a blocking factor in DESeq2, controlling for inter-subject variability while testing treatment effects — the correct approach given repeated measures rather than independent groups. The plan runs a single multi-factor DESeq2 model (~subject + condition) on the 12000x12 count matrix, then extracts three contrasts: treated_a vs control, treated_b vs control, and treated_a vs treated_b, answering both halves of the research question (which genes respond to either treatment; whether the treatments differ from each other). QC and normalization are folded into the DE step since the dataset is small (12000 genes x 12 samples, single CSV) and does not warrant a separate step. Results feed two downstream tracks: (1) an overlap/comparison of the two treatment-response gene sets, and (2) pathway enrichment of each contrast's significant genes using WikiPathways human gene sets, plus a network-context step using the STRING human PPI to see whether the shared/divergent responders form connected modules. All steps route to agents matching their primary data object: DESeq2 count-matrix work to bulk-transcriptomics-agent, gene-list set comparison to statistical-modeling-agent (as it's a general list/matrix operation over DE results), and pathway/network context to enrichment-agent and network-agent respectively."
+  },
+  "usage": {
+    "inputTokens": 132277,
+    "outputTokens": 4454,
+    "cacheCreationInputTokens": 70692,
+    "cacheReadInputTokens": 61549,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "fgsea",
+          "clusterProfiler",
+          "pheatmap",
+          "EnhancedVolcano"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Paired DESeq2: treatment A/B vs control within subject",
+          "analytical_narrative": "This is a paired bulk RNA-seq design: 4 subjects, each contributing a control, treated_a, and treated_b sample (12 samples total, single batch, 12000 genes, raw Salmon counts). The paired structure lets us model subject as a blocking factor in DESeq2, controlling for inter-subject variability while testing treatment effects — the correct approach given repeated measures rather than independent groups. The plan runs a single multi-factor DESeq2 model (~subject + condition) on the 12000x12 count matrix, then extracts three contrasts: treated_a vs control, treated_b vs control, and treated_a vs treated_b, answering both halves of the research question (which genes respond to either treatment; whether the treatments differ from each other). QC and normalization are folded into the DE step since the dataset is small (12000 genes x 12 samples, single CSV) and does not warrant a separate step. Results feed two downstream tracks: (1) an overlap/comparison of the two treatment-response gene sets, and (2) pathway enrichment of each contrast's significant genes using WikiPathways human gene sets, plus a network-context step using the STRING human PPI to see whether the shared/divergent responders form connected modules. All steps route to agents matching their primary data object: DESeq2 count-matrix work to bulk-transcriptomics-agent, gene-list set comparison to statistical-modeling-agent (as it's a general list/matrix operation over DE results), and pathway/network context to enrichment-agent and network-agent respectively.",
+          "created_at": "2026-09-06",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Paired DESeq2 model and three contrasts",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Within each of 4 subjects, which of the 12000 genes respond to treated_a vs control, to treated_b vs control, and do treated_a and treated_b differ from each other, after accounting for subject-to-subject variability?",
+              "acceptance_criteria": [
+                "Counts (12000 genes x 12 samples) and metadata (12 samples: subject, condition) are loaded and sample order/names are matched between the two files before building the DESeq2 dataset",
+                "DESeqDataSet is built with design ~ subject + condition (condition releveled so 'control' is the reference level), fit with DESeq()",
+                "Three results tables are extracted: treated_a vs control, treated_b vs control, and treated_a vs treated_b, each with log2FoldChange, p-value, and BH-adjusted p-value (padj) for all ~12000 genes",
+                "Independent filtering / outlier flags from DESeq2 are retained in the output (not stripped)",
+                "Results are written as three CSV files (one per contrast) plus a combined table, and a PCA or sample-distance plot colored by subject and shaped/faceted by condition is produced to visually confirm the pairing structure and check for outlier samples",
+                "Report the count of genes at padj < 0.05 for each of the three contrasts"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "EnhancedVolcano",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer Salmon gene-level counts, 12000 genes x 12 samples (4 subjects x {control, treated_a, treated_b}), single batch. Files: counts.csv (gene symbol rows, sample columns) and metadata.csv (subject, condition per sample). This is a within-subject repeated-measures design, not two independent groups — subject must be included as a covariate in the design formula to remove between-subject variance and gain power, and to make the treated_a-vs-treated_b comparison biologically meaningful.",
+              "constraints": [
+                "Design formula must be ~ subject + condition, not ~ condition alone, given the paired/repeated-measures structure",
+                "Do not drop or ignore the subject blocking factor even though the question focuses on condition effects",
+                "Verify sample name matching between counts.csv columns and metadata.csv rows explicitly before constructing the DESeqDataSet"
+              ],
+              "caveats": [
+                "n=4 subjects per condition is small; power to detect modest effect sizes will be limited, especially for the treated_a vs treated_b contrast where within-subject variance may be similar in magnitude to the control contrasts",
+                "Check dispersion estimates and PCA for any subject behaving as an outlier before trusting the paired model"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Compare treatment-responsive gene sets",
+              "track": "T2",
+              "step_type": "comparative_analysis",
+              "question": "Which genes are shared responders to both treated_a and treated_b (vs control), which are unique to one treatment, and how concordant are their effect directions and magnitudes given the direct treated_a vs treated_b contrast?",
+              "acceptance_criteria": [
+                "Significant gene sets (padj < 0.05, and separately a stricter padj<0.05 & |log2FC|>1 set) are derived from the treated_a-vs-control and treated_b-vs-control result tables",
+                "Overlap (shared vs unique-to-A vs unique-to-B) is quantified and visualized (Venn/UpSet-style summary)",
+                "For the shared responder genes, log2FC(treated_a vs control) is plotted against log2FC(treated_b vs control) with a concordance/correlation statistic to assess whether shared responders move in the same direction and magnitude",
+                "Genes significant in the direct treated_a vs treated_b contrast are cross-referenced against the shared/unique categories to flag genes that respond similarly in magnitude to control but still differ significantly between the two treatments",
+                "Output is a single annotated table (gene, category, log2FC and padj for all three contrasts) plus the overlap and concordance plots"
+              ],
+              "packages": [
+                "ggplot2",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "context": "Three DESeq2 contrast tables from T1S1 (treated_a vs control, treated_b vs control, treated_a vs treated_b), each covering ~12000 genes. This step operates purely on the resulting gene-level statistics tables (a generic list/matrix comparison), not on the count matrix itself.",
+              "constraints": [
+                "Use the same padj threshold (0.05) consistently across all three contrasts for defining 'significant'",
+                "Report both the loose (padj<0.05) and effect-size-aware (padj<0.05 & |log2FC|>1) gene sets since 12000-gene panels with n=4 can have many small-effect significant hits"
+              ],
+              "caveats": [
+                "A gene can be non-significant in the direct A-vs-B contrast yet appear in only one of the vs-control sets purely from being near the significance threshold in the other — treat 'unique to A/B' as a soft category, not proof the other treatment has zero effect"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment of treatment-responsive genes",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes responding to treated_a, treated_b, and among genes that differ between the two treatments?",
+              "acceptance_criteria": [
+                "Enrichment (over-representation or GSEA-style ranked) is run separately for: treated_a-vs-control significant genes, treated_b-vs-control significant genes, and treated_a-vs-treatment_b significant genes, each against the full ~12000-gene panel as background",
+                "Uses the WikiPathways human gene set collection (HGNC symbols) available in the reference store; if the reference file is absent at runtime, the step reports that pathway context could not be generated rather than failing silently",
+                "Output includes enriched pathway name, WikiPathways ID, gene ratio, and BH-adjusted p-value for each of the three gene lists, plus a comparison noting pathways shared between the treated_a and treated_b enrichment results versus pathways unique to one"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Gene-level DESeq2 results (log2FC, padj) for three contrasts among ~12000 human blood-tissue genes. Reference: WikiPathways human pathway gene sets (GMT, HGNC symbols) confirmed present in the environment at /mnt/refs/managed/wikipathways-human/2026.07.10/. Gene symbols in counts.csv are the join key against the GMT's HGNC symbols; confirm symbol overlap before enrichment.",
+              "constraints": [
+                "Parse the GMT's '%'-delimited first field to recover a readable pathway name alongside the WikiPathways ID",
+                "Use the same significant-gene definition (padj<0.05) as T2S1 for consistency across the plan"
+              ],
+              "caveats": [
+                "With only ~12000 genes profiled (not full transcriptome) and small per-contrast gene-set sizes from n=4 subjects, enrichment power is limited — treat results as hypothesis-generating"
+              ]
+            },
+            {
+              "id": "T4S1",
+              "name": "PPI network context of shared and divergent responders",
+              "track": "T4",
+              "step_type": "network_analysis",
+              "question": "Do the genes shared between the treated_a and treated_b responses, and the genes that distinguish treated_a from treated_b, form connected modules in the human protein-protein interaction network rather than being scattered unrelated genes?",
+              "acceptance_criteria": [
+                "Maps the shared-responder gene set and the treated_a-vs-treated_b-significant gene set (from T2S1) onto the STRING human PPI network using the protein.info name-to-STRING-id join",
+                "Applies the conventional high-confidence edge threshold (combined_score >= 700) and reports network size (nodes/edges), the largest connected component size, and whether it is larger than expected by chance (e.g., via a simple degree-preserving permutation or comparison to the STRING background)",
+                "Produces a network visualization or module summary table for each gene set, noting any genes with unusually high connectivity (hubs) within the mapped subnetwork",
+                "If STRING info/links files load with a mismatch or empty overlap after symbol mapping, report the mapping rate explicitly rather than silently proceeding on a near-empty network"
+              ],
+              "packages": [
+                "igraph",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent",
+              "context": "Gene lists from T2S1 (shared treatment responders; genes differing between treated_a and treated_b). Reference: STRING human PPI network (9606.protein.links.v12.0.txt.gz, ~13.7M directed-pair rows / ~6.9M edges full graph, space-delimited despite .txt extension) joined via 9606.protein.info.v12.0.txt.gz (STRING id to preferred_name/gene symbol) confirmed present in the environment.",
+              "constraints": [
+                "Join protein.links to protein.info on both protein1 and protein2 to recover gene symbols before intersecting with the input gene lists",
+                "Apply combined_score >= 700 before any connectivity/component analysis — the full unfiltered graph (6.9M edges) is too dense for meaningful distance measures",
+                "Account for the STRING file's double-counted (bidirectional) edges when reporting edge counts"
+              ],
+              "caveats": [
+                "This network analysis reflects general human PPI, not blood-tissue- or treatment-specific interactions, and should be interpreted as generic mechanistic context rather than tissue-validated biology",
+                "Small input gene lists (from n=4 subjects) may map to very few or zero STRING nodes; report this plainly if the mapped set is too small for component analysis to be meaningful"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

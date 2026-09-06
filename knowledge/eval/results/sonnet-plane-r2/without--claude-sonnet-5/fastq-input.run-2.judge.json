@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 3,
+    "low_count_filter": 3,
+    "normalization": 3,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 4
+  },
+  "rationale": "The planner correctly recognised that the data state (raw paired-end FASTQ, no count matrix) makes a DE test impossible, refused to invent a count file, and stopped with a precise question covering the three right options: locate an existing matrix, provision a quantifier (STAR/salmon/kallisto/HISAT2) with a matching index, or confirm the intended method; it also surfaced the available GENCODE v50 GTF and GRCh38 FASTA, which matches the reference outcome. However, it did not sketch the conditional downstream plan the reference expects once counts arrive (DESeq2/edgeR on ~treatment, BH at 0.05, LFC shrinkage, minimal count filter, PCA/library-size QC, and a low-power caveat for 3 vs 3), so the design-specific statistical criteria are essentially unstated and score low. Enrichment is not warranted for this question and was not proposed, so its omission is appropriate."
+}

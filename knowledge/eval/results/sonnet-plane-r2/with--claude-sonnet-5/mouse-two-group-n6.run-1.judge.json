@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw counts with median-of-ratios normalization, explicit chow reference level and named HFD-vs-chow contrast, apeglm shrinkage, and BH at 0.05 with independent filtering. QC is design-specific, retaining sample_01 by default, characterizing it via library size, blind-VST PCA (top 500) and a distance heatmap, and gating exclusion on a stated reason beyond depth. The pre-filter (>=10 counts in >=6 samples, the smallest group) is minimal and justified. Enrichment correctly uses the mouse-native Hallmark MH collection with a stated version, fgsea preranked on the full tested-gene list by Wald statistic, 15-500 size window, and refuses to substitute human sets without an ortholog map. The report covers method, versions, design formula, thresholds, gene counts, sample_01 disposition and caveats; minor deductions because the design formula is only stated in the report step rather than the DE step and one caveat phrase is slightly garbled."
+}

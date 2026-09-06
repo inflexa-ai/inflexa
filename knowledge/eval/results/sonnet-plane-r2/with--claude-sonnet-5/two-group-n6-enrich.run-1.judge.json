@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every point: DESeq2 Wald on raw Salmon counts with ~condition, Control releveled as reference and the contrast stated explicitly, which fits an unpaired 6 vs 6 single-batch design. QC precedes the model with library-size barplot, blind-VST PCA, and distance heatmap, and sample_01 is retained by default with removal only on a stated QC-based reason. The pre-filter (>=10 counts in >=6 samples, tied to the smallest group) is minimal and justified, normalization is median-of-ratios inside the model, and significance is BH padj<0.05 with apeglm shrinkage for reported fold changes, with Cook's NAs distinguished from independent-filtering NAs. Enrichment is fgsea preranked on the full tested list ranked by the Wald statistic against MSigDB Hallmark 2026.1 with a 15–500 size window and recorded seed, and the report step names versions, design, thresholds, tested/significant counts, and design caveats."
+}

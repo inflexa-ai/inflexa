@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 5,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly recognizes the hidden orthogonal structure, verifies it is not confounded with condition, keeps raw counts in DESeq2 with ~cluster + condition, and avoids ComBat, but it never asks the analyst for the unrecorded variable and it prefers a k-means label derived from the same data over the sva estimate, inverting the reference's preference and risking double-dipping. QC has PCA colored by condition and cluster but no library sizes, sample distances, or outlier policy; the low-count filter is an unspecified 'e.g.' threshold. BH at 0.05 is implied and shrinkage is only mentioned in passing rather than as lfcShrink for the reported effect; enrichment names versioned collections and a filtered universe but leaves the ranking metric and ORA-vs-GSEA choice ambiguous and omits a size window. The report describes counts and caveats but not package versions."
+}

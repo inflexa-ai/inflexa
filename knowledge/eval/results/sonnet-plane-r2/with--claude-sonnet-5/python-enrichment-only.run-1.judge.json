@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses to refit a count model, ranks the full untruncated results table by the DESeq2 Wald statistic with explicit NA-drop, duplicate, and tie rules, and runs gseapy prerank against a named local MSigDB Hallmark 2026.1 GMT with the 15-500 window, 1000 permutations, seed 42, and BH FDR, reporting NES, FDR, and leading edge per set. The count-model criteria (QC, filter, normalization, formula) are not directly applicable since DE is upstream; the plan states this explicitly, gives the contrast direction and sign convention, and flags that the shallow sample_01 caveat is inherited and cannot be reassessed, which is the honest handling, though a minimal sanity check of the results table (e.g., stat distribution, p-value histogram) would have strengthened the QC posture. The report section is thorough with versions, universe size, thresholds, and the single-method caveat."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 5,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly specifies a paired DESeq2 model (~subject + condition) and explicitly refuses to collapse the pairing, with a sensibly framed descriptive per-subject consistency step. QC is limited to a PCA/sample-distance plot with no library-size check or stated outlier/shallow-sample policy, and the low-count filter is left as a vague 'e.g. min count threshold' without justification. The reference level and explicit contrast call are not stated, and no fold-change shrinkage is mentioned despite reporting log2FC as the effect. Enrichment names a versioned WikiPathways collection but leaves the ranking metric as 'log2FC or stat', gives no explicit ORA universe, and no gene-set size window; package versions are not required in the report."
+}

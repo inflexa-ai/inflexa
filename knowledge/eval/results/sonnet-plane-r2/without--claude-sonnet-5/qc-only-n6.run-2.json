@@ -1,0 +1,257 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "qc-only-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T21:20:17.399Z",
+  "elapsedMs": 24491,
+  "outcome": "plan_submitted",
+  "planId": "pln-ff1eca8c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Library size and count QC across all 12 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "matplotlib",
+          "DESeq2"
+        ],
+        "question": "What are the raw and normalized library sizes (total counts) for each of the 12 samples (sample_01 through sample_12, 6 AD lesional vs 6 control), and how does sample_01 compare quantitatively to the cohort median and to the other 11 samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Table reporting total raw counts per sample for all 12 samples, sorted ascending",
+          "Median library size computed and each sample's ratio to median reported",
+          "Explicit quantification of sample_01's library size relative to the median (confirm or refute the ~4x-below-median claim from the data profile)",
+          "Number of genes with zero counts or near-zero detection reported per sample to flag any additional shallow samples",
+          "Bar plot of library sizes annotated by condition (AD lesional vs control) and saved as a figure"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Variance-stabilized normalization and PCA of all 12 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "matplotlib",
+          "ggplot2"
+        ],
+        "question": "After variance-stabilizing transformation (DESeq2 VST or rlog) of the 12000 x 12 raw count matrix, how do the 12 samples separate in PCA space, does the AD lesional vs control grouping emerge on the top components, and does sample_01 appear as an outlier along any principal component?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Raw counts loaded from counts.csv and matched to metadata.csv condition labels for all 12 samples",
+          "VST or rlog applied via DESeq2 on the full 12-sample count matrix",
+          "PCA computed on the transformed data; PC1 vs PC2 (and PC2 vs PC3) scatter plots produced, colored by condition and labeled by sample ID",
+          "Percent variance explained reported for at least the first 4 PCs",
+          "Explicit statement of where sample_01 falls relative to the other 11 samples on each of the top PCs, with a numeric outlier assessment (e.g., distance from group centroid or z-score of PC loading)"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sample-to-sample distance matrix and hierarchical clustering",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "pandas"
+        ],
+        "question": "Using the VST-transformed 12-sample expression matrix, what do pairwise sample-to-sample Euclidean distances and hierarchical clustering reveal about sample grouping by condition (AD lesional vs control), and does sample_01 cluster as an outlier or fall within its expected condition group?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Pairwise sample-to-sample distance matrix computed on the same VST-transformed data used for PCA in T1S2, for all 12 samples",
+          "Heatmap of the 12x12 distance matrix produced with hierarchical clustering dendrogram and condition annotation bar",
+          "Sample_01's distances to every other sample reported explicitly, contrasted against the median inter-sample distance for the cohort",
+          "Statement on whether sample_01 clusters with its labeled condition group or forms a singleton/outlier branch"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Verdict on sample_01: retain, downweight, or exclude",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "Given sample_01's library size (~4x below median per the data profile), its position in PCA space, and its sample-to-sample distances relative to the other 11 samples, what is the recommended disposition for sample_01 before differential expression testing — keep as-is, keep with a flag/sensitivity analysis, or exclude?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "synthesis",
+        "depends_on": [
+          "T1S1",
+          "T1S2",
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Synthesizes numeric evidence from T1S1 (library size ratio), T1S2 (PCA outlier position), and T1S3 (distance-matrix outlier position) into a single written verdict",
+          "Explicitly states whether sample_01's low depth is likely to bias downstream DE results (e.g., via gene dropout, increased dispersion, or shrinkage toward zero) given it is n=6 per group with only 12 total samples",
+          "Gives a concrete recommendation: retain and proceed, retain but flag/run DE with and without sample_01 as a sensitivity check, or exclude and lose statistical power (explicitly note the power cost of dropping to 5 vs 6 in a small design)",
+          "Does not claim differential expression was tested — this step precedes and does not substitute for a DE analysis"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control skin RNA-seq QC",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "This is a pre-testing QC pass on the 12-sample (6 AD lesional vs 6 control) skin bulk RNA-seq count matrix (12000 genes x 12 samples, raw Salmon gene-level counts). The data context already flags sample_01 as having a library size ~4x below the median, a known caveat for this cohort. Before any differential expression is run, we need: (1) library size accounting across all 12 samples, (2) a variance-stabilized PCA to see whether sample_01 or any other sample separates as an outlier and whether condition drives the dominant axes, (3) a sample-to-sample distance/clustering view to corroborate the PCA read, and (4) an explicit verdict step that synthesizes the library-size, PCA, and distance evidence into a decision on sample_01 (retain, downweight, or exclude) with justification. All steps operate on the same 12x12000 counts.csv and metadata.csv, so this is a single track on the bulk-transcriptomics-agent, run as sequential/dependent steps since each downstream check consumes the normalized object from the QC step."
+  },
+  "usage": {
+    "inputTokens": 43290,
+    "outputTokens": 2276,
+    "cacheCreationInputTokens": 34136,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control skin RNA-seq QC",
+          "analytical_narrative": "This is a pre-testing QC pass on the 12-sample (6 AD lesional vs 6 control) skin bulk RNA-seq count matrix (12000 genes x 12 samples, raw Salmon gene-level counts). The data context already flags sample_01 as having a library size ~4x below the median, a known caveat for this cohort. Before any differential expression is run, we need: (1) library size accounting across all 12 samples, (2) a variance-stabilized PCA to see whether sample_01 or any other sample separates as an outlier and whether condition drives the dominant axes, (3) a sample-to-sample distance/clustering view to corroborate the PCA read, and (4) an explicit verdict step that synthesizes the library-size, PCA, and distance evidence into a decision on sample_01 (retain, downweight, or exclude) with justification. All steps operate on the same 12x12000 counts.csv and metadata.csv, so this is a single track on the bulk-transcriptomics-agent, run as sequential/dependent steps since each downstream check consumes the normalized object from the QC step.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Library size and count QC across all 12 samples",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "What are the raw and normalized library sizes (total counts) for each of the 12 samples (sample_01 through sample_12, 6 AD lesional vs 6 control), and how does sample_01 compare quantitatively to the cohort median and to the other 11 samples?",
+              "acceptance_criteria": [
+                "Table reporting total raw counts per sample for all 12 samples, sorted ascending",
+                "Median library size computed and each sample's ratio to median reported",
+                "Explicit quantification of sample_01's library size relative to the median (confirm or refute the ~4x-below-median claim from the data profile)",
+                "Number of genes with zero counts or near-zero detection reported per sample to flag any additional shallow samples",
+                "Bar plot of library sizes annotated by condition (AD lesional vs control) and saved as a figure"
+              ],
+              "packages": [
+                "pandas",
+                "matplotlib",
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Variance-stabilized normalization and PCA of all 12 samples",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "After variance-stabilizing transformation (DESeq2 VST or rlog) of the 12000 x 12 raw count matrix, how do the 12 samples separate in PCA space, does the AD lesional vs control grouping emerge on the top components, and does sample_01 appear as an outlier along any principal component?",
+              "acceptance_criteria": [
+                "Raw counts loaded from counts.csv and matched to metadata.csv condition labels for all 12 samples",
+                "VST or rlog applied via DESeq2 on the full 12-sample count matrix",
+                "PCA computed on the transformed data; PC1 vs PC2 (and PC2 vs PC3) scatter plots produced, colored by condition and labeled by sample ID",
+                "Percent variance explained reported for at least the first 4 PCs",
+                "Explicit statement of where sample_01 falls relative to the other 11 samples on each of the top PCs, with a numeric outlier assessment (e.g., distance from group centroid or z-score of PC loading)"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "matplotlib",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Sample-to-sample distance matrix and hierarchical clustering",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Using the VST-transformed 12-sample expression matrix, what do pairwise sample-to-sample Euclidean distances and hierarchical clustering reveal about sample grouping by condition (AD lesional vs control), and does sample_01 cluster as an outlier or fall within its expected condition group?",
+              "acceptance_criteria": [
+                "Pairwise sample-to-sample distance matrix computed on the same VST-transformed data used for PCA in T1S2, for all 12 samples",
+                "Heatmap of the 12x12 distance matrix produced with hierarchical clustering dendrogram and condition annotation bar",
+                "Sample_01's distances to every other sample reported explicitly, contrasted against the median inter-sample distance for the cohort",
+                "Statement on whether sample_01 clusters with its labeled condition group or forms a singleton/outlier branch"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Verdict on sample_01: retain, downweight, or exclude",
+              "track": "T1",
+              "step_type": "synthesis",
+              "question": "Given sample_01's library size (~4x below median per the data profile), its position in PCA space, and its sample-to-sample distances relative to the other 11 samples, what is the recommended disposition for sample_01 before differential expression testing — keep as-is, keep with a flag/sensitivity analysis, or exclude?",
+              "acceptance_criteria": [
+                "Synthesizes numeric evidence from T1S1 (library size ratio), T1S2 (PCA outlier position), and T1S3 (distance-matrix outlier position) into a single written verdict",
+                "Explicitly states whether sample_01's low depth is likely to bias downstream DE results (e.g., via gene dropout, increased dispersion, or shrinkage toward zero) given it is n=6 per group with only 12 total samples",
+                "Gives a concrete recommendation: retain and proceed, retain but flag/run DE with and without sample_01 as a sensitivity check, or exclude and lose statistical power (explicitly note the power cost of dropping to 5 vs 6 in a small design)",
+                "Does not claim differential expression was tested — this step precedes and does not substitute for a DE analysis"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

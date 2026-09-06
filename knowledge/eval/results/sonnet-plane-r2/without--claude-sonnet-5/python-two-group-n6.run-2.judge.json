@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 4,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly uses PyDESeq2 on raw counts with a condition-only design, honors the Python constraint, and handles sample_01 sensibly (kept in the primary run, characterized in QC, with a named sensitivity arm and an ordination plot). Weaknesses are in specification: the low-count filter is mentioned only as a caveat with no threshold or rationale; BH is not named and no fold-change shrinkage is planned, while |log2FC|>1 is applied as a post hoc cutoff rather than in the test; the reference level is not set. Enrichment uses gseapy prerank on the full list but hedges on the ranking statistic, omits the Hallmark version, size window, seed, and an explicit ORA universe. Package versions are never stated for the report."
+}

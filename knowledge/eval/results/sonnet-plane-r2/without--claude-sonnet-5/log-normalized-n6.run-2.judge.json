@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 1,
+    "normalization": 9,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly rejects DESeq2/edgeR/voom, applies limma lmFit/eBayes with trend directly to the log2(TPM+1) values, and explicitly forbids re-normalization or re-logging, matching the reference on method and normalization. QC includes a value-range check and PCA/clustering for outliers but gives no outlier policy or color-by-condition detail, and no low-expression filter on the log values is mentioned at all. The design is described only as a 'treated-vs-control design matrix' without an explicit formula or stated reference level; BH is applied but two thresholds are floated rather than one fixed alpha. Enrichment is added without being warranted and lacks a version, explicit universe, decided method, ranking metric, or size window; the report omits package versions."
+}

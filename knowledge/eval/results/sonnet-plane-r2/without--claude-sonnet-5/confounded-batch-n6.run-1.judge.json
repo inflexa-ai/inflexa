@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 1,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly recognizes the perfect confounding, refuses ComBat/removeBatchEffect/batch covariates on rank-deficiency grounds, fits ~condition only, labels every output as condition-or-batch, and recommends a rebalanced follow-up design, which matches the reference. QC is reasonable (PCA, clustering, library sizes, detected genes) but lacks a stated outlier policy. No low-count filter is mentioned at all; normalization is implicit via DESeq2 on raw counts but never stated as inside the model; BH at 0.05 is given but no fold-change shrinkage or LFC threshold in the test. Enrichment names the collection and an explicit detected-gene universe but omits version, size window, and settles neither ORA nor GSEA; the report omits software versions."
+}

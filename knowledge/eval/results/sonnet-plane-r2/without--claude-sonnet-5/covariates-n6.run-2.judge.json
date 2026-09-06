@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies an unpaired 6v6 single-batch design with unbalanced covariates and fits ~ sex + age + condition in DESeq2/pydeseq2 with control as reference, a justified filter (>=10 in >=6 samples), raw counts into the model, BH at 0.05 and LFC shrinkage, plus a sensible balance tabulation of age/sex by group; it omits centering age and treats a collinear covariate as still fittable rather than as a confound that cannot be estimated. QC is partial: PCA by condition and sex plus dispersion and p-value histogram, but no PCA by age, no library-size or sample-distance check, no outlier policy, and no XIST/Y-linked sex check. Enrichment was not asked for and adds little at n=6; it names a collection and version but leaves the ORA universe implicit and gives no set-size window. Reporting covers gene counts, thresholds and design caveats but does not mention software versions."
+}

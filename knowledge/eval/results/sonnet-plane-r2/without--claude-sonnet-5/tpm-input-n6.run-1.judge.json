@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies that TPM is not count data, rejects DESeq2/edgeR/voom, and fits limma lmFit + eBayes(trend=TRUE) on log2(TPM+1) with a two-group unpaired design, BH at 0.05, and a justified filter (TPM>=1 in at least the smaller group size of 6) plus PCA and correlation heatmap on the log values with outlier flagging; it does not, however, ask the core for the raw counts or quantification directories. The design is described but the reference level is not explicitly set, and the |log2FC|>=1 cutoff is applied post hoc rather than via treat(). Enrichment names collections, the ranking metric, and a filtered-gene universe, but omits collection versions and a set-size window; reporting covers method, design, thresholds, counts, and TPM caveats but not package versions. Steps 4-5 (deconvolution, PPI) are unrequested scope beyond the DE question."
+}

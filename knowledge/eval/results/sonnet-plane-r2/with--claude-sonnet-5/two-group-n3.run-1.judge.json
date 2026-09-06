@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every core point: negative binomial modeling (DESeq2 Wald with apeglm, edgeR QL as a cross-check) on raw Salmon counts, a justified minimal filter (>=10 in >=3 samples), normalization inside the model with no pre-normalization, explicit ~condition design with control as reference and a named contrast, BH at 0.05 with independent filtering and shrinkage, and an explicit low-power caveat without lowering alpha. QC is thorough (blind VST, PCA, distance heatmap, library sizes, colored by condition, single-batch noted, outliers flagged not dropped), though no explicit policy for a shallow library is stated. Enrichment was not asked for and the reference deems it unwarranted; the plan adds it anyway, though it does specify ranking metric, universe, collection versions, and size window correctly, with only 'Reactome current' left unversioned. The report step covers method, versions, design, thresholds, counts, and design caveats."
+}

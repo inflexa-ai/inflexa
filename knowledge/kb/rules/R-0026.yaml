@@ -17,6 +17,10 @@ conditions:
 action:
   step_type: normalize
   method: M-0008
+  parameters:
+    - name: size_factors
+      value: median_of_ratios_named_in_the_plan
+      default_source: "doi:10.1186/s13059-014-0550-8"
 severity: info
 strength: consensus
 evidence_quality: high

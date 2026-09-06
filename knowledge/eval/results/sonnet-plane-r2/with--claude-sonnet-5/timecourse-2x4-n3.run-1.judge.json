@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: a DESeq2 LRT of ~condition+time+condition:time against ~condition+time, with per-time-point Wald simple effects and shrinkage to describe the pattern, on raw counts with internal median-of-ratios normalization and a minimal, group-size-justified filter. QC is blind VST PCA, distance heatmap and library sizes colored by condition and time, though the outlier policy stops at flagging by name without stating what happens to a flagged or shallow sample. Model specification is explicit (full/reduced, reference levels, named contrasts), but the actual reference level for condition and the exact construction of the non-t0 simple-effect contrasts are not spelled out. Enrichment is not required by the question; the plan adds it anyway, but does so correctly with a tested-gene universe, named/versioned collections, a size window and BH, with an honest caveat about small gene lists. The report step covers method, versions, design, thresholds, tested/significant counts, fit diagnostics and the n=3 power caveat."
+}

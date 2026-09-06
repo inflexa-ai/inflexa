@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refrains from redoing DE and runs preranked fgsea on the full ranked list using the Wald statistic, explicitly rejecting shrunken LFC, pre-thresholding, and a fallback ORA; it names the Hallmark collection and MSigDB version, sets the 15-500 window on the tested-gene universe, fixes a seed, applies BH at 0.05 on pathways, and reports leading edges. QC is specific to the design: blind VST, PCA on top-500 genes colored by condition, distance heatmap, library sizes, with an explicit keep-and-report policy for sample_01. Low-count filtering and normalization are largely moot because DE is inherited, and the plan says so, but it does not check that no cutoff was applied to the delivered table beyond noting inherited filtering; the contrast direction is stated but no formula is needed. The report specification covers method, versions, metric, universe, thresholds, seed, and caveats, with only the unpinned Reactome release as a (acknowledged) reproducibility weakness."
+}

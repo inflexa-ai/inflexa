@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 3,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference on the core method: one DESeq2 fit with ~condition on all twelve samples, LRT against ~1 for the omnibus question, two Wald contrasts against an explicit control reference with apeglm shrinkage and BH within each contrast, and a correct warning not to report the LRT p-value as a pairwise result. QC is concrete (library size, detection, VST PCA colored by condition, a stated outlier policy), but no low-count filter is specified before the model, only DESeq2's internal independent filtering is mentioned. The |log2FC|>1 & padj cut is applied post hoc rather than via lfcThreshold. Enrichment was not requested; the plan adds ORA on WikiPathways without stating a universe, collection version, size window, or clearly choosing between ORA and GSEA. Package versions are not reported."
+}

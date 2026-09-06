@@ -261,6 +261,19 @@ describe("generatePlan loop-driving tool", () => {
         expect(result.question).toBe("Which two conditions should be contrasted?");
     });
 
+    it("refuses a placeholder clarification and records the real question that follows", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("t1", "request_clarification", { question: "Placeholder — not used." })], "tool_use"),
+            makeMessage([toolUseBlock("t2", "request_clarification", { question: "Which two conditions should be contrasted?" })], "tool_use"),
+            makeMessage([textBlock("Asked.")], "end_turn"),
+        ]);
+
+        const result = (await toolFor(provider).execute(INPUT, toolContext()))._unsafeUnwrap() as PlanResult;
+
+        expect(result.event).toBe("clarification_needed");
+        expect(result.question).toBe("Which two conditions should be contrasted?");
+    });
+
     it("errors when the planner ends without a terminal tool call", async () => {
         // Prose every turn — including the terminal-salvage continuation — so no
         // terminal outcome is ever recorded.

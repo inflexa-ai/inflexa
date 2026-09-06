@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 3,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference on the core design: one DESeq2 object on all twelve samples with ~condition, control as reference, LRT against ~1 for the omnibus question, and two explicit Wald contrasts against control with apeglm/ashr shrinkage and BH at 0.05, reported separately rather than conflated. Normalization is correctly inside the model via size factors on raw counts, and QC (library sizes, vst PCA, clustering) precedes modeling, though the outlier policy is only 'flag and check' with no stated action. The main gap is the absence of any stated pre-model low-count filter; the plan leans entirely on DESeq2 independent filtering, which is not the same thing. Enrichment is not asked for and, while the ORA universe is correctly set to the tested genes, the WikiPathways collection has no version or gene-set size window; the report also omits package versions."
+}

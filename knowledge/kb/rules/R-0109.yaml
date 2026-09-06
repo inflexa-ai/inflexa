@@ -1,0 +1,62 @@
+id: R-0109
+title: "Over-representation of a gene list: state the direction handling, and keep the over-representation test as the answer"
+assertion: >-
+  When the question is the over-representation of a discrete gene list, the
+  plan states whether it tests the up-regulated and the down-regulated genes
+  as two lists or as one pooled list, and it gives the reason. A ranked
+  enrichment on the full list answers a different question, thus it is at
+  most a stated secondary check and never the primary answer. The plan names
+  the reference level and the direction convention of the log2 fold change
+  behind the list, the universe as the tested genes, and the size window.
+modality: bulk_rna_seq
+conditions:
+  - field: question
+    op: in
+    value: [enrichment, full_plan]
+  - field: enrichment_input
+    op: eq
+    value: gene_list
+action:
+  step_type: enrichment
+  parameters:
+    - name: direction_handling
+      value: two_lists_or_stated_pooling
+      default_source: "rule:R-0109"
+    - name: primary_answer
+      value: over_representation_test
+      default_source: "rule:R-0109"
+    - name: input_contrast_statement
+      value: reference_level_and_sign_convention
+      default_source: "doi:10.1371/journal.pcbi.1009935"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: conditional
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0027
+    paraphrase: >-
+      The survey finds that the gene list, the background, and the direction
+      of the genes are inconsistently reported across enrichment studies, and
+      that each omission changes what a reader can conclude from the result.
+    anchor: "Results; Recommendations"
+    retrieved: "2026-09-05"
+  - direction: neutral
+    eco: ECO:0000033
+    cito: cito:discusses
+    source: S-0024
+    paraphrase: >-
+      The gene set enrichment method ranks every gene and asks whether a set
+      concentrates at either end of the list, which is a different question
+      from the over-representation of a thresholded list.
+    anchor: "Abstract; Overview of GSEA"
+    retrieved: "2026-09-05"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-05"
+tags: [enrichment, ora, gene_list, report]

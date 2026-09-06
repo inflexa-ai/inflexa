@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: DESeq2 Wald on raw counts for an unpaired 3v3 single-batch design, blind VST PCA and distance heatmap with library-size checks, a minimal >=10-in->=3 filter tied to the smallest group, median-of-ratios inside the model, an explicit ~condition formula with control releveled and the contrast named, BH at 0.05 with apeglm shrinkage, and the n=3 power caveat stated. Enrichment correctly acknowledges no zebrafish curated collection and takes the one-to-one human-ortholog fgsea path on the Wald statistic with a 15-500 size window and the mapped share reported. Deductions: the outlier handling is only a flag without a stated drop/keep policy, the babelgene ortholog-table version and the Ensembl release are deferred to the report rather than named in the plan, and the collection versions are not stated up front."
+}

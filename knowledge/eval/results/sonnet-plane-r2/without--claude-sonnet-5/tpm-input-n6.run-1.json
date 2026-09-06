@@ -1,0 +1,819 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "tpm-input-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T22:19:52.905Z",
+  "elapsedMs": 309131,
+  "outcome": "plan_submitted",
+  "planId": "pln-5693a511",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, sample-metadata join, and filtering of the TPM matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Only a TPM table was delivered — no raw counts, no quantification directories. TPM columns must be matched to the metadata's condition column (lesional vs control) by sample id. Low-expressed genes need filtering before any downstream linear modeling because TPM near zero across most samples is unstable for a moderated t-test.",
+        "maxSteps": 200,
+        "packages": [
+          "data.table",
+          "readr",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Given only a 12000-gene x 12-sample TPM table (salmon, no raw counts) and a 12-sample metadata table (6 lesional vs 6 control, unpaired, single batch), which genes and samples are usable for differential testing, and does the design show the expected lesional/control separation?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Match TPM matrix columns to metadata rows by sample identifier; do not assume column order is already aligned — verify explicitly.",
+          "Filter genes: retain genes with TPM >= 1 in at least 6 of the 12 samples (the smaller group size); do not use edgeR::filterByExpr, which is calibrated for raw counts, not TPM.",
+          "Log-transform with log2(TPM + 1) for all downstream variance/PCA work.",
+          "Report the number of genes retained after filtering out of the starting 12000.",
+          "Do not drop any of the 12 samples without flagging the reason in the QC report — this is a fixed 6v6 design."
+        ],
+        "acceptance_criteria": [
+          "A filtered, log2(TPM+1)-transformed matrix is produced with sample columns labeled by condition (lesional/control) matched to metadata.",
+          "A PCA plot and a sample-sample correlation heatmap are produced showing whether lesional and control samples separate.",
+          "The QC report states the number of genes filtered in vs out and flags any outlier sample by name."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "limma-trend differential expression: lesional vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Because only TPM (not raw counts) was delivered, count-based DE tools (DESeq2, edgeR/NB-GLM) are not appropriate here since they require integer counts to estimate dispersion from library size. limma with trend=TRUE (limma-trend) is the standard approach for moderated t-tests on continuous, pre-normalized expression values such as TPM, and does not require raw counts.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "EnhancedVolcano",
+          "pheatmap",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between psoriasis lesional and control skin samples (6 vs 6, unpaired, single batch), using the filtered log2(TPM+1) matrix from T1S1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use limma::lmFit + limma::eBayes(trend=TRUE) on the log2(TPM+1) filtered matrix from T1S1 — do not attempt voom (voom requires raw counts and library sizes, neither of which exist here).",
+          "Design: single factor (lesional vs control), unpaired, no additional covariates — metadata carries only condition, no batch/paired identifiers to adjust for.",
+          "Report log2 fold-change, moderated t-statistic, raw p-value, and BH-adjusted p-value (FDR) per gene.",
+          "State explicitly in the output that this is a limma-trend analysis on TPM, not a count-based DESeq2/edgeR analysis, and that TPM-based fold-changes lack the count-level uncertainty modeling that raw counts would have supported.",
+          "Flag that n=6 per group is a modest sample size for FDR-controlled discovery; report how many genes pass FDR<0.05 and |log2FC|>=1 versus a more lenient threshold, do not cherry-pick a threshold that maximizes hits."
+        ],
+        "acceptance_criteria": [
+          "A full gene-level results table (log2FC, t, p, adj.p) is produced for every filtered gene.",
+          "A volcano plot and a heatmap of the top differential genes (by adjusted p-value) are produced, samples labeled lesional/control.",
+          "The report states the count of significant genes at FDR<0.05 and separately notes the TPM-only caveat."
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment of the lesional-vs-control DE signal",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "context": "The DE results from T2S1 (log2FC, t-statistic, adjusted p-value per gene) feed both an over-representation test on the significant subset and a preranked GSEA on the full ranked list (ranked by the limma moderated t-statistic). Human WikiPathways gene sets and MSigDB Hallmark human gene sets are both confirmed present in the reference store and match the organism (Homo sapiens) of this dataset.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db",
+          "enrichplot",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which biological pathways are over-represented among genes differentially expressed between lesional and control skin, and which pathways show coordinated shift across the full ranked gene list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "pathway_enrichment",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Use the WikiPathways human GMT (HGNC gene symbols) and the MSigDB Hallmark human GMT (50 sets, HGNC symbols) as the two gene-set collections; confirm both load before analysis and report gene-symbol overlap with the expression matrix's gene identifiers.",
+          "For ORA, use genes passing FDR<0.05 from T2S1 as the query set and all filtered genes from T1S1 as the background universe — do not use the whole genome as background.",
+          "For GSEA, rank the full filtered gene list by the limma moderated t-statistic from T2S1, run fgsea preranked, and report normalized enrichment scores and BH-adjusted p-values.",
+          "If either gene-set collection fails to load, report which one failed and proceed with the other rather than stopping."
+        ],
+        "acceptance_criteria": [
+          "ORA and preranked GSEA results are produced against both WikiPathways human and MSigDB Hallmark human collections.",
+          "Each result table reports pathway name, gene count/overlap, enrichment score (GSEA) or odds ratio (ORA), and BH-adjusted p-value.",
+          "A dot plot or bar plot of top pathways per method/collection is produced."
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Immune/stromal cell composition deconvolution from TPM",
+        "agent": "immune-profiling-agent",
+        "track": "T3",
+        "status": "pending",
+        "context": "Psoriasis lesional skin is a classically immune-infiltrated inflammatory condition. Deconvolution methods (xCell, MCPcounter, quantiseq via immunedeconv) are designed to run directly on normalized bulk expression (TPM) without needing raw counts, so they can be applied to the T1S1 filtered TPM matrix (not the log-transformed one — most of these methods expect linear-scale TPM).",
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "MCPcounter",
+          "xCell",
+          "quantiseqr",
+          "data.table",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do lesional and control skin samples differ in inferred immune and stromal cell composition, and does this infiltration signature help contextualize the differential gene list from T2S1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "immune_deconvolution",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Run deconvolution on the linear-scale, filtered TPM matrix (post-filtering from T1S1, pre-log-transform), matched to gene symbols.",
+          "Use at least two of the available methods (e.g., MCPcounter and xCell, or quantiseq) via immunedeconv and report results per method separately — do not average across methods, since their scales are not comparable.",
+          "Test lesional vs control differences per cell type using a non-parametric test (Wilcoxon rank-sum, unpaired) given n=6 per group; report raw and BH-adjusted p-values across cell types.",
+          "State explicitly that these are inferred proportions/scores, not measured cell counts, and that skin-specific reference signatures were not used (these methods are largely tumor/blood-derived), so interpret cautiously for skin-resident populations (e.g., keratinocytes are not covered)."
+        ],
+        "acceptance_criteria": [
+          "A per-sample, per-cell-type score/proportion matrix is produced for at least two deconvolution methods.",
+          "A group-comparison table (lesional vs control) with test statistic and BH-adjusted p-value per cell type is produced for each method.",
+          "The report explicitly notes the caution about applying non-skin-derived reference signatures to skin tissue."
+        ]
+      },
+      {
+        "id": "T5S1",
+        "name": "PPI network context of significant DE genes",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "context": "A STRING v12.0 human PPI network is confirmed present as two files: a protein-info file (STRING id to gene symbol mapping) and a protein-links file (STRING id pairs with combined confidence scores). The links file is space-delimited despite the .txt name, gzipped, ~13.7M edges (both directions), and must be joined against the info file to translate STRING ids to gene symbols before it can be related to the DE gene list.",
+        "maxSteps": 200,
+        "packages": [
+          "igraph",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Among genes significantly differentially expressed between lesional and control skin (T2S1), which form a connected, high-confidence protein-protein interaction subnetwork, and which are hub genes within it?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "network_analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Join the info file's preferred_name to both protein1 and protein2 in the links file to recover gene symbols before any filtering.",
+          "Apply the conventional high-confidence cutoff combined_score >= 700 before building the graph (this reduces the graph from ~13.7M directed rows to roughly 237,000 unique undirected edges over ~16,200 proteins) — do not attempt distance-based network measures on the full unfiltered graph, it is too dense to be meaningful.",
+          "Restrict the induced subnetwork to nodes present in the T2S1 significant gene list (FDR<0.05); report both the full DE-gene subnetwork and, separately, degree/hub ranking within it.",
+          "Report how many of the significant DE genes have no edges in the high-confidence network (isolated nodes) rather than silently dropping them."
+        ],
+        "acceptance_criteria": [
+          "A gene-symbol-resolved, high-confidence (score>=700) induced subnetwork of the significant DE genes is produced.",
+          "A hub-gene ranking (by degree or betweenness) within that subnetwork is reported.",
+          "The count of significant DE genes with zero edges in the high-confidence network is reported explicitly."
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control DE from TPM-only data",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The data profile shows a gene-level TPM table (12000 genes x 12 samples, salmon-derived) with no raw counts and no quantification directories preserved — this rules out count-based NB-GLM tools (DESeq2, edgeR) that require integer counts and library-size-derived dispersion estimates. The standard, well-grounded alternative for continuous, already-normalized expression values (TPM/FPKM/microarray-like) is limma with the trend=TRUE (limma-trend) empirical-Bayes moderation on log2(TPM+1) values, which does not assume count-level mean-variance structure. Step 1 loads and QCs the TPM matrix against the 6 lesional vs 6 control metadata (unpaired, single batch, 12 samples total), filters low-expressed genes, and checks for sample outliers/structure via PCA and correlation. Step 2 runs the limma-trend contrast lesional-vs-control on the filtered log2(TPM+1) matrix. Step 3 takes the resulting gene list/ranked statistic into pathway enrichment (ORA + preranked GSEA) against WikiPathways human and MSigDB Hallmark human gene sets, both confirmed present in the reference store. Step 4 uses the same TPM matrix (deconvolution methods are designed to run directly on normalized expression, no raw counts needed) to quantify immune/stromal cell composition shifts, which is directly relevant given psoriasis is an immune-infiltrated inflammatory skin disease and helps distinguish infiltration-driven signal from intrinsic keratinocyte transcriptional change in the DE list. Step 5 places the significant DE genes onto the STRING v12.0 human PPI network (high-confidence edges, score>=700) to surface hub/connected genes among the differential signal. All steps are scoped to the actual 12-sample, 12000-gene TPM table; no step assumes count data that was not delivered."
+  },
+  "usage": {
+    "inputTokens": 3047542,
+    "outputTokens": 13317,
+    "cacheCreationInputTokens": 232602,
+    "cacheReadInputTokens": 2814266,
+    "reasoningTokens": 3815
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "limma",
+          "pydeseq2",
+          "rnanorm",
+          "clusterProfiler",
+          "fgsea"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "differential expression TPM only no raw counts limma voom RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma without raw counts normalized expression differential expression analysis",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "psoriasis lesional skin transcriptomics differentially expressed genes",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune deconvolution skin cell signature"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "xCell",
+          "MCPcounter"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/scanpy",
+        "query": "limma-trend voom differential expression TPM log2 normalized"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "limma",
+        "query": "limma trend eBayes differential expression with log2 TPM values"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma trend method log2 expression values eBayes microarray-like RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma-trend precision weights RNA-seq counts per million analysis quality preprocessing",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Law Ritchie limma trend RNA-seq differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma trend method for RNA-seq without raw counts precision weights eBayes",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma trend gene expression analysis without precision weights",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "analyzing RNA-seq data with limma trend when raw counts unavailable TPM",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "27441086"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "salmon TPM gene-level abundance import tximport differential expression gene counts estimated",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "tximport differential expression analysis transcript abundance estimates",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Soneson tximport gene-level estimates improve",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "26925227"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma trend without quantification files normalized log-expression eBayes precision weights not needed",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifier mapping symbol HGNC human ensembl"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "drug target open targets psoriasis"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology biological process human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "GO.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "enrichplot",
+          "DOSE"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "GSVA",
+          "fgsea",
+          "decoupleR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pheatmap",
+          "EnhancedVolcano",
+          "PCAtools"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "quantiseqr",
+          "MCPcounter",
+          "EPIC"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph",
+          "STRINGdb"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string ppi human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/string-ppi-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/string-ppi-human/12.0"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "scGate psoriasis skin cell type reference"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "Seurat",
+          "SoupX",
+          "singscore"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "gseapy"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "TF activity dorothea regulon"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "dorothea"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "psoriasis"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "open targets drug target"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "OlinkAnalyze",
+          "ashr",
+          "apeglm"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "data.table",
+          "tibble",
+          "ggplot2",
+          "pandas"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "37816883"
+        ]
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma trend log transformed expression differential expression eBayes analysis",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "differential expression analysis without raw counts TPM limma trend statistical method",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "limma trend TPM differential expression pipeline no counts",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "limma-trend RNA-seq log2 TPM analysis",
+        "language": "R",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma trend method log CPM eBayes",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma trend method log CPM eBayes",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "psoriasis skin gene expression biomarker signature",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma-trend method eBayes RNA-seq",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma powerful differential expression analyses RNA-sequencing microarray studies Ritchie 2015",
+        "limit": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma powers differential expression analyses RNA sequencing microarray studies",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Reactome KEGG human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control DE from TPM-only data",
+          "analytical_narrative": "The data profile shows a gene-level TPM table (12000 genes x 12 samples, salmon-derived) with no raw counts and no quantification directories preserved — this rules out count-based NB-GLM tools (DESeq2, edgeR) that require integer counts and library-size-derived dispersion estimates. The standard, well-grounded alternative for continuous, already-normalized expression values (TPM/FPKM/microarray-like) is limma with the trend=TRUE (limma-trend) empirical-Bayes moderation on log2(TPM+1) values, which does not assume count-level mean-variance structure. Step 1 loads and QCs the TPM matrix against the 6 lesional vs 6 control metadata (unpaired, single batch, 12 samples total), filters low-expressed genes, and checks for sample outliers/structure via PCA and correlation. Step 2 runs the limma-trend contrast lesional-vs-control on the filtered log2(TPM+1) matrix. Step 3 takes the resulting gene list/ranked statistic into pathway enrichment (ORA + preranked GSEA) against WikiPathways human and MSigDB Hallmark human gene sets, both confirmed present in the reference store. Step 4 uses the same TPM matrix (deconvolution methods are designed to run directly on normalized expression, no raw counts needed) to quantify immune/stromal cell composition shifts, which is directly relevant given psoriasis is an immune-infiltrated inflammatory skin disease and helps distinguish infiltration-driven signal from intrinsic keratinocyte transcriptional change in the DE list. Step 5 places the significant DE genes onto the STRING v12.0 human PPI network (high-confidence edges, score>=700) to surface hub/connected genes among the differential signal. All steps are scoped to the actual 12-sample, 12000-gene TPM table; no step assumes count data that was not delivered.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, sample-metadata join, and filtering of the TPM matrix",
+              "track": "T1",
+              "step_type": "qc_preprocessing",
+              "question": "Given only a 12000-gene x 12-sample TPM table (salmon, no raw counts) and a 12-sample metadata table (6 lesional vs 6 control, unpaired, single batch), which genes and samples are usable for differential testing, and does the design show the expected lesional/control separation?",
+              "context": "Only a TPM table was delivered — no raw counts, no quantification directories. TPM columns must be matched to the metadata's condition column (lesional vs control) by sample id. Low-expressed genes need filtering before any downstream linear modeling because TPM near zero across most samples is unstable for a moderated t-test.",
+              "constraints": [
+                "Match TPM matrix columns to metadata rows by sample identifier; do not assume column order is already aligned — verify explicitly.",
+                "Filter genes: retain genes with TPM >= 1 in at least 6 of the 12 samples (the smaller group size); do not use edgeR::filterByExpr, which is calibrated for raw counts, not TPM.",
+                "Log-transform with log2(TPM + 1) for all downstream variance/PCA work.",
+                "Report the number of genes retained after filtering out of the starting 12000.",
+                "Do not drop any of the 12 samples without flagging the reason in the QC report — this is a fixed 6v6 design."
+              ],
+              "acceptance_criteria": [
+                "A filtered, log2(TPM+1)-transformed matrix is produced with sample columns labeled by condition (lesional/control) matched to metadata.",
+                "A PCA plot and a sample-sample correlation heatmap are produced showing whether lesional and control samples separate.",
+                "The QC report states the number of genes filtered in vs out and flags any outlier sample by name."
+              ],
+              "packages": [
+                "data.table",
+                "readr",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "limma-trend differential expression: lesional vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between psoriasis lesional and control skin samples (6 vs 6, unpaired, single batch), using the filtered log2(TPM+1) matrix from T1S1?",
+              "context": "Because only TPM (not raw counts) was delivered, count-based DE tools (DESeq2, edgeR/NB-GLM) are not appropriate here since they require integer counts to estimate dispersion from library size. limma with trend=TRUE (limma-trend) is the standard approach for moderated t-tests on continuous, pre-normalized expression values such as TPM, and does not require raw counts.",
+              "constraints": [
+                "Use limma::lmFit + limma::eBayes(trend=TRUE) on the log2(TPM+1) filtered matrix from T1S1 — do not attempt voom (voom requires raw counts and library sizes, neither of which exist here).",
+                "Design: single factor (lesional vs control), unpaired, no additional covariates — metadata carries only condition, no batch/paired identifiers to adjust for.",
+                "Report log2 fold-change, moderated t-statistic, raw p-value, and BH-adjusted p-value (FDR) per gene.",
+                "State explicitly in the output that this is a limma-trend analysis on TPM, not a count-based DESeq2/edgeR analysis, and that TPM-based fold-changes lack the count-level uncertainty modeling that raw counts would have supported.",
+                "Flag that n=6 per group is a modest sample size for FDR-controlled discovery; report how many genes pass FDR<0.05 and |log2FC|>=1 versus a more lenient threshold, do not cherry-pick a threshold that maximizes hits."
+              ],
+              "acceptance_criteria": [
+                "A full gene-level results table (log2FC, t, p, adj.p) is produced for every filtered gene.",
+                "A volcano plot and a heatmap of the top differential genes (by adjusted p-value) are produced, samples labeled lesional/control.",
+                "The report states the count of significant genes at FDR<0.05 and separately notes the TPM-only caveat."
+              ],
+              "packages": [
+                "limma",
+                "EnhancedVolcano",
+                "pheatmap",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment of the lesional-vs-control DE signal",
+              "track": "T2",
+              "step_type": "pathway_enrichment",
+              "question": "Which biological pathways are over-represented among genes differentially expressed between lesional and control skin, and which pathways show coordinated shift across the full ranked gene list?",
+              "context": "The DE results from T2S1 (log2FC, t-statistic, adjusted p-value per gene) feed both an over-representation test on the significant subset and a preranked GSEA on the full ranked list (ranked by the limma moderated t-statistic). Human WikiPathways gene sets and MSigDB Hallmark human gene sets are both confirmed present in the reference store and match the organism (Homo sapiens) of this dataset.",
+              "constraints": [
+                "Use the WikiPathways human GMT (HGNC gene symbols) and the MSigDB Hallmark human GMT (50 sets, HGNC symbols) as the two gene-set collections; confirm both load before analysis and report gene-symbol overlap with the expression matrix's gene identifiers.",
+                "For ORA, use genes passing FDR<0.05 from T2S1 as the query set and all filtered genes from T1S1 as the background universe — do not use the whole genome as background.",
+                "For GSEA, rank the full filtered gene list by the limma moderated t-statistic from T2S1, run fgsea preranked, and report normalized enrichment scores and BH-adjusted p-values.",
+                "If either gene-set collection fails to load, report which one failed and proceed with the other rather than stopping."
+              ],
+              "acceptance_criteria": [
+                "ORA and preranked GSEA results are produced against both WikiPathways human and MSigDB Hallmark human collections.",
+                "Each result table reports pathway name, gene count/overlap, enrichment score (GSEA) or odds ratio (ORA), and BH-adjusted p-value.",
+                "A dot plot or bar plot of top pathways per method/collection is produced."
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db",
+                "enrichplot",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T4S1",
+              "name": "Immune/stromal cell composition deconvolution from TPM",
+              "track": "T3",
+              "step_type": "immune_deconvolution",
+              "question": "Do lesional and control skin samples differ in inferred immune and stromal cell composition, and does this infiltration signature help contextualize the differential gene list from T2S1?",
+              "context": "Psoriasis lesional skin is a classically immune-infiltrated inflammatory condition. Deconvolution methods (xCell, MCPcounter, quantiseq via immunedeconv) are designed to run directly on normalized bulk expression (TPM) without needing raw counts, so they can be applied to the T1S1 filtered TPM matrix (not the log-transformed one — most of these methods expect linear-scale TPM).",
+              "constraints": [
+                "Run deconvolution on the linear-scale, filtered TPM matrix (post-filtering from T1S1, pre-log-transform), matched to gene symbols.",
+                "Use at least two of the available methods (e.g., MCPcounter and xCell, or quantiseq) via immunedeconv and report results per method separately — do not average across methods, since their scales are not comparable.",
+                "Test lesional vs control differences per cell type using a non-parametric test (Wilcoxon rank-sum, unpaired) given n=6 per group; report raw and BH-adjusted p-values across cell types.",
+                "State explicitly that these are inferred proportions/scores, not measured cell counts, and that skin-specific reference signatures were not used (these methods are largely tumor/blood-derived), so interpret cautiously for skin-resident populations (e.g., keratinocytes are not covered)."
+              ],
+              "acceptance_criteria": [
+                "A per-sample, per-cell-type score/proportion matrix is produced for at least two deconvolution methods.",
+                "A group-comparison table (lesional vs control) with test statistic and BH-adjusted p-value per cell type is produced for each method.",
+                "The report explicitly notes the caution about applying non-skin-derived reference signatures to skin tissue."
+              ],
+              "packages": [
+                "immunedeconv",
+                "MCPcounter",
+                "xCell",
+                "quantiseqr",
+                "data.table",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "immune-profiling-agent"
+            },
+            {
+              "id": "T5S1",
+              "name": "PPI network context of significant DE genes",
+              "track": "T2",
+              "step_type": "network_analysis",
+              "question": "Among genes significantly differentially expressed between lesional and control skin (T2S1), which form a connected, high-confidence protein-protein interaction subnetwork, and which are hub genes within it?",
+              "context": "A STRING v12.0 human PPI network is confirmed present as two files: a protein-info file (STRING id to gene symbol mapping) and a protein-links file (STRING id pairs with combined confidence scores). The links file is space-delimited despite the .txt name, gzipped, ~13.7M edges (both directions), and must be joined against the info file to translate STRING ids to gene symbols before it can be related to the DE gene list.",
+              "constraints": [
+                "Join the info file's preferred_name to both protein1 and protein2 in the links file to recover gene symbols before any filtering.",
+                "Apply the conventional high-confidence cutoff combined_score >= 700 before building the graph (this reduces the graph from ~13.7M directed rows to roughly 237,000 unique undirected edges over ~16,200 proteins) — do not attempt distance-based network measures on the full unfiltered graph, it is too dense to be meaningful.",
+                "Restrict the induced subnetwork to nodes present in the T2S1 significant gene list (FDR<0.05); report both the full DE-gene subnetwork and, separately, degree/hub ranking within it.",
+                "Report how many of the significant DE genes have no edges in the high-confidence network (isolated nodes) rather than silently dropping them."
+              ],
+              "acceptance_criteria": [
+                "A gene-symbol-resolved, high-confidence (score>=700) induced subnetwork of the significant DE genes is produced.",
+                "A hub-gene ranking (by degree or betweenness) within that subnetwork is reported.",
+                "The count of significant DE genes with zero edges in the high-confidence network is reported explicitly."
+              ],
+              "packages": [
+                "igraph",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent"
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

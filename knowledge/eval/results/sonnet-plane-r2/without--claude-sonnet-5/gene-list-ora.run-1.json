@@ -1,0 +1,186 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "gene-list-ora",
+  "run": 1,
+  "startedAt": "2026-09-05T21:09:34.485Z",
+  "elapsedMs": 26635,
+  "outcome": "plan_submitted",
+  "planId": "pln-20948dcc",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Define significant gene set and background from DESeq2 results",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not use the full genome as background — use only genes actually tested in this DESeq2 contrast (present in de_results.csv with non-NA padj) to avoid inflated enrichment significance",
+          "sample_01's low library size caveat is not directly relevant here since the DE table is already computed, but note it as a limitation on the reliability of the input contrast"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "Which genes in the treated (AD lesional) vs control DESeq2 contrast (de_results.csv, 12000 genes x 8 columns) meet significance (padj < 0.05 and |log2FoldChange| > 1), and what is the appropriate background gene universe for enrichment testing?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Loads de_results.csv, confirms columns for gene identifier, log2_fold_change, and adjusted p-value are present",
+          "Reports counts: total genes tested, genes with non-NA padj, and number passing padj<0.05 & |log2FC|>1, split into up- and down-regulated",
+          "Flags if the significant gene count is very small (<10) or very large (>50% of universe), since either undermines ORA interpretability",
+          "Writes out two gene lists (HGNC symbols): significant gene set and background universe (all genes with non-NA padj in the table), plus a summary table of the filtering"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "GO Biological Process over-representation analysis",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "GO ORA results are highly sensitive to the significance threshold and background choice made in T1S1 — report these explicitly alongside results",
+          "Do not interpret enrichment p-values as effect sizes; report gene ratios and term-level gene counts alongside significance",
+          "If the significant gene set from T1S1 is small (<10-15 genes), flag that ORA power is limited and results should be treated as exploratory"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "GO.db",
+          "enrichplot"
+        ],
+        "question": "Which GO Biological Process terms are significantly over-represented (BH-adjusted p < 0.05) among the genes significant in the AD lesional vs control DESeq2 contrast, relative to the background of all genes tested in that contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Runs clusterProfiler::enrichGO (ont='BP') with org.Hs.eg.db as the annotation source, using the significant gene list from T1S1 as input and the study-specific background universe (not the whole genome) as universe",
+          "Applies BH (fdr) correction for GO terms and reports terms at q<0.05, with GeneRatio, BgRatio, adjusted p-value, and the contributing gene symbols per term",
+          "Simplifies/collapses highly redundant GO terms (e.g., via clusterProfiler::simplify) to avoid reporting near-duplicate parent/child terms as independent findings",
+          "Produces a results table (all tested terms with stats) and a dot/bar plot of the top significant terms, and explicitly states if zero terms reach significance",
+          "Separately reports up- and down-regulated gene ORA results if both directions have enough genes (>=10), rather than pooling only"
+        ]
+      }
+    ],
+    "title": "GO BP over-representation in AD lesional vs control skin",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The DESeq2 results table (de_results.csv, 12000 genes) already provides the treated (AD lesional) vs control contrast statistics for this 6-vs-6 unpaired bulk RNA-seq skin dataset. The research question is purely about which GO Biological Process terms are over-represented among significant genes, so no re-analysis of counts is needed — the existing DE table is the input. Step 1 loads and QCs the DE table, applies standard significance thresholds (padj < 0.05, |log2FC| > 1) to define the significant gene set and an appropriate background (all tested/expressed genes in the table, not the whole genome), and hands off a clean gene list plus universe. Step 2 runs GO Biological Process over-representation analysis (clusterProfiler::enrichGO with org.Hs.eg.db, ont='BP') against that background, with BH correction, and reports the significant terms with gene ratios and core enrichment genes. Because org.Hs.eg.db and GO.db are both installed (human, current GO release), no external reference file is required; WikiPathways human GMT is available as a secondary cross-check but GO BP ORA via clusterProfiler is the primary, directly-supported method for this question."
+  },
+  "usage": {
+    "inputTokens": 131808,
+    "outputTokens": 2042,
+    "cacheCreationInputTokens": 69862,
+    "cacheReadInputTokens": 61910,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "GO.db",
+          "enrichplot",
+          "fgsea",
+          "gseapy"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "GO BP over-representation in AD lesional vs control skin",
+          "analytical_narrative": "The DESeq2 results table (de_results.csv, 12000 genes) already provides the treated (AD lesional) vs control contrast statistics for this 6-vs-6 unpaired bulk RNA-seq skin dataset. The research question is purely about which GO Biological Process terms are over-represented among significant genes, so no re-analysis of counts is needed — the existing DE table is the input. Step 1 loads and QCs the DE table, applies standard significance thresholds (padj < 0.05, |log2FC| > 1) to define the significant gene set and an appropriate background (all tested/expressed genes in the table, not the whole genome), and hands off a clean gene list plus universe. Step 2 runs GO Biological Process over-representation analysis (clusterProfiler::enrichGO with org.Hs.eg.db, ont='BP') against that background, with BH correction, and reports the significant terms with gene ratios and core enrichment genes. Because org.Hs.eg.db and GO.db are both installed (human, current GO release), no external reference file is required; WikiPathways human GMT is available as a secondary cross-check but GO BP ORA via clusterProfiler is the primary, directly-supported method for this question.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Define significant gene set and background from DESeq2 results",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Which genes in the treated (AD lesional) vs control DESeq2 contrast (de_results.csv, 12000 genes x 8 columns) meet significance (padj < 0.05 and |log2FoldChange| > 1), and what is the appropriate background gene universe for enrichment testing?",
+              "acceptance_criteria": [
+                "Loads de_results.csv, confirms columns for gene identifier, log2_fold_change, and adjusted p-value are present",
+                "Reports counts: total genes tested, genes with non-NA padj, and number passing padj<0.05 & |log2FC|>1, split into up- and down-regulated",
+                "Flags if the significant gene count is very small (<10) or very large (>50% of universe), since either undermines ORA interpretability",
+                "Writes out two gene lists (HGNC symbols): significant gene set and background universe (all genes with non-NA padj in the table), plus a summary table of the filtering"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do not use the full genome as background — use only genes actually tested in this DESeq2 contrast (present in de_results.csv with non-NA padj) to avoid inflated enrichment significance",
+                "sample_01's low library size caveat is not directly relevant here since the DE table is already computed, but note it as a limitation on the reliability of the input contrast"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "GO Biological Process over-representation analysis",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which GO Biological Process terms are significantly over-represented (BH-adjusted p < 0.05) among the genes significant in the AD lesional vs control DESeq2 contrast, relative to the background of all genes tested in that contrast?",
+              "acceptance_criteria": [
+                "Runs clusterProfiler::enrichGO (ont='BP') with org.Hs.eg.db as the annotation source, using the significant gene list from T1S1 as input and the study-specific background universe (not the whole genome) as universe",
+                "Applies BH (fdr) correction for GO terms and reports terms at q<0.05, with GeneRatio, BgRatio, adjusted p-value, and the contributing gene symbols per term",
+                "Simplifies/collapses highly redundant GO terms (e.g., via clusterProfiler::simplify) to avoid reporting near-duplicate parent/child terms as independent findings",
+                "Produces a results table (all tested terms with stats) and a dot/bar plot of the top significant terms, and explicitly states if zero terms reach significance",
+                "Separately reports up- and down-regulated gene ORA results if both directions have enough genes (>=10), rather than pooling only"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "GO.db",
+                "enrichplot"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "GO ORA results are highly sensitive to the significance threshold and background choice made in T1S1 — report these explicitly alongside results",
+                "Do not interpret enrichment p-values as effect sizes; report gene ratios and term-level gene counts alongside significance",
+                "If the significant gene set from T1S1 is small (<10-15 genes), flag that ORA power is limited and results should be treated as exploratory"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

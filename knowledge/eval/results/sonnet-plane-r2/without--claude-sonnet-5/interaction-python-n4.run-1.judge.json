@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly frames the question as a genotype:treatment interaction, fits the full factorial in PyDESeq2 with stated reference levels, tests the interaction coefficient by Wald, and recovers simple effects via a 4-level group parametrization, all in Python with a stated n=4 power caveat. QC includes PCA and a sample correlation heatmap but omits library sizes and any explicit policy for handling an outlier; the low-count filter is stated and justified by group size, and raw counts enter the model with median-of-ratios size factors. BH at alpha 0.05 is stated but no fold-change shrinkage is applied to the reported effects. Enrichment names organism-matched collections, an explicit tested-gene universe, and a signed ranking metric, but gives no collection versions or gene-set size window; the report lacks software versions."
+}

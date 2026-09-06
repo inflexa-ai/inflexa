@@ -13,7 +13,9 @@ export const SituationFieldsSchema = z.object({
     question: z
         .enum(["differential_expression", "enrichment", "qc", "full_plan"])
         .describe(
-            "What the plan needs a procedure for. `full_plan` returns QC, filtering, the model, the test, shrinkage, multiple testing, enrichment, and the report in one answer.",
+            "What the plan needs a procedure for. `full_plan` returns QC, filtering, the model, the test, shrinkage, multiple testing, enrichment, and the report in one answer. " +
+                "Use `differential_expression` when the research question does not ask for pathways or gene sets; an enrichment step the user did not ask for is unasked scope. " +
+                "Use `enrichment` when a results table is the input and no new test is fitted, and `qc` when the question stops at the sample structure.",
         ),
     modality: z.literal("bulk_rna_seq").describe("The assay. Phase 0 serves bulk RNA-seq only."),
     data_state: z

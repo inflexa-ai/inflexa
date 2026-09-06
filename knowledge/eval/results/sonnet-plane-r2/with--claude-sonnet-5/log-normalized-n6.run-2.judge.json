@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies log2(TPM+1) as non-count data, rules out DESeq2/edgeR/voom, and fits limma-trend (lmFit, eBayes trend=TRUE) with control as the explicit reference and a named treated - control contrast, BH at 0.05 via topTable, and no re-normalization, with a stated min/max range check. QC on the log values is present with PCA on top-500 variable genes, a distance heatmap, and outlier flagging, though no explicit policy for handling an outlier is given and the strandedness caveat is irrelevant. The low-expression filter is group-independent and on log values but the floor is left unspecified. Enrichment was not asked by the user; the GSEA step is well specified (full ranked list, moderated t, Hallmark/Reactome with version, 15-500 size window) but is an unrequested addition. The report step names the method, versions, design, thresholds, tested and significant counts, the facility's transform, and the design caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 6,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly frames the question as a condition:time interaction in a single DESeq2 model (~ condition + time + condition:time) and adds the simple effects within each time point, which matches the reference; it does not, however, state that time is a two-level factor rather than the continuous time_hours column, nor name the reference levels. QC is a PCA/sample-distance plot by condition and time but without library-size checks or an outlier policy; the low-count filter is only vaguely 'near-zero'; normalization is implicit in using DESeq2 with raw counts rather than stated as size factors. BH at 0.05 is stated, but fold-change shrinkage is never described in the acceptance criteria (apeglm is merely listed, and it cannot shrink the simple-effect contrasts the plan proposes; ashr would be needed). Enrichment and a STRING network are not warranted by the question; the enrichment step does define an explicit universe and collection but gives no version or size window and builds a 'time-invariant' set from non-significance, and the report omits versions and design caveats."
+}

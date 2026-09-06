@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 1,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly fits a single DESeq2 model with ~ subject + condition, control as reference, and extracts the three pairwise Wald contrasts, but it omits the joint LRT (reduced model ~ subject) for any condition effect that the reference calls for. QC is present (PCA/sample distance colored by subject and condition, dispersion check) but library sizes and an explicit outlier policy are absent, and no low-count filter is stated at all. Normalization is only implied by passing raw counts to DESeq() rather than stated as size factors; BH at 0.05 is explicit but there is no fold-change shrinkage (ashr/apeglm) and the |log2FC|>1 cut is applied post hoc instead of via lfcThreshold. Enrichment names a versioned WikiPathways collection and a 12000-gene background but leaves ORA vs GSEA, the ranking metric, and a set-size window unspecified; the report states counts and caveats but not package versions."
+}

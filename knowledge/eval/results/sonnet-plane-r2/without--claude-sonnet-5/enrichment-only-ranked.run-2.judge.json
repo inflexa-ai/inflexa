@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly refuses to redo DE and runs preranked GSEA on the full ranked list with a stated, appropriate metric (Wald stat or signed -log10 p), with BH on the pathways and direction reported, which matches the core of the reference. It weakens itself by adding an ORA track on the padj<0.05 subset (mitigated by the explicit tested-gene universe and directional split) and by hedging between FDR<0.25 and FDR<0.05. It omits the set-size window, a fixed seed, leading-edge reporting, and any check that the delivered table is uncut, and it never names the gseapy or MSigDB versions. The sample_01 shallow-library concern is only flagged as a caveat, which is the right policy given no counts are remodeled, though the '12-gene study' wording is a slip."
+}

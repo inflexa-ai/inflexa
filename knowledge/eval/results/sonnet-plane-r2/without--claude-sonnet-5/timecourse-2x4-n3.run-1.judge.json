@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the condition:time interaction as the question and specifies the DESeq2 LRT with the full (~condition + time + condition:time) and reduced (~condition + time) models, with time as a factor and the 3-replicate power caveat stated. QC covers library size, PCA and vst sample distances with an explicit no-silent-drop outlier policy. Weaknesses: the low-count filter is vague ('near-zero') without a stated rule; the reference level of condition is never named; fold-change shrinkage for the reported per-timepoint effects is not requested (the 'wide unshrunk prior' remark is confused for an LRT) and no thresholds are placed in the test; enrichment was not asked for and, though it names a universe and collections, lacks versions and a set-size window; software versions are not required in the report."
+}

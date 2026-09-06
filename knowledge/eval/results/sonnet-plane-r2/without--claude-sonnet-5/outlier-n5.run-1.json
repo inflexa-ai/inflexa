@@ -1,0 +1,685 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "outlier-n5",
+  "run": 1,
+  "startedAt": "2026-09-05T21:48:45.566Z",
+  "elapsedMs": 367869,
+  "outcome": "plan_submitted",
+  "planId": "pln-a4423cc8",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC diagnostics and outlier characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A whole-sample PCA outlier can reflect a genuine strong biological responder as easily as a technical failure; this step must report the observation without concluding a cause",
+          "With only 5 samples per group, PCA structure is noisy — treat PC1/PC2 separation as suggestive, not proof, of a single dominant axis of variation"
+        ],
+        "context": "Raw integer gene-level counts from Salmon, first column gene symbol, one column per sample (12000 x 11 CSV); metadata.csv has one row per sample with a condition column (10 x 2 CSV). Design is 5 treated vs 5 control, unpaired, single batch. The data profile already flagged sample_03 as an outlier on PCA and the sample distance heatmap; this step must reproduce that diagnostic on the actual files and add the quantitative detail (which group, how far, whether library size differs) needed to design the sensitivity analysis in T1S2.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Which condition (treated or control) is sample_03 assigned to in metadata.csv, and how far does it deviate from its own group and from the opposite group on variance-stabilized PCA and sample-distance clustering, using the 12000-gene x 10-sample counts.csv from Salmon?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Use variance-stabilizing transformation (vst) or rlog from DESeq2 for PCA/heatmap, not raw or simply log2(counts+1)",
+          "Do not drop or impute any sample in this step",
+          "Report exact numeric distances/metrics, not just a qualitative plot"
+        ],
+        "acceptance_criteria": [
+          "Reports sample_03's condition label from metadata.csv explicitly",
+          "Produces a PCA plot (PC1/PC2 at minimum) on VST- or rlog-transformed counts with all 10 samples labeled by condition and by sample ID",
+          "Produces a sample-to-sample Euclidean distance heatmap with hierarchical clustering, samples labeled by condition",
+          "Quantifies sample_03's distance to its own group centroid versus the opposite group centroid in PCA space",
+          "Reports per-sample library size (total counts) so a technical explanation (depth) can be distinguished from a biological one",
+          "Does not remove or modify any sample — output is diagnostic only, feeding the design decision in T1S2"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: primary (outlier-excluded) and sensitivity (full cohort)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=4 vs n=5 (outlier-excluded model) has materially less power than n=5 vs n=5 — do not report it as equivalent in sensitivity to the full-cohort model",
+          "A gene significant only in the full-cohort model may be driven entirely by sample_03 rather than a real group effect; a gene significant only after exclusion may be a real effect masked by that sample's noise — both directions are possible and must be reported, not resolved by assumption"
+        ],
+        "context": "Same counts.csv/metadata.csv as T1S1. T1S1 established which condition sample_03 belongs to and how extreme its deviation is; this step uses that to build the outlier-excluded model correctly (excluding it from whichever condition group it was labeled under) while keeping the full-cohort model as the sensitivity comparison. DESeq2's Cook's-distance-based automatic outlier handling operates per-gene within an otherwise-consistent sample set and does not substitute for this whole-sample sensitivity comparison.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between treated and control in this muscle dataset, and does that gene list depend on whether sample_03 (the PCA/heatmap outlier identified in T1S1) is included in the model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use raw integer counts as input to DESeqDataSetFromMatrix — do not pre-normalize before DESeq2",
+          "Use BH (padj) correction, not raw p-values, for all significance calls",
+          "Do not silently pick one model's result as 'the' answer without reporting the other explicitly in the output"
+        ],
+        "acceptance_criteria": [
+          "Fits DESeq2 with design ~condition on raw integer counts (no pre-normalization) for two models: (a) full cohort, 5 treated vs 5 control including sample_03, (b) sample_03 excluded, giving an asymmetric n (one group at 4, the other at 5)",
+          "Applies independent filtering and apeglm log2FC shrinkage in both models",
+          "Reports each model's full results table (gene, baseMean, log2FoldChange, lfcSE, padj) and the significant gene set at padj < 0.05 (report count of significant genes at |log2FC| > 1 as a stricter secondary cut)",
+          "Reports the overlap (Jaccard/count) between the two models' significant gene sets, and flags any gene significant in only one model as outlier-sensitive",
+          "Produces a volcano plot for each model with the outlier-sensitive genes marked",
+          "States explicitly which model is treated as primary and why, and reports the reduced power/asymmetric n consequence of exclusion rather than treating exclusion as cost-free"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on primary and sensitivity DE gene sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If a named reference gene set collection is absent from the environment at run time, report which collections were actually used rather than failing silently",
+          "Small significant gene lists (particularly from the reduced-power outlier-excluded model) can produce unstable or underpowered ORA results — report this explicitly if the significant gene count is very small"
+        ],
+        "context": "Consumes both DE results tables produced in T1S2 (outlier-excluded primary model and full-cohort sensitivity model). Reference gene sets needed: a pathway/process gene set collection for Homo sapiens, such as WikiPathways human pathways, MSigDB Hallmark human gene sets, and MSigDB GO Biological Process human gene sets — all curated for gene-symbol input matching the gene-symbol-indexed counts matrix.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "GSEABase",
+          "ggplot2"
+        ],
+        "question": "Which biological pathways or processes are enriched among genes differing between treated and control muscle samples, and is that pathway-level signal consistent between the outlier-excluded (primary) and full-cohort (sensitivity) DESeq2 results from T1S2?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Match gene set organism to Homo sapiens only — do not use mouse or rat pathway files present in the environment",
+          "Use BH-adjusted p-values for reporting significant pathways in both ORA and GSEA",
+          "GO Biological Process sets are a nested hierarchy — collapse or flag blocks of highly overlapping significant parent/child terms rather than reporting them as independent findings"
+        ],
+        "acceptance_criteria": [
+          "Runs hypergeometric over-representation analysis (ORA) on the significant gene set (padj < 0.05) from each of the two T1S2 models separately",
+          "Runs preranked GSEA (fgsea) on the full ranked gene list (by DESeq2 stat or shrunken log2FC) from each of the two T1S2 models separately",
+          "Uses human gene sets matched to the dataset organism (Homo sapiens): WikiPathways human, MSigDB Hallmark human, and MSigDB GO Biological Process human — reports which of these references were actually available and used at run time, and proceeds with whichever subset is present if any is missing",
+          "Reports top enriched terms (by adjusted p-value) per gene set collection, per model, with clear labeling of which DE model each result comes from",
+          "Explicitly compares enrichment results between the two models and reports whether pathway-level conclusions are robust to the sample_03 outlier decision, separately from the gene-level concordance already reported in T1S2"
+        ]
+      }
+    ],
+    "title": "Treated vs control muscle DE with outlier sensitivity analysis",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data context flags sample_03 as separating from every other sample on PCA and the sample-distance heatmap, in a design with only 5 treated vs 5 control (unpaired, single batch, raw Salmon gene counts, 12000 genes x 10 samples, Homo sapiens muscle). At n=5 per group, a single divergent sample can dominate a two-group test — a documented failure mode for small-n RNA-seq (Schurch et al. 2016, RNA; Conesa et al. 2016, Genome Biology). DESeq2's built-in Cook's-distance mechanism only guards against single-gene outliers within an otherwise consistent sample, not a whole-transcriptome outlier sample, so it cannot resolve this caveat on its own. The plan therefore: (1) characterizes sample_03 quantitatively — confirms which condition it is labeled under and how far it deviates from its group centroid versus the other group, using a variance-stabilized PCA and sample-distance heatmap computed directly on this dataset; (2) runs DESeq2 (~condition, apeglm shrinkage, BH FDR) twice — once on the full 5-vs-5 cohort and once with sample_03 excluded — and reports both gene lists plus their concordance, so that no single DE call is presented without knowing whether it depends on that one sample; (3) runs pathway enrichment (hypergeometric ORA + fgsea preranked GSEA) against human WikiPathways, MSigDB Hallmark, and GO Biological Process gene sets on both the primary (outlier-excluded) and sensitivity (full-cohort) gene lists, since pathway-level signal is typically more robust to a single-sample perturbation than individual gene calls, and that robustness (or lack of it) is itself informative for answering 'which genes differ.'"
+  },
+  "usage": {
+    "inputTokens": 3186788,
+    "outputTokens": 13733,
+    "cacheCreationInputTokens": 284161,
+    "cacheReadInputTokens": 2901989,
+    "reasoningTokens": 5313
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human",
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "fgsea",
+          "clusterProfiler",
+          "pheatmap",
+          "EnhancedVolcano",
+          "ashr",
+          "apeglm"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "GSVA",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "sva",
+          "limma"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq outlier sample small sample size differential expression sensitivity analysis",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "outlier detection RNA-seq DESeq2 Cook's distance small sample",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Cook's distance outlier RNA-seq differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq quality control outlier sample exclusion differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 differential expression RNA-seq",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Cook's distance outlier detection genomics count data",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "principal component analysis outlier sample RNA-seq quality control",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq quality control best practices",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "robust regression outlier RNA-seq skeletal muscle transcriptome treatment",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "skeletal muscle transcriptome treatment RNA-seq differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string ppi human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string-ppi-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "MSigDB hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene sets biological process"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "c5"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTEx muscle normal expression"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "surrogate variable analysis unwanted variation small sample gene expression outlier",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "robust principal component analysis outlier detection genomics",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "PoissonSeq",
+          "edgeR",
+          "RUVSeq",
+          "outliers"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ComplexHeatmap",
+          "rrvgo",
+          "gseapy",
+          "GSEABase"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "STRINGdb",
+          "igraph",
+          "networkx"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph",
+          "STRING",
+          "readr",
+          "data.table"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph",
+          "R (CRAN)"
+        ],
+        "language": "r"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "igraph",
+        "language": "r"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "stringdb"
+        ],
+        "language": "python"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "PCAtools",
+          "mixOmics"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "sensitivity analysis leave one out RNA-seq differential expression outlier robustness",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "outlier sample RNA-seq differential expression sensitivity analysis small sample size",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "Cook's distance outlier detection DESeq2 RNA-seq",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "Cook's distance outlier detection DESeq2 RNA-seq",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "RNA-seq sample outlier sensitivity differential expression",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "edgeR robust dispersion outlier robust hyperparameter estimation RNA-seq",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 apeglm shrinkage LFC effect size low sample size",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "apeglm approximate posterior estimation shrinkage sequence count data",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "apeglm approximate posterior estimation shrinkage sequence count data",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "immune deconvolution muscle bulk RNA-seq immune infiltration",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "robust outlier detection small sample RNA-seq differential expression",
+        "limit": 3
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "MCPcounter",
+          "xCell",
+          "ConsensusTME",
+          "immunedeconv"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "immunedeconv"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control muscle DE with outlier sensitivity analysis",
+          "analytical_narrative": "The data context flags sample_03 as separating from every other sample on PCA and the sample-distance heatmap, in a design with only 5 treated vs 5 control (unpaired, single batch, raw Salmon gene counts, 12000 genes x 10 samples, Homo sapiens muscle). At n=5 per group, a single divergent sample can dominate a two-group test — a documented failure mode for small-n RNA-seq (Schurch et al. 2016, RNA; Conesa et al. 2016, Genome Biology). DESeq2's built-in Cook's-distance mechanism only guards against single-gene outliers within an otherwise consistent sample, not a whole-transcriptome outlier sample, so it cannot resolve this caveat on its own. The plan therefore: (1) characterizes sample_03 quantitatively — confirms which condition it is labeled under and how far it deviates from its group centroid versus the other group, using a variance-stabilized PCA and sample-distance heatmap computed directly on this dataset; (2) runs DESeq2 (~condition, apeglm shrinkage, BH FDR) twice — once on the full 5-vs-5 cohort and once with sample_03 excluded — and reports both gene lists plus their concordance, so that no single DE call is presented without knowing whether it depends on that one sample; (3) runs pathway enrichment (hypergeometric ORA + fgsea preranked GSEA) against human WikiPathways, MSigDB Hallmark, and GO Biological Process gene sets on both the primary (outlier-excluded) and sensitivity (full-cohort) gene lists, since pathway-level signal is typically more robust to a single-sample perturbation than individual gene calls, and that robustness (or lack of it) is itself informative for answering 'which genes differ.'",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC diagnostics and outlier characterization",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Which condition (treated or control) is sample_03 assigned to in metadata.csv, and how far does it deviate from its own group and from the opposite group on variance-stabilized PCA and sample-distance clustering, using the 12000-gene x 10-sample counts.csv from Salmon?",
+              "acceptance_criteria": [
+                "Reports sample_03's condition label from metadata.csv explicitly",
+                "Produces a PCA plot (PC1/PC2 at minimum) on VST- or rlog-transformed counts with all 10 samples labeled by condition and by sample ID",
+                "Produces a sample-to-sample Euclidean distance heatmap with hierarchical clustering, samples labeled by condition",
+                "Quantifies sample_03's distance to its own group centroid versus the opposite group centroid in PCA space",
+                "Reports per-sample library size (total counts) so a technical explanation (depth) can be distinguished from a biological one",
+                "Does not remove or modify any sample — output is diagnostic only, feeding the design decision in T1S2"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level counts from Salmon, first column gene symbol, one column per sample (12000 x 11 CSV); metadata.csv has one row per sample with a condition column (10 x 2 CSV). Design is 5 treated vs 5 control, unpaired, single batch. The data profile already flagged sample_03 as an outlier on PCA and the sample distance heatmap; this step must reproduce that diagnostic on the actual files and add the quantitative detail (which group, how far, whether library size differs) needed to design the sensitivity analysis in T1S2.",
+              "constraints": [
+                "Use variance-stabilizing transformation (vst) or rlog from DESeq2 for PCA/heatmap, not raw or simply log2(counts+1)",
+                "Do not drop or impute any sample in this step",
+                "Report exact numeric distances/metrics, not just a qualitative plot"
+              ],
+              "caveats": [
+                "A whole-sample PCA outlier can reflect a genuine strong biological responder as easily as a technical failure; this step must report the observation without concluding a cause",
+                "With only 5 samples per group, PCA structure is noisy — treat PC1/PC2 separation as suggestive, not proof, of a single dominant axis of variation"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: primary (outlier-excluded) and sensitivity (full cohort)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between treated and control in this muscle dataset, and does that gene list depend on whether sample_03 (the PCA/heatmap outlier identified in T1S1) is included in the model?",
+              "acceptance_criteria": [
+                "Fits DESeq2 with design ~condition on raw integer counts (no pre-normalization) for two models: (a) full cohort, 5 treated vs 5 control including sample_03, (b) sample_03 excluded, giving an asymmetric n (one group at 4, the other at 5)",
+                "Applies independent filtering and apeglm log2FC shrinkage in both models",
+                "Reports each model's full results table (gene, baseMean, log2FoldChange, lfcSE, padj) and the significant gene set at padj < 0.05 (report count of significant genes at |log2FC| > 1 as a stricter secondary cut)",
+                "Reports the overlap (Jaccard/count) between the two models' significant gene sets, and flags any gene significant in only one model as outlier-sensitive",
+                "Produces a volcano plot for each model with the outlier-sensitive genes marked",
+                "States explicitly which model is treated as primary and why, and reports the reduced power/asymmetric n consequence of exclusion rather than treating exclusion as cost-free"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same counts.csv/metadata.csv as T1S1. T1S1 established which condition sample_03 belongs to and how extreme its deviation is; this step uses that to build the outlier-excluded model correctly (excluding it from whichever condition group it was labeled under) while keeping the full-cohort model as the sensitivity comparison. DESeq2's Cook's-distance-based automatic outlier handling operates per-gene within an otherwise-consistent sample set and does not substitute for this whole-sample sensitivity comparison.",
+              "constraints": [
+                "Use raw integer counts as input to DESeqDataSetFromMatrix — do not pre-normalize before DESeq2",
+                "Use BH (padj) correction, not raw p-values, for all significance calls",
+                "Do not silently pick one model's result as 'the' answer without reporting the other explicitly in the output"
+              ],
+              "caveats": [
+                "n=4 vs n=5 (outlier-excluded model) has materially less power than n=5 vs n=5 — do not report it as equivalent in sensitivity to the full-cohort model",
+                "A gene significant only in the full-cohort model may be driven entirely by sample_03 rather than a real group effect; a gene significant only after exclusion may be a real effect masked by that sample's noise — both directions are possible and must be reported, not resolved by assumption"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on primary and sensitivity DE gene sets",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways or processes are enriched among genes differing between treated and control muscle samples, and is that pathway-level signal consistent between the outlier-excluded (primary) and full-cohort (sensitivity) DESeq2 results from T1S2?",
+              "acceptance_criteria": [
+                "Runs hypergeometric over-representation analysis (ORA) on the significant gene set (padj < 0.05) from each of the two T1S2 models separately",
+                "Runs preranked GSEA (fgsea) on the full ranked gene list (by DESeq2 stat or shrunken log2FC) from each of the two T1S2 models separately",
+                "Uses human gene sets matched to the dataset organism (Homo sapiens): WikiPathways human, MSigDB Hallmark human, and MSigDB GO Biological Process human — reports which of these references were actually available and used at run time, and proceeds with whichever subset is present if any is missing",
+                "Reports top enriched terms (by adjusted p-value) per gene set collection, per model, with clear labeling of which DE model each result comes from",
+                "Explicitly compares enrichment results between the two models and reports whether pathway-level conclusions are robust to the sample_03 outlier decision, separately from the gene-level concordance already reported in T1S2"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "GSEABase",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Consumes both DE results tables produced in T1S2 (outlier-excluded primary model and full-cohort sensitivity model). Reference gene sets needed: a pathway/process gene set collection for Homo sapiens, such as WikiPathways human pathways, MSigDB Hallmark human gene sets, and MSigDB GO Biological Process human gene sets — all curated for gene-symbol input matching the gene-symbol-indexed counts matrix.",
+              "constraints": [
+                "Match gene set organism to Homo sapiens only — do not use mouse or rat pathway files present in the environment",
+                "Use BH-adjusted p-values for reporting significant pathways in both ORA and GSEA",
+                "GO Biological Process sets are a nested hierarchy — collapse or flag blocks of highly overlapping significant parent/child terms rather than reporting them as independent findings"
+              ],
+              "caveats": [
+                "If a named reference gene set collection is absent from the environment at run time, report which collections were actually used rather than failing silently",
+                "Small significant gene lists (particularly from the reduced-power outlier-excluded model) can produce unstable or underpowered ORA results — report this explicitly if the significant gene count is very small"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

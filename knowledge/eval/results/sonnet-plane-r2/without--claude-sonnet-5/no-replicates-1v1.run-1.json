@@ -1,0 +1,163 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "no-replicates-1v1",
+  "run": 1,
+  "startedAt": "2026-09-05T21:08:50.993Z",
+  "elapsedMs": 23414,
+  "outcome": "plan_submitted",
+  "planId": "pln-4906fd45",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DE analysis: treated vs control (no-replicate design)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "No biological replication: within-group variance cannot be estimated, so standard NB dispersion fitting is not applicable — do not silently fall back to default DESeq2 replicate-based dispersion estimation, which will produce spuriously confident p-values or fail outright with only 2 columns",
+          "Verify metadata.csv correctly assigns each of the 2 sample columns in counts.csv to 'treated' vs 'control' before running any comparison",
+          "12000 gene rows is a filtered/summarized set already, not raw all-gene salmon output — do not re-filter aggressively for low counts beyond a basic zero-count exclusion, or too little signal will remain"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes are differentially expressed between the treated liver sample and the control liver sample, given a 1-vs-1 design with no biological replication?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts.csv (12000 genes x 2 samples) and metadata.csv are loaded and sample-to-condition mapping is verified against metadata before any comparison is run",
+          "DESeq2 (or equivalent) is run in a documented no-replicate mode: dispersion is fixed to a literature-typical value (e.g., DESeq2 blind/gene-est-disp workaround with a manually set dispersion, such as 0.1-0.4 range typical for RNA-seq) rather than estimated from within-group variance",
+          "Output table includes gene symbol, raw counts in both samples, log2 fold change, and a rough Wald-test p-value/FDR, explicitly labeled as approximate due to n=1 per group",
+          "A written caveat accompanies the results stating that with one sample per condition, no valid biological-replicate-based FDR control is possible, and that findings should be treated as hypothesis-generating fold-change screens, not confirmed DE calls",
+          "Results are ranked by absolute log2 fold change and saved as a full gene table plus a top-N (e.g., top 50 up and top 50 down) list"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on ranked DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Confirm the human WikiPathways GMT file is present before running; if absent at execution time, report the enrichment step as skipped rather than substituting a different organism's gene sets",
+          "Gene symbols in the DE table must match HGNC symbols used in the WikiPathways GMT; check case and aliasing before matching, since a silent low-overlap join underreports enrichment without erroring"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes with the largest fold-change (up and down) between the treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Enrichment is run on the fold-change-ranked gene list from T1S1 (e.g., pre-ranked GSEA-style test or over-representation test on top up/down gene sets) using the human WikiPathways gene sets",
+          "Gene set names are parsed from the '%'-delimited descriptor field of the GMT and reported as readable pathway names, not raw WikiPathways IDs",
+          "Output reports enriched pathway name, direction (up/down in treated), normalized enrichment score or odds ratio, and nominal/adjusted p-value",
+          "Report explicitly notes that pathway p-values inherit the statistical fragility of the upstream n=1-vs-n=1 DE call and should be read as descriptive, not confirmatory"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control DE, no replicates",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The counts.csv (12000 genes x 3 columns, 1 gene-symbol column + 2 sample columns) and metadata.csv describe a single treated sample vs a single control sample with zero biological replication. Standard DESeq2/edgeR dispersion estimation requires within-group replicates to estimate variance; with n=1 per group there is no way to distinguish biological variance from technical noise, so any per-gene p-value from a standard GLM would be fabricated precision. The only defensible options are: (1) DESeq2 run with a fixed, literature-typical dispersion (no replicate mode), which several tools support explicitly for this design and flags results as approximate, or (2) a simple fold-change/rank-based approach with explicit caveats and no valid p-values. I plan a single differential-expression step using DESeq2's no-replicate accommodation (blind dispersion estimate fixed a priori, e.g. gene-wise dispersion set to a conservative default) to produce log2FC and a rough significance call, explicitly reporting that FDR-corrected p-values are not statistically valid given n=1 vs n=1. This is followed by a functional enrichment step on the resulting ranked gene list using human WikiPathways gene sets (available in refs), to give the differential signal biological context despite the statistical limitation. No batch correction, immune deconvolution, or other specialized steps are warranted given the minimal design and the pure DE research question."
+  },
+  "usage": {
+    "inputTokens": 43230,
+    "outputTokens": 1906,
+    "cacheCreationInputTokens": 34076,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control DE, no replicates",
+          "analytical_narrative": "The counts.csv (12000 genes x 3 columns, 1 gene-symbol column + 2 sample columns) and metadata.csv describe a single treated sample vs a single control sample with zero biological replication. Standard DESeq2/edgeR dispersion estimation requires within-group replicates to estimate variance; with n=1 per group there is no way to distinguish biological variance from technical noise, so any per-gene p-value from a standard GLM would be fabricated precision. The only defensible options are: (1) DESeq2 run with a fixed, literature-typical dispersion (no replicate mode), which several tools support explicitly for this design and flags results as approximate, or (2) a simple fold-change/rank-based approach with explicit caveats and no valid p-values. I plan a single differential-expression step using DESeq2's no-replicate accommodation (blind dispersion estimate fixed a priori, e.g. gene-wise dispersion set to a conservative default) to produce log2FC and a rough significance call, explicitly reporting that FDR-corrected p-values are not statistically valid given n=1 vs n=1. This is followed by a functional enrichment step on the resulting ranked gene list using human WikiPathways gene sets (available in refs), to give the differential signal biological context despite the statistical limitation. No batch correction, immune deconvolution, or other specialized steps are warranted given the minimal design and the pure DE research question.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DE analysis: treated vs control (no-replicate design)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between the treated liver sample and the control liver sample, given a 1-vs-1 design with no biological replication?",
+              "acceptance_criteria": [
+                "Counts.csv (12000 genes x 2 samples) and metadata.csv are loaded and sample-to-condition mapping is verified against metadata before any comparison is run",
+                "DESeq2 (or equivalent) is run in a documented no-replicate mode: dispersion is fixed to a literature-typical value (e.g., DESeq2 blind/gene-est-disp workaround with a manually set dispersion, such as 0.1-0.4 range typical for RNA-seq) rather than estimated from within-group variance",
+                "Output table includes gene symbol, raw counts in both samples, log2 fold change, and a rough Wald-test p-value/FDR, explicitly labeled as approximate due to n=1 per group",
+                "A written caveat accompanies the results stating that with one sample per condition, no valid biological-replicate-based FDR control is possible, and that findings should be treated as hypothesis-generating fold-change screens, not confirmed DE calls",
+                "Results are ranked by absolute log2 fold change and saved as a full gene table plus a top-N (e.g., top 50 up and top 50 down) list"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "No biological replication: within-group variance cannot be estimated, so standard NB dispersion fitting is not applicable — do not silently fall back to default DESeq2 replicate-based dispersion estimation, which will produce spuriously confident p-values or fail outright with only 2 columns",
+                "Verify metadata.csv correctly assigns each of the 2 sample columns in counts.csv to 'treated' vs 'control' before running any comparison",
+                "12000 gene rows is a filtered/summarized set already, not raw all-gene salmon output — do not re-filter aggressively for low counts beyond a basic zero-count exclusion, or too little signal will remain"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on ranked DE gene list",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which WikiPathways human pathways are enriched among genes with the largest fold-change (up and down) between the treated and control liver samples?",
+              "acceptance_criteria": [
+                "Enrichment is run on the fold-change-ranked gene list from T1S1 (e.g., pre-ranked GSEA-style test or over-representation test on top up/down gene sets) using the human WikiPathways gene sets",
+                "Gene set names are parsed from the '%'-delimited descriptor field of the GMT and reported as readable pathway names, not raw WikiPathways IDs",
+                "Output reports enriched pathway name, direction (up/down in treated), normalized enrichment score or odds ratio, and nominal/adjusted p-value",
+                "Report explicitly notes that pathway p-values inherit the statistical fragility of the upstream n=1-vs-n=1 DE call and should be read as descriptive, not confirmatory"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Confirm the human WikiPathways GMT file is present before running; if absent at execution time, report the enrichment step as skipped rather than substituting a different organism's gene sets",
+                "Gene symbols in the DE table must match HGNC symbols used in the WikiPathways GMT; check case and aliasing before matching, since a silent low-overlap join underreports enrichment without erroring"
+              ]
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

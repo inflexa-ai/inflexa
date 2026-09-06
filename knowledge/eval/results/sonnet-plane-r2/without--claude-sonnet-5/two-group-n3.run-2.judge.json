@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 5,
+    "normalization": 5,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly selects DESeq2 on raw Salmon counts with ~condition, control as reference, apeglm shrinkage and BH at 0.05, and it is explicit about n=3 power limits without lowering alpha. QC (library size, PCA/correlation on VST, explicit outlier flagging policy) precedes the test. Weaknesses: the low-count filter is left as an unspecified 'e.g.' threshold with no justification, and normalization (size factors) is never stated, only implied by feeding raw counts to DESeq2. Enrichment is added though not warranted for the question, and it omits an explicit ORA universe, collection version, size window, and a definite ranking metric. The report plan lacks package versions."
+}

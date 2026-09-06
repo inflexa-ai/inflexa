@@ -36,6 +36,16 @@ The agent loop MUST accept an early cap, a predicate the host gives, and MUST ta
 - **WHEN** the next iteration starts
 - **THEN** the loop takes the wrap-up path, the salvage turn offers `submit_plan` and `request_clarification`, and the plan lands before the iteration cap and the wall clock
 
+### Requirement: A placeholder text does not end a run
+
+A terminal tool that takes a text, the clarification question of the planner and the reason of the blocker tool, MUST refuse a text that is a placeholder or shorter than a few characters, with a retryable error that names the fault. The refusal MUST NOT record an outcome, thus the run continues.
+
+#### Scenario: A placeholder clarification
+
+- **GIVEN** a planner that calls `request_clarification` with the question "Placeholder, not used"
+- **WHEN** the tool runs
+- **THEN** it answers an error, no outcome is recorded, and a later call with a real question ends the run as a clarification
+
 ### Requirement: An unavailable answer does not invite a retry
 
 The unavailable answer of the reference listing MUST state that a later call in the run gives the same answer.

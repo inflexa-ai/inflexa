@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly uses DESeq2 Wald on raw counts for an unpaired 6-vs-6 single-batch design, refuses read-level deduplication, and keeps normalization inside the model, with a sensible 10-counts-in-6-samples filter and a keep-with-sensitivity policy for sample_01. However, it never explains the duplication with per-sample rRNA, mitochondrial, or intronic fractions and does not consider removing rRNA/mito genes if their share is large and uneven, which the reference requires for total RNA libraries. The design formula and reference level are only implied, no fold change shrinkage (apeglm) is used, and the |log2FC|>1 cutoff is applied post hoc rather than as lfcThreshold in the test. Enrichment was not requested; as written it names collections and versions and a tested-gene universe but the GSEA ranking metric log2FC*sign(-log10 p) is ill-defined and no gene set size window is given, and package versions are absent from the report."
+}

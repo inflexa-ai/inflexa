@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on the core: DESeq2 Wald on raw Salmon counts with median-of-ratios normalization inside the model, a minimal filter (>=10 counts in >=3 samples, tied to the smallest group), explicit control reference level and named contrast, BH at 0.05 passed to results(), apeglm shrinkage, and a blind-VST PCA/distance/library-size QC with an explicit no-silent-drop policy. It states low power at n=3 and refuses to loosen alpha. Minor deductions: the edgeR robustness arm does not explicitly state TMM normalization, and presenting the DESeq2/edgeR intersection as 'higher confidence' is a weak inferential claim that further reduces already-low power. Enrichment was not asked for and the reference treats it as not warranted; the plan adds it anyway, though the GSEA specification itself (full ranked list, Wald stat, tested-gene universe, named collections with versions, 15-500 size window) is correct."
+}

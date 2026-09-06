@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: one ~condition model fit on all twelve samples, an LRT against ~1 for the any-difference question, and two explicit Wald contrasts against a releveled control reference from the same fit, with ashr shrinkage and BH at 0.05 within each contrast. The filter (>=10 in >=4 samples, tied to the smallest group), median-of-ratios inside the model, blind VST QC with PCA/distances/library sizes, and a report listing design, thresholds, gene counts, versions, and the per-contrast FDR caveat are all stated. Deductions: the justification for ashr over apeglm is wrong (treated_x vs control is a coefficient against the reference, so apeglm would apply), the QC notes outliers but gives no explicit policy for handling one, and the unasked enrichment ranks the LRT results on an unsigned chi-square statistic, which is not a valid directional preranked GSEA input, while the Reactome collection is versioned only as 'current'."
+}

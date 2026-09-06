@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 5,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly fits a single DESeq2 model with subject as a blocking term and pulls all three pairwise contrasts from it, with control as the reference level, but it omits the joint test of any condition effect (LRT against ~subject) that the reference uses to answer 'responds to either treatment', substituting a union of vs-control hits instead. QC includes PCA/distances colored by subject and condition but no outlier or shallow-sample policy; the low-count filter is left as a vague 'e.g.' with no justification. BH at 0.05 and apeglm/ashr shrinkage are stated, but a post hoc |log2FC|>1 cutoff is applied rather than an lfcThreshold in the test, and apeglm is awkward for the A-vs-B contrast. Enrichment is not warranted here yet is included; it is done reasonably (fgsea, stated ranking metric, named collection) but lacks a version and size window. The report specifies thresholds, methods, and n=4 caveats but does not commit to reporting package versions or the number of genes tested."
+}

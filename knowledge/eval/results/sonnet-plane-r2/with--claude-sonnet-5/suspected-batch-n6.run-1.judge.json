@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the two condition-balanced clusters as an estimable latent structure and handles it with svaseq (full ~condition, null ~1), adding the estimator-chosen SVs to the DESeq2 design rather than adjusting counts, with explicit reference level, contrast, median-of-ratios normalization, BH at 0.05 and apeglm shrinkage. It loses a little on design fit for not first asking the analyst for the unrecorded variable and for only loosely stating the check that no SV tracks condition; the fdrtool fallback is an odd addition but is caveated. QC is thorough and colored by condition and cluster with a stated outlier policy, and the filter (>=10 in >=6) is minimal and justified. Enrichment was not requested; it is added but specified correctly (full ranked list, Wald stat, tested-gene universe, named versioned collections, 15-500 window), and the report section covers method, versions, design, thresholds, gene counts and design caveats."
+}

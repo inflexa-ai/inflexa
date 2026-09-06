@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the question as an interaction test and fits a single DESeq2 model ~genotype + treatment + genotype:treatment with explicit WT/vehicle reference levels, pulling the interaction coefficient plus both simple effects, with ashr shrinkage justified for non-single-coefficient contrasts and BH at a stated alpha. QC is thorough (sample reconciliation of the 17-vs-16 mismatch, blind VST PCA, distance heatmap, library sizes) though the handling policy for a flagged outlier or shallow sample beyond 'flag it' is not stated. The low-count filter is minimal and tied to the smallest cell size, and normalization stays inside the model. Enrichment was not requested but is specified well (full Wald-stat ranked list, fgsea, Hallmark/Reactome, 15-500 window), with the version only stated late and Reactome's release left vague; the report section covers versions, design, thresholds, gene counts, and the n=4 power caveat."
+}

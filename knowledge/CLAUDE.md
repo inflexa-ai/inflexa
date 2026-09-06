@@ -76,8 +76,10 @@ resolves its types.
   mirror, after the R templates, with the same applicability. The caller
   selects the language with a preference on the recommend request. A
   preference never changes a rule or a method.
-- A published snapshot is never edited. A correction is a new snapshot. A rule
-  is never deleted. It becomes deprecated with a `replaced_by` link.
+- A published snapshot is never edited. A correction is a new snapshot. After
+  the first published snapshot, a rule is never deleted: it becomes deprecated
+  with a `replaced_by` link, because a claim id in a decision record must
+  resolve. Before that release, delete a rule that a new rule replaces.
 - The step order of a modality lives in `kb/modalities/`. A new step type is a
   schema change, in `schema/` and in `src/model.ts` together.
 - A new Situation field is a schema change in three places: `schema/`,

@@ -1,0 +1,569 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "python-enrichment-only",
+  "run": 2,
+  "startedAt": "2026-09-05T21:35:24.591Z",
+  "elapsedMs": 96284,
+  "outcome": "plan_submitted",
+  "planId": "pln-8ed6d7e1",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on raw counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This QC is descriptive only; it does not gate the enrichment step, which uses the already-delivered DESeq2 results table, not these counts, as its direct input",
+          "sample_01's low depth is inherited context — report whether it appears as an outlier on PCA/distances, but do not re-run differential expression here"
+        ],
+        "context": "Inputs: counts.csv (12000 genes x 12 samples, raw Salmon counts) and metadata.csv (12 samples, condition column: 6 lesional/treated, 6 control, unpaired, single batch). Caveat already known: sample_01 has a library size ~4x below the median.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scikit-learn",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the 6 lesional (treated) and 6 control skin samples separate by condition on a variance-stabilized PCA, and how does sample_01's ~4x-below-median library size manifest in that structure?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "R-0033 requires sample-structure QC (blind variance-stabilizing transform, PCA on top-variable genes, sample-distance heatmap) on every count dataset before any downstream analysis; translated to the Python track (pydeseq2) per the user's Python-only constraint since the sourced template is R/DESeq2-based.",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+          "template": "tpl-qc-python@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use a variance-stabilizing transform (pydeseq2's vst equivalent, blind to condition) before PCA — do not run PCA on raw or merely log2(counts+1) data",
+          "Compute PCA on the top 500 most-variable genes after the transform",
+          "Do not drop sample_01 — report its behavior, do not silently exclude it"
+        ],
+        "acceptance_criteria": [
+          "PCA plot (PC1/PC2) colored by condition (lesional vs control) computed on variance-stabilized counts, top 500 most-variable genes",
+          "Sample-to-sample distance heatmap produced",
+          "Library size bar plot produced, with sample_01 flagged and its position on the PCA/distance plots called out explicitly",
+          "Output confirms whether condition is the dominant axis of variance or whether sample_01 is an outlier that could bias downstream ranking"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA against MSigDB Hallmark and Reactome",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If fewer than ~50 genes pass a significance threshold, do not additionally run an over-representation test on that short list — the ranked full-list method already used here is the correct one for this design",
+          "Reactome and Hallmark enrichment results are expected to diverge in which specific sets reach significance even when they agree on the broad biology (e.g., inflammatory/immune signal) — report agreement and disagreement explicitly rather than picking one collection as ground truth",
+          "GSEA/enrichment results are method-dependent; treat significant sets as hypotheses for follow-up, not as proven mechanistic findings"
+        ],
+        "context": "Input: de_results.csv (12000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change shrunken variant, stat/p-value/padj columns) — DESeq2 results for the treated (lesional) vs control contrast, already computed; no new DE model is fit here. Reference gene sets available and organism-matched: MSigDB Hallmark human (50 sets, HGNC symbols, /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt) and Reactome pathways (/mnt/refs/managed/reactome-pathways/current/ReactomePathways.gmt, filter to Homo sapiens via ReactomePathways.txt).",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 50 MSigDB Hallmark gene sets (and, as follow-up, which Reactome pathways) are enriched in the lesional (treated) vs control DESeq2 contrast, ranking all 12000 tested genes by their DESeq2 Wald statistic?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77",
+            "R-0110@41cb"
+          ],
+          "reason": "R-0098/R-0048 sequence Hallmark first then Reactome for human data; R-0107/R-0045 require the full ranked tested-gene list as GSEA input; R-0099/R-0108 resolve the ranking-metric dispute in favor of the Wald statistic; R-0110 requires stating the inherited contrast/sign convention and tie rule since enrichment starts from a delivered results table.",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+          "template": "tpl-gseapy-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Rank by the DESeq2 Wald statistic (stat column) — the disputed ranking-metric choice is resolved here in favor of the Wald statistic, per R-0108/R-0099, because it scales the effect by its uncertainty and is available directly in the delivered results table",
+          "Use the full list of ~12000 tested genes as the ranked input and as the implicit universe — do not threshold by padj or log2FC before ranking",
+          "State and apply an explicit tie-breaking rule for genes with identical stat values (e.g., stable sort by absolute log2FC as secondary key)",
+          "Restrict gene sets to those with 15-500 members among the tested genes (apply the window after intersecting each set with the tested gene list)",
+          "Pin and report the exact gene-set collection files and version used (MSigDB Hallmark 2026.1; Reactome 'current' snapshot — report the snapshot date since Reactome overwrites its current release)",
+          "Fix and report a random seed for the permutation-based GSEA p-value calculation",
+          "Report the share of gene symbols in de_results.csv that failed to map onto the gene-set collections' symbol space"
+        ],
+        "acceptance_criteria": [
+          "Gene symbols in de_results.csv mapped/verified against Hallmark and Reactome HGNC symbol gene sets; unmapped share reported",
+          "Full ranked list (all tested genes, ranked by the DESeq2 stat/Wald column, ties broken by a stated deterministic rule) used as GSEA input — no pre-filtering by padj or log2FC before ranking",
+          "gseapy prerank run against MSigDB Hallmark (50 sets, HGNC symbols) with gene-set size window 15-500 genes among tested genes, seed fixed and recorded, permutation number stated",
+          "Benjamini-Hochberg-adjusted (FDR q-value) results table produced for Hallmark, with NES, p-value, FDR q-value, and leading-edge genes per significant set (FDR < 0.25 per GSEA convention, or state the cutoff used)",
+          "Same preranked GSEA repeated against Reactome human pathway gene sets as a follow-up/robustness collection; overlap and disagreement with the Hallmark hits reported",
+          "Redundant/highly overlapping significant sets flagged or collapsed with a note on shared leading-edge genes",
+          "Report states: the contrast direction (lesional/treated vs control, positive NES/stat = higher in lesional), the collection name and version pinned, the ranking metric (stat), the size window, and the random seed"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Enrichment report with reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Consolidates the QC (T1S1) and enrichment (T2S1) outputs into one decision-ready report for the lesional vs control atopic dermatitis skin comparison.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "What is the consolidated, reproducible summary of hallmark (and Reactome follow-up) pathway enrichment for lesional vs control skin, including leading-edge genes, method caveats, and full provenance?",
+        "grounding": {
+          "claims": [
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report-step aggregation has no single selecting rule beyond the reporting content requirements (R-0051 database/version/metric/universe/window; R-0055 method-dependence caveat; R-0105 leading-edge listing; R-0086 reproducibility record), all already folded into the acceptance criteria.",
+          "status": "ungrounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Do not introduce new statistical claims not already produced by T1S1/T2S1",
+          "State the p-value histogram shape from the delivered DESeq2 results if inspectable, noting this is inherited QC since no new DE model is fit"
+        ],
+        "acceptance_criteria": [
+          "Final table of significant Hallmark gene sets (FDR-cutoff stated) with NES, FDR q-value, leading-edge gene list, and gene-level stat values for each leading-edge gene",
+          "Same for the Reactome follow-up collection, plus an explicit overlap/disagreement summary between the two collections",
+          "Reproducibility record included: package versions (gseapy, pydeseq2), the fixed random seed(s), the pinned gene-set collection names and versions/snapshot dates, and the contrast/sign convention used",
+          "Explicit statement that enrichment findings are hypotheses dependent on the chosen method and ranking metric, not proven mechanisms"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control hallmark pathway enrichment",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The research question asks which hallmark pathways are enriched in the atopic-dermatitis lesional (treated) vs control skin comparison, and the analysis already has a DESeq2 results table (de_results.csv, 12000 genes x 8 columns) for the treated vs control contrast — so no new differential expression model is fitted. The plan (1) profiles sample structure from the raw counts to confirm the treated/control grouping and flag sample_01's low library size as an inherited QC note rather than something the enrichment step must re-derive, (2) runs preranked GSEA (gseapy, Python per the user's constraint) on the delivered DESeq2 Wald statistic against MSigDB Hallmark (the first-pass human collection) with Reactome as the follow-up collection, both staged in the reference store, (3) reports leading-edge genes, the pinned collection versions, the ranking-metric choice, and the method-dependence caveat. All steps run in Python per the explicit user constraint; DESeq2/fgsea R-track defaults from the knowledge base are translated to their Python equivalents (pydeseq2 for the vst-style QC transform, gseapy prerank for fgsea-preranked GSEA) since only Python tooling is permitted."
+  },
+  "usage": {
+    "inputTokens": 1276909,
+    "outputTokens": 6696,
+    "cacheCreationInputTokens": 137034,
+    "cacheReadInputTokens": 1139671,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "preferred_language": "python"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gseapy",
+          "fgsea",
+          "mygene",
+          "pydeseq2"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db human gene identifier"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "gseapy",
+        "query": "prerank GSEA function parameters"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/zqfang/gseapy",
+        "query": "gseapy.prerank function parameters rnk gmt seed permutation_num min_size max_size"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "gseapy prerank python GSEA implementation",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "gseapy python gene set enrichment prerank",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "gseapy prerank",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "gseapy",
+        "limit": 5,
+        "language": "python"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed/msigdb-immunologic-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "gseapy Python gene set enrichment analysis",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "36426870"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2-equivalent sample structure QC via pydeseq2 vst + PCA on raw counts",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "gseapy prerank GSEA on the Wald statistic (stat column) from delivered DESeq2 results, against MSigDB Hallmark human gene sets",
+            "package": "gseapy",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "permutation_num",
+                "value": 1000
+              },
+              {
+                "name": "seed",
+                "value": 42
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "gseapy prerank GSEA on the Wald statistic against Reactome pathway gene sets (human subset)",
+            "package": "gseapy",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "reactome"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Enrichment report with leading-edge genes, method-dependence caveat, reproducibility record"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control hallmark pathway enrichment",
+          "analytical_narrative": "The research question asks which hallmark pathways are enriched in the atopic-dermatitis lesional (treated) vs control skin comparison, and the analysis already has a DESeq2 results table (de_results.csv, 12000 genes x 8 columns) for the treated vs control contrast — so no new differential expression model is fitted. The plan (1) profiles sample structure from the raw counts to confirm the treated/control grouping and flag sample_01's low library size as an inherited QC note rather than something the enrichment step must re-derive, (2) runs preranked GSEA (gseapy, Python per the user's constraint) on the delivered DESeq2 Wald statistic against MSigDB Hallmark (the first-pass human collection) with Reactome as the follow-up collection, both staged in the reference store, (3) reports leading-edge genes, the pinned collection versions, the ranking-metric choice, and the method-dependence caveat. All steps run in Python per the explicit user constraint; DESeq2/fgsea R-track defaults from the knowledge base are translated to their Python equivalents (pydeseq2 for the vst-style QC transform, gseapy prerank for fgsea-preranked GSEA) since only Python tooling is permitted.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on raw counts",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 6 lesional (treated) and 6 control skin samples separate by condition on a variance-stabilized PCA, and how does sample_01's ~4x-below-median library size manifest in that structure?",
+              "acceptance_criteria": [
+                "PCA plot (PC1/PC2) colored by condition (lesional vs control) computed on variance-stabilized counts, top 500 most-variable genes",
+                "Sample-to-sample distance heatmap produced",
+                "Library size bar plot produced, with sample_01 flagged and its position on the PCA/distance plots called out explicitly",
+                "Output confirms whether condition is the dominant axis of variance or whether sample_01 is an outlier that could bias downstream ranking"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Inputs: counts.csv (12000 genes x 12 samples, raw Salmon counts) and metadata.csv (12 samples, condition column: 6 lesional/treated, 6 control, unpaired, single batch). Caveat already known: sample_01 has a library size ~4x below the median.",
+              "constraints": [
+                "Use a variance-stabilizing transform (pydeseq2's vst equivalent, blind to condition) before PCA — do not run PCA on raw or merely log2(counts+1) data",
+                "Compute PCA on the top 500 most-variable genes after the transform",
+                "Do not drop sample_01 — report its behavior, do not silently exclude it"
+              ],
+              "caveats": [
+                "This QC is descriptive only; it does not gate the enrichment step, which uses the already-delivered DESeq2 results table, not these counts, as its direct input",
+                "sample_01's low depth is inherited context — report whether it appears as an outlier on PCA/distances, but do not re-run differential expression here"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-python@1.0.0",
+                "reason": "R-0033 requires sample-structure QC (blind variance-stabilizing transform, PCA on top-variable genes, sample-distance heatmap) on every count dataset before any downstream analysis; translated to the Python track (pydeseq2) per the user's Python-only constraint since the sourced template is R/DESeq2-based."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA against MSigDB Hallmark and Reactome",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB Hallmark gene sets (and, as follow-up, which Reactome pathways) are enriched in the lesional (treated) vs control DESeq2 contrast, ranking all 12000 tested genes by their DESeq2 Wald statistic?",
+              "acceptance_criteria": [
+                "Gene symbols in de_results.csv mapped/verified against Hallmark and Reactome HGNC symbol gene sets; unmapped share reported",
+                "Full ranked list (all tested genes, ranked by the DESeq2 stat/Wald column, ties broken by a stated deterministic rule) used as GSEA input — no pre-filtering by padj or log2FC before ranking",
+                "gseapy prerank run against MSigDB Hallmark (50 sets, HGNC symbols) with gene-set size window 15-500 genes among tested genes, seed fixed and recorded, permutation number stated",
+                "Benjamini-Hochberg-adjusted (FDR q-value) results table produced for Hallmark, with NES, p-value, FDR q-value, and leading-edge genes per significant set (FDR < 0.25 per GSEA convention, or state the cutoff used)",
+                "Same preranked GSEA repeated against Reactome human pathway gene sets as a follow-up/robustness collection; overlap and disagreement with the Hallmark hits reported",
+                "Redundant/highly overlapping significant sets flagged or collapsed with a note on shared leading-edge genes",
+                "Report states: the contrast direction (lesional/treated vs control, positive NES/stat = higher in lesional), the collection name and version pinned, the ranking metric (stat), the size window, and the random seed"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Input: de_results.csv (12000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change shrunken variant, stat/p-value/padj columns) — DESeq2 results for the treated (lesional) vs control contrast, already computed; no new DE model is fit here. Reference gene sets available and organism-matched: MSigDB Hallmark human (50 sets, HGNC symbols, /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt) and Reactome pathways (/mnt/refs/managed/reactome-pathways/current/ReactomePathways.gmt, filter to Homo sapiens via ReactomePathways.txt).",
+              "constraints": [
+                "Rank by the DESeq2 Wald statistic (stat column) — the disputed ranking-metric choice is resolved here in favor of the Wald statistic, per R-0108/R-0099, because it scales the effect by its uncertainty and is available directly in the delivered results table",
+                "Use the full list of ~12000 tested genes as the ranked input and as the implicit universe — do not threshold by padj or log2FC before ranking",
+                "State and apply an explicit tie-breaking rule for genes with identical stat values (e.g., stable sort by absolute log2FC as secondary key)",
+                "Restrict gene sets to those with 15-500 members among the tested genes (apply the window after intersecting each set with the tested gene list)",
+                "Pin and report the exact gene-set collection files and version used (MSigDB Hallmark 2026.1; Reactome 'current' snapshot — report the snapshot date since Reactome overwrites its current release)",
+                "Fix and report a random seed for the permutation-based GSEA p-value calculation",
+                "Report the share of gene symbols in de_results.csv that failed to map onto the gene-set collections' symbol space"
+              ],
+              "caveats": [
+                "If fewer than ~50 genes pass a significance threshold, do not additionally run an over-representation test on that short list — the ranked full-list method already used here is the correct one for this design",
+                "Reactome and Hallmark enrichment results are expected to diverge in which specific sets reach significance even when they agree on the broad biology (e.g., inflammatory/immune signal) — report agreement and disagreement explicitly rather than picking one collection as ground truth",
+                "GSEA/enrichment results are method-dependent; treat significant sets as hypotheses for follow-up, not as proven mechanistic findings"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77",
+                  "R-0110@41cb"
+                ],
+                "template": "tpl-gseapy-preranked@1.0.0",
+                "reason": "R-0098/R-0048 sequence Hallmark first then Reactome for human data; R-0107/R-0045 require the full ranked tested-gene list as GSEA input; R-0099/R-0108 resolve the ranking-metric dispute in favor of the Wald statistic; R-0110 requires stating the inherited contrast/sign convention and tie rule since enrichment starts from a delivered results table."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Enrichment report with reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the consolidated, reproducible summary of hallmark (and Reactome follow-up) pathway enrichment for lesional vs control skin, including leading-edge genes, method caveats, and full provenance?",
+              "acceptance_criteria": [
+                "Final table of significant Hallmark gene sets (FDR-cutoff stated) with NES, FDR q-value, leading-edge gene list, and gene-level stat values for each leading-edge gene",
+                "Same for the Reactome follow-up collection, plus an explicit overlap/disagreement summary between the two collections",
+                "Reproducibility record included: package versions (gseapy, pydeseq2), the fixed random seed(s), the pinned gene-set collection names and versions/snapshot dates, and the contrast/sign convention used",
+                "Explicit statement that enrichment findings are hypotheses dependent on the chosen method and ranking metric, not proven mechanisms"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Consolidates the QC (T1S1) and enrichment (T2S1) outputs into one decision-ready report for the lesional vs control atopic dermatitis skin comparison.",
+              "constraints": [
+                "Do not introduce new statistical claims not already produced by T1S1/T2S1",
+                "State the p-value histogram shape from the delivered DESeq2 results if inspectable, noting this is inherited QC since no new DE model is fit"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report-step aggregation has no single selecting rule beyond the reporting content requirements (R-0051 database/version/metric/universe/window; R-0055 method-dependence caveat; R-0105 leading-edge listing; R-0086 reproducibility record), all already folded into the acceptance criteria."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+  }
+}

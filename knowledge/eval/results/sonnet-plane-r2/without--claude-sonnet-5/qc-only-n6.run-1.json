@@ -1,0 +1,117 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "qc-only-n6",
+  "run": 1,
+  "startedAt": "2026-09-05T21:19:58.099Z",
+  "elapsedMs": 19293,
+  "outcome": "plan_submitted",
+  "planId": "pln-bf5b788c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Library size, PCA, sample-distance QC and outlier verdict",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "sample_01 is flagged in the data profile as having a library size ~4x below the median — do not silently drop it; the step must produce evidence-based reasoning for its disposition",
+          "With only 12 samples, PCA components beyond PC1/PC2 will explain little variance and should not be over-interpreted",
+          "vst requires reasonably consistent size factors; if sample_01's extreme depth destabilizes size-factor estimation, note this explicitly and consider rlog or a robustness check as a fallback described in the report",
+          "Do not perform differential expression in this step — it is QC only, ahead of any hypothesis testing"
+        ],
+        "context": "Raw integer gene-level counts from Salmon, 12000 genes x 12 samples (plus gene-symbol column), CSV at data/inputs/counts/counts.csv; sample metadata (condition: AD-lesional vs control) at data/inputs/metadata/metadata.csv. Single batch, unpaired 6v6 design. This is purely a QC/exploratory step preceding any differential expression testing; no reference data beyond the provided files is required.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Across the 12 skin samples (6 AD-lesional vs 6 control, unpaired, single batch), what do library sizes, a variance-stabilized PCA, and the sample-to-sample distance matrix show about sample structure and outliers, and specifically is sample_01 (flagged with library size ~4x below the median) an outlier that should be excluded, downweighted, or retained with caveat?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality-control",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports per-sample library size (total raw counts) for all 12 samples as a table and bar chart, sorted, with sample_01's value and its ratio to the cohort median explicitly stated",
+          "Reports per-sample number of detected genes (non-zero count genes) alongside library size",
+          "Applies DESeq2 vst (or equivalent variance-stabilizing transform) to the raw counts using the 6-vs-6 condition design from metadata.csv before PCA",
+          "Produces a PCA plot (PC1 vs PC2, with % variance explained) colored by condition (AD-lesional vs control) and labeled by sample ID, showing where sample_01 falls relative to both groups",
+          "Computes a full 12x12 sample-to-sample distance matrix (e.g. Euclidean distance on vst data) and renders it as an annotated heatmap with hierarchical clustering, colored/annotated by condition",
+          "Cross-references sample_01's library size, its PCA coordinates, and its row/column in the distance matrix to state explicitly whether it clusters with its assigned condition group, is an isolated outlier, or is ambiguous",
+          "Delivers an explicit, justified verdict for sample_01 (retain as-is / retain with caveat and sensitivity analysis planned downstream / exclude) rather than only presenting the plots",
+          "States any other samples that show borderline library size or distance-outlier behavior, if present, without overstating findings beyond what the QC metrics show"
+        ]
+      }
+    ],
+    "title": "AD skin RNA-seq: QC, library size, PCA, sample distances",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is a 12000x13 raw Salmon gene-count matrix (12 samples: 6 AD-lesional vs 6 control, unpaired, single batch), with a flagged caveat that sample_01 has a library size ~4x below the median. Before any differential testing, the priority is a single self-contained QC pass on the count matrix: compute per-sample library sizes and detected-gene counts, apply a variance-stabilizing transform (DESeq2 vst, appropriate for n=12 and 12000 genes), run PCA on the transformed data to check for outliers and separation by condition, compute a sample-to-sample distance matrix/heatmap to see clustering structure and confirm or refute whether sample_01 is an outlier by distance as well as by depth, and close with an explicit verdict on sample_01 (exclude / downweight / keep-with-caveat) grounded in the combination of library size, PCA position, and distance-matrix behavior. This is one coherent QC step on one data object (the count matrix + metadata), so it is planned as a single bulk-transcriptomics-agent step rather than fragmented across agents."
+  },
+  "usage": {
+    "inputTokens": 43290,
+    "outputTokens": 1622,
+    "cacheCreationInputTokens": 34136,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD skin RNA-seq: QC, library size, PCA, sample distances",
+          "analytical_narrative": "The dataset is a 12000x13 raw Salmon gene-count matrix (12 samples: 6 AD-lesional vs 6 control, unpaired, single batch), with a flagged caveat that sample_01 has a library size ~4x below the median. Before any differential testing, the priority is a single self-contained QC pass on the count matrix: compute per-sample library sizes and detected-gene counts, apply a variance-stabilizing transform (DESeq2 vst, appropriate for n=12 and 12000 genes), run PCA on the transformed data to check for outliers and separation by condition, compute a sample-to-sample distance matrix/heatmap to see clustering structure and confirm or refute whether sample_01 is an outlier by distance as well as by depth, and close with an explicit verdict on sample_01 (exclude / downweight / keep-with-caveat) grounded in the combination of library size, PCA position, and distance-matrix behavior. This is one coherent QC step on one data object (the count matrix + metadata), so it is planned as a single bulk-transcriptomics-agent step rather than fragmented across agents.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Library size, PCA, sample-distance QC and outlier verdict",
+              "track": "T1",
+              "step_type": "quality-control",
+              "question": "Across the 12 skin samples (6 AD-lesional vs 6 control, unpaired, single batch), what do library sizes, a variance-stabilized PCA, and the sample-to-sample distance matrix show about sample structure and outliers, and specifically is sample_01 (flagged with library size ~4x below the median) an outlier that should be excluded, downweighted, or retained with caveat?",
+              "acceptance_criteria": [
+                "Reports per-sample library size (total raw counts) for all 12 samples as a table and bar chart, sorted, with sample_01's value and its ratio to the cohort median explicitly stated",
+                "Reports per-sample number of detected genes (non-zero count genes) alongside library size",
+                "Applies DESeq2 vst (or equivalent variance-stabilizing transform) to the raw counts using the 6-vs-6 condition design from metadata.csv before PCA",
+                "Produces a PCA plot (PC1 vs PC2, with % variance explained) colored by condition (AD-lesional vs control) and labeled by sample ID, showing where sample_01 falls relative to both groups",
+                "Computes a full 12x12 sample-to-sample distance matrix (e.g. Euclidean distance on vst data) and renders it as an annotated heatmap with hierarchical clustering, colored/annotated by condition",
+                "Cross-references sample_01's library size, its PCA coordinates, and its row/column in the distance matrix to state explicitly whether it clusters with its assigned condition group, is an isolated outlier, or is ambiguous",
+                "Delivers an explicit, justified verdict for sample_01 (retain as-is / retain with caveat and sensitivity analysis planned downstream / exclude) rather than only presenting the plots",
+                "States any other samples that show borderline library size or distance-outlier behavior, if present, without overstating findings beyond what the QC metrics show"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level counts from Salmon, 12000 genes x 12 samples (plus gene-symbol column), CSV at data/inputs/counts/counts.csv; sample metadata (condition: AD-lesional vs control) at data/inputs/metadata/metadata.csv. Single batch, unpaired 6v6 design. This is purely a QC/exploratory step preceding any differential expression testing; no reference data beyond the provided files is required.",
+              "caveats": [
+                "sample_01 is flagged in the data profile as having a library size ~4x below the median — do not silently drop it; the step must produce evidence-based reasoning for its disposition",
+                "With only 12 samples, PCA components beyond PC1/PC2 will explain little variance and should not be over-interpreted",
+                "vst requires reasonably consistent size factors; if sample_01's extreme depth destabilizes size-factor estimation, note this explicitly and consider rlog or a robustness check as a fallback described in the report",
+                "Do not perform differential expression in this step — it is QC only, ahead of any hypothesis testing"
+              ]
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,294 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-2x2-n4",
+  "run": 2,
+  "startedAt": "2026-09-05T20:58:39.356Z",
+  "elapsedMs": 43665,
+  "outcome": "plan_submitted",
+  "planId": "pln-eab857de",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering, and DESeq2 interaction model fit",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "After loading the raw gene-level counts (12000 genes x 16 samples, from counts.csv) and the 2x2 metadata (genotype: WT/KO, treatment: vehicle/drug), does a DESeq2 model with the full interaction design (~genotype*treatment) fit cleanly, and what do library size, PCA, and sample-sample correlation show about the 4 experimental groups (WT-vehicle, WT-drug, KO-vehicle, KO-drug; n=4 each)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts matrix (12000 x 16) and metadata (16 x 3 factors: genotype, treatment, condition) are loaded and sample order/names are matched between the two files",
+          "Genes with near-zero counts across all samples are filtered before fitting (e.g. rowSums(counts) > 0 or a low-count filter), and the number of genes retained is reported",
+          "DESeqDataSet is built with design = ~genotype + treatment + genotype:treatment and DESeq() runs to completion without error",
+          "PCA plot (on vst/rlog-transformed data) and a sample correlation heatmap are produced, colored by genotype and treatment, and the 4 groups are visually distinguishable or the lack of separation is reported",
+          "Size factors and dispersion estimates are reported; any outlier sample is flagged explicitly rather than silently dropped"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Extract drug-effect-in-WT, drug-effect-in-KO, and genotype x treatment interaction contrasts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr"
+        ],
+        "question": "From the fitted interaction model, what are the shrunken log2 fold changes and adjusted p-values for (a) drug vs vehicle within WT, (b) drug vs vehicle within KO, and (c) the genotype:treatment interaction term itself (the direct statistical test of whether the drug effect differs between WT and KO)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Three result tables are produced: drug-vs-vehicle-in-WT, drug-vs-vehicle-in-KO, and the interaction coefficient (genotypeKO.treatmentdrug or equivalent contrast), each with log2FoldChange, lfcSE, stat, pvalue, padj per gene",
+          "log2 fold changes for the two simple-effect contrasts are shrunk with apeglm or ashr (appropriate for the interaction design) and it is stated which shrinkage estimator was used and why",
+          "The number of genes significant (padj < 0.05) is reported separately for each of the three contrasts, with explicit note that the interaction contrast is the one answering 'does the drug act differently in KO vs WT' — the two simple-effect contrasts alone cannot answer it",
+          "A comparison table/Venn or overlap summary shows how many drug-responsive genes are shared vs unique to WT and KO",
+          "If zero genes are significant at padj<0.05 for the interaction term, this is reported plainly as a negative/underpowered finding, not reframed as a positive result from the simple effects"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Visualize interaction-effect genes",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "For the genes with the strongest genotype x treatment interaction (lowest padj on the interaction term), what do their per-sample normalized expression patterns look like across the 4 groups (WT-vehicle, WT-drug, KO-vehicle, KO-drug), and does the pattern visually confirm a genotype-dependent drug response (e.g. crossover or divergent effect) rather than an artifact?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "A volcano plot of the interaction contrast is produced with EnhancedVolcano, labeling top interaction genes",
+          "A heatmap (pheatmap) of vst-normalized expression for the top 30-50 interaction-significant genes across all 16 samples, annotated by genotype and treatment, is produced",
+          "Boxplots/stripplots of normalized counts for the top 6-10 interaction genes are shown across the 4 groups to confirm the interaction pattern is a true crossover/divergence and not driven by one outlier sample",
+          "Findings state explicitly whether the visual pattern is consistent with a genuine differential drug effect by genotype"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on interaction-significant and simple-effect gene sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which biological pathways (WikiPathways human, MSigDB Hallmark human, Reactome human) are enriched among genes showing a significant genotype x treatment interaction, and how do these compare to the pathways enriched in the WT-only and KO-only drug-response gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Gene sets tested: (1) interaction-significant genes (padj<0.05 on interaction term), (2) WT drug-responsive genes, (3) KO drug-responsive genes — each run separately through overrepresentation analysis or fgsea (ranked on interaction/contrast statistic)",
+          "Uses the WikiPathways human GMT (HGNC symbols) and MSigDB Hallmark human GMT (HGNC symbols) and Reactome human pathways (filtered to Homo sapiens via the species column in the Reactome pathway index) staged in the reference store; organism match to human is confirmed before use",
+          "Reports top enriched pathways (FDR<0.25 for fgsea or padj<0.05 for ORA) per gene set with normalized enrichment score or odds ratio and gene counts",
+          "Explicitly contrasts pathways unique to the interaction-gene-set vs pathways shared with the WT-only/KO-only simple effects, to characterize which biological programs show genotype-dependent (vs genotype-independent) drug response",
+          "If the interaction gene list is empty or very small (<10 genes), states that formal enrichment is underpowered and reports enrichment on the union of WT/KO drug-responsive genes as a descriptive/exploratory comparison instead, labeled as such"
+        ]
+      }
+    ],
+    "title": "2x2 genotype x drug interaction DE + pathway analysis",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is a 2x2 factorial bulk RNA-seq design (genotype: WT/KO x treatment: vehicle/drug, n=4/cell, 16 samples, 12000 genes, brain tissue, human). The research question — does the drug act differently in KO than WT — is precisely a genotype x treatment interaction question, which requires an interaction-term model in DESeq2 rather than separate pairwise contrasts. The plan: (1) QC and DESeq2 fit with a full model including the interaction term; (2) extract three contrasts — drug effect in WT, drug effect in KO, and the interaction term itself (the statistical answer to 'does the drug act differently') — with shrunken log fold changes; (3) visualize the interaction genes; (4) run pathway enrichment (WikiPathways human, MSigDB hallmark human, Reactome) on the interaction-significant gene set to characterize which biological programs show genotype-dependent drug response. Human WikiPathways, Reactome, and MSigDB hallmark/GO references are staged and organism-matched. No translational/clinical data (PK, safety, drug targets) are present, so no translational steps are added beyond mechanistic pathway enrichment, which is directly supported by the DE output."
+  },
+  "usage": {
+    "inputTokens": 255451,
+    "outputTokens": 3412,
+    "cacheCreationInputTokens": 88479,
+    "cacheReadInputTokens": 166912,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways mouse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathways"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "fgsea",
+          "clusterProfiler",
+          "pheatmap",
+          "EnhancedVolcano",
+          "apeglm"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "2x2 genotype x drug interaction DE + pathway analysis",
+          "analytical_narrative": "The dataset is a 2x2 factorial bulk RNA-seq design (genotype: WT/KO x treatment: vehicle/drug, n=4/cell, 16 samples, 12000 genes, brain tissue, human). The research question — does the drug act differently in KO than WT — is precisely a genotype x treatment interaction question, which requires an interaction-term model in DESeq2 rather than separate pairwise contrasts. The plan: (1) QC and DESeq2 fit with a full model including the interaction term; (2) extract three contrasts — drug effect in WT, drug effect in KO, and the interaction term itself (the statistical answer to 'does the drug act differently') — with shrunken log fold changes; (3) visualize the interaction genes; (4) run pathway enrichment (WikiPathways human, MSigDB hallmark human, Reactome) on the interaction-significant gene set to characterize which biological programs show genotype-dependent drug response. Human WikiPathways, Reactome, and MSigDB hallmark/GO references are staged and organism-matched. No translational/clinical data (PK, safety, drug targets) are present, so no translational steps are added beyond mechanistic pathway enrichment, which is directly supported by the DE output.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, filtering, and DESeq2 interaction model fit",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "After loading the raw gene-level counts (12000 genes x 16 samples, from counts.csv) and the 2x2 metadata (genotype: WT/KO, treatment: vehicle/drug), does a DESeq2 model with the full interaction design (~genotype*treatment) fit cleanly, and what do library size, PCA, and sample-sample correlation show about the 4 experimental groups (WT-vehicle, WT-drug, KO-vehicle, KO-drug; n=4 each)?",
+              "acceptance_criteria": [
+                "Counts matrix (12000 x 16) and metadata (16 x 3 factors: genotype, treatment, condition) are loaded and sample order/names are matched between the two files",
+                "Genes with near-zero counts across all samples are filtered before fitting (e.g. rowSums(counts) > 0 or a low-count filter), and the number of genes retained is reported",
+                "DESeqDataSet is built with design = ~genotype + treatment + genotype:treatment and DESeq() runs to completion without error",
+                "PCA plot (on vst/rlog-transformed data) and a sample correlation heatmap are produced, colored by genotype and treatment, and the 4 groups are visually distinguishable or the lack of separation is reported",
+                "Size factors and dispersion estimates are reported; any outlier sample is flagged explicitly rather than silently dropped"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Extract drug-effect-in-WT, drug-effect-in-KO, and genotype x treatment interaction contrasts",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "From the fitted interaction model, what are the shrunken log2 fold changes and adjusted p-values for (a) drug vs vehicle within WT, (b) drug vs vehicle within KO, and (c) the genotype:treatment interaction term itself (the direct statistical test of whether the drug effect differs between WT and KO)?",
+              "acceptance_criteria": [
+                "Three result tables are produced: drug-vs-vehicle-in-WT, drug-vs-vehicle-in-KO, and the interaction coefficient (genotypeKO.treatmentdrug or equivalent contrast), each with log2FoldChange, lfcSE, stat, pvalue, padj per gene",
+                "log2 fold changes for the two simple-effect contrasts are shrunk with apeglm or ashr (appropriate for the interaction design) and it is stated which shrinkage estimator was used and why",
+                "The number of genes significant (padj < 0.05) is reported separately for each of the three contrasts, with explicit note that the interaction contrast is the one answering 'does the drug act differently in KO vs WT' — the two simple-effect contrasts alone cannot answer it",
+                "A comparison table/Venn or overlap summary shows how many drug-responsive genes are shared vs unique to WT and KO",
+                "If zero genes are significant at padj<0.05 for the interaction term, this is reported plainly as a negative/underpowered finding, not reframed as a positive result from the simple effects"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Visualize interaction-effect genes",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "For the genes with the strongest genotype x treatment interaction (lowest padj on the interaction term), what do their per-sample normalized expression patterns look like across the 4 groups (WT-vehicle, WT-drug, KO-vehicle, KO-drug), and does the pattern visually confirm a genotype-dependent drug response (e.g. crossover or divergent effect) rather than an artifact?",
+              "acceptance_criteria": [
+                "A volcano plot of the interaction contrast is produced with EnhancedVolcano, labeling top interaction genes",
+                "A heatmap (pheatmap) of vst-normalized expression for the top 30-50 interaction-significant genes across all 16 samples, annotated by genotype and treatment, is produced",
+                "Boxplots/stripplots of normalized counts for the top 6-10 interaction genes are shown across the 4 groups to confirm the interaction pattern is a true crossover/divergence and not driven by one outlier sample",
+                "Findings state explicitly whether the visual pattern is consistent with a genuine differential drug effect by genotype"
+              ],
+              "packages": [
+                "DESeq2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on interaction-significant and simple-effect gene sets",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways (WikiPathways human, MSigDB Hallmark human, Reactome human) are enriched among genes showing a significant genotype x treatment interaction, and how do these compare to the pathways enriched in the WT-only and KO-only drug-response gene sets?",
+              "acceptance_criteria": [
+                "Gene sets tested: (1) interaction-significant genes (padj<0.05 on interaction term), (2) WT drug-responsive genes, (3) KO drug-responsive genes — each run separately through overrepresentation analysis or fgsea (ranked on interaction/contrast statistic)",
+                "Uses the WikiPathways human GMT (HGNC symbols) and MSigDB Hallmark human GMT (HGNC symbols) and Reactome human pathways (filtered to Homo sapiens via the species column in the Reactome pathway index) staged in the reference store; organism match to human is confirmed before use",
+                "Reports top enriched pathways (FDR<0.25 for fgsea or padj<0.05 for ORA) per gene set with normalized enrichment score or odds ratio and gene counts",
+                "Explicitly contrasts pathways unique to the interaction-gene-set vs pathways shared with the WT-only/KO-only simple effects, to characterize which biological programs show genotype-dependent (vs genotype-independent) drug response",
+                "If the interaction gene list is empty or very small (<10 genes), states that formal enrichment is underpowered and reports enrichment on the union of WT/KO drug-responsive genes as a descriptive/exploratory comparison instead, labeled as such"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

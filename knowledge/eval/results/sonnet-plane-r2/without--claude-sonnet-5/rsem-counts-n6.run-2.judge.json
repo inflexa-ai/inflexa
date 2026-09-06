@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 0,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies RSEM expected counts, states that the effective-length offset is lost without genes.results, rounds for DESeq2 rather than switching to TPM/FPKM, and normalizes inside the model with median-of-ratios, but it never asks for the missing per-sample files. QC is solid: library sizes, PCA/clustering colored by condition, sample_01 kept with a stated policy and a sensitivity fit. It says nothing about a low-count filter, never states the reference level or a formula, does not name BH, omits apeglm shrinkage, and applies a |log2FC|>=1 cutoff post hoc rather than in the test. Enrichment was not requested and is added without a collection version or size window, and the report lacks package versions."
+}

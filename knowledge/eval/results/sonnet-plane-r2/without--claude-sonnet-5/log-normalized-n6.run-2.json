@@ -1,0 +1,230 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "log-normalized-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T22:37:09.814Z",
+  "elapsedMs": 26568,
+  "outcome": "plan_submitted",
+  "planId": "pln-09f695b0",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and align log2 expression matrix with metadata",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The matrix is already log2 normalized (log2(TPM+1)) — do not re-normalize, re-log, or feed it into a count-based tool",
+          "12000 x 13 dimensions mean one column is not a sample (likely a gene identifier column) — resolve this explicitly rather than assuming"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "pandas"
+        ],
+        "question": "Do the 12000x13 log2(TPM+1) expression matrix and the 12-sample metadata.csv align correctly for a 6 treated vs 6 control unpaired comparison, and what is the extra 13th column?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Confirms which of the 13 columns in log_expr.csv are sample columns vs a gene-id column, and subsets to the 12 samples present in metadata.csv",
+          "Confirms metadata.csv assigns exactly 6 samples to treated and 6 to control with no missing/duplicate sample IDs",
+          "Reports value range of the matrix consistent with log2(TPM+1) (non-negative, typically 0-~15) and flags any sample as an outlier via PCA or hierarchical clustering",
+          "Produces a cleaned, sample-matched expression matrix and group vector ready for modeling"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Unpaired design with n=6 per group and single batch — no batch correction term needed, no pairing/blocking variable to model",
+          "Do not apply voom (designed for raw counts) since input is already log2 normalized continuous data; use limma's trend/eBayes on the log2 matrix directly"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Which of the 12000 genes are significantly differentially expressed between treated (n=6) and control (n=6) muscle samples using the delivered log2(TPM+1) values?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Fits a limma linear model (lmFit) with a treated-vs-control design matrix on the QC'd log2 matrix from T1S1, applies eBayes moderation, and extracts topTable with logFC, moderated t-statistic, raw p-value, and BH-adjusted FDR for all genes",
+          "Reports the number of genes significant at FDR < 0.05 and at FDR < 0.1, and lists the top up- and down-regulated genes by adjusted p-value",
+          "Explicitly states that count-based tools (DESeq2/edgeR) were not used because the input is pre-normalized log2 data, not raw counts",
+          "Outputs a full ranked gene table (all 12000 genes) suitable for downstream enrichment"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "WikiPathways enrichment of DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways gene sets use HGNC gene symbols — confirm the DE gene list's identifier space matches (or map it) before joining",
+          "With only 12000 genes profiled and n=6 per group, enrichment power is limited; treat borderline pathway hits cautiously"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Which biological pathways are enriched among genes differentially expressed between treated and control muscle samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Confirms availability of the human WikiPathways gene set file before use; if absent, reports the gap rather than fabricating enrichment results",
+          "Runs over-representation or ranked (fgsea-style) enrichment using the full ranked gene list (logFC and FDR) from T1S2 against WikiPathways human pathway gene sets",
+          "Reports enriched pathways with adjusted p-values (BH-corrected) and the leading-edge/member genes driving each significant pathway",
+          "Interprets results in the context of muscle tissue biology, flagging any enrichment driven by very few genes as weak signal"
+        ]
+      }
+    ],
+    "title": "Muscle treated vs control DE via limma on log2 data",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The core facility delivered log2(TPM+1) normalized expression (12000 genes x 13 samples matrix trimmed to the 12 samples with condition labels in metadata.csv: 6 treated vs 6 control, unpaired, single batch), not raw counts. DESeq2/edgeR require raw integer counts and cannot be validly applied to pre-normalized log2 values — running them here would silently produce meaningless results. limma is the correct tool for continuous, already log-transformed/normalized expression data of this kind (its moderated t-test framework, via lmFit/eBayes, was designed for exactly this input type, historically for microarray log-ratios and now widely applied to log2 CPM/TPM RNA-seq data). The plan therefore: (1) loads and QC-checks the log2 matrix and metadata, confirming sample alignment and group balance; (2) fits a limma linear model with empirical Bayes moderation for the treated-vs-control contrast, producing a ranked DE gene list with logFC, moderated t, p-value, and BH-adjusted FDR; (3) runs pathway enrichment (WikiPathways human gene sets, confirmed present in the reference store) on the DE result to contextualize the affected biology in muscle tissue. No translational/PK/safety steps are added since the research question is a plain DE contrast with no drug, biomarker-outcome, or safety data present."
+  },
+  "usage": {
+    "inputTokens": 131886,
+    "outputTokens": 2342,
+    "cacheCreationInputTokens": 69570,
+    "cacheReadInputTokens": 62280,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "limma",
+          "DESeq2",
+          "statsmodels",
+          "pydeseq2"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Muscle treated vs control DE via limma on log2 data",
+          "analytical_narrative": "The core facility delivered log2(TPM+1) normalized expression (12000 genes x 13 samples matrix trimmed to the 12 samples with condition labels in metadata.csv: 6 treated vs 6 control, unpaired, single batch), not raw counts. DESeq2/edgeR require raw integer counts and cannot be validly applied to pre-normalized log2 values — running them here would silently produce meaningless results. limma is the correct tool for continuous, already log-transformed/normalized expression data of this kind (its moderated t-test framework, via lmFit/eBayes, was designed for exactly this input type, historically for microarray log-ratios and now widely applied to log2 CPM/TPM RNA-seq data). The plan therefore: (1) loads and QC-checks the log2 matrix and metadata, confirming sample alignment and group balance; (2) fits a limma linear model with empirical Bayes moderation for the treated-vs-control contrast, producing a ranked DE gene list with logFC, moderated t, p-value, and BH-adjusted FDR; (3) runs pathway enrichment (WikiPathways human gene sets, confirmed present in the reference store) on the DE result to contextualize the affected biology in muscle tissue. No translational/PK/safety steps are added since the research question is a plain DE contrast with no drug, biomarker-outcome, or safety data present.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and align log2 expression matrix with metadata",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12000x13 log2(TPM+1) expression matrix and the 12-sample metadata.csv align correctly for a 6 treated vs 6 control unpaired comparison, and what is the extra 13th column?",
+              "acceptance_criteria": [
+                "Confirms which of the 13 columns in log_expr.csv are sample columns vs a gene-id column, and subsets to the 12 samples present in metadata.csv",
+                "Confirms metadata.csv assigns exactly 6 samples to treated and 6 to control with no missing/duplicate sample IDs",
+                "Reports value range of the matrix consistent with log2(TPM+1) (non-negative, typically 0-~15) and flags any sample as an outlier via PCA or hierarchical clustering",
+                "Produces a cleaned, sample-matched expression matrix and group vector ready for modeling"
+              ],
+              "packages": [
+                "limma",
+                "pandas"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "The matrix is already log2 normalized (log2(TPM+1)) — do not re-normalize, re-log, or feed it into a count-based tool",
+                "12000 x 13 dimensions mean one column is not a sample (likely a gene identifier column) — resolve this explicitly rather than assuming"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "limma differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are significantly differentially expressed between treated (n=6) and control (n=6) muscle samples using the delivered log2(TPM+1) values?",
+              "acceptance_criteria": [
+                "Fits a limma linear model (lmFit) with a treated-vs-control design matrix on the QC'd log2 matrix from T1S1, applies eBayes moderation, and extracts topTable with logFC, moderated t-statistic, raw p-value, and BH-adjusted FDR for all genes",
+                "Reports the number of genes significant at FDR < 0.05 and at FDR < 0.1, and lists the top up- and down-regulated genes by adjusted p-value",
+                "Explicitly states that count-based tools (DESeq2/edgeR) were not used because the input is pre-normalized log2 data, not raw counts",
+                "Outputs a full ranked gene table (all 12000 genes) suitable for downstream enrichment"
+              ],
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Unpaired design with n=6 per group and single batch — no batch correction term needed, no pairing/blocking variable to model",
+                "Do not apply voom (designed for raw counts) since input is already log2 normalized continuous data; use limma's trend/eBayes on the log2 matrix directly"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "WikiPathways enrichment of DE gene list",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among genes differentially expressed between treated and control muscle samples?",
+              "acceptance_criteria": [
+                "Confirms availability of the human WikiPathways gene set file before use; if absent, reports the gap rather than fabricating enrichment results",
+                "Runs over-representation or ranked (fgsea-style) enrichment using the full ranked gene list (logFC and FDR) from T1S2 against WikiPathways human pathway gene sets",
+                "Reports enriched pathways with adjusted p-values (BH-corrected) and the leading-edge/member genes driving each significant pathway",
+                "Interprets results in the context of muscle tissue biology, flagging any enrichment driven by very few genes as weak signal"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "WikiPathways gene sets use HGNC gene symbols — confirm the DE gene list's identifier space matches (or map it) before joining",
+                "With only 12000 genes profiled and n=6 per group, enrichment power is limited; treat borderline pathway hits cautiously"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

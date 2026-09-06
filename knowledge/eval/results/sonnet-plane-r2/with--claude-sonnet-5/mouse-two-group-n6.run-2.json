@@ -1,0 +1,637 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "mouse-two-group-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T22:23:35.270Z",
+  "elapsedMs": 61896,
+  "outcome": "plan_submitted",
+  "planId": "pln-9a567ed2",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and low-depth sample inspection",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A library-size difference alone is not evidence of a technical failure; DESeq2 size factors already account for depth differences",
+          "Only remove sample_01 downstream if QC shows it as a clear outlier on PCA/distance, not for its depth alone"
+        ],
+        "context": "Data: /data/inputs/counts/counts.csv (12000 genes x 12 samples, raw Salmon integer gene counts, mouse gene symbols) and /data/inputs/metadata/metadata.csv (12 samples x condition: high-fat diet vs chow). Single batch, unpaired 6v6 design. sample_01 has a library size about 4x below the median of the other 11 samples per the data profile.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 6 HFD and 6 chow mouse liver samples separate by condition on PCA, and how does sample_01 (library size ~4x below median) behave relative to its group on the sample-distance heatmap and PCA?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC (vst blind, PCA on top 500 genes, sample distance heatmap) is the grounded procedure for raw counts with a flagged low-depth sample (R-0033, R-0008); template tpl-qc-eda@1.0.0",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use vst(..., blind=TRUE) for the QC transform, not the design-aware transform",
+          "Do not remove sample_01 in this step; only characterize it and recommend a decision with a stated reason",
+          "PCA must use the top 500 variance-ranked genes"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the raw count matrix (12000 genes x 12 samples)",
+          "PCA on top 500 most-variable genes, colored by condition (HFD vs chow), with sample_01 labeled",
+          "Sample-distance heatmap (Euclidean distance on VST values) covering all 12 samples",
+          "Library size (total counts) and number of detected genes reported per sample, with sample_01 explicitly flagged and compared to the group median",
+          "Explicit written decision on whether sample_01 is retained, with the stated reason (not depth alone)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: HFD vs chow",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 replicates per group DESeq2 flags count outliers with NA p-values rather than replacing them (fewer than 7 reps); report these separately",
+          "If sample_01 is excluded per T1S1, note the resulting 5 vs 6 design explicitly and how it affects power"
+        ],
+        "context": "Raw Salmon gene-level counts, mouse liver, 6 HFD vs 6 chow, unpaired, single batch. Uses the sample-inclusion decision made in T1S1.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which of the 12000 mouse liver genes are differentially expressed between high-fat diet and chow mice (6 vs 6, unpaired, single batch)?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248",
+            "R-0036@9786",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with apeglm shrinkage, median-of-ratios normalization, explicit reference level, BH adjustment with independent filtering per template tpl-deseq2-two-group@1.0.0; explicit reference level chosen as chow/control per the disputed-default warning from execute_knowledge_check (R-0036)",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not pre-normalize or scale counts before DESeq2; normalization is internal via size factors",
+          "Set factor levels explicitly (relevel condition to chow before DESeqDataSet construction)",
+          "Select DE genes by BH-adjusted p-value only, never by raw p-value or fold change alone",
+          "Rank/plot on the shrunken log2FoldChange; keep unshrunken estimate and its SE in the table for reference"
+        ],
+        "acceptance_criteria": [
+          "Genes pre-filtered to those with >=10 counts in >=6 samples (smallest group size) before modeling",
+          "DESeq2 run on raw counts with median-of-ratios size factor normalization (no pre-scaling)",
+          "Design ~condition with an explicit reference level set to chow (control); contrast named as condition, HFD, chow",
+          "Wald test for the HFD vs chow contrast; count outliers flagged via Cook's distance policy with NA p-values reported separately from independent-filtering NAs",
+          "apeglm shrinkage applied to report a shrunken log2FoldChange alongside the unshrunken log2FoldChange and lfcSE",
+          "Results table includes BH-adjusted p-value (padj) at alpha 0.05 with independent filtering left on; number of genes tested and number of DE genes (padj<0.05) reported",
+          "p-value histogram (unadjusted) generated and inspected for shape before trusting adjusted p-values",
+          "MA plot and dispersion plot produced as fit diagnostics",
+          "Decision on sample_01 (retain/exclude) from T1S1 is applied and stated in this step's output"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "fgsea preranked Hallmark pathway enrichment",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are method- and ranking-metric-dependent; report the chosen metric (Wald statistic) and treat significant pathways as hypotheses for follow-up, not proven mechanisms",
+          "GO/other collections are not used here per the research question scope (Hallmark pathways only)"
+        ],
+        "context": "Uses the DESeq2 results table from T1S2 (full ranked gene list by Wald statistic) and the MSigDB mouse Hallmark gene sets staged at /mnt/refs/managed/msigdb-hallmark-mouse/2026.1/mh.all.v2026.1.Mm.symbols.gmt (mouse gene symbols, MGI), matching the mouse gene symbols in the counts matrix directly — no ortholog mapping needed.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table"
+        ],
+        "question": "Which MSigDB Hallmark pathways are enriched (up or down) in high-fat diet vs chow mouse liver, using the full ranked gene list from the DESeq2 Wald test?",
+        "grounding": {
+          "claims": [
+            "R-0049@d76b",
+            "R-0107@976c",
+            "R-0045@f652",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77",
+            "R-0108@409f"
+          ],
+          "reason": "fgsea preranked GSEA on the Wald statistic against MSigDB mouse Hallmark per template tpl-fgsea-preranked@1.0.0; mouse-native Hallmark collection confirmed present at /mnt/refs/managed/msigdb-hallmark-mouse/2026.1/",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the mouse Hallmark collection directly (gene symbols already mouse/MGI); do not map to human symbols or use the human Hallmark file",
+          "Rank by the Wald statistic ('stat' column from DESeq2 results)",
+          "Use the full ranked list of tested genes, not a p-value or fold-change-thresholded subset",
+          "If the resource is unavailable at run time, report that Hallmark enrichment could not be performed and stop this step rather than substituting an unrelated collection"
+        ],
+        "acceptance_criteria": [
+          "Full list of tested genes (post-filter, pre-significance-threshold) ranked by the DESeq2 Wald statistic (stat column), not by unshrunken fold change or a ties-prone signed p-value",
+          "fgsea run against the MSigDB mouse Hallmark gene set collection restricted to sets with 15-500 member genes among the tested genes",
+          "BH-adjusted p-values reported per pathway; redundant/overlapping significant pathways collapsed with one representative reported and full table kept as supplement",
+          "Leading-edge genes listed for each significant pathway with their Wald statistic",
+          "Gene set collection name and version (MSigDB mouse Hallmark, 2026.1) stated in the output"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Integrated DE + Hallmark pathway report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If sample_01 was excluded, state the resulting reduced power and unbalanced design explicitly"
+        ],
+        "context": "Synthesizes outputs of T1S1 (QC), T1S2 (DESeq2 DE results), and T2S1 (fgsea Hallmark enrichment) into one report answering which genes and which Hallmark pathways change between HFD and chow mouse liver.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "fgsea"
+        ],
+        "question": "What is the combined picture of gene-level and Hallmark pathway-level changes between HFD and chow mouse liver, including the impact of the low-depth sample and full reproducibility details?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report-step content rules apply as claims but no single method/template covers the reporting synthesis step itself",
+          "status": "ungrounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Do not present enrichment results as definitive mechanism; frame as hypothesis-generating per the method-dependence caveat",
+          "Report all reproducibility fields listed in the acceptance criteria; do not omit package versions or the gene set collection version"
+        ],
+        "acceptance_criteria": [
+          "Reports QC findings (T1S1): PCA, sample distance heatmap, library sizes, and the stated decision on sample_01",
+          "Reports DE results (T1S2): design formula, contrast, package versions, thresholds, number of genes tested, number of DE genes at padj<0.05, MA plot, dispersion plot, p-value histogram shape",
+          "Gene table includes gene symbol, unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, padj, and flags for any NA results (Cook's outlier vs independent filtering)",
+          "Reports Hallmark enrichment results (T2S1): significant pathways with NES, padj, leading-edge genes, gene set collection version, ranking metric used",
+          "States gene set database version, ranking metric, universe, and size window explicitly",
+          "Includes a full reproducibility record: sessionInfo, package versions, any random seeds used, gene set collection version",
+          "Explicitly states the caveat that enrichment results depend on the chosen method/ranking metric"
+        ]
+      }
+    ],
+    "title": "Mouse liver HFD vs chow: DE genes and Hallmark pathways",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "Raw Salmon gene-level counts (12000 genes x 12 mice: 6 high-fat diet, 6 chow, liver, single batch, unpaired) are first checked for sample structure with a blind VST, PCA, and sample-distance heatmap, explicitly inspecting sample_01 whose library size is ~4x below the median rather than dropping it by default. DESeq2 then models raw counts with median-of-ratios normalization (never pre-scaled counts), a minimal count pre-filter, an explicit reference level (chow/control) and a named contrast (HFD vs chow), a Wald test, and apeglm shrinkage of the reported fold changes, selecting genes by BH-adjusted p-value (alpha 0.05) with independent filtering left on. The full ranked gene list (ranked by the Wald statistic) is then tested against the MSigDB mouse Hallmark collection with fgsea preranked GSEA, respecting the 15-500 gene set size window and collapsing redundant sets. A final report step assembles QC findings, DE results (with fit diagnostics and the low-depth sample's effect on the model explicitly discussed), and the Hallmark enrichment results with leading-edge genes and full reproducibility metadata."
+  },
+  "usage": {
+    "inputTokens": 206993,
+    "outputTokens": 6583,
+    "cacheCreationInputTokens": 129936,
+    "cacheReadInputTokens": 77021,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "mouse",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "ranked_list",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "mouse",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "ranked_list",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA, sample distances, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep gene with >=10 counts in >= smallest group size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors (DESeq2)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~condition, explicit reference level = chow/control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on Wald statistic with MSigDB mouse Hallmark",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_mouse"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE + enrichment report with QC, diagnostics, reproducibility record",
+            "package": "none",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Mouse liver HFD vs chow: DE genes and Hallmark pathways",
+          "analytical_narrative": "Raw Salmon gene-level counts (12000 genes x 12 mice: 6 high-fat diet, 6 chow, liver, single batch, unpaired) are first checked for sample structure with a blind VST, PCA, and sample-distance heatmap, explicitly inspecting sample_01 whose library size is ~4x below the median rather than dropping it by default. DESeq2 then models raw counts with median-of-ratios normalization (never pre-scaled counts), a minimal count pre-filter, an explicit reference level (chow/control) and a named contrast (HFD vs chow), a Wald test, and apeglm shrinkage of the reported fold changes, selecting genes by BH-adjusted p-value (alpha 0.05) with independent filtering left on. The full ranked gene list (ranked by the Wald statistic) is then tested against the MSigDB mouse Hallmark collection with fgsea preranked GSEA, respecting the 15-500 gene set size window and collapsing redundant sets. A final report step assembles QC findings, DE results (with fit diagnostics and the low-depth sample's effect on the model explicitly discussed), and the Hallmark enrichment results with leading-edge genes and full reproducibility metadata.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and low-depth sample inspection",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 6 HFD and 6 chow mouse liver samples separate by condition on PCA, and how does sample_01 (library size ~4x below median) behave relative to its group on the sample-distance heatmap and PCA?",
+              "acceptance_criteria": [
+                "Blind VST computed on the raw count matrix (12000 genes x 12 samples)",
+                "PCA on top 500 most-variable genes, colored by condition (HFD vs chow), with sample_01 labeled",
+                "Sample-distance heatmap (Euclidean distance on VST values) covering all 12 samples",
+                "Library size (total counts) and number of detected genes reported per sample, with sample_01 explicitly flagged and compared to the group median",
+                "Explicit written decision on whether sample_01 is retained, with the stated reason (not depth alone)"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data: /data/inputs/counts/counts.csv (12000 genes x 12 samples, raw Salmon integer gene counts, mouse gene symbols) and /data/inputs/metadata/metadata.csv (12 samples x condition: high-fat diet vs chow). Single batch, unpaired 6v6 design. sample_01 has a library size about 4x below the median of the other 11 samples per the data profile.",
+              "constraints": [
+                "Use vst(..., blind=TRUE) for the QC transform, not the design-aware transform",
+                "Do not remove sample_01 in this step; only characterize it and recommend a decision with a stated reason",
+                "PCA must use the top 500 variance-ranked genes"
+              ],
+              "caveats": [
+                "A library-size difference alone is not evidence of a technical failure; DESeq2 size factors already account for depth differences",
+                "Only remove sample_01 downstream if QC shows it as a clear outlier on PCA/distance, not for its depth alone"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "reason": "Sample structure QC (vst blind, PCA on top 500 genes, sample distance heatmap) is the grounded procedure for raw counts with a flagged low-depth sample (R-0033, R-0008); template tpl-qc-eda@1.0.0"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: HFD vs chow",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 mouse liver genes are differentially expressed between high-fat diet and chow mice (6 vs 6, unpaired, single batch)?",
+              "acceptance_criteria": [
+                "Genes pre-filtered to those with >=10 counts in >=6 samples (smallest group size) before modeling",
+                "DESeq2 run on raw counts with median-of-ratios size factor normalization (no pre-scaling)",
+                "Design ~condition with an explicit reference level set to chow (control); contrast named as condition, HFD, chow",
+                "Wald test for the HFD vs chow contrast; count outliers flagged via Cook's distance policy with NA p-values reported separately from independent-filtering NAs",
+                "apeglm shrinkage applied to report a shrunken log2FoldChange alongside the unshrunken log2FoldChange and lfcSE",
+                "Results table includes BH-adjusted p-value (padj) at alpha 0.05 with independent filtering left on; number of genes tested and number of DE genes (padj<0.05) reported",
+                "p-value histogram (unadjusted) generated and inspected for shape before trusting adjusted p-values",
+                "MA plot and dispersion plot produced as fit diagnostics",
+                "Decision on sample_01 (retain/exclude) from T1S1 is applied and stated in this step's output"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw Salmon gene-level counts, mouse liver, 6 HFD vs 6 chow, unpaired, single batch. Uses the sample-inclusion decision made in T1S1.",
+              "constraints": [
+                "Do not pre-normalize or scale counts before DESeq2; normalization is internal via size factors",
+                "Set factor levels explicitly (relevel condition to chow before DESeqDataSet construction)",
+                "Select DE genes by BH-adjusted p-value only, never by raw p-value or fold change alone",
+                "Rank/plot on the shrunken log2FoldChange; keep unshrunken estimate and its SE in the table for reference"
+              ],
+              "caveats": [
+                "With 6 replicates per group DESeq2 flags count outliers with NA p-values rather than replacing them (fewer than 7 reps); report these separately",
+                "If sample_01 is excluded per T1S1, note the resulting 5 vs 6 design explicitly and how it affects power"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0030@2248",
+                  "R-0036@9786",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "reason": "DESeq2 Wald test with apeglm shrinkage, median-of-ratios normalization, explicit reference level, BH adjustment with independent filtering per template tpl-deseq2-two-group@1.0.0; explicit reference level chosen as chow/control per the disputed-default warning from execute_knowledge_check (R-0036)"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "fgsea preranked Hallmark pathway enrichment",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB Hallmark pathways are enriched (up or down) in high-fat diet vs chow mouse liver, using the full ranked gene list from the DESeq2 Wald test?",
+              "acceptance_criteria": [
+                "Full list of tested genes (post-filter, pre-significance-threshold) ranked by the DESeq2 Wald statistic (stat column), not by unshrunken fold change or a ties-prone signed p-value",
+                "fgsea run against the MSigDB mouse Hallmark gene set collection restricted to sets with 15-500 member genes among the tested genes",
+                "BH-adjusted p-values reported per pathway; redundant/overlapping significant pathways collapsed with one representative reported and full table kept as supplement",
+                "Leading-edge genes listed for each significant pathway with their Wald statistic",
+                "Gene set collection name and version (MSigDB mouse Hallmark, 2026.1) stated in the output"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Uses the DESeq2 results table from T1S2 (full ranked gene list by Wald statistic) and the MSigDB mouse Hallmark gene sets staged at /mnt/refs/managed/msigdb-hallmark-mouse/2026.1/mh.all.v2026.1.Mm.symbols.gmt (mouse gene symbols, MGI), matching the mouse gene symbols in the counts matrix directly — no ortholog mapping needed.",
+              "constraints": [
+                "Use the mouse Hallmark collection directly (gene symbols already mouse/MGI); do not map to human symbols or use the human Hallmark file",
+                "Rank by the Wald statistic ('stat' column from DESeq2 results)",
+                "Use the full ranked list of tested genes, not a p-value or fold-change-thresholded subset",
+                "If the resource is unavailable at run time, report that Hallmark enrichment could not be performed and stop this step rather than substituting an unrelated collection"
+              ],
+              "caveats": [
+                "Enrichment results are method- and ranking-metric-dependent; report the chosen metric (Wald statistic) and treat significant pathways as hypotheses for follow-up, not proven mechanisms",
+                "GO/other collections are not used here per the research question scope (Hallmark pathways only)"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0049@d76b",
+                  "R-0107@976c",
+                  "R-0045@f652",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77",
+                  "R-0108@409f"
+                ],
+                "reason": "fgsea preranked GSEA on the Wald statistic against MSigDB mouse Hallmark per template tpl-fgsea-preranked@1.0.0; mouse-native Hallmark collection confirmed present at /mnt/refs/managed/msigdb-hallmark-mouse/2026.1/"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Integrated DE + Hallmark pathway report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the combined picture of gene-level and Hallmark pathway-level changes between HFD and chow mouse liver, including the impact of the low-depth sample and full reproducibility details?",
+              "acceptance_criteria": [
+                "Reports QC findings (T1S1): PCA, sample distance heatmap, library sizes, and the stated decision on sample_01",
+                "Reports DE results (T1S2): design formula, contrast, package versions, thresholds, number of genes tested, number of DE genes at padj<0.05, MA plot, dispersion plot, p-value histogram shape",
+                "Gene table includes gene symbol, unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, padj, and flags for any NA results (Cook's outlier vs independent filtering)",
+                "Reports Hallmark enrichment results (T2S1): significant pathways with NES, padj, leading-edge genes, gene set collection version, ranking metric used",
+                "States gene set database version, ranking metric, universe, and size window explicitly",
+                "Includes a full reproducibility record: sessionInfo, package versions, any random seeds used, gene set collection version",
+                "Explicitly states the caveat that enrichment results depend on the chosen method/ranking metric"
+              ],
+              "packages": [
+                "DESeq2",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Synthesizes outputs of T1S1 (QC), T1S2 (DESeq2 DE results), and T2S1 (fgsea Hallmark enrichment) into one report answering which genes and which Hallmark pathways change between HFD and chow mouse liver.",
+              "constraints": [
+                "Do not present enrichment results as definitive mechanism; frame as hypothesis-generating per the method-dependence caveat",
+                "Report all reproducibility fields listed in the acceptance criteria; do not omit package versions or the gene set collection version"
+              ],
+              "caveats": [
+                "If sample_01 was excluded, state the resulting reduced power and unbalanced design explicitly"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report-step content rules apply as claims but no single method/template covers the reporting synthesis step itself"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+  }
+}

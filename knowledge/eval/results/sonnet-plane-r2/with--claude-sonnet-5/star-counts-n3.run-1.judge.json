@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the STAR/featureCounts matrix as raw integer gene-level counts fed directly into DESeq2 via DESeqDataSet, explicitly rules out tximport and length correction, keeps median-of-ratios normalization inside the model, uses a minimal justified filter (>=10 counts in >=3 samples), an explicit ~condition design with control as reference, a named contrast, apeglm shrinkage, BH at alpha=0.05 with independent filtering, and states the n=3 power limitation. QC is blinded VST/PCA/distance heatmap with library sizes colored by condition, but the outlier policy is only 'flag' without stating what action follows. Enrichment was not requested; the added GSEA is well specified (Wald stat ranking, full list, 15-500 window, Hallmark 2026.1, seed) though the Reactome version is left as 'current' rather than pinned. The report step covers method, versions, design, thresholds, tested/significant counts, diagnostics, and caveats."
+}

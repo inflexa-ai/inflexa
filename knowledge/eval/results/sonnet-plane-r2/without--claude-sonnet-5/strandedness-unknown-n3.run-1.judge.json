@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 5
+  },
+  "rationale": "The plan uses the right test (DESeq2 Wald, ~condition, apeglm, padj<0.05, row-sum<10 filter, n=3 power caveat) and a sound sample QC with an outlier policy, but it declares the alignments unavailable and fits the model on the counts as delivered, replacing the required per-sample strandedness inference (infer_experiment/salmon -l A) and re-counting with an indirect antisense-overlap heuristic and a post hoc Fisher confound test; this is a thoughtful hedge but does not establish that the counts are right. Normalization by size factors and the BH procedure are implied by DESeq2 but never stated, and the reference level is not set explicitly. Enrichment was not requested; the plan runs ORA anyway without naming the universe, collection versions, or a set-size window. The report names thresholds and design caveats but omits software versions and the counts of tested and significant genes."
+}

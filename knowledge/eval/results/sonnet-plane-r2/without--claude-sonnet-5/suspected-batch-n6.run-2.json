@@ -1,0 +1,291 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "suspected-batch-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T21:56:27.396Z",
+  "elapsedMs": 43362,
+  "outcome": "plan_submitted",
+  "planId": "pln-281829e8",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and PCA characterization of the two sample clusters",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "In the 12000 x 12 kidney raw count matrix (counts.csv) with metadata.csv recording only 'condition' (6 treated, 6 control), what defines the two clusters of six samples seen in PCA, and how does that split relate to library size, gene detection rate, and other extractable QC metrics?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts and metadata are loaded, sample ordering matched, and a DESeq2 (or vst/rlog) normalization is used to build the PCA",
+          "Report explicitly confirms or updates the PC1/PC2 axis that separates the two six-sample clusters and states the % variance explained by each PC",
+          "Cluster membership (assign each of the 12 samples to cluster A or B) is written out as a table alongside condition label",
+          "Library size, total detected genes, and any other computable per-sample QC metric are compared between the two clusters (e.g., boxplots, t-test) to check whether the split reflects a technical artifact (depth/composition) rather than biology",
+          "A 2x2 contingency table of PCA cluster vs condition (treated/control) is produced and reported explicitly (expected fully-crossed 3v3 per cluster if correctable, or perfectly confounded if not)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Estimate latent surrogate variable(s) for the unrecorded confound",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "This step depends on T1S1's contingency table. If T1S1 shows the PCA cluster is perfectly confounded with condition (each cluster = one condition group entirely), SVA/design adjustment cannot separate batch from treatment effects and this step must report that limitation explicitly rather than force a surrogate variable into the model.",
+        "maxSteps": 200,
+        "packages": [
+          "sva",
+          "DESeq2"
+        ],
+        "question": "Given no recorded batch variable but a PCA split into two six-sample groups not explained by condition, can a surrogate variable analysis (SVA, unsupervised, full vs null model of ~condition) recover a latent factor whose values track the PCA cluster split, and is that factor NOT perfectly collinear with condition (i.e., is the design still estimable)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "SVA is run on a DESeq2-normalized/vst expression matrix with full model ~condition and null model ~1, using the sva package's num.sv/sva functions",
+          "Number of significant surrogate variables (n.sv) is reported",
+          "Each estimated surrogate variable is correlated against the PCA-cluster assignment from T1S1 to confirm it captures the same latent axis",
+          "Correlation of the surrogate variable(s) with condition itself is reported to check the design remains full rank (variance inflation / aliasing check)",
+          "If condition and the PCA cluster are perfectly confounded (from T1S1), this step explicitly states that SV-based correction is not identifiable and recommends treating any downstream DE result as confounded/exploratory only"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DESeq2 differential expression, treated vs control, adjusted for estimated surrogate variable(s)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Uses the raw integer Salmon gene counts (counts.csv) and metadata.csv (condition) plus the surrogate variable(s) estimated in T1S2, appended as extra columns of the DESeq2 colData.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between treated (n=6) and control (n=6) kidney samples when the model adjusts for the SVA-estimated surrogate variable(s) from T1S2, i.e. fitting DESeq2 with design ~SV1(+SV2...)+condition?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 is run twice: (a) naive model ~condition only, (b) adjusted model ~SV1(+SV2)+condition, both with the same raw counts",
+          "Adjusted model results table (log2FoldChange, padj, baseMean) is exported for the condition contrast (treated vs control), independent of the surrogate variable(s)",
+          "Number of genes at padj<0.05 (and a stated |log2FC| threshold, e.g. 1) is reported for both naive and adjusted models, with a comparison (overlap, genes gained/lost) to show what the SV adjustment changed",
+          "If T1S2 flagged the confound as unresolvable (perfect confounding), this step still runs the naive model for completeness but the report must state that the adjusted model could not be fit / is not interpretable, and flags all DE results as potentially confounded",
+          "Standard DESeq2 diagnostics (dispersion plot, independent filtering summary) are generated"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Functional enrichment of treated vs control DE genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Uses the adjusted DE gene table (ranked by DESeq2 stat or log2FC) from T1S3. Reference gene sets: MSigDB human hallmark gene sets (50 sets, HGNC symbols), WikiPathways human pathways (HGNC symbols), and MSigDB human canonical pathways (KEGG MEDICUS, BioCarta, PID; HGNC symbols) — all confirmed present for Homo sapiens in this environment.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which biological pathways (MSigDB Hallmark, WikiPathways human, and MSigDB canonical KEGG MEDICUS/BioCarta/PID collections) are enriched among genes differentially expressed between treated and control kidney samples in the SVA-adjusted DESeq2 result from T1S3?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Pre-ranked GSEA (fgsea) is run on the full adjusted DE gene list ranked by DESeq2 test statistic, against Hallmark, WikiPathways human, and canonical (KEGG MEDICUS/BioCarta/PID) gene sets",
+          "Results report NES, p-value, and BH-adjusted p-value per pathway, with significant pathways (padj<0.05) listed by collection",
+          "If T1S3 flagged the DE result as confounded/unresolvable, this enrichment step explicitly carries that caveat forward in its own report rather than presenting pathways as clean treatment biology",
+          "Gene symbols in counts.csv are confirmed to match HGNC symbols used in the gene set files before running enrichment (case/alias check)"
+        ]
+      }
+    ],
+    "title": "Kidney DE with latent-factor batch correction",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The kidney bulk RNA-seq dataset (12000 genes x 12 samples, raw Salmon counts, 6 treated vs 6 control, unpaired) shows two PCA clusters of six samples each that do NOT align with the treated/control label, and no processing batch was recorded. This is the classic signature of an unmodeled latent confounder (batch, sex, processing date, etc.) that is orthogonal to or worse, confounded with, the biological variable of interest. Running a naive two-group DESeq2 model here would risk attributing the latent-factor effect to 'treatment', producing a DE gene list dominated by a technical or unknown biological axis rather than the drug/condition effect. The plan therefore: (1) formally characterizes the PCA split against every available sample-level variable to rule out a labeled confound; (2) cross-tabulates the split against condition to quantify confounding (a full crossing, e.g. 3v3 in each PCA cluster, is correctable; perfect confounding, e.g. cluster=condition, is not); (3) depending on that structure, estimates the latent factor with surrogate variable analysis (SVA) since no batch label exists, and includes the estimated surrogate variable(s) in the DESeq2 design alongside condition; (4) runs DESeq2 for treated vs control adjusting for the surrogate variable(s), with a QC step comparing adjusted vs naive results to show what the correction changed; (5) performs functional enrichment (hallmark, WikiPathways, KEGG MEDICUS/BioCarta/PID canonical pathways for human) on the adjusted DE gene list to interpret the treatment-associated biology. If step T1S2 finds the PCA split is perfectly confounded with condition (each condition entirely inside one cluster), SVA adjustment cannot separate the two axes and the agent must report this as an unresolvable confound rather than force a correction."
+  },
+  "usage": {
+    "inputTokens": 184494,
+    "outputTokens": 3654,
+    "cacheCreationInputTokens": 79401,
+    "cacheReadInputTokens": 105045,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene sets human",
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "sva",
+          "limma",
+          "edgeR",
+          "pheatmap",
+          "ggplot2",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney DE with latent-factor batch correction",
+          "analytical_narrative": "The kidney bulk RNA-seq dataset (12000 genes x 12 samples, raw Salmon counts, 6 treated vs 6 control, unpaired) shows two PCA clusters of six samples each that do NOT align with the treated/control label, and no processing batch was recorded. This is the classic signature of an unmodeled latent confounder (batch, sex, processing date, etc.) that is orthogonal to or worse, confounded with, the biological variable of interest. Running a naive two-group DESeq2 model here would risk attributing the latent-factor effect to 'treatment', producing a DE gene list dominated by a technical or unknown biological axis rather than the drug/condition effect. The plan therefore: (1) formally characterizes the PCA split against every available sample-level variable to rule out a labeled confound; (2) cross-tabulates the split against condition to quantify confounding (a full crossing, e.g. 3v3 in each PCA cluster, is correctable; perfect confounding, e.g. cluster=condition, is not); (3) depending on that structure, estimates the latent factor with surrogate variable analysis (SVA) since no batch label exists, and includes the estimated surrogate variable(s) in the DESeq2 design alongside condition; (4) runs DESeq2 for treated vs control adjusting for the surrogate variable(s), with a QC step comparing adjusted vs naive results to show what the correction changed; (5) performs functional enrichment (hallmark, WikiPathways, KEGG MEDICUS/BioCarta/PID canonical pathways for human) on the adjusted DE gene list to interpret the treatment-associated biology. If step T1S2 finds the PCA split is perfectly confounded with condition (each condition entirely inside one cluster), SVA adjustment cannot separate the two axes and the agent must report this as an unresolvable confound rather than force a correction.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and PCA characterization of the two sample clusters",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "In the 12000 x 12 kidney raw count matrix (counts.csv) with metadata.csv recording only 'condition' (6 treated, 6 control), what defines the two clusters of six samples seen in PCA, and how does that split relate to library size, gene detection rate, and other extractable QC metrics?",
+              "acceptance_criteria": [
+                "Counts and metadata are loaded, sample ordering matched, and a DESeq2 (or vst/rlog) normalization is used to build the PCA",
+                "Report explicitly confirms or updates the PC1/PC2 axis that separates the two six-sample clusters and states the % variance explained by each PC",
+                "Cluster membership (assign each of the 12 samples to cluster A or B) is written out as a table alongside condition label",
+                "Library size, total detected genes, and any other computable per-sample QC metric are compared between the two clusters (e.g., boxplots, t-test) to check whether the split reflects a technical artifact (depth/composition) rather than biology",
+                "A 2x2 contingency table of PCA cluster vs condition (treated/control) is produced and reported explicitly (expected fully-crossed 3v3 per cluster if correctable, or perfectly confounded if not)"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Estimate latent surrogate variable(s) for the unrecorded confound",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Given no recorded batch variable but a PCA split into two six-sample groups not explained by condition, can a surrogate variable analysis (SVA, unsupervised, full vs null model of ~condition) recover a latent factor whose values track the PCA cluster split, and is that factor NOT perfectly collinear with condition (i.e., is the design still estimable)?",
+              "context": "This step depends on T1S1's contingency table. If T1S1 shows the PCA cluster is perfectly confounded with condition (each cluster = one condition group entirely), SVA/design adjustment cannot separate batch from treatment effects and this step must report that limitation explicitly rather than force a surrogate variable into the model.",
+              "acceptance_criteria": [
+                "SVA is run on a DESeq2-normalized/vst expression matrix with full model ~condition and null model ~1, using the sva package's num.sv/sva functions",
+                "Number of significant surrogate variables (n.sv) is reported",
+                "Each estimated surrogate variable is correlated against the PCA-cluster assignment from T1S1 to confirm it captures the same latent axis",
+                "Correlation of the surrogate variable(s) with condition itself is reported to check the design remains full rank (variance inflation / aliasing check)",
+                "If condition and the PCA cluster are perfectly confounded (from T1S1), this step explicitly states that SV-based correction is not identifiable and recommends treating any downstream DE result as confounded/exploratory only"
+              ],
+              "packages": [
+                "sva",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "DESeq2 differential expression, treated vs control, adjusted for estimated surrogate variable(s)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are differentially expressed between treated (n=6) and control (n=6) kidney samples when the model adjusts for the SVA-estimated surrogate variable(s) from T1S2, i.e. fitting DESeq2 with design ~SV1(+SV2...)+condition?",
+              "context": "Uses the raw integer Salmon gene counts (counts.csv) and metadata.csv (condition) plus the surrogate variable(s) estimated in T1S2, appended as extra columns of the DESeq2 colData.",
+              "acceptance_criteria": [
+                "DESeq2 is run twice: (a) naive model ~condition only, (b) adjusted model ~SV1(+SV2)+condition, both with the same raw counts",
+                "Adjusted model results table (log2FoldChange, padj, baseMean) is exported for the condition contrast (treated vs control), independent of the surrogate variable(s)",
+                "Number of genes at padj<0.05 (and a stated |log2FC| threshold, e.g. 1) is reported for both naive and adjusted models, with a comparison (overlap, genes gained/lost) to show what the SV adjustment changed",
+                "If T1S2 flagged the confound as unresolvable (perfect confounding), this step still runs the naive model for completeness but the report must state that the adjusted model could not be fit / is not interpretable, and flags all DE results as potentially confounded",
+                "Standard DESeq2 diagnostics (dispersion plot, independent filtering summary) are generated"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Functional enrichment of treated vs control DE genes",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological pathways (MSigDB Hallmark, WikiPathways human, and MSigDB canonical KEGG MEDICUS/BioCarta/PID collections) are enriched among genes differentially expressed between treated and control kidney samples in the SVA-adjusted DESeq2 result from T1S3?",
+              "context": "Uses the adjusted DE gene table (ranked by DESeq2 stat or log2FC) from T1S3. Reference gene sets: MSigDB human hallmark gene sets (50 sets, HGNC symbols), WikiPathways human pathways (HGNC symbols), and MSigDB human canonical pathways (KEGG MEDICUS, BioCarta, PID; HGNC symbols) — all confirmed present for Homo sapiens in this environment.",
+              "acceptance_criteria": [
+                "Pre-ranked GSEA (fgsea) is run on the full adjusted DE gene list ranked by DESeq2 test statistic, against Hallmark, WikiPathways human, and canonical (KEGG MEDICUS/BioCarta/PID) gene sets",
+                "Results report NES, p-value, and BH-adjusted p-value per pathway, with significant pathways (padj<0.05) listed by collection",
+                "If T1S3 flagged the DE result as confounded/unresolvable, this enrichment step explicitly carries that caveat forward in its own report rather than presenting pathways as clean treatment biology",
+                "Gene symbols in counts.csv are confirmed to match HGNC symbols used in the gene set files before running enrichment (case/alias check)"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

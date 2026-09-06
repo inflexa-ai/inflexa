@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames the question as the interaction term of ~genotype + treatment + genotype:treatment with explicit WT/vehicle reference levels, tests the interaction first and then both simple effects, with QC, a justified minimal filter, in-model median-of-ratios normalization, and BH at a stated alpha with alpha passed into results(). The main flaw is a stated technical error: the KO simple effect is defined as list(c('treatment_drug_vs_vehicle','genotypeKO.treatmentdrug')), which is a sum of two coefficients, not a single coefficient, so apeglm cannot be applied to it as written (lfcShrink with apeglm requires coef=); the plan explicitly rejects ashr for exactly the case where ashr (or a releveled refit) is needed. Enrichment is well specified (full ranked list by Wald stat, named/versioned collections, 15-500 size window, tested-gene universe), and the report section covers method, versions, design, thresholds, gene counts, and the low-power caveat for the interaction at n=4/cell."
+}

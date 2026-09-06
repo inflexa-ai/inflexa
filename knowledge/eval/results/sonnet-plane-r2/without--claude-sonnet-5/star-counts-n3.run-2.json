@@ -1,0 +1,203 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "star-counts-n3",
+  "run": 2,
+  "startedAt": "2026-09-05T21:57:42.336Z",
+  "elapsedMs": 29890,
+  "outcome": "plan_submitted",
+  "planId": "pln-621edaaf",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 vs n=3 is a small sample size; results are sensitive to individual sample variance and multiple-testing correction will be conservative",
+          "featureCounts gene-level counts require no additional gene-length normalization step for the DESeq2 GLM itself (size factors handle library size, not length), but note this is not TPM/FPKM-comparable output"
+        ],
+        "context": "Input files: /eval-sonnet-plane-r2-without-star-counts-n3-2/data/inputs/counts/counts.csv (12000 genes x 6 samples, raw integer counts from STAR+featureCounts, first column gene symbol) and /eval-sonnet-plane-r2-without-star-counts-n3-2/data/inputs/metadata/metadata.csv (6 samples x 2 columns, condition = treated/control). Single batch, unpaired design.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "EnhancedVolcano",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which of the 12000 profiled genes are differentially expressed between the 3 treated and 3 control liver samples, using raw STAR/featureCounts integer gene counts modeled with a negative-binomial GLM?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use raw integer counts directly with DESeq2 — do not renormalize or use a transcript-quantifier-oriented tool (e.g. tximport/sleuth) since these are STAR+featureCounts gene-level counts, not transcript-level quantifier output",
+          "Do not apply batch correction — the design context states single batch"
+        ],
+        "acceptance_criteria": [
+          "Counts and metadata are loaded and sample order/names are verified to match between counts.csv columns and metadata.csv rows before building the DESeq2 dataset",
+          "Design formula is ~condition using the condition column from metadata.csv (3 treated vs 3 control, unpaired)",
+          "Genes with all-zero or near-zero counts across samples are filtered before running DESeq2's default independent filtering",
+          "DESeq2 is run with default size-factor normalization (median-of-ratios), Wald test for the treated-vs-control contrast, and apeglm or normal LFC shrinkage is applied for reporting fold changes",
+          "Output table includes gene symbol, baseMean, log2FoldChange (shrunk), lfcSE, stat, pvalue, and padj (BH) for all tested genes",
+          "A results table is saved listing genes at padj < 0.05 (and separately noting |log2FC| >= 1 subset) ranked by significance",
+          "Basic QC outputs are produced: PCA plot of the 6 samples colored by condition and a dispersion plot, to confirm the treated/control split is consistent with the design and to flag any outlier sample",
+          "Given only 3 replicates per group, the report explicitly states the statistical power limitations of an n=3 vs n=3 unpaired design"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of DE genes (WikiPathways human)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways coverage is smaller and less comprehensive than MSigDB Hallmark/KEGG; report the gene-symbol match rate against pathway sets so the enrichment result can be judged for completeness"
+        ],
+        "context": "Uses the DE results table (gene symbol, log2FoldChange, padj) produced in T1S1 as the primary input. Reference: WikiPathways human pathway gene sets (HGNC gene symbols) available in the reference store at wikipathways-human/2026.07.10.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among the genes differentially expressed between treated and control liver samples identified in T1S1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use only the human WikiPathways gene set file — do not substitute the mouse or rat WikiPathways files given the organism is Homo sapiens"
+        ],
+        "acceptance_criteria": [
+          "Reference gene sets are loaded from the WikiPathways human GMT file, parsing the '%'-delimited descriptor field to recover readable pathway names and species, and confirming the species field is Homo sapiens",
+          "Enrichment is run twice: (a) over-representation analysis on the padj<0.05 significant gene list from T1S1 against the full tested-gene background, and (b) a ranked GSEA using the full DE stat (e.g. Wald stat or log2FC-based rank) if the significant gene count is small",
+          "Gene symbols from the counts matrix are matched to WikiPathways HGNC gene symbols; unmatched genes and the match rate are reported",
+          "Output is a table of enriched pathways with normalized enrichment score or odds ratio, p-value, and BH-adjusted q-value, plus a bar or dot plot of the top pathways",
+          "If the significant DE gene list from T1S1 is empty or very small (e.g. <10 genes), the step reports this explicitly and falls back to the ranked GSEA approach rather than fabricating an ORA result on a tiny list"
+        ]
+      }
+    ],
+    "title": "Liver bulk RNA-seq treated vs control DE + pathways",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is a standard bulk RNA-seq design: 12000 genes x 6 samples (3 treated, 3 control liver samples), raw integer STAR/featureCounts gene-level counts, unpaired, single batch. This is the canonical use case for a negative-binomial count model. Step 1 runs DESeq2 (or pydeseq2) on the raw counts.csv against the metadata.csv condition column to get a QC-checked, size-factor-normalized differential expression table with shrunk log2 fold changes and BH-adjusted p-values. Step 2 takes the significant DE gene list and runs pathway enrichment against WikiPathways human gene sets (available in the reference store) to contextualize the transcriptional response to drug treatment in liver. No batch correction is needed (single batch, unpaired 3v3), and no translational/safety/immune steps are added since the research question is a plain DE question with no drug-target, safety-biomarker, or immune-composition angle specified."
+  },
+  "usage": {
+    "inputTokens": 131961,
+    "outputTokens": 2539,
+    "cacheCreationInputTokens": 70399,
+    "cacheReadInputTokens": 61526,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "pydeseq2",
+          "EnhancedVolcano",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver bulk RNA-seq treated vs control DE + pathways",
+          "analytical_narrative": "The dataset is a standard bulk RNA-seq design: 12000 genes x 6 samples (3 treated, 3 control liver samples), raw integer STAR/featureCounts gene-level counts, unpaired, single batch. This is the canonical use case for a negative-binomial count model. Step 1 runs DESeq2 (or pydeseq2) on the raw counts.csv against the metadata.csv condition column to get a QC-checked, size-factor-normalized differential expression table with shrunk log2 fold changes and BH-adjusted p-values. Step 2 takes the significant DE gene list and runs pathway enrichment against WikiPathways human gene sets (available in the reference store) to contextualize the transcriptional response to drug treatment in liver. No batch correction is needed (single batch, unpaired 3v3), and no translational/safety/immune steps are added since the research question is a plain DE question with no drug-target, safety-biomarker, or immune-composition angle specified.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12000 profiled genes are differentially expressed between the 3 treated and 3 control liver samples, using raw STAR/featureCounts integer gene counts modeled with a negative-binomial GLM?",
+              "acceptance_criteria": [
+                "Counts and metadata are loaded and sample order/names are verified to match between counts.csv columns and metadata.csv rows before building the DESeq2 dataset",
+                "Design formula is ~condition using the condition column from metadata.csv (3 treated vs 3 control, unpaired)",
+                "Genes with all-zero or near-zero counts across samples are filtered before running DESeq2's default independent filtering",
+                "DESeq2 is run with default size-factor normalization (median-of-ratios), Wald test for the treated-vs-control contrast, and apeglm or normal LFC shrinkage is applied for reporting fold changes",
+                "Output table includes gene symbol, baseMean, log2FoldChange (shrunk), lfcSE, stat, pvalue, and padj (BH) for all tested genes",
+                "A results table is saved listing genes at padj < 0.05 (and separately noting |log2FC| >= 1 subset) ranked by significance",
+                "Basic QC outputs are produced: PCA plot of the 6 samples colored by condition and a dispersion plot, to confirm the treated/control split is consistent with the design and to flag any outlier sample",
+                "Given only 3 replicates per group, the report explicitly states the statistical power limitations of an n=3 vs n=3 unpaired design"
+              ],
+              "packages": [
+                "DESeq2",
+                "EnhancedVolcano",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input files: /eval-sonnet-plane-r2-without-star-counts-n3-2/data/inputs/counts/counts.csv (12000 genes x 6 samples, raw integer counts from STAR+featureCounts, first column gene symbol) and /eval-sonnet-plane-r2-without-star-counts-n3-2/data/inputs/metadata/metadata.csv (6 samples x 2 columns, condition = treated/control). Single batch, unpaired design.",
+              "constraints": [
+                "Use raw integer counts directly with DESeq2 — do not renormalize or use a transcript-quantifier-oriented tool (e.g. tximport/sleuth) since these are STAR+featureCounts gene-level counts, not transcript-level quantifier output",
+                "Do not apply batch correction — the design context states single batch"
+              ],
+              "caveats": [
+                "n=3 vs n=3 is a small sample size; results are sensitive to individual sample variance and multiple-testing correction will be conservative",
+                "featureCounts gene-level counts require no additional gene-length normalization step for the DESeq2 GLM itself (size factors handle library size, not length), but note this is not TPM/FPKM-comparable output"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of DE genes (WikiPathways human)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among the genes differentially expressed between treated and control liver samples identified in T1S1?",
+              "acceptance_criteria": [
+                "Reference gene sets are loaded from the WikiPathways human GMT file, parsing the '%'-delimited descriptor field to recover readable pathway names and species, and confirming the species field is Homo sapiens",
+                "Enrichment is run twice: (a) over-representation analysis on the padj<0.05 significant gene list from T1S1 against the full tested-gene background, and (b) a ranked GSEA using the full DE stat (e.g. Wald stat or log2FC-based rank) if the significant gene count is small",
+                "Gene symbols from the counts matrix are matched to WikiPathways HGNC gene symbols; unmatched genes and the match rate are reported",
+                "Output is a table of enriched pathways with normalized enrichment score or odds ratio, p-value, and BH-adjusted q-value, plus a bar or dot plot of the top pathways",
+                "If the significant DE gene list from T1S1 is empty or very small (e.g. <10 genes), the step reports this explicitly and falls back to the ranked GSEA approach rather than fabricating an ORA result on a tiny list"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Uses the DE results table (gene symbol, log2FoldChange, padj) produced in T1S1 as the primary input. Reference: WikiPathways human pathway gene sets (HGNC gene symbols) available in the reference store at wikipathways-human/2026.07.10.",
+              "constraints": [
+                "Use only the human WikiPathways gene set file — do not substitute the mouse or rat WikiPathways files given the organism is Homo sapiens"
+              ],
+              "caveats": [
+                "WikiPathways coverage is smaller and less comprehensive than MSigDB Hallmark/KEGG; report the gene-symbol match rate against pathway sets so the enrichment result can be judged for completeness"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

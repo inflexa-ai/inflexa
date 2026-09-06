@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 2,
+    "low_count_filter": 2,
+    "normalization": 2,
+    "model_formula_contrasts": 2,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 3
+  },
+  "rationale": "The planner correctly recognized that paired-end FASTQs with no count matrix, no quantifier, and no genome/transcriptome FASTA cannot support a DE test, and stopped with a precise question naming the missing pieces (count matrix or Salmon/kallisto quant files, or a quantifier plus a matching reference build and annotation), which is exactly the outcome the reference requires and avoids fabricating a matrix. However, no downstream plan was stated at all: nothing about DESeq2/edgeR on the 3 vs 3 design, sample QC, a minimal count filter, in-model normalization, the ~treatment formula and contrast, BH at 0.05 with LFC shrinkage, or the low-power caveat once counts arrive. Enrichment was rightly not invoked for this question. The clarification message is clear about the blocking issue but does not constitute a report of method, thresholds, or design caveats."
+}

@@ -1,0 +1,273 @@
+{
+  "campaign": "sonnet-plane-r2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "confounded-batch-n6",
+  "run": 2,
+  "startedAt": "2026-09-05T21:08:04.452Z",
+  "elapsedMs": 46530,
+  "outcome": "plan_submitted",
+  "planId": "pln-72fe08e6",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and exploratory diagnostics on raw counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Batch (B1/B2) and condition (control/treated) are perfectly confounded — any axis of separation found is consistent with EITHER explanation and this step must not claim it reflects treatment specifically.",
+          "12000 x 12 is small; do not over-allocate compute."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scikit-learn",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the 12 lung samples (6 treated in batch B2, 6 control in batch B1) separate primarily along a treated-vs-control / B2-vs-B1 axis in unsupervised analysis, given the counts.csv (12000 genes x 12 samples) and metadata.csv (condition, batch)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not attempt to include both batch and condition as covariates in any model in this step — the design matrix would be rank-deficient (batch is a linear function of condition here)."
+        ],
+        "acceptance_criteria": [
+          "Raw counts and metadata loaded and sample identifiers cross-checked for a 1:1 match between counts columns and metadata rows",
+          "Library size / total count per sample reported",
+          "Counts normalized (e.g., DESeq2 median-of-ratios or CPM+log) and PCA computed on the top variable genes",
+          "PCA plot and a sample-sample correlation/hierarchical clustering heatmap produced, samples labeled by condition and by batch simultaneously",
+          "Report explicitly states whether PC1 (or the dominant clustering axis) separates samples by the condition/batch split, since condition and batch are identical partitions here and the separation cannot be assigned to either alone"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Naive DESeq2 differential expression, treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This is the core limitation of the dataset: with batch fully aliased to condition, no valid statistical adjustment exists (not ComBat, not SVA, not RUV) that recovers a treatment-specific effect free of batch — correction methods need at least partial independence between the nuisance variable and the variable of interest, which this design does not have.",
+          "Do not present the DE gene list as validated 'treatment effect' genes anywhere in outputs — always pair with the confound caveat.",
+          "Sample size (n=6 vs 6) is on the low end for RNA-seq DE dispersion estimation; note width of confidence intervals if discussed."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Using the raw salmon gene-level counts (counts.csv, 12000 genes x 12 samples) and the sample metadata (condition: 6 treated / 6 control), which genes show statistically significant differential expression between treated and control under a condition-only model — understanding that this model is statistically indistinguishable from a batch (B1 vs B2) effect?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Model condition alone; do not attempt ~batch + condition or ~condition + batch (rank-deficient, will fail or give meaningless/NA coefficients).",
+          "Do not apply ComBat, SVA, or RUV as if they can rescue this design — the confound is deterministic, not a partial correlation these tools address; if attempted for exploratory purposes only, results must be labeled experimental/non-corrective."
+        ],
+        "acceptance_criteria": [
+          "DESeq2 (via pydeseq2) run with design ~condition only (batch cannot be added — see constraints)",
+          "Standard filtering of low-count genes before testing, size-factor normalization applied",
+          "Output table of all 12000 genes with log2FoldChange, p-value, and BH-adjusted p-value (padj)",
+          "Significant gene list reported at padj < 0.05 (and |log2FC| >= 1 as a secondary, clearly labeled cutoff), with counts of up/down genes",
+          "MA plot and volcano plot produced",
+          "Result narrative explicitly states, in the output itself (not only the plan), that because batch B1=all controls and B2=all treated, every gene called 'differentially expressed by condition' is equally explainable as a batch/processing effect, and this analysis cannot separate the two; the gene list should be reported as a confounded technical+biological signature, not as validated treatment-responsive genes"
+        ]
+      }
+    ],
+    "title": "Confounded lung treatment vs control DE analysis",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The data context states plainly that batch (B1/B2) is perfectly confounded with condition (control/treated): all 6 controls are in B1 and all 6 treated are in B2. This means any statistical model that includes both batch and condition terms is unidentifiable (the design matrix would be rank-deficient), and a model with condition alone cannot distinguish a treatment effect from a batch/technical effect. No computational method (ComBat, RUV, SVA, or otherwise) can recover the treatment effect independent of batch from this design alone, because batch and condition are the same partition of samples. Given this, the plan proceeds in two parts: (1) run and report the naive DESeq2 differential expression between treated and control exactly as the confounded design allows, with explicit, prominent caveats that any DE signal is fully aliased with batch and cannot be attributed to treatment; and (2) run diagnostic steps (PCA, sample clustering) to characterize whether the separation looks batch-driven and to quantify how large the confounded technical effect might be, informing the reliability statement in the final report. No pathway/network step is added on top of an unreliable gene list, since enrichment on a confounded DE list would compound the confounding into a downstream false narrative; if the user wants biological interpretation despite the confound, that should be a deliberate follow-up decision, not baked into this plan silently."
+  },
+  "usage": {
+    "inputTokens": 88763,
+    "outputTokens": 4263,
+    "cacheCreationInputTokens": 70455,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Confounded lung treatment vs control DE analysis",
+          "analytical_narrative": "The data context states plainly that batch (B1/B2) is perfectly confounded with condition (control/treated): all 6 controls are in B1 and all 6 treated are in B2. This means any statistical model that includes both batch and condition terms is unidentifiable (the design matrix would be rank-deficient), and a model with condition alone cannot distinguish a treatment effect from a batch/technical effect. No computational method (ComBat, RUV, SVA, or otherwise) can recover the treatment effect independent of batch from this design alone, because batch and condition are the same partition of samples. Given this, the plan proceeds in two parts: (1) run and report the naive DESeq2 differential expression between treated and control exactly as the confounded design allows, with explicit, prominent caveats that any DE signal is fully aliased with batch and cannot be attributed to treatment; and (2) run diagnostic steps (PCA, sample clustering, surrogate variable exploration) to characterize whether the separation looks batch-driven and to quantify how large the confounded technical effect might be, informing the reliability statement in the final report. No pathway/network step is added on top of an unreliable gene list, since enrichment on a confounded DE list would compound the confounding into a downstream false narrative; if the user wants biological interpretation despite the confound, that should be a deliberate follow-up decision, not baked into this plan silently.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and exploratory diagnostics on raw counts",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 lung samples (6 treated in batch B2, 6 control in batch B1) separate primarily along a treated-vs-control / B2-vs-B1 axis in unsupervised analysis, given the counts.csv (12000 genes x 12 samples) and metadata.csv (condition, batch)?",
+              "acceptance_criteria": [
+                "Raw counts and metadata loaded and sample identifiers cross-checked for a 1:1 match between counts columns and metadata rows",
+                "Library size / total count per sample reported",
+                "Counts normalized (e.g., DESeq2 median-of-ratios or CPM+log) and PCA computed on the top variable genes",
+                "PCA plot and a sample-sample correlation/hierarchical clustering heatmap produced, samples labeled by condition and by batch simultaneously",
+                "Report explicitly states whether PC1 (or the dominant clustering axis) separates samples by the condition/batch split, since condition and batch are identical partitions here and the separation cannot be assigned to either alone"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Batch (B1/B2) and condition (control/treated) are perfectly confounded — any axis of separation found is consistent with EITHER explanation and this step must not claim it reflects treatment specifically.",
+                "12000 x 12 is small; do not over-allocate compute."
+              ],
+              "constraints": [
+                "Do not attempt to include both batch and condition as covariates in any model in this step — the design matrix would be rank-deficient (batch is a linear function of condition here)."
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Naive DESeq2 differential expression, treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using the raw salmon gene-level counts (counts.csv, 12000 genes x 12 samples) and the sample metadata (condition: 6 treated / 6 control), which genes show statistically significant differential expression between treated and control under a condition-only model — understanding that this model is statistically indistinguishable from a batch (B1 vs B2) effect?",
+              "acceptance_criteria": [
+                "DESeq2 (via pydeseq2) run with design ~condition only (batch cannot be added — see constraints)",
+                "Standard filtering of low-count genes before testing, size-factor normalization applied",
+                "Output table of all 12000 genes with log2FoldChange, p-value, and BH-adjusted p-value (padj)",
+                "Significant gene list reported at padj < 0.05 (and |log2FC| >= 1 as a secondary, clearly labeled cutoff), with counts of up/down genes",
+                "MA plot and volcano plot produced",
+                "Result narrative explicitly states, in the output itself (not only the plan), that because batch B1=all controls and B2=all treated, every gene called 'differentially expressed by condition' is equally explainable as a batch/processing effect, and this analysis cannot separate the two; the gene list should be reported as a confounded technical+biological signature, not as validated treatment-responsive genes"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "This is the core limitation of the dataset: with batch fully aliased to condition, no valid statistical adjustment exists (not ComBat, not SVA, not RUV) that recovers a treatment-specific effect free of batch — correction methods need at least partial independence between the nuisance variable and the variable of interest, which this design does not have.",
+                "Do not present the DE gene list as validated 'treatment effect' genes anywhere in outputs — always pair with the confound caveat.",
+                "Sample size (n=6 vs 6) is on the low end for RNA-seq DE dispersion estimation; note width of confidence intervals if discussed."
+              ],
+              "constraints": [
+                "Model condition alone; do not attempt ~batch + condition or ~condition + batch (rank-deficient, will fail or give meaningless/NA coefficients).",
+                "Do not apply ComBat, SVA, or RUV as if they can rescue this design — the confound is deterministic, not a partial correlation these tools address; if attempted for exploratory purposes only, results must be labeled experimental/non-corrective."
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Confounded lung treatment vs control DE analysis",
+          "analytical_narrative": "The data context states plainly that batch (B1/B2) is perfectly confounded with condition (control/treated): all 6 controls are in B1 and all 6 treated are in B2. This means any statistical model that includes both batch and condition terms is unidentifiable (the design matrix would be rank-deficient), and a model with condition alone cannot distinguish a treatment effect from a batch/technical effect. No computational method (ComBat, RUV, SVA, or otherwise) can recover the treatment effect independent of batch from this design alone, because batch and condition are the same partition of samples. Given this, the plan proceeds in two parts: (1) run and report the naive DESeq2 differential expression between treated and control exactly as the confounded design allows, with explicit, prominent caveats that any DE signal is fully aliased with batch and cannot be attributed to treatment; and (2) run diagnostic steps (PCA, sample clustering) to characterize whether the separation looks batch-driven and to quantify how large the confounded technical effect might be, informing the reliability statement in the final report. No pathway/network step is added on top of an unreliable gene list, since enrichment on a confounded DE list would compound the confounding into a downstream false narrative; if the user wants biological interpretation despite the confound, that should be a deliberate follow-up decision, not baked into this plan silently.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and exploratory diagnostics on raw counts",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 lung samples (6 treated in batch B2, 6 control in batch B1) separate primarily along a treated-vs-control / B2-vs-B1 axis in unsupervised analysis, given the counts.csv (12000 genes x 12 samples) and metadata.csv (condition, batch)?",
+              "acceptance_criteria": [
+                "Raw counts and metadata loaded and sample identifiers cross-checked for a 1:1 match between counts columns and metadata rows",
+                "Library size / total count per sample reported",
+                "Counts normalized (e.g., DESeq2 median-of-ratios or CPM+log) and PCA computed on the top variable genes",
+                "PCA plot and a sample-sample correlation/hierarchical clustering heatmap produced, samples labeled by condition and by batch simultaneously",
+                "Report explicitly states whether PC1 (or the dominant clustering axis) separates samples by the condition/batch split, since condition and batch are identical partitions here and the separation cannot be assigned to either alone"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Batch (B1/B2) and condition (control/treated) are perfectly confounded — any axis of separation found is consistent with EITHER explanation and this step must not claim it reflects treatment specifically.",
+                "12000 x 12 is small; do not over-allocate compute."
+              ],
+              "constraints": [
+                "Do not attempt to include both batch and condition as covariates in any model in this step — the design matrix would be rank-deficient (batch is a linear function of condition here)."
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Naive DESeq2 differential expression, treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using the raw salmon gene-level counts (counts.csv, 12000 genes x 12 samples) and the sample metadata (condition: 6 treated / 6 control), which genes show statistically significant differential expression between treated and control under a condition-only model — understanding that this model is statistically indistinguishable from a batch (B1 vs B2) effect?",
+              "acceptance_criteria": [
+                "DESeq2 (via pydeseq2) run with design ~condition only (batch cannot be added — see constraints)",
+                "Standard filtering of low-count genes before testing, size-factor normalization applied",
+                "Output table of all 12000 genes with log2FoldChange, p-value, and BH-adjusted p-value (padj)",
+                "Significant gene list reported at padj < 0.05 (and |log2FC| >= 1 as a secondary, clearly labeled cutoff), with counts of up/down genes",
+                "MA plot and volcano plot produced",
+                "Result narrative explicitly states, in the output itself (not only the plan), that because batch B1=all controls and B2=all treated, every gene called 'differentially expressed by condition' is equally explainable as a batch/processing effect, and this analysis cannot separate the two; the gene list should be reported as a confounded technical+biological signature, not as validated treatment-responsive genes"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "This is the core limitation of the dataset: with batch fully aliased to condition, no valid statistical adjustment exists (not ComBat, not SVA, not RUV) that recovers a treatment-specific effect free of batch — correction methods need at least partial independence between the nuisance variable and the variable of interest, which this design does not have.",
+                "Do not present the DE gene list as validated 'treatment effect' genes anywhere in outputs — always pair with the confound caveat.",
+                "Sample size (n=6 vs 6) is on the low end for RNA-seq DE dispersion estimation; note width of confidence intervals if discussed."
+              ],
+              "constraints": [
+                "Model condition alone; do not attempt ~batch + condition or ~condition + batch (rank-deficient, will fail or give meaningless/NA coefficients).",
+                "Do not apply ComBat, SVA, or RUV as if they can rescue this design — the confound is deterministic, not a partial correlation these tools address; if attempted for exploratory purposes only, results must be labeled experimental/non-corrective."
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

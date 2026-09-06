@@ -16,8 +16,10 @@
  * own outcome cell after the loop and decides the terminal status.
  */
 
-import { ok } from "neverthrow";
+import { err, ok } from "neverthrow";
 import { z } from "zod";
+
+import { degenerateTerminalText } from "../terminal-text.js";
 
 import { defineTool, type Tool } from "../define-tool.js";
 
@@ -66,6 +68,8 @@ export function createReportBlockerToolFor(deps: ReportBlockerDeps): Tool {
         inputSchema: ReportBlockerInputSchema,
         describeCall: "none",
         execute: async (input) => {
+            const degenerate = degenerateTerminalText(input.reason);
+            if (degenerate) return err({ error: `${degenerate} Give the real reason, or continue the work.`, retryable: true });
             deps.record({ kind: "blocker", reason: input.reason });
             return ok({
                 recorded: true as const,

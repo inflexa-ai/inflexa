@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 6,
+    "normalization": 10,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the 3' tag-seq property, refuses any TPM/FPKM or length offset, runs DESeq2 on raw counts with median-of-ratios inside the model, design ~ condition, BH at 0.05 and apeglm shrinkage, and flags low power at n=3. The low-count floor of 10 in 3 samples is the full-length default rather than the lower floor appropriate for a tag library, and the reference level is not explicitly set. QC lists library size and PCA/correlation but gives no concrete outlier policy or coloring. Enrichment was not asked and the reference omits it; the plan adds GSEA/ORA without an explicit ORA universe, collection version, or gene-set size window, and leaves the ranking metric ambiguous. The report omits package versions."
+}

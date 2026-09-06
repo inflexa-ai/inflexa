@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 3,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly chooses DESeq2 Wald on raw counts for 6v6 unpaired single-batch data, explicitly refuses to deduplicate non-UMI reads with a sound justification, keeps normalization inside the model, and states ~condition with treated vs control as the contrast. The QC covers library size, PCA/clustering and a sample_01 policy, but never proposes the rRNA, mitochondrial, or intronic fractions that the reference uses to explain the duplication, nor the conditional removal of rRNA/mt genes. It relies only on DESeq2's built-in independent filtering with no stated minimal pre-filter, applies a post hoc |log2FC|>1 cutoff instead of lfcThreshold, and omits apeglm shrinkage entirely. Enrichment is added though not requested, with an ambiguous ranking metric, no ORA universe, no collection version or size window; the report lacks package versions and an explicit count of tested genes."
+}

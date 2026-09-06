@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 4,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly diagnoses the perfect confound, refuses a batch term and ComBat/SVA/RUV, and runs a condition-only DESeq2 with the aliasing caveat carried into every output, which matches the reference; it does not offer the alternative of stopping to request a rebalanced design. QC covers library sizes, PCA, and clustering colored by both condition and batch, but states no policy for an outlier or shallow sample. The low-count filter is left as 'standard' without a stated rule or justification, the reference level for the contrast is not named, no fold-change shrinkage is planned, and the |log2FC| >= 1 cutoff is applied post hoc rather than in the test. Omitting enrichment is correct and explicitly reasoned; the report lacks package versions."
+}

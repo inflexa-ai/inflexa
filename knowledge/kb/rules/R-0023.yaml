@@ -20,6 +20,9 @@ action:
     - name: covariate_handling
       value: design_terms
       default_source: "doi:10.12688/f1000research.27893.1"
+    - name: continuous_covariate
+      value: center_before_the_fit
+      default_source: "rule:R-0023"
 severity: info
 strength: consensus
 evidence_quality: high
