@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly treats this as an interaction question: PyDESeq2 with ~ genotype + treatment + genotype:treatment, explicit WT/vehicle reference levels, a Wald test on the interaction coefficient, and the two within-genotype simple effects, with a stated fallback (manual coefficient combination with propagated SE) if the contrast API is missing. QC (PCA on top 500 genes, Euclidean distances, library sizes, colored by both factors), the cell-size-justified >=10-in-4 filter, internal median-of-ratios normalization, BH at alpha 0.05, and the report content are all explicit and design-specific. The main flaw is Step 3's proposal to call the R package ashr via rpy2 for the KO simple-effect shrinkage, which breaches the stated Python-only constraint rather than stopping to ask; the outlier policy in QC is a flag without a stated action. Enrichment was not requested but is specified properly (gseapy prerank on the Wald statistic, Hallmark 2026.1, 15-500 window, no pre-thresholding)."
+}

@@ -58,7 +58,7 @@ describe("guardRepeatedCalls", () => {
     it("counts each tool on its own and keeps the description hooks of the tool", async () => {
         const a = makeTool("a");
         const b = makeTool("b");
-        const guarded = guardRepeatedCalls([a.tool, b.tool], { policy: { identicalLimit: 1, perToolLimit: 12 } });
+        const guarded = guardRepeatedCalls([a.tool, b.tool], { policy: { identicalLimit: 1, perToolLimit: 12, totalLimit: 40 } });
         expect((await guarded[0]!.execute({ query: "x" }, ctx)).isOk()).toBe(true);
         expect((await guarded[1]!.execute({ query: "x" }, ctx)).isOk()).toBe(true);
         expect((await guarded[0]!.execute({ query: "x" }, ctx)).isErr()).toBe(true);
@@ -67,12 +67,30 @@ describe("guardRepeatedCalls", () => {
         expect(guarded[0]!.jsonSchema).toEqual(a.tool.jsonSchema);
     });
 
+    it("refuses every tool past the total budget of the run, whatever the tool", async () => {
+        const a = makeTool("a");
+        const b = makeTool("b");
+        const refusals: string[] = [];
+        const guarded = guardRepeatedCalls([a.tool, b.tool], {
+            policy: { identicalLimit: 2, perToolLimit: 12, totalLimit: 3 },
+            onRefusal: (refusal) => refusals.push(`${refusal.tool}:${refusal.kind}:${refusal.calls}`),
+        });
+        expect((await guarded[0]!.execute({ query: "1" }, ctx)).isOk()).toBe(true);
+        expect((await guarded[1]!.execute({ query: "2" }, ctx)).isOk()).toBe(true);
+        expect((await guarded[0]!.execute({ query: "3" }, ctx)).isOk()).toBe(true);
+        const fourth = await guarded[1]!.execute({ query: "4" }, ctx);
+        expect(fourth.isErr()).toBe(true);
+        expect(fourth._unsafeUnwrapErr().error).toContain("3 calls across its search tools");
+        expect(a.count() + b.count()).toBe(3);
+        expect(refusals).toEqual(["b:total:4"]);
+    });
+
     it("starts the counters at zero for each wrapped list", async () => {
         const { tool } = makeTool("c");
-        const first = guardRepeatedCalls([tool], { policy: { identicalLimit: 1, perToolLimit: 12 } });
+        const first = guardRepeatedCalls([tool], { policy: { identicalLimit: 1, perToolLimit: 12, totalLimit: 40 } });
         expect((await first[0]!.execute({}, ctx)).isOk()).toBe(true);
         expect((await first[0]!.execute({}, ctx)).isErr()).toBe(true);
-        const second = guardRepeatedCalls([tool], { policy: { identicalLimit: 1, perToolLimit: 12 } });
+        const second = guardRepeatedCalls([tool], { policy: { identicalLimit: 1, perToolLimit: 12, totalLimit: 40 } });
         expect((await second[0]!.execute({}, ctx)).isOk()).toBe(true);
     });
 });

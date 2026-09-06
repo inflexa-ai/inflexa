@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 6,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: a single DESeq2 fit with ~subject + condition, an LRT against ~subject for any-condition effect, and the three named pairwise Wald contrasts from the same fit with apeglm/ashr shrinkage and BH at 0.05, with control set explicitly as reference. QC is well specified (blind VST, PCA by subject and condition, distance heatmap, library sizes, outliers flagged not dropped) and the low-count filter is minimal and tied to the smallest group. Normalization is never stated; DESeq2 size factors are implied by feeding raw counts but the plan does not say so. Enrichment was not asked for, and while the fgsea setup names collections, ranking metric, and a size window, ranking genes by the LRT statistic is flawed because that statistic is unsigned, and collection versions are not named in the plan itself. The report step is thorough, listing versions, design, thresholds, tested/significant counts, and design caveats."
+}

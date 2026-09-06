@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan fits the design correctly: DESeq2 Wald on ~ sex + age_centered + condition with control as reference, age mean-centered, no pre-adjustment of counts, median-of-ratios inside the model, a minimal justified filter (>=10 in >=6), BH at 0.05 with independent filtering, and apeglm on the condition coefficient. It omits the reference's explicit tabulation of sex and age by group to report balance and rule out a covariate collinear with condition, and the QC lacks the XIST/Y-linked sex check, though PCA is colored by condition, sex and age and outliers are flagged descriptively. Enrichment was not requested; it is run anyway with a tested-gene universe, versioned collections and a 15-500 window, which is well specified but unwarranted and oddly justified by a rule set rather than the question. The report step is complete on method, versions, design, thresholds, counts and design caveats."
+}

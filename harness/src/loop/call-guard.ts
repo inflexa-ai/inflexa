@@ -6,9 +6,9 @@
  * another, until the iteration cap or the wall clock ends the run. A frontier
  * model reads an "unavailable" answer once and continues; a smaller model
  * does not. The guard makes that difference a host decision: the third call
- * with an input the run already sent, or the call past the budget of one
- * tool, answers a tool error that tells the model to continue with what it
- * has. The service behind the tool never sees the refused call.
+ * with an input the run already sent, the call past the budget of one tool,
+ * or the call past the budget of the whole run, answers a tool error that
+ * tells the model to continue with what it has. The service behind the tool never sees the refused call.
  *
  * The guard wraps a list of tools for ONE run. Build it where the tools of
  * the run are built, never at construction of the host, thus the counters
@@ -25,15 +25,20 @@ export interface CallGuardPolicy {
     readonly identicalLimit: number;
     /** The calls, with any input, that a run may make to one tool. The next one is refused. */
     readonly perToolLimit: number;
+    /** The calls, with any input, that a run may make across every guarded tool. The next one is refused by every tool. */
+    readonly totalLimit: number;
 }
 
 /**
  * Two identical calls let a model confirm an answer once. Twelve calls of one
  * tool is above the largest count a frontier planner made in the Phase 0
  * campaign (six and a half calls per plan across ALL tools) and far below the
- * two hundred that a looping planner reached.
+ * two hundred that a looping planner reached. Forty calls across every tool
+ * bounds the round over the tools that stays under each per-tool budget: in
+ * the 32-task campaign every submitted Sonnet plan but two needed fewer, and
+ * the one plan that ran to the wall clock made 62.
  */
-export const DEFAULT_CALL_GUARD: CallGuardPolicy = { identicalLimit: 2, perToolLimit: 12 };
+export const DEFAULT_CALL_GUARD: CallGuardPolicy = { identicalLimit: 2, perToolLimit: 12, totalLimit: 40 };
 
 /** A stable key for one input: the JSON text with the object keys sorted at every depth. */
 export function canonicalInputKey(input: unknown): string {
@@ -52,7 +57,7 @@ function sortKeys(value: unknown): unknown {
 
 export interface GuardedCallRefusal {
     readonly tool: string;
-    readonly kind: "identical" | "budget";
+    readonly kind: "identical" | "budget" | "total";
     readonly calls: number;
 }
 
@@ -65,6 +70,7 @@ export interface CallGuardOptions {
 /** Wrap each tool so its `execute` obeys the policy for the life of the returned list. */
 export function guardRepeatedCalls(tools: readonly Tool[], options: CallGuardOptions = {}): Tool[] {
     const policy = options.policy ?? DEFAULT_CALL_GUARD;
+    let total = 0;
     return tools.map((tool) => {
         let calls = 0;
         const byInput = new Map<string, number>();
@@ -83,6 +89,16 @@ export function guardRepeatedCalls(tools: readonly Tool[], options: CallGuardOpt
                         error:
                             `This run already called ${tool.id} with this exact input ${identical - 1} times, and the answer does not change within a run. ` +
                             "Use the answer you have and continue. If the answer was that a resource is absent, plan without it or ask for it; do not search again.",
+                        retryable: false,
+                    });
+                }
+                total += 1;
+                if (total > policy.totalLimit) {
+                    options.onRefusal?.({ tool: tool.id, kind: "total", calls: total });
+                    return err({
+                        error:
+                            `This run made ${policy.totalLimit} calls across its search tools, which is the search budget of one run. ` +
+                            "Submit the plan you have now. If a required resource is absent, ask for it; do not search again.",
                         retryable: false,
                     });
                 }

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the data as RSEM expected counts, keeps them (rounded for DESeq2, unrounded for edgeR), explicitly states the lost effective-length offset, and never substitutes TPM/FPKM; it does not, however, explicitly request the missing genes.results files as the reference does. QC covers library sizes, size factors, blind-VST PCA and distance heatmap with a stated retain-by-default policy for sample_01. Normalization is inside the model, the filter is minimal and stated, reference level and contrast are explicit though the design formula is never written out as ~condition, and BH at 0.05 with apeglm shrinkage is specified. Enrichment uses the full Wald-ranked list with a size window and stated universe, but the Reactome release is only 'current' rather than truly pinned; the report specification is thorough and includes the design caveats."
+}

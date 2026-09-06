@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the matrix as RSEM expected counts, states that the tximport length offset is lost without the genes.results files, rounds for DESeq2, never substitutes TPM/FPKM, and runs DESeq2 Wald with apeglm and BH at 0.05 plus an edgeR QL cross-check; it does not explicitly request the missing files and rounds for edgeR unnecessarily, hence a small deduction. QC keeps sample_01, inspects it on PCA and distance heatmap, reports library sizes, and states a removal-only-with-reason policy; the filter (>=10 in >=6 samples) is justified by group size, normalization is inside the model, and the design/contrast/reference level are explicit. Enrichment was not requested but, having been added, is specified properly (full Wald-stat ranked list, tested-gene universe, named/versioned collections, 15-500 window). The report step names versions, design, thresholds, tested/significant counts, and the length-offset and low-depth caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly frames the question as a genotype:treatment interaction in PyDESeq2 with explicit reference levels, tests the interaction coefficient alongside both within-genotype simple effects, keeps raw counts with model-internal size factors, and uses a minimal justified pre-filter. QC covers PCA, distances, and library sizes colored by both factors, though the outlier/shallow-sample policy is only implied by 'no silent drops' rather than stated. It does not check whether the installed PyDESeq2 can express the KO simple-effect contrast or offer the combined-group fallback the reference asks for, and the ashr shrinkage via rpy2 leans on R under a Python-only constraint without noting that limit. Enrichment is well specified (Wald ranking, full list, 15-500 window, tested-gene universe, FDR 0.25 stated) though collection versions are deferred to the report rather than named; the report step is thorough on versions, counts, and the low-power caveat."
+}

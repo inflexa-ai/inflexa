@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly on design: subject as a blocking term in DESeq2 with an LRT of ~subject+condition against ~subject, followed by the three named pairwise Wald contrasts with control as the explicit reference, ashr shrinkage (correctly justified over apeglm for the A-vs-B contrast), and BH at 0.05 within each contrast. QC is blind-VST PCA plus distance heatmap and library sizes colored by subject and condition with an explicit no-silent-drop policy, though no concrete rule for a shallow sample is stated. The low-count filter (>=10 counts in >=4 samples) is minimal and tied to the smallest group, and normalization is explicitly left to median-of-ratios inside the model. Enrichment was not asked for but is done defensibly (tested-gene universe, GO BP, 15-500 size window, direction-split lists, underpowered-list guard); the collection version is only deferred to the report rather than named upfront. The report step names method, versions, design, thresholds, tested/significant counts, and design caveats."
+}

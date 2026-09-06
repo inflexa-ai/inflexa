@@ -489,8 +489,12 @@ The two placeholder failures are gone: the outlier task rose from 43.8 to
 rose from 68.8 to 77.5 and the Python enrichment task from 68.8 to 80.6.
 One run failed: the second covariates run searched eight tools in a round,
 each under its budget, until the wall clock ended it. The early cap counts
-refusals, thus a round below every budget escapes it. A total search budget
-per plan is the next host fix.
+refusals, thus a round below every budget escaped it. The call guard now
+holds a total budget of forty calls across every search tool of one plan,
+and past it every search tool refuses. A check over the four longest tasks,
+two runs each, submitted all eight plans. The covariates task went from one
+timeout to 88.8 at 118 s. The Python interaction task went from 79 calls at
+497 s to 40 calls at 204 s, with its rubric at 83.1 against 90.6 before.
 
 Sonnet 5 with the plane now sits four points above Opus 5 alone over the 32
 tasks, and the interval touches zero. The three-point gain over the earlier

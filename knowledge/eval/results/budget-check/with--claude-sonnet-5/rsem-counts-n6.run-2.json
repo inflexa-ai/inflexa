@@ -1,0 +1,1005 @@
+{
+  "campaign": "budget-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "rsem-counts-n6",
+  "run": 2,
+  "startedAt": "2026-09-06T05:22:54.694Z",
+  "elapsedMs": 190721,
+  "outcome": "plan_submitted",
+  "planId": "pln-12ae0f94",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on RSEM counts (rounded)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A library size 4x below median gives a low-depth sample wider confidence intervals and lower power for that sample's contribution, not necessarily a biased fold change; DESeq2 size factors account for depth",
+          "Removal of sample_01, if later decided, must be justified by identity/QC failure evidence, not depth alone"
+        ],
+        "context": "Input is counts.csv (12000 genes x 12 samples, RSEM expected counts, non-integer) and metadata.csv (condition: treated/control, 6 each, unpaired, single batch). Round expected counts to nearest integer before any DESeq2 call, since RSEM outputs are non-integer expected counts. No effective-length offset is available (per-sample genes.results not delivered), so this is standard blind-VST QC on rounded counts.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 6 treated and 6 control colon samples separate by condition on PCA/sample-distance after a blind VST, and how does the flagged low-depth sample (sample_01, ~4x below median library size) behave relative to its group?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC (blind vst, PCA on top-variable genes, sample distance heatmap) with explicit keep/inspect/report handling of the flagged low-depth sample per R-0033@40bf and R-0008@440d",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Round(counts) to nearest integer before constructing any DESeq2 object",
+          "Use vst(blind=TRUE), PCA on top 500 most-variable genes, sample-distance heatmap colored by condition",
+          "Do not drop sample_01 in this step — report it, do not silently remove it"
+        ],
+        "acceptance_criteria": [
+          "PCA plot (top 500 variable genes) and sample-distance heatmap produced, colored by condition",
+          "Library size and detected-gene count per sample reported in a table, with sample_01 called out explicitly",
+          "A stated decision (with reason) on whether sample_01 is retained or removed — not a silent default"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test, treated vs control, with apeglm shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Without RSEM effective-length offsets, any systematic within-gene length variation across libraries (e.g. from differing isoform usage between conditions) is not corrected; treat this as a known limitation, not grounds to withhold results",
+          "n=6 per group: DESeq2 flags Cook's-distance count outliers with NA p-values rather than replacing them (replacement only triggers at >=7 replicates per cell) — report these NA genes separately from independent-filtering NAs"
+        ],
+        "context": "Only a pre-summarized gene x sample count matrix is available (RSEM expected counts, non-integer, rounded in T1S1/here). The per-sample genes.results files with effective lengths needed for the standard tximport(type='rsem') length-offset import were not delivered, and tximport is not among the installed packages in this environment, so DESeqDataSetFromMatrix on rounded counts is used instead of DESeqDataSetFromTximport. This is a documented deviation from the RSEM-specific best practice, not an oversight.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which of the 12000 colon genes are differentially expressed between the 6 treated and 6 control samples (DESeq2 Wald test, BH-adjusted alpha 0.05)?",
+        "grounding": {
+          "claims": [
+            "R-0065@1a71",
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248",
+            "R-0036@9786",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "Knowledge service names tximport(type='rsem') with effective-length offsets as the required RSEM import (R-0065@1a71), but the per-sample genes.results files it needs were not delivered and tximport is not installed here; falls back to DESeqDataSetFromMatrix on rounded expected counts with the deviation stated explicitly. All other DESeq2 defaults (pre-filter, normalization, Wald test, apeglm shrinkage, BH/independent filtering) follow the grounded procedure unchanged.",
+          "status": "flagged",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Explicit relevel: condition factor releveled with 'control' as reference before DESeq()",
+          "Pre-filter: keep gene if rounded count >=10 in at least 6 samples",
+          "Do not pre-normalize or scale counts before DESeq(); let median-of-ratios size factors run inside the model",
+          "Keep default Cook's-distance outlier handling on (n=6/group is below the 7-replicate replace threshold, so outliers get NA p-values, not replacement)",
+          "Report the fold-change threshold as none (test is against LFC=0); do not post-hoc filter by fold change"
+        ],
+        "acceptance_criteria": [
+          "Genes filtered to >=10 rounded counts in >=6 samples (smallest group size) before the model",
+          "DESeqDataSetFromMatrix built on rounded integer counts with design ~condition, condition releveled so 'control' is the reference",
+          "Wald test run; results() called with contrast=c('condition','treated','control') and alpha=0.05, independent filtering on",
+          "apeglm shrinkage applied to the condition_treated_vs_control coefficient; both shrunken and unshrunken log2FoldChange plus lfcSE reported per gene",
+          "MA plot and dispersion plot produced as fit diagnostics",
+          "p-value histogram inspected and reported before trusting BH-adjusted results",
+          "Number of genes tested, number with padj<0.05, and number flagged NA by Cook's-distance outlier detection reported separately from independent-filtering NAs",
+          "A caveat stated that no gene-length offset was applied (per-sample RSEM effective lengths were not delivered), so this run departs from the standard tximport(type='rsem') path"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR quasi-likelihood robustness check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Disagreement between the two methods is expected to grow at low replicate numbers and low counts; report it rather than picking whichever gives more hits"
+        ],
+        "context": "Robustness cross-check required at n=6/group per the knowledge-service guidance: DESeq2 and edgeR QL agree on most genes at this replicate count but not all, and the union should never be presented as the result.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Does an independent edgeR quasi-likelihood F-test on the same rounded RSEM counts and design (treated vs control) agree with the DESeq2 call set?",
+        "grounding": {
+          "claims": [
+            "R-0001@9a17",
+            "R-0042@54e1"
+          ],
+          "reason": "n=6/group fixed-effects design: edgeR QLF as the second method for a robustness overlap check per R-0001@9a17 and R-0042@54e1",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the same pre-filtered gene set and rounded counts as T1S2",
+          "TMM normalization (calcNormFactors), glmQLFit + glmQLFTest on the treated-vs-control contrast",
+          "Do not treat edgeR output as a replacement for the DESeq2 result; it is a secondary robustness check only"
+        ],
+        "acceptance_criteria": [
+          "edgeR QLF test run on the same filtered, rounded count matrix and design as T1S2, TMM-normalized",
+          "Number of significant genes (FDR<0.05) from edgeR reported alongside DESeq2's count",
+          "Intersection and set-difference of the two significant gene lists reported; intersection labeled the high-confidence set"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "fgsea preranked GSEA on Wald statistic (Hallmark, then Reactome/WikiPathways/GO)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GSEA results are method-dependent; report as hypothesis-generating, not proven mechanism",
+          "Gene length/expression-level detection bias can affect enrichment; the length-offset issue from T1S2 (no RSEM effective-length correction) may weakly propagate into ranking, note this explicitly"
+        ],
+        "context": "Reference data confirmed staged for human: MSigDB Hallmark gene sets (50 sets, HGNC symbols, /mnt/refs managed msigdb-hallmark-human 2026.1), Reactome pathways (HGNC symbols, ReactomePathways.gmt), and WikiPathways human (HGNC symbols, 2026.07.10 snapshot). All are symbol-keyed, matching the counts.csv gene-symbol identifier space directly.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea"
+        ],
+        "question": "Which MSigDB Hallmark biological states/processes are coordinately shifted between treated and control colon samples, ranked on the full DESeq2 Wald-statistic list?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "fgsea preranked GSEA on the Wald statistic against MSigDB Hallmark (staged and confirmed for human), then Reactome/WikiPathways as staged follow-up collections, per R-0098@d01b/R-0107@976c/R-0048@500d",
+          "status": "grounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Rank by the DESeq2 Wald statistic ('stat'), not by unshrunken log2FC alone and not by a signed p-value with ties",
+          "Use the full ranked list of tested (post-filter) genes as input; do not subset to significant genes first",
+          "Apply gene set size window 15-500 after intersecting each set with the tested-gene universe",
+          "If fewer than ~50 genes pass padj<0.05 in T1S2, do not additionally run an over-representation test on that short list — state the count and rely on the ranked GSEA result"
+        ],
+        "acceptance_criteria": [
+          "Every tested gene (post-filter) ranked by the DESeq2 Wald statistic ('stat' column), full list used — no pre-threshold cut",
+          "Gene symbols mapped to the identifier space of the gene set files (HGNC symbols, matching the staged GMTs directly — no Entrez mapping needed since the gene sets are symbol-based)",
+          "fgsea run against the MSigDB Hallmark human gene sets (50 sets) with min.size=15, max.size=500",
+          "A second pass run against Reactome and WikiPathways human gene sets as staged follow-up collections",
+          "BH-adjusted enrichment p-values reported; redundant/overlapping significant sets collapsed to one representative with full table kept as supplement",
+          "Leading-edge genes listed for each significant set",
+          "Report states: gene set database name and version, ranking metric ('stat'), universe (tested genes), size window (15-500)"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Integrated DE + enrichment report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Consolidates T1S1-T1S3 and T2S1 outputs into one decision-ready report, following the knowledge service's reporting requirements for a bulk RNA-seq DE + enrichment analysis.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "What is the consolidated, reproducible summary of differentially expressed genes and enriched pathways between treated and control colon samples, including all methodological deviations and QC caveats?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "no single rule covers the aggregate report step; assembled from the report-stage claims of each upstream grounded step",
+          "status": "ungrounded",
+          "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T2S1"
+        ],
+        "constraints": [
+          "Do not present the union of DESeq2 and edgeR calls as the finding; the intersection is the high-confidence set",
+          "State the RSEM effective-length limitation prominently, not as a footnote"
+        ],
+        "acceptance_criteria": [
+          "Report states: DESeq2/apeglm/edgeR/fgsea package versions, design formula and named contrast (condition: treated vs control, control as reference), alpha=0.05, number of genes tested after filtering, number of DE genes (padj<0.05)",
+          "MA plot and dispersion plot included as fit diagnostics",
+          "DESeq2 vs edgeR overlap reported with the intersection as the high-confidence gene set",
+          "Gene table includes unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, padj; ranking/plots use the shrunken value",
+          "Enrichment section states gene set database + version, ranking metric, universe, and size window; leading-edge genes per significant set listed",
+          "Explicit statement that RSEM per-sample effective-length files were unavailable, expected counts were rounded, and the standard tximport length-offset import could not be run — with the resulting limitation on cross-gene/length-driven bias",
+          "Explicit statement on the low-depth sample (sample_01) decision made in T1S1 and its impact on power",
+          "Full session/reproducibility record: package versions, seed, gene set collection versions"
+        ]
+      }
+    ],
+    "title": "Colon RSEM DE: 6 treated vs 6 control + Hallmark GSEA",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data profile gives 12000 genes x 12 samples of RSEM gene-level expected counts (non-integer) for 6 treated vs 6 control colon samples, single batch, unpaired, with sample_01 flagged at ~4x below median library size. Because the per-sample genes.results files carrying effective lengths were not delivered, the tximport(type='rsem')+length-offset path that the knowledge service names as the correct RSEM import cannot be run — there is no gene-level effective-length matrix in this environment to build it from (confirmed: no such reference is staged, and tximport itself is not an installed package). The plan therefore proceeds on the delivered gene x sample count matrix alone: round the non-integer RSEM expected counts to nearest integer (necessary for DESeq2's negative-binomial machinery) and run the standard DESeq2 workflow without a length offset, explicitly documenting this deviation and its consequence (uncorrected inter-gene length bias in absolute levels; the treated-vs-control comparison per gene is largely unaffected since length is constant within a gene across samples, but cross-gene comparisons and any length-driven pathway bias are not corrected). Track 1 runs sample-structure QC (keeping and reporting the low-depth sample per the flagged rule rather than silently dropping it), minimal pre-filtering, DESeq2 Wald test with an explicit reference level (control) and apeglm shrinkage, BH-adjusted results at alpha 0.05, and a secondary edgeR quasi-likelihood run for a robustness overlap check (both packages confirmed installed). Track 2 takes the DESeq2 Wald statistic ranked list into fgsea preranked GSEA against the MSigDB Hallmark gene sets (confirmed staged for human), with WikiPathways and Reactome as staged follow-up collections. A final report step assembles the DE table, QC/fit diagnostics, the two-method overlap, and the enrichment results with all methodological caveats stated."
+  },
+  "usage": {
+    "inputTokens": 3614093,
+    "outputTokens": 11155,
+    "cacheCreationInputTokens": 160328,
+    "cacheReadInputTokens": 3453273,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "rsem",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "ranked_list"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "tximport",
+          "DESeq2",
+          "apeglm",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "edgeR"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "edgeR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot-idmapping-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtf gene annotation human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "effective length"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "genome-annotation"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/genome-annotation"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human gene length gencode ensembl"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSEM expected counts DESeq2 without effective length gene-level matrix analysis",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeqDataSetFromMatrix gene-level counts without length offset",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "RSEM expected counts DESeq2 rounding without effective length offset",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "RSEM expected counts DESeq2 rounding without effective length offset",
+        "limit": 5
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {}
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "DESeqDataSetFromMatrix with RSEM expected counts without gene length offset"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "DESeqDataSetFromMatrix with RSEM expected counts without gene length offset"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "tximport RSEM effective length offset differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "tximport transcript abundance import Soneson Love Robinson",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "tximport differential expression salmon kallisto",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "tximport",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "26925227"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human gene length annotation gtf transcript"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "TxDb"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "EnsDb"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "genefilter",
+          "GenomicFeatures"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "geneLenDataBase"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "EDASeq"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "annotables"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSEM genes.results missing effective length matrix gene-level count summarization DESeq2 alternative",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 differential expression package Love Huber Anders",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 0
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "org.Hs.eg.db"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "Homo.sapiens"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "biomaRt"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "rsem",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA and sample-distance heatmap; library size / detected-gene inspection of low-depth sample",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with >=10 counts in >= smallest group size (rounded RSEM expected counts, no effective-length offset available)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors on rounded RSEM expected counts (no tximport offset, per-sample genes.results not delivered)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeqDataSetFromMatrix, ~condition, explicit reference level = control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition_treated_vs_control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage of condition_treated_vs_control coefficient",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with DESeq2 independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on Wald statistic, MSigDB Hallmark then Reactome/WikiPathways/GO",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Colon RSEM DE: 6 treated vs 6 control + Hallmark GSEA",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The data profile gives 12000 genes x 12 samples of RSEM gene-level expected counts (non-integer) for 6 treated vs 6 control colon samples, single batch, unpaired, with sample_01 flagged at ~4x below median library size. Because the per-sample genes.results files carrying effective lengths were not delivered, the tximport(type='rsem')+length-offset path that the knowledge service names as the correct RSEM import cannot be run — there is no gene-level effective-length matrix in this environment to build it from (confirmed: no such reference is staged, and tximport itself is not an installed package). The plan therefore proceeds on the delivered gene x sample count matrix alone: round the non-integer RSEM expected counts to nearest integer (necessary for DESeq2's negative-binomial machinery) and run the standard DESeq2 workflow without a length offset, explicitly documenting this deviation and its consequence (uncorrected inter-gene length bias in absolute levels; the treated-vs-control comparison per gene is largely unaffected since length is constant within a gene across samples, but cross-gene comparisons and any length-driven pathway bias are not corrected). Track 1 runs sample-structure QC (keeping and reporting the low-depth sample per the flagged rule rather than silently dropping it), minimal pre-filtering, DESeq2 Wald test with an explicit reference level (control) and apeglm shrinkage, BH-adjusted results at alpha 0.05, and a secondary edgeR quasi-likelihood run for a robustness overlap check (both packages confirmed installed). Track 2 takes the DESeq2 Wald statistic ranked list into fgsea preranked GSEA against the MSigDB Hallmark gene sets (confirmed staged for human), with WikiPathways and Reactome as staged follow-up collections. A final report step assembles the DE table, QC/fit diagnostics, the two-method overlap, and the enrichment results with all methodological caveats stated.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on RSEM counts (rounded)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 6 treated and 6 control colon samples separate by condition on PCA/sample-distance after a blind VST, and how does the flagged low-depth sample (sample_01, ~4x below median library size) behave relative to its group?",
+              "acceptance_criteria": [
+                "PCA plot (top 500 variable genes) and sample-distance heatmap produced, colored by condition",
+                "Library size and detected-gene count per sample reported in a table, with sample_01 called out explicitly",
+                "A stated decision (with reason) on whether sample_01 is retained or removed — not a silent default"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input is counts.csv (12000 genes x 12 samples, RSEM expected counts, non-integer) and metadata.csv (condition: treated/control, 6 each, unpaired, single batch). Round expected counts to nearest integer before any DESeq2 call, since RSEM outputs are non-integer expected counts. No effective-length offset is available (per-sample genes.results not delivered), so this is standard blind-VST QC on rounded counts.",
+              "constraints": [
+                "Round(counts) to nearest integer before constructing any DESeq2 object",
+                "Use vst(blind=TRUE), PCA on top 500 most-variable genes, sample-distance heatmap colored by condition",
+                "Do not drop sample_01 in this step — report it, do not silently remove it"
+              ],
+              "caveats": [
+                "A library size 4x below median gives a low-depth sample wider confidence intervals and lower power for that sample's contribution, not necessarily a biased fold change; DESeq2 size factors account for depth",
+                "Removal of sample_01, if later decided, must be justified by identity/QC failure evidence, not depth alone"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC (blind vst, PCA on top-variable genes, sample distance heatmap) with explicit keep/inspect/report handling of the flagged low-depth sample per R-0033@40bf and R-0008@440d"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test, treated vs control, with apeglm shrinkage",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 colon genes are differentially expressed between the 6 treated and 6 control samples (DESeq2 Wald test, BH-adjusted alpha 0.05)?",
+              "acceptance_criteria": [
+                "Genes filtered to >=10 rounded counts in >=6 samples (smallest group size) before the model",
+                "DESeqDataSetFromMatrix built on rounded integer counts with design ~condition, condition releveled so 'control' is the reference",
+                "Wald test run; results() called with contrast=c('condition','treated','control') and alpha=0.05, independent filtering on",
+                "apeglm shrinkage applied to the condition_treated_vs_control coefficient; both shrunken and unshrunken log2FoldChange plus lfcSE reported per gene",
+                "MA plot and dispersion plot produced as fit diagnostics",
+                "p-value histogram inspected and reported before trusting BH-adjusted results",
+                "Number of genes tested, number with padj<0.05, and number flagged NA by Cook's-distance outlier detection reported separately from independent-filtering NAs",
+                "A caveat stated that no gene-length offset was applied (per-sample RSEM effective lengths were not delivered), so this run departs from the standard tximport(type='rsem') path"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Only a pre-summarized gene x sample count matrix is available (RSEM expected counts, non-integer, rounded in T1S1/here). The per-sample genes.results files with effective lengths needed for the standard tximport(type='rsem') length-offset import were not delivered, and tximport is not among the installed packages in this environment, so DESeqDataSetFromMatrix on rounded counts is used instead of DESeqDataSetFromTximport. This is a documented deviation from the RSEM-specific best practice, not an oversight.",
+              "constraints": [
+                "Explicit relevel: condition factor releveled with 'control' as reference before DESeq()",
+                "Pre-filter: keep gene if rounded count >=10 in at least 6 samples",
+                "Do not pre-normalize or scale counts before DESeq(); let median-of-ratios size factors run inside the model",
+                "Keep default Cook's-distance outlier handling on (n=6/group is below the 7-replicate replace threshold, so outliers get NA p-values, not replacement)",
+                "Report the fold-change threshold as none (test is against LFC=0); do not post-hoc filter by fold change"
+              ],
+              "caveats": [
+                "Without RSEM effective-length offsets, any systematic within-gene length variation across libraries (e.g. from differing isoform usage between conditions) is not corrected; treat this as a known limitation, not grounds to withhold results",
+                "n=6 per group: DESeq2 flags Cook's-distance count outliers with NA p-values rather than replacing them (replacement only triggers at >=7 replicates per cell) — report these NA genes separately from independent-filtering NAs"
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0065@1a71",
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0030@2248",
+                  "R-0036@9786",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Knowledge service names tximport(type='rsem') with effective-length offsets as the required RSEM import (R-0065@1a71), but the per-sample genes.results files it needs were not delivered and tximport is not installed here; falls back to DESeqDataSetFromMatrix on rounded expected counts with the deviation stated explicitly. All other DESeq2 defaults (pre-filter, normalization, Wald test, apeglm shrinkage, BH/independent filtering) follow the grounded procedure unchanged."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "edgeR quasi-likelihood robustness check",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Does an independent edgeR quasi-likelihood F-test on the same rounded RSEM counts and design (treated vs control) agree with the DESeq2 call set?",
+              "acceptance_criteria": [
+                "edgeR QLF test run on the same filtered, rounded count matrix and design as T1S2, TMM-normalized",
+                "Number of significant genes (FDR<0.05) from edgeR reported alongside DESeq2's count",
+                "Intersection and set-difference of the two significant gene lists reported; intersection labeled the high-confidence set"
+              ],
+              "packages": [
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Robustness cross-check required at n=6/group per the knowledge-service guidance: DESeq2 and edgeR QL agree on most genes at this replicate count but not all, and the union should never be presented as the result.",
+              "constraints": [
+                "Use the same pre-filtered gene set and rounded counts as T1S2",
+                "TMM normalization (calcNormFactors), glmQLFit + glmQLFTest on the treated-vs-control contrast",
+                "Do not treat edgeR output as a replacement for the DESeq2 result; it is a secondary robustness check only"
+              ],
+              "caveats": [
+                "Disagreement between the two methods is expected to grow at low replicate numbers and low counts; report it rather than picking whichever gives more hits"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0001@9a17",
+                  "R-0042@54e1"
+                ],
+                "reason": "n=6/group fixed-effects design: edgeR QLF as the second method for a robustness overlap check per R-0001@9a17 and R-0042@54e1"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "fgsea preranked GSEA on Wald statistic (Hallmark, then Reactome/WikiPathways/GO)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB Hallmark biological states/processes are coordinately shifted between treated and control colon samples, ranked on the full DESeq2 Wald-statistic list?",
+              "acceptance_criteria": [
+                "Every tested gene (post-filter) ranked by the DESeq2 Wald statistic ('stat' column), full list used — no pre-threshold cut",
+                "Gene symbols mapped to the identifier space of the gene set files (HGNC symbols, matching the staged GMTs directly — no Entrez mapping needed since the gene sets are symbol-based)",
+                "fgsea run against the MSigDB Hallmark human gene sets (50 sets) with min.size=15, max.size=500",
+                "A second pass run against Reactome and WikiPathways human gene sets as staged follow-up collections",
+                "BH-adjusted enrichment p-values reported; redundant/overlapping significant sets collapsed to one representative with full table kept as supplement",
+                "Leading-edge genes listed for each significant set",
+                "Report states: gene set database name and version, ranking metric ('stat'), universe (tested genes), size window (15-500)"
+              ],
+              "packages": [
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Reference data confirmed staged for human: MSigDB Hallmark gene sets (50 sets, HGNC symbols, /mnt/refs managed msigdb-hallmark-human 2026.1), Reactome pathways (HGNC symbols, ReactomePathways.gmt), and WikiPathways human (HGNC symbols, 2026.07.10 snapshot). All are symbol-keyed, matching the counts.csv gene-symbol identifier space directly.",
+              "constraints": [
+                "Rank by the DESeq2 Wald statistic ('stat'), not by unshrunken log2FC alone and not by a signed p-value with ties",
+                "Use the full ranked list of tested (post-filter) genes as input; do not subset to significant genes first",
+                "Apply gene set size window 15-500 after intersecting each set with the tested-gene universe",
+                "If fewer than ~50 genes pass padj<0.05 in T1S2, do not additionally run an over-representation test on that short list — state the count and rely on the ranked GSEA result"
+              ],
+              "caveats": [
+                "GSEA results are method-dependent; report as hypothesis-generating, not proven mechanism",
+                "Gene length/expression-level detection bias can affect enrichment; the length-offset issue from T1S2 (no RSEM effective-length correction) may weakly propagate into ranking, note this explicitly"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "fgsea preranked GSEA on the Wald statistic against MSigDB Hallmark (staged and confirmed for human), then Reactome/WikiPathways as staged follow-up collections, per R-0098@d01b/R-0107@976c/R-0048@500d"
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Integrated DE + enrichment report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the consolidated, reproducible summary of differentially expressed genes and enriched pathways between treated and control colon samples, including all methodological deviations and QC caveats?",
+              "acceptance_criteria": [
+                "Report states: DESeq2/apeglm/edgeR/fgsea package versions, design formula and named contrast (condition: treated vs control, control as reference), alpha=0.05, number of genes tested after filtering, number of DE genes (padj<0.05)",
+                "MA plot and dispersion plot included as fit diagnostics",
+                "DESeq2 vs edgeR overlap reported with the intersection as the high-confidence gene set",
+                "Gene table includes unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, padj; ranking/plots use the shrunken value",
+                "Enrichment section states gene set database + version, ranking metric, universe, and size window; leading-edge genes per significant set listed",
+                "Explicit statement that RSEM per-sample effective-length files were unavailable, expected counts were rounded, and the standard tximport length-offset import could not be run — with the resulting limitation on cross-gene/length-driven bias",
+                "Explicit statement on the low-depth sample (sample_01) decision made in T1S1 and its impact on power",
+                "Full session/reproducibility record: package versions, seed, gene set collection versions"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Consolidates T1S1-T1S3 and T2S1 outputs into one decision-ready report, following the knowledge service's reporting requirements for a bulk RNA-seq DE + enrichment analysis.",
+              "constraints": [
+                "Do not present the union of DESeq2 and edgeR calls as the finding; the intersection is the high-confidence set",
+                "State the RSEM effective-length limitation prominently, not as a footnote"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "no single rule covers the aggregate report step; assembled from the report-stage claims of each upstream grounded step"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-05",
+    "digest": "sha256:dfcde5f7e64089dd43007623dd938eeca4962364bac2e2ee6cb83880a7422101"
+  }
+}

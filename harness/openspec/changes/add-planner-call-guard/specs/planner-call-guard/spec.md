@@ -2,7 +2,7 @@
 
 ### Requirement: A run bounds the repeated calls of one tool
 
-The harness MUST provide a guard that wraps the tools of one run. A call whose input the run already sent more than the identical-input limit MUST answer a tool error, and a call past the per-tool budget MUST answer a tool error. The guard MUST NOT call the tool for a refused call. The error text MUST tell the model to continue with the answer it has. The counters MUST start at zero for each wrapped list.
+The harness MUST provide a guard that wraps the tools of one run. A call whose input the run already sent more than the identical-input limit MUST answer a tool error, a call past the per-tool budget MUST answer a tool error, and a call past the total budget of the run MUST answer a tool error from every guarded tool. The guard MUST NOT call the tool for a refused call. The error text MUST tell the model to continue with the answer it has. The counters MUST start at zero for each wrapped list.
 
 #### Scenario: The same input a third time
 
@@ -15,6 +15,12 @@ The harness MUST provide a guard that wraps the tools of one run. A call whose i
 - **GIVEN** a run that made twelve calls of `list_available_packages` with twelve different inputs
 - **WHEN** the model calls it again
 - **THEN** the tool answers an error that names the budget, and the run continues
+
+#### Scenario: The budget of the run
+
+- **GIVEN** a run that made forty calls across its search tools, each tool under its own budget
+- **WHEN** the model calls any search tool again
+- **THEN** the tool answers an error that names the budget of the run, and the run continues to the wrap-up
 
 ### Requirement: The planner wraps its search tools
 

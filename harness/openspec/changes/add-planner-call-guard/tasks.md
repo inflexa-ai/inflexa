@@ -1,6 +1,6 @@
 ## 1. The guard
 
-- [x] 1.1 `guardRepeatedCalls` over a list of tools, with the identical-input limit and the per-tool budget, and a stable key over the input.
+- [x] 1.1 `guardRepeatedCalls` over a list of tools, with the identical-input limit, the per-tool budget, the total budget of the run, and a stable key over the input.
 - [x] 1.2 Tests: the third identical call is refused without a call to the tool, the budget refuses past the limit, each tool counts on its own, and a new list starts at zero.
 
 ## 2. The planner
