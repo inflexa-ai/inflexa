@@ -3,9 +3,9 @@
  *
  * Instruments:
  *   - cortex.run.completed{status, workflow}      — counter, one per run that reached a terminal status
- *   - cortex.run.duration_ms{status, workflow}    — histogram, start to terminal status
+ *   - cortex.run.duration{status, workflow}       — histogram, start to terminal status
  *   - cortex.step.completed{status, agent_id}     — counter, one per executed step that settled
- *   - cortex.step.duration_ms{status, agent_id}   — histogram, step start to its terminal ledger write
+ *   - cortex.step.duration{status, agent_id}      — histogram, step start to its terminal ledger write
  *   - cortex.artifact.reconcile.dropped{agent_id}              — counter for missing manifest entries
  *   - cortex.artifact.reconcile.input_dropped{agent_id, reason} — counter for lineage input drops
  *
@@ -65,7 +65,7 @@ function getInstruments(): Instruments {
                 description: "Runs that reached a terminal status. Tagged by status, workflow.",
                 unit: "{run}",
             }),
-            runDuration: meter.createHistogram("cortex.run.duration_ms", {
+            runDuration: meter.createHistogram("cortex.run.duration", {
                 description: "Run duration from its start to its terminal status. Tagged by status, workflow.",
                 unit: "ms",
                 advice,
@@ -74,7 +74,7 @@ function getInstruments(): Instruments {
                 description: "Executed steps that settled. Tagged by status, agent_id.",
                 unit: "{step}",
             }),
-            stepDuration: meter.createHistogram("cortex.step.duration_ms", {
+            stepDuration: meter.createHistogram("cortex.step.duration", {
                 description: "Step duration from its start to its terminal ledger write. Tagged by status, agent_id.",
                 unit: "ms",
                 advice,

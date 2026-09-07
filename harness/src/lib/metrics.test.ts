@@ -87,7 +87,7 @@ describe("run and step outcome metrics", () => {
             recordStepCompleted({ agentId: "enrichment", status: "canceled" });
 
             expect(await capture.sums("cortex.run.completed")).toEqual([[{ status: "partial", workflow: "analysis" }, 1]]);
-            expect(await capture.histograms("cortex.run.duration_ms")).toEqual([
+            expect(await capture.histograms("cortex.run.duration")).toEqual([
                 [
                     { status: "partial", workflow: "analysis" },
                     { count: 1, sum: 900_000 },
@@ -97,7 +97,7 @@ describe("run and step outcome metrics", () => {
                 [{ status: "failed", agent_id: "enrichment" }, 1],
                 [{ status: "canceled", agent_id: "enrichment" }, 1],
             ]);
-            expect(await capture.histograms("cortex.step.duration_ms")).toEqual([
+            expect(await capture.histograms("cortex.step.duration")).toEqual([
                 [
                     { status: "failed", agent_id: "enrichment" },
                     { count: 1, sum: 3_000 },

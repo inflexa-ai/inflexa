@@ -317,14 +317,14 @@ describe("createRunCanceler outcome metrics", () => {
 
             expect(result.outcome).toBe("canceled");
             expect(await capture.sums("cortex.run.completed")).toEqual([[{ status: "canceled", workflow: "analysis" }, 1]]);
-            const [duration] = await capture.histograms("cortex.run.duration_ms");
+            const [duration] = await capture.histograms("cortex.run.duration");
             expect(duration?.[0]).toEqual({ status: "canceled", workflow: "analysis" });
             expect(duration?.[1].count).toBe(1);
             // Measured from the row's `started_at` (2026-08-12), so it is at least that far in the past.
             expect(duration?.[1].sum).toBeGreaterThan(Date.now() - Date.parse("2026-08-13T00:00:00.000Z"));
             // The cut child is counted without a duration; the child with a terminal row is left to itself.
             expect(await capture.sums("cortex.step.completed")).toEqual([[{ status: "canceled", agent_id: "test-agent" }, 1]]);
-            expect(await capture.histograms("cortex.step.duration_ms")).toEqual([]);
+            expect(await capture.histograms("cortex.step.duration")).toEqual([]);
         } finally {
             await capture.dispose();
         }

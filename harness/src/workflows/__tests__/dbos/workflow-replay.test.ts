@@ -508,14 +508,14 @@ describe("run and step outcome metrics across a DBOS replay", () => {
             // The body ran twice; the terminal step's closure ran once, and so did each record in it.
             expect(result.terminalCalls).toBe(1);
             expect(await capture.sums("cortex.run.completed")).toEqual([[{ status: "completed", workflow: "analysis" }, 1]]);
-            expect(await capture.histograms("cortex.run.duration_ms")).toEqual([
+            expect(await capture.histograms("cortex.run.duration")).toEqual([
                 [
                     { status: "completed", workflow: "analysis" },
                     { count: 1, sum: 30_000 },
                 ],
             ]);
             expect(await capture.sums("cortex.step.completed")).toEqual([[{ status: "completed", agent_id: "mirror-agent" }, 1]]);
-            expect(await capture.histograms("cortex.step.duration_ms")).toEqual([
+            expect(await capture.histograms("cortex.step.duration")).toEqual([
                 [
                     { status: "completed", agent_id: "mirror-agent" },
                     { count: 1, sum: 1_500 },

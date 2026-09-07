@@ -1776,7 +1776,7 @@ describe("run and step outcome metrics", () => {
                 [{ status: "canceled", agent_id: "agent-x" }, 1],
             ]);
             // A residual step settled without a durable duration: counted, not timed.
-            expect(await capture.histograms("cortex.step.duration_ms")).toEqual([]);
+            expect(await capture.histograms("cortex.step.duration")).toEqual([]);
         } finally {
             await capture.dispose();
         }
