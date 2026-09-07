@@ -29,6 +29,8 @@ export interface KnowledgeSituation {
     readonly modality: "bulk_rna_seq";
     readonly data_state: "fastq" | "counts" | "tpm_or_fpkm" | "log_normalized";
     readonly count_source?: "salmon" | "kallisto" | "star_featurecounts" | "rsem" | "unknown";
+    /** Whether the length correction of a quantifier occurred. Never required: the service sets `unknown` on counts. */
+    readonly import_state?: "quantifications" | "estimated_counts_with_lengths" | "corrected_counts" | "integer_counts" | "unknown";
     readonly organism: "human" | "mouse" | "other";
     readonly n_groups: number;
     readonly n_per_group_min: number;
@@ -41,6 +43,8 @@ export interface KnowledgeSituation {
     readonly library_type?: "polyA" | "total" | "three_prime" | "unknown";
     readonly strandedness?: "verified" | "declared_unverified" | "unknown";
     readonly interaction?: boolean;
+    /** True for a classifier of the samples into classes; absent for a per-sample score. */
+    readonly classifier?: boolean;
     readonly quality_flags?: readonly ("low_depth_sample" | "outlier_sample" | "sample_identity_doubt" | "high_duplication")[];
 }
 
@@ -48,15 +52,37 @@ export interface KnowledgeSituation {
 
 const SnapshotRefSchema = z.object({ date: z.string(), digest: z.string() });
 
+/** A method of the catalog by id and label. */
+const MethodRefSchema = z.looseObject({ id: z.string(), label: z.string() });
+
+/** Two rules of equal specificity and strength disagree on a parameter. The step omits the parameter and names both. */
+const ProcedureConflictSchema = z.looseObject({
+    parameter: z.string(),
+    entries: z.array(z.looseObject({ rule: z.string(), value: z.unknown() })),
+});
+
+/** The step method is a declared substitute: `for` names the method of record it stands in for. */
+const ProcedureSubstitutionSchema = z.looseObject({ for: z.string(), label: z.string(), template: z.string() });
+
+/** No template of the requested language holds for the design; the step keeps the first template that holds. */
+const ProcedureLimitSchema = z.looseObject({
+    requested_language: z.enum(["R", "python"]),
+    reason: z.string(),
+    skipped: z.array(z.looseObject({ template: z.string(), missing: z.array(z.string()) })),
+});
+
 const ProcedureStepSchema = z.looseObject({
     step: z.string(),
-    method: z.looseObject({ id: z.string(), label: z.string() }).optional(),
+    method: MethodRefSchema.optional(),
     template: z.string().optional(),
     rules: z.array(z.string()),
     flags: z.array(z.looseObject({ rule: z.string(), severity: z.string(), message: z.string(), outcome: z.string().optional() })).optional(),
-    alternatives: z.array(z.looseObject({ method: z.string(), label: z.string(), when: z.string() })).optional(),
+    alternatives: z.array(z.looseObject({ method: z.string(), label: z.string(), when: z.string(), rules: z.array(z.string()) })).optional(),
     disputed: z.looseObject({ rule: z.string(), sides: z.array(z.string()) }).optional(),
     parameters: z.array(z.looseObject({ name: z.string(), value: z.unknown(), default_source: z.string().optional() })).optional(),
+    conflicts: z.array(ProcedureConflictSchema).optional(),
+    substitution: ProcedureSubstitutionSchema.optional(),
+    limit: ProcedureLimitSchema.optional(),
 });
 
 const ClaimSchema = z.looseObject({
@@ -86,18 +112,32 @@ const FindingSchema = z.looseObject({
     permitted: z.array(z.string()).optional(),
 });
 
+/** A drafted step that no rule covers in the situation: neither passed nor failed. */
+const NotAssessedSchema = z.looseObject({ step_type: z.string(), reason: z.string(), message: z.string() });
+
 export const CheckResponseSchema = z.looseObject({
+    /** True when the assessed steps carry no violation and no warning. A step in `not_assessed` does not count. */
     ok: z.boolean(),
     snapshot: SnapshotRefSchema,
     violations: z.array(FindingSchema),
     warnings: z.array(FindingSchema),
+    not_assessed: z.array(NotAssessedSchema).optional(),
 });
 export type CheckResponse = z.infer<typeof CheckResponseSchema>;
 
 export const RenderResponseSchema = z.looseObject({
     ok: z.literal(true),
     snapshot: SnapshotRefSchema,
-    template: z.looseObject({ id: z.string(), version: z.string(), label: z.string(), method: z.string(), language: z.string() }),
+    template: z.looseObject({
+        id: z.string(),
+        version: z.string(),
+        label: z.string(),
+        /** The method the script runs: the substitute when the template is one. */
+        method: MethodRefSchema,
+        /** The method of record when the template is a declared substitute. */
+        substitute_for: MethodRefSchema.optional(),
+        language: z.string(),
+    }),
     script: z.string(),
     slots: z.array(z.looseObject({ name: z.string(), value: z.unknown(), source: z.string(), adaptable: z.boolean(), lines: z.array(z.number()) })),
     environment: z.looseObject({ match: z.string() }),
@@ -130,6 +170,8 @@ export interface KnowledgePreferences {
 export interface DraftedStep {
     readonly step_type: string;
     readonly method: string;
+    /** The catalog id of the method (`M-dddd`), copied from the recommendation. An exact match wins over the wording. */
+    readonly method_id?: string;
     readonly package?: string;
     readonly parameters?: readonly { readonly name: string; readonly value: string | number | boolean }[];
     /** The outcome the step states when the design forbids inference, for example `descriptive_only`. */

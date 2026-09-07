@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { createWorkspaceMutator } from "../workspace/mutator.js";
 import { stepWritePrefix } from "../../workspace/paths.js";
-import { fakeKnowledgeClient, renderAnswer, SNAPSHOT } from "./__fixtures__/fake-client.js";
+import { fakeKnowledgeClient, limitAnswer, notAssessedCheckAnswer, renderAnswer, SNAPSHOT, substitutionAnswer } from "./__fixtures__/fake-client.js";
 import { CHECK_CALL_LIMIT, createKnowledgeCheckTool } from "./check.js";
 import { createKnowledgeTools } from "./index.js";
 import { createKnowledgeRecommendTool } from "./recommend.js";
@@ -52,6 +52,15 @@ describe("knowledge_recommend", () => {
         expect(out.procedure.map((step) => step.template)).toContain("tpl-deseq2-two-group@1.0.0");
         expect(calls.recommend[0]?.situation).toEqual(SITUATION);
         expect(Object.keys(calls.recommend[0]!.situation)).not.toContain("covariates");
+    });
+
+    it("sends the classifier flag and the import state as situation fields, and refuses an unknown import state", async () => {
+        const { client, calls } = fakeKnowledgeClient();
+        const tool = createKnowledgeRecommendTool({ client });
+        const { ctx } = makeToolContext();
+        await tool.execute(tool.inputSchema.parse({ ...SITUATION, question: "signature_scoring", classifier: true, import_state: "unknown" }), ctx);
+        expect(calls.recommend[0]?.situation).toEqual({ ...SITUATION, question: "signature_scoring", classifier: true, import_state: "unknown" });
+        expect(tool.inputSchema.safeParse({ ...SITUATION, import_state: "tximport" }).success).toBe(false);
     });
 
     it("sends the preferred language beside the situation, not inside it", async () => {
@@ -125,7 +134,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(analysis.grounding).toEqual({
             status: "grounded",
             snapshot: SNAPSHOT.digest,
-            claims: ["R-0001@e7d0"],
+            claims: ["R-0001@e7d0", "R-0010@2b3c", "R-0166@4d5e"],
             template: "tpl-deseq2-two-group@1.0.0",
             reason: "DESeq2 Wald test with apeglm log fold change shrinkage per R-0001@e7d0",
         });
@@ -133,6 +142,54 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(gsea.agent).toBe("enrichment-agent");
         expect(gsea.depends_on).toEqual(["T1S2"]);
         expect(gsea.caveats).toEqual(["Few DE genes: ORA has no power."]);
+    });
+
+    it("renders a parameter conflict as a caveat that names both rules, never as a constraint", async () => {
+        const { client } = fakeKnowledgeClient();
+        const tool = createKnowledgeRecommendTool({ client });
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
+        if (out.match !== "applicable") throw new Error(out.match);
+        const analysis = out.plan_skeleton!.find((step) => step.id === "T1S2")!;
+        expect(analysis.caveats).toEqual(["multiple_testing: independent_filtering conflicts between R-0010@2b3c and R-0166@4d5e"]);
+        expect(analysis.constraints.some((constraint) => constraint.includes("independent_filtering"))).toBe(false);
+        expect(analysis.constraints).toEqual(["differential_expression: alpha = 0.05 (doi:10.1186/s13059-014-0550-8)"]);
+    });
+
+    it("names the substitute as the step method and renders the substitution as a caveat", async () => {
+        const { client } = fakeKnowledgeClient({ recommend: substitutionAnswer() });
+        const tool = createKnowledgeRecommendTool({ client });
+        const { ctx } = makeToolContext();
+        const out = (
+            await tool.execute(
+                tool.inputSchema.parse({ ...SITUATION, question: "enrichment", enrichment_input: "sample_scores", preferred_language: "python" }),
+                ctx,
+            )
+        )._unsafeUnwrap();
+        if (out.match !== "applicable") throw new Error(out.match);
+        const enrichment = out.plan_skeleton!.find((step) => step.id === "T2S1")!;
+        expect(enrichment.name).toBe("decoupler ulm per-sample pathway scores with a two-sample t-test on the scores");
+        expect(enrichment.packages).toEqual(["decoupler"]);
+        expect(enrichment.grounding.template).toBe("tpl-decoupler-scores@1.0.0");
+        expect(enrichment.caveats).toEqual([
+            "decoupler ulm per-sample pathway scores with a two-sample t-test on the scores stands in for GSVA per-sample pathway scores with limma on the scores",
+        ]);
+        expect(enrichment.constraints).toEqual(["enrichment: gene_set_collection = msigdb_hallmark_human"]);
+    });
+
+    it("renders a language limit as a caveat and keeps the named template", async () => {
+        const { client } = fakeKnowledgeClient({ recommend: limitAnswer() });
+        const tool = createKnowledgeRecommendTool({ client });
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute(tool.inputSchema.parse({ ...SITUATION, paired: true, preferred_language: "python" }), ctx))._unsafeUnwrap();
+        if (out.match !== "applicable") throw new Error(out.match);
+        const analysis = out.plan_skeleton!.find((step) => step.id === "T1S2")!;
+        expect(analysis.grounding.template).toBe("tpl-deseq2-blocked@1.0.0");
+        expect(analysis.packages).toEqual(["DESeq2"]);
+        expect(analysis.caveats).toEqual([
+            "the requested language has no template that realizes DESeq2 Wald test with apeglm log fold change shrinkage for this design; the R template is named",
+        ]);
+        expect(analysis.constraints).toEqual([]);
     });
 
     it("carries no environment when no store is bound, and still folds the skeleton", async () => {
@@ -165,6 +222,40 @@ describe("knowledge_check", () => {
         expect(calls.check[0]?.steps).toEqual([{ step_type: "differential_expression", method: "DESeq2 Wald", package: "DESeq2" }]);
         expect(calls.check[0]?.situation).toEqual(SITUATION);
         expect(tool.describeResult?.(input, out)).toBe("1 violation(s), 0 warning(s)");
+    });
+
+    it("sends the method id through to the service, and refuses a malformed one at the schema", async () => {
+        const { client, calls } = fakeKnowledgeClient();
+        const tool = createKnowledgeCheckTool({ client });
+        const { ctx } = makeToolContext();
+        const input = tool.inputSchema.parse({
+            ...SITUATION,
+            steps: [{ step_type: "differential_expression", method: "DESeq2 Wald test", method_id: "M-0001" }],
+        });
+        await tool.execute(input, ctx);
+        expect(calls.check[0]?.steps[0]?.method_id).toBe("M-0001");
+        expect(
+            tool.inputSchema.safeParse({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald test", method_id: "deseq2" }] })
+                .success,
+        ).toBe(false);
+    });
+
+    it("shows the steps the check did not assess beside the findings", async () => {
+        const { client } = fakeKnowledgeClient({ check: notAssessedCheckAnswer() });
+        const tool = createKnowledgeCheckTool({ client });
+        const { ctx } = makeToolContext();
+        const input = tool.inputSchema.parse({ ...SITUATION, steps: [{ step_type: "shrink_lfc", method: "apeglm" }] });
+        const out = (await tool.execute(input, ctx))._unsafeUnwrap();
+        expect("ok" in out && out.ok).toBe(true);
+        expect("not_assessed" in out && out.not_assessed).toEqual(notAssessedCheckAnswer().not_assessed);
+        expect(tool.describeResult?.(input, out)).toBe("ok, 1 not assessed");
+        expect(
+            tool.describeResult?.(input, {
+                ...notAssessedCheckAnswer(),
+                ok: false,
+                violations: [{ step_type: "differential_expression", severity: "violation", rule: "R-0004@aaaa", message: "forbidden" }],
+            }),
+        ).toBe("1 violation(s), 0 warning(s), 1 not assessed");
     });
 
     it("passes a stated outcome through to the service", async () => {
@@ -226,7 +317,12 @@ describe("knowledge_template", () => {
         const script = await readFile(join(workingDir, "scripts", "tpl-deseq2-two-group.R"), "utf8");
         expect(script).toBe(renderAnswer().script);
         const record = JSON.parse(await readFile(join(workingDir, DECISION_RECORD_PATH), "utf8"));
-        expect(record.template).toEqual({ id: "tpl-deseq2-two-group", version: "1.0.0" });
+        expect(record.template).toEqual({
+            id: "tpl-deseq2-two-group",
+            version: "1.0.0",
+            label: "DESeq2 two-group",
+            method: { id: "M-0001", label: "DESeq2 Wald test with apeglm log fold change shrinkage" },
+        });
         expect(record.script_path).toBe(out.script_path);
     });
 

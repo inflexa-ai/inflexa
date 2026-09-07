@@ -99,6 +99,34 @@ function renderValue(value: unknown): string {
     return Array.isArray(value) ? value.map(String).join(", ") : String(value);
 }
 
+/** `a and b`, or `a, b and c` for a longer list. */
+function joinWithAnd(items: readonly string[]): string {
+    if (items.length <= 1) return items.join("");
+    return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/**
+ * The caveats a step carries beside its warn flags. A parameter conflict, a
+ * substitution, and a language limit each render as a caveat, never as a
+ * constraint: a constraint is copied into the plan as a value, and none of
+ * the three is a value.
+ */
+function stepCaveats(step: ProcedureStep): string[] {
+    const caveats: string[] = [];
+    for (const conflict of step.conflicts ?? []) {
+        caveats.push(`${step.step}: ${conflict.parameter} conflicts between ${joinWithAnd(conflict.entries.map((entry) => entry.rule))}`);
+    }
+    if (step.substitution && step.method) {
+        caveats.push(`${step.method.label} stands in for ${step.substitution.label}`);
+    }
+    if (step.limit) {
+        // Only two languages exist, thus the named template is in the other one.
+        const named = step.limit.requested_language === "python" ? "R" : "Python";
+        caveats.push(`the requested language has no template that realizes ${step.method?.label ?? step.step} for this design; the ${named} template is named`);
+    }
+    return caveats;
+}
+
 /** The present dependencies of a group; a group whose own dependency is absent falls back to the QC. */
 function dependsOn(id: string, kept: ReadonlySet<string>): string[] {
     const present = (DEPENDS[id] ?? []).filter((dependency) => kept.has(dependency));
@@ -126,7 +154,7 @@ export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonSte
                     `${step.step}: ${parameter.name} = ${renderValue(parameter.value)}${parameter.default_source ? ` (${parameter.default_source})` : ""}`,
             ),
         );
-        const caveats = flags.filter((flag) => flag.severity === "warn").map((flag) => flag.message);
+        const caveats = [...flags.filter((flag) => flag.severity === "warn").map((flag) => flag.message), ...steps.flatMap(stepCaveats)];
         const method = central?.method;
         const status = hardFlag ? "flagged" : method ? "grounded" : "ungrounded";
         const name = method && group.id !== "T1S1" && group.id !== "T1S3" ? method.label : group.name;

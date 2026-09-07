@@ -64,15 +64,29 @@ When the host binds a farm lock or a reference store, `knowledge_recommend` MUST
 - **WHEN** the planner calls `knowledge_recommend`
 - **THEN** no step carries an environment, and `environment_source` reads unknown for both
 
-### Requirement: A language preference selects the template, never the method
+### Requirement: A language preference selects among the templates that honor the design
 
-The recommend tool MUST accept an optional `preferred_language` of `R` or `python`. The client MUST send it beside the situation as a preference, never as a situation field. The service MUST select, among the templates of a method whose applicability holds, the first template in the preferred language, and MUST fall back to the first template that holds. A preference MUST NOT change a rule or a method.
+The recommend tool MUST accept an optional `preferred_language` of `R` or `python`. The client MUST send it beside the situation as a preference, never as a situation field. A preference MUST NOT change a rule. The service MUST select among the templates of the method that hold and honor the design requirements of the situation. In that set, the service MUST select the first template in the preferred language.
+
+When that template is a declared substitute, the answer MUST name the substitute as the method of the step. The step MUST carry the package and the template of the substitute, and `substitution.for` MUST name the method of record. When no template of the preferred language holds, the answer MUST keep the first template that holds. That step MUST report `limit` with the requested language and each skipped template with the requirement it lacks. The plan skeleton MUST render a substitution and a limit as a caveat of the step, never as a constraint.
 
 #### Scenario: The user asks for Python
 
-- **GIVEN** a two-group design and a user constraint that names Python
+- **GIVEN** an unpaired two-group design and a user constraint that names Python
 - **WHEN** the planner calls `knowledge_recommend` with `preferred_language: python`
-- **THEN** the differential expression step names the same method and the Python template of that method
+- **THEN** the differential expression step names the same method and the Python template of that method, with no `limit` and no `substitution`
+
+#### Scenario: A paired design with a Python preference
+
+- **GIVEN** a paired two-group design and a user constraint that names Python
+- **WHEN** the planner calls `knowledge_recommend` with `preferred_language: python`
+- **THEN** the differential expression step names the R template that honors the pairing. `limit.requested_language` reads `python`, and `limit.skipped` names the Python template and `pairing`. The skeleton step carries the limit as a caveat.
+
+#### Scenario: The Python template is a declared substitute
+
+- **GIVEN** an unpaired design with per-sample pathway scores and a user constraint that names Python
+- **WHEN** the planner calls `knowledge_recommend` with `preferred_language: python`
+- **THEN** the enrichment step names the substitute method, its package, and its template. `substitution.for` names the method of record, and the skeleton step carries the substitution as a caveat.
 
 ### Requirement: The situation is typed and carries no data
 

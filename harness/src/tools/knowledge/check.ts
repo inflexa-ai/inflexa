@@ -48,6 +48,13 @@ const DraftedStepSchema = z.object({
         ])
         .describe("The kind of work the drafted step does."),
     method: z.string().min(1).describe("The method as the step names it, for example `DESeq2 Wald test` or `edgeR quasi-likelihood`."),
+    method_id: z
+        .string()
+        .regex(/^M-\d{4}$/)
+        .optional()
+        .describe(
+            "The `method.id` of the step in the `knowledge_recommend` answer (for example `M-0001`), copied when the step uses that method. With it the check matches the method exactly and ignores the wording.",
+        ),
     package: z.string().optional().describe("The main package of the step, for example `DESeq2`."),
     parameters: z
         .array(z.object({ name: z.string().min(1), value: z.union([z.string(), z.number(), z.boolean()]) }))
@@ -59,6 +66,13 @@ const DraftedStepSchema = z.object({
         .describe("The outcome the step states when a flag of `knowledge_recommend` removes inference, copied from the flag, for example `descriptive_only`."),
 });
 
+/** `ok`, or the counts of the findings, plus the steps the check did not assess when there are any. */
+function describeFindings(result: CheckResponse): string {
+    const findings = result.ok ? "ok" : `${result.violations.length} violation(s), ${result.warnings.length} warning(s)`;
+    const notAssessed = result.not_assessed?.length ?? 0;
+    return notAssessed > 0 ? `${findings}, ${notAssessed} not assessed` : findings;
+}
+
 export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps) {
     let calls = 0;
     return defineTool({
@@ -67,14 +81,15 @@ export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps) {
             "Check the method steps you drafted for a bulk RNA-seq analysis against the rules of the Inflexa knowledge service, once, after the draft and before `submit_plan`. " +
             "Send the same situation you sent to `knowledge_recommend` and the drafted steps: the step type, the method as the step names it, its package, and its key parameters. " +
             "The answer lists `violations` (a forbidden method, a method outside the permitted set, an inferential test on a flagged design) and `warnings` (a parameter that differs from a sourced default, or a required parameter that the step does not state), each with the rule id and the permitted alternatives. " +
-            "Revise a violated step once, then submit. `ok: true` means nothing applies. `match: unavailable` means the service did not answer; submit the draft as it is. " +
+            "Revise a violated step once, then submit. `ok: true` means no finding on the assessed steps. " +
+            "`not_assessed` lists the steps that no rule covers; the check neither passed nor failed them, so submit them as drafted. " +
+            "`match: unavailable` means the service did not answer; submit the draft as it is. " +
             `The host accepts ${CHECK_CALL_LIMIT} checks per plan; after that the tool refuses and you submit with the findings you have.`,
         inputSchema: SituationFieldsSchema.extend({
             steps: z.array(DraftedStepSchema).min(1).describe("The drafted method steps, one entry per step type."),
         }),
         describeCall: ({ steps }) => `${steps.length} drafted step(s)`,
-        describeResult: (_input, result: KnowledgeCheckOutput) =>
-            "ok" in result ? (result.ok ? "ok" : `${result.violations.length} violation(s), ${result.warnings.length} warning(s)`) : result.match,
+        describeResult: (_input, result: KnowledgeCheckOutput) => ("ok" in result ? describeFindings(result) : result.match),
         execute: async (input): Promise<Result<KnowledgeCheckOutput, ToolError>> => {
             calls += 1;
             if (calls > CHECK_CALL_LIMIT) {

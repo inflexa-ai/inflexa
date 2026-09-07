@@ -40,6 +40,9 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps) {
             "`match: rejected`: a field was invalid; the answer names the field and the permitted values, so correct the call once. " +
             "A step with `disputed` sides: choose one side and state the choice in the step. A step `flags` entry with severity warn is a caveat for that step. " +
             "The `alternatives` of a step are also permitted methods. `dropped` lists the steps the procedure removed because a flag removed inference; do not plan them. " +
+            "A step `conflicts` entry names two rules that disagree on a parameter, and the step omits that parameter; state the value you choose and both rule ids in the step. " +
+            "A step `substitution` means the template runs a substitute of the method of record named in `substitution.for`; the step method, package, and template are the substitute, and the plan states it. " +
+            "A step `limit` means the requested language has no template that realizes the method for this design; the step keeps the named template, and the plan states the language limit. " +
             "Each step carries `environment` when the host bound the stores: `package.present` and its version from the farm, and `collection.present` with its path in the reference store. " +
             "That is the environment answer; do not call the listing tools for a package or a collection the answer already reports. " +
             "`plan_skeleton` is the procedure folded into plan steps with the id, the name, the track, the agent, the packages, the dependencies, the constraints, the caveats, and the grounding filled. " +

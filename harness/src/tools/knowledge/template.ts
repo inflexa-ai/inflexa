@@ -31,7 +31,13 @@ export type KnowledgeTemplateOutput =
           readonly status: "ok";
           readonly script_path: string;
           readonly decision_record_path: string;
-          readonly template: { readonly id: string; readonly version: string; readonly label: string; readonly method: string };
+          readonly template: {
+              readonly id: string;
+              readonly version: string;
+              readonly label: string;
+              readonly method: { readonly id: string; readonly label: string };
+              readonly substitute_for?: { readonly id: string; readonly label: string };
+          };
           readonly snapshot: { readonly date: string; readonly digest: string };
           readonly slots: readonly {
               readonly name: string;
@@ -117,7 +123,15 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
                 status: "ok",
                 script_path: scriptWrite.path,
                 decision_record_path: recordWrite.path,
-                template: { id: answer.template.id, version: answer.template.version, label: answer.template.label, method: answer.template.method },
+                template: {
+                    id: answer.template.id,
+                    version: answer.template.version,
+                    label: answer.template.label,
+                    method: { id: answer.template.method.id, label: answer.template.method.label },
+                    ...(answer.template.substitute_for
+                        ? { substitute_for: { id: answer.template.substitute_for.id, label: answer.template.substitute_for.label } }
+                        : {}),
+                },
                 snapshot: answer.snapshot,
                 slots: answer.slots,
                 environment_match: answer.environment.match,

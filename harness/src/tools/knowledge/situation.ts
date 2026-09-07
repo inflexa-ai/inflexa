@@ -27,7 +27,8 @@ export const SituationFieldsSchema = z.object({
             "What the plan needs a procedure for. `full_plan` returns QC, filtering, the model, the test, shrinkage, multiple testing, enrichment, and the report in one answer. " +
                 "Use `differential_expression` when the research question does not ask for pathways or gene sets; an enrichment step the user did not ask for is unasked scope. " +
                 "Use `enrichment` when a results table is the input and no new test is fitted, and `qc` when the question stops at the sample structure. " +
-                "Use `tf_activity` for regulator or pathway activity, `deconvolution` for cell type proportions, `coexpression` for modules, `clustering` for sample subgroups, `survival` for an outcome association, and `signature_scoring` for a per-sample score.",
+                "Use `tf_activity` for regulator or pathway activity, `deconvolution` for cell type proportions, `coexpression` for modules, `clustering` for sample subgroups, `survival` for an outcome association, " +
+                "and `signature_scoring` for a per-sample score, or with `classifier: true` for a classifier of the samples.",
         ),
     modality: z.literal("bulk_rna_seq").describe("The assay. Phase 0 serves bulk RNA-seq only."),
     data_state: z
@@ -38,7 +39,20 @@ export const SituationFieldsSchema = z.object({
     count_source: z
         .enum(["salmon", "kallisto", "star_featurecounts", "rsem", "unknown"])
         .optional()
-        .describe("The quantifier that produced the counts, when the profile names one."),
+        .describe(
+            "The quantifier that produced the counts, when the profile names one. The quantifier does not establish the length correction; `import_state` does.",
+        ),
+    import_state: z
+        .enum(["quantifications", "estimated_counts_with_lengths", "corrected_counts", "integer_counts", "unknown"])
+        .optional()
+        .describe(
+            "The import state of a count table from a transcript quantifier (Salmon, kallisto, RSEM): whether the length correction occurred. Read it from the profile. " +
+                "`quantifications`: per-sample quantification files (quant.sf or abundance.h5) or a quantification directory, plus a transcript-to-gene map. " +
+                "`estimated_counts_with_lengths`: a fractional gene-by-sample matrix plus a table of average transcript lengths per gene and sample. " +
+                "`corrected_counts`: a table described as lengthScaledTPM or scaledTPM counts. " +
+                "`integer_counts`: integer counts from an aligner and a counter (STAR, featureCounts) or from a 3' protocol, with no length data. " +
+                "`unknown`: a count table from a quantifier with no statement of the correction. Omit when `data_state` is not `counts`.",
+        ),
     organism: z.enum(["human", "mouse", "other"]).describe("The organism of the samples."),
     n_groups: z.number().int().min(1).describe("The number of levels of the condition of interest (2 for a two-group comparison; 4 for a 2x2 design)."),
     n_per_group_min: z.number().int().min(1).describe("The smallest number of biological replicates in any group. 1 means a group has no replication."),
@@ -66,6 +80,12 @@ export const SituationFieldsSchema = z.object({
         .optional()
         .describe("Whether the strandedness was verified against the quantification, declared but not verified, or unknown."),
     interaction: z.boolean().optional().describe("True when the question is the interaction of two factors (for example genotype by treatment)."),
+    classifier: z
+        .boolean()
+        .optional()
+        .describe(
+            "Set true when the question is a classifier of the samples into classes (a model that predicts the class of a sample from its expression, with cross-validation). Omit for a per-sample score.",
+        ),
     extra_analyses: z
         .array(
             z.enum([
@@ -125,5 +145,5 @@ export function toPreferences(fields: SituationFields): KnowledgePreferences | u
 
 /** One worked example, in the descriptions of the two planner tools. Examples raise complex-parameter accuracy. */
 export const SITUATION_EXAMPLE =
-    '{"question":"differential_expression","modality":"bulk_rna_seq","data_state":"counts","count_source":"salmon","organism":"human",' +
+    '{"question":"differential_expression","modality":"bulk_rna_seq","data_state":"counts","count_source":"salmon","import_state":"unknown","organism":"human",' +
     '"n_groups":2,"n_per_group_min":6,"n_per_group_max":6,"paired":false,"batch":"none","quality_flags":["low_depth_sample"]}';
