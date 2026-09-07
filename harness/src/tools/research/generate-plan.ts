@@ -60,7 +60,7 @@ import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { LogFields, Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
-import { hintForZodIssue } from "../../lib/zod-issues.js";
+import { decodeObjectString, hintForZodIssue } from "../../lib/zod-issues.js";
 import { insertPlan, loadDataProfileStatus, loadPlan, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
 
 // ── Tool-level config ──────────────────────────────────────────────
@@ -454,9 +454,15 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
  * BOTH pass.
  */
 function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { valid: true; plan: PlannerPlan } | { valid: false; issues: ValidationIssue[] } {
-    const parsed = PlannerPlanSchema.safeParse(candidate);
+    // The permissive arg schema of the planner tools accepts a string, thus the
+    // loop-boundary repair never sees a plan that a model sent as a JSON-encoded
+    // string. A small model does this on a large nested schema. Decode it here,
+    // the same as run-synthesis does, so the schema issues describe the plan
+    // inside the string and not the string.
+    const decoded = decodeObjectString(candidate);
+    const parsed = PlannerPlanSchema.safeParse(decoded);
     if (!parsed.success) {
-        return { valid: false, issues: zodIssuesToValidationIssues(parsed.error, candidate) };
+        return { valid: false, issues: zodIssuesToValidationIssues(parsed.error, decoded) };
     }
 
     // Semantic checks operate on the AnalysisPlan shape — PlannerPlan omits

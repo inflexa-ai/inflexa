@@ -327,6 +327,20 @@ describe("generatePlan loop-driving tool", () => {
             expect(seed).toContain("## Research Question");
         });
 
+        it("accepts a plan that the model sent as a JSON-encoded string", async () => {
+            const analysisId = "an-string-plan";
+            await seedAnalysis(pool, analysisId, { dpStatus: null });
+            // A small model on a large nested schema encodes the object as a string.
+            // The permissive arg schema accepts the string, thus the loop repair never
+            // runs, and the planner decodes it before its own validation.
+            const provider = scriptedProvider([makeMessage([toolUseBlock("t1", "submit_plan", { plan: JSON.stringify(validCandidate()) })], "tool_use")]);
+
+            const result = (await toolFor(provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+
+            expect(result.event).toBe("plan_complete");
+            expect(result.planId).toMatch(/^pln-[a-f0-9]{8}$/);
+        });
+
         it("plans without a profile: no data-context section, and the plan still lands", async () => {
             const analysisId = "an-unprofiled";
             // A real analysis with a NULL profile status — the honest "never profiled"
