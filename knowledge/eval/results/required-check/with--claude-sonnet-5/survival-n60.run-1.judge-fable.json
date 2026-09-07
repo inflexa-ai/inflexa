@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: it counts events, censored samples and median follow-up before interpreting, fits Surv(time,event) ~ standardized score + condition with the HR per SD and 95% CI, checks proportional hazards with cox.zph and names the stratified or time-varying remedy, and demotes the tertile Kaplan-Meier to a display. QC (blind VST, PCA, distance heatmap, library sizes, the 121-vs-120 column reconciliation) precedes modeling, the filterByExpr filter and median-of-ratios size factors are stated and appropriate for feeding a VST matrix into UCell, and gene coverage of the 20-gene signature is reported. Minor gaps: the reference level for condition is not stated, the p-value is left as Wald/LR rather than committing to the likelihood ratio test, and the outlier policy is a flag rather than an explicit rule. Enrichment is correctly omitted and the single-test, no-FDR stance is made explicit rather than implied."
+}

@@ -169,6 +169,24 @@ describe("matchRules and assembleProcedure", () => {
         expect(drafted.warnings[0]?.message).toContain("alpha");
     });
 
+    it("warns when a drafted step omits a required parameter, and accepts the step that states it", () => {
+        const required = store([
+            rule({
+                id: "R-0090",
+                title: "wald with a required alpha",
+                conditions: [{ field: "data_state", op: "eq", value: "counts" }],
+                action: { step_type: "differential_expression", method: "M-0001", parameters: [{ name: "alpha", value: 0.05, default_source: "doi:10.1186/s13059-014-0550-8", required: true }] },
+            }),
+        ]);
+        const { applicable } = matchRules(required, SITUATION);
+        const omitted = checkSteps(applicable, SITUATION, [{ step_type: "differential_expression", method: "DESeq2 Wald test" }], MODALITY, CATALOG);
+        expect(omitted.violations).toEqual([]);
+        expect(omitted.warnings.map((finding) => finding.parameter)).toEqual(["alpha"]);
+        expect(omitted.warnings[0]?.message).toContain("0.05");
+        const stated = checkSteps(applicable, SITUATION, [{ step_type: "differential_expression", method: "DESeq2 Wald test", parameters: [{ name: "alpha", value: 0.05 }] }], MODALITY, CATALOG);
+        expect(stated.ok).toBe(true);
+    });
+
     it("turns a flag that permits a labeled result into a warning, and a flag that removes inference into a violation", () => {
         const flags = store([
             rule({ id: "R-0020", title: "confounded", severity: "flag", conditions: [{ field: "batch", op: "eq", value: "known_confounded" }], action: { step_type: "differential_expression", outcome: "confounded_label_or_stop" } }),

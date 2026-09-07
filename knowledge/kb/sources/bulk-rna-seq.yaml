@@ -907,3 +907,9 @@
   title: "The GTEx Consortium atlas of genetic regulatory effects across human tissues"
   year: 2020
   venue: Science
+
+- id: S-0146
+  doi: 10.1073/pnas.102102699
+  title: "Selection bias in gene extraction on the basis of microarray gene-expression data"
+  year: 2002
+  venue: PNAS

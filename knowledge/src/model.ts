@@ -100,6 +100,8 @@ export const ParameterValueSchema = z.object({
     name: z.string().min(1),
     value: z.union([Scalar, z.array(Scalar)]),
     default_source: z.string().optional(),
+    /** A drafted step must state this parameter. The check warns when the step omits it. */
+    required: z.boolean().optional(),
 });
 export type ParameterValue = z.infer<typeof ParameterValueSchema>;
 

@@ -325,8 +325,12 @@ describe("the curated tree on the evaluation situations", () => {
         const survival = answer({ ...BASE, question: "survival", n_per_group_min: 60, n_per_group_max: 60 });
         expect(step(survival, "survival").method?.id).toBe("M-0053");
         expect(step(survival, "signature_scoring").method?.id).toBe("M-0045");
+        expect(parameter(survival, "survival", "score_scale")).toBe("per_standard_deviation");
+        expect(parameter(survival, "survival", "event_count_statement")).toBe("state_events_censored_and_median_follow_up");
         const large = answer({ ...BASE, question: "coexpression", n_per_group_min: 60, n_per_group_max: 60 });
         expect(step(large, "coexpression").method?.id).toBe("M-0047");
+        expect(parameter(large, "coexpression", "min_module_size")).toBe(30);
+        expect(parameter(large, "coexpression", "merge_cut_height")).toBe(0.25);
         const small = answer({ ...BASE, question: "coexpression" });
         expect(small.match).toBe("flag");
         expect(step(small, "coexpression").forbids).toContain("M-0047");

@@ -66,7 +66,7 @@ export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps) {
         description:
             "Check the method steps you drafted for a bulk RNA-seq analysis against the rules of the Inflexa knowledge service, once, after the draft and before `submit_plan`. " +
             "Send the same situation you sent to `knowledge_recommend` and the drafted steps: the step type, the method as the step names it, its package, and its key parameters. " +
-            "The answer lists `violations` (a forbidden method, a method outside the permitted set, an inferential test on a flagged design) and `warnings` (a parameter that differs from a sourced default), each with the rule id and the permitted alternatives. " +
+            "The answer lists `violations` (a forbidden method, a method outside the permitted set, an inferential test on a flagged design) and `warnings` (a parameter that differs from a sourced default, or a required parameter that the step does not state), each with the rule id and the permitted alternatives. " +
             "Revise a violated step once, then submit. `ok: true` means nothing applies. `match: unavailable` means the service did not answer; submit the draft as it is. " +
             `The host accepts ${CHECK_CALL_LIMIT} checks per plan; after that the tool refuses and you submit with the findings you have.`,
         inputSchema: SituationFieldsSchema.extend({

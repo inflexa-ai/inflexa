@@ -6,7 +6,8 @@
  * parameters. The check resolves the drafted method onto the catalog by its
  * package and its label tokens, then compares it with the permitted set of
  * the step type. A forbidden method or a method outside the permitted set is
- * a violation. A parameter that differs from a sourced default is a warning.
+ * a violation. A parameter that differs from a sourced default is a warning,
+ * and so is a required parameter that the step does not state.
  * A flag rule whose outcome forbids inference is a violation on an inferential
  * step. Nothing applicable gives `ok`.
  */
@@ -31,6 +32,8 @@ export interface CheckFinding {
     readonly rule: string;
     readonly message: string;
     readonly permitted?: readonly string[];
+    /** The name of the required parameter that the step does not state. */
+    readonly parameter?: string;
 }
 
 export interface CheckResult {
@@ -197,6 +200,17 @@ export function checkSteps(
                 rule: expected.rules[0] ?? "",
                 message: `${resolved.label} is not a permitted method for ${draft.step_type} in this situation.`,
                 permitted: permitted.labels,
+            });
+        }
+
+        for (const required of (expected.parameters ?? []).filter((candidate) => candidate.required)) {
+            if ((draft.parameters ?? []).some((parameter) => parameter.name === required.name)) continue;
+            warnings.push({
+                step_type: draft.step_type,
+                severity: "warning",
+                rule: expected.rules[0] ?? "",
+                parameter: required.name,
+                message: `The step states no ${required.name}. The rule sets it to ${String(required.value)}${required.default_source ? ` (${required.default_source})` : ""}. State ${required.name} on the step.`,
             });
         }
 

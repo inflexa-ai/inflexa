@@ -9,8 +9,10 @@ assertion: >-
   and an optimized cut inflates the significance. Check the proportional
   hazards assumption on the scaled Schoenfeld residuals, and if it fails,
   report a stratified model or a time-dependent effect instead of the single
-  hazard ratio. Report the hazard ratio per unit of the score with its
-  confidence interval, the number of events, and the covariates in the model.
+  hazard ratio. Standardize the score, and report the hazard ratio per standard deviation
+  with its confidence interval and the covariates in the model. Count the
+  events and the censored samples and report the median follow-up before the
+  model, because the events give the power.
   Draw a Kaplan-Meier curve by score tertile or quartile for the picture only,
   and keep the inference in the continuous model.
 modality: bulk_rna_seq
@@ -31,6 +33,14 @@ action:
     - name: ph_check
       value: scaled_schoenfeld_residuals
       default_source: "doi:10.1111/j.2517-6161.1972.tb00899.x"
+    - name: score_scale
+      value: per_standard_deviation
+      default_source: "rule:R-0153"
+      required: true
+    - name: event_count_statement
+      value: state_events_censored_and_median_follow_up
+      default_source: "rule:R-0153"
+      required: true
 severity: info
 strength: consensus
 evidence_quality: high

@@ -1,0 +1,689 @@
+{
+  "campaign": "required-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "coexpression-n60",
+  "run": 1,
+  "startedAt": "2026-09-06T08:08:26.957Z",
+  "elapsedMs": 75392,
+  "outcome": "plan_submitted",
+  "planId": "pln-0c23e099",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load counts/metadata, reconcile sample IDs, sample-structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A library-size or batch-driven outlier undetected here will distort the co-expression network module structure downstream"
+        ],
+        "context": "Raw integer gene-level Salmon counts, 12000 genes x 121 sample columns (first column gene symbol); metadata.csv has 120 rows x 2 columns (sample, condition). The row/column count mismatch (121 vs 120) must be resolved by ID matching, not assumed to be an off-by-one error — could be a header/index column issue.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 121 count columns and 120 metadata rows align one-to-one by sample ID, do the case (n=60) and control (n=60) samples separate or mix on a blinded-VST PCA and sample-distance heatmap, and is there a library-size or outlier issue before any co-expression network is built?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC (blind vst, PCA, sample distance) grounded by R-0033 for every raw-count dataset before any downstream model",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use blind VST (not design-aware) per grounded rule R-0033",
+          "PCA on top 500 variance genes",
+          "Do not drop any sample without stating the numeric criterion used"
+        ],
+        "acceptance_criteria": [
+          "Reports the exact reconciliation of the 121 counts columns vs 120 metadata rows (e.g., a gene-symbol first column mistaken as a sample, or a genuinely extra/missing sample) and documents the resolved sample set used downstream",
+          "Produces a blind VST transform (DESeq2), PCA on top 500 variable genes, and a sample-distance heatmap colored by case/control status",
+          "Flags any sample whose library size or PCA position is a clear outlier, with a stated numeric criterion",
+          "States final n per group after reconciliation"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count filtering and variance-stabilizing transform for network input",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Over-filtering removes real but modest hub genes; keep the filter minimal per R-0029"
+        ],
+        "context": "12000 genes is already a fairly compact starting set for a bulk RNA-seq gene matrix; filtering should still be applied since Salmon-derived low-count genes destabilize correlation estimates in WGCNA even more than they do t-tests.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2"
+        ],
+        "question": "Which of the 12000 genes have too few reads across the 120 whole-blood samples to support a reliable correlation-based network, and what does the resulting variance-stabilized expression matrix (genes x 120 samples) look like after filtering?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1"
+          ],
+          "reason": "Minimal filterByExpr pre-filter and DESeq2 median-of-ratios normalization grounded for raw-count WGCNA input",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-edger-ql@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count=10, min_samples=60 (smallest group size)",
+          "Do not additionally TMM/CPM normalize on top of the VST output — normalization is inside DESeq2's size-factor step per R-0026"
+        ],
+        "acceptance_criteria": [
+          "Applies filterByExpr (edgeR) using the case/control grouping with min.count=10, keeping a gene only if it clears the threshold in at least the smallest group size (60) of samples",
+          "Reports the number of genes retained vs the starting 12000",
+          "Produces the DESeq2 VST matrix (genes-by-samples) on the filtered gene set as the WGCNA input, explicitly not further scaling/normalizing on top of VST",
+          "Checks for and flags genes/samples with zero variance that WGCNA's goodSamplesGenes would reject"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "WGCNA signed co-expression network, module detection, eigengenes",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A signed network on 120 samples gives module structure that is a hypothesis about coordinated expression in this cohort, not a validated regulatory pathway",
+          "Module count and boundaries are sensitive to min_module_size and merge_cut_height — both are stated so the result is reproducible"
+        ],
+        "context": "Input is the VST-transformed, filterByExpr-filtered gene expression matrix (genes x 120 samples) from T1S2. This step builds the module structure the research question asks for directly.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA"
+        ],
+        "question": "Across all 120 whole-blood samples, what co-expression modules do the filtered, variance-stabilized genes form under a signed weighted network (soft-threshold chosen by scale-free topology fit), what is each module's size, and who are the top hub genes (highest module membership, kME) in each module?",
+        "grounding": {
+          "claims": [
+            "R-0139@0008"
+          ],
+          "reason": "Signed WGCNA network with soft-threshold by scale-free fit, dynamic tree cut modules, and kME-based hub ranking directly grounded by R-0139 for a co-expression question on raw counts",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-wgcna-modules@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "coexpression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "network_type=signed",
+          "soft_threshold_criterion=scale_free_fit_index_0.8",
+          "module_detection=topological_overlap_dynamic_tree_cut",
+          "min_module_size=30",
+          "merge_cut_height=0.25",
+          "hub_ranking=module_membership_kME"
+        ],
+        "acceptance_criteria": [
+          "Runs goodSamplesGenes QC and reports any genes/samples removed",
+          "Picks the soft-threshold power as the lowest power reaching scale-free fit index ~0.8 (pickSoftThreshold), reports the chosen power, the fit index, and mean connectivity at that power",
+          "Builds a signed network, computes TOM, performs dynamic tree cut with min module size 30",
+          "Merges eigengenes at a merge-cut-height of 0.25 and reports the final module count and sizes (with color labels)",
+          "Produces a full gene-to-module assignment table and, for every module, the module membership (kME) of each gene, with top-10 hub genes per module listed",
+          "States the sample count (120, or the reconciled count from T1S1) that entered the network explicitly"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Module eigengene vs case/control trait association",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With only two conditions and single-batch structure but no covariates known beyond case/control, an unmeasured confounder (e.g., age, sex, cell-composition shift in whole blood) could produce or mask a module-trait association — note this explicitly if metadata carries no further covariates"
+        ],
+        "context": "Uses module eigengenes from T2S1 and the case/control (and any other) trait columns from metadata.csv (reconciled sample set from T1S1).",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA"
+        ],
+        "question": "Which of the WGCNA modules' eigengenes correlate significantly with case-versus-control status across the 120 samples, after adjusting for the number of modules tested?",
+        "grounding": {
+          "claims": [
+            "R-0139@0008",
+            "R-0151@c88b"
+          ],
+          "reason": "Eigengene-trait correlation with adjusted p-values across modules and traits grounded by R-0139/R-0151",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "coexpression",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "BH-adjust across (n_modules x n_traits) tests, not just across modules",
+          "Report both correlation coefficient and adjusted p-value for every module-trait pair, not only the significant ones"
+        ],
+        "acceptance_criteria": [
+          "Computes module eigengenes (already produced in T2S1) and correlates each against a binary case/control trait (and any other sample-level metadata column present) using Pearson or biweight midcorrelation",
+          "Reports raw p-value and BH-adjusted p-value for every module-trait pair (adjustment across the product of module count x trait count)",
+          "Produces a labeled eigengene-trait heatmap (module rows, trait columns, correlation + adjusted p-value annotated)",
+          "Explicitly flags modules whose adjusted p-value < 0.05 as case/control-associated, and reports the effect direction (higher/lower eigengene in cases)",
+          "States that a significant module-trait correlation is an association in this cohort, not a causal or mechanistic claim"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Functional annotation of trait-associated modules",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "This step only enriches modules already shown to associate with case/control status in T2S2 — it is descriptive annotation of the module's gene content, not an independent statistical test of the case/control contrast itself"
+        ],
+        "context": "Reference data: MSigDB Hallmark human gene sets (50 sets, HGNC symbols, 2026.1) and MSigDB human GO Biological Process gene sets (7,538 sets, HGNC symbols, 2026.1) are staged in the reference store for this organism. Use the tested/filtered gene set from T1S2/T2S1 as the universe, per grounded enrichment rules, not the whole genome.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ],
+        "question": "What biological processes or hallmark states do the genes of each case/control-associated WGCNA module represent, using the module's full gene membership as an over-representation test?",
+        "grounding": {
+          "claims": [
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0048@500d"
+          ],
+          "reason": "Over-representation with tested-gene universe, gene-set size window, and redundancy collapse; hallmark-first ordering per R-0048",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S2"
+        ],
+        "constraints": [
+          "universe = genes that entered the WGCNA network (post-filterByExpr), never the whole genome or whole annotation (R-0046)",
+          "gene set size window 15-500 members among tested genes (R-0047)",
+          "collapse redundant significant sets before reporting (R-0052)"
+        ],
+        "acceptance_criteria": [
+          "For every module with BH-adjusted eigengene-trait p<0.05 from T2S2, runs an over-representation test (e.g., against MSigDB Hallmark and GO Biological Process gene sets for human) using that module's gene list as the query and the full set of genes that entered the WGCNA network (post-filter) as the statistical universe",
+          "Reports gene set size window applied (15-500 genes) and collapses redundant overlapping significant sets to one representative per group",
+          "States the MSigDB collection version used",
+          "If no module reaches significance in T2S2, this step reports that explicitly and stops rather than fabricating an enrichment on non-significant modules"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Co-expression analysis report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Assembles outputs of T1S1/T1S2 (QC, filtering), T2S1/T2S2 (modules, eigengene-trait correlations), and T3S1 (functional annotation) into one report per the grounded co-expression report checklist.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA"
+        ],
+        "question": "What is the complete, reproducible summary of the co-expression module structure across the 120 case/control whole-blood samples, which modules track case/control status, and what is their functional annotation?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0151@c88b"
+          ],
+          "reason": "Reproducibility record and co-expression report content checklist grounded by R-0086/R-0151",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S2",
+          "T3S1"
+        ],
+        "constraints": [
+          "Report every module-trait pair, not only significant ones",
+          "State that a module is a correlated gene group and not a proven pathway, and a module-trait correlation is an association in this cohort, per R-0151"
+        ],
+        "acceptance_criteria": [
+          "States n_samples entering the network (reconciled from T1S1), n_genes after filtering, network type (signed), soft-threshold power with scale-free fit index and mean connectivity",
+          "Lists every module with its size and color label, and includes the full gene-to-module table with kME module membership",
+          "Reports eigengene-trait correlations and BH-adjusted p-values for every module-trait pair from T2S2, with significant modules flagged",
+          "Includes functional annotation results from T3S1 for significant modules",
+          "Includes a reproducibility record: sessionInfo/package versions, random seeds used (WGCNA network construction, any permutation), and the MSigDB/annotation release version(s) used",
+          "Explicitly states the sample-count reconciliation finding from T1S1 and any samples excluded, with reasons"
+        ]
+      }
+    ],
+    "title": "WGCNA co-expression modules, case vs control blood",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is 12000 x 121 raw Salmon gene-level counts across 120 whole-blood samples (60 case, 60 control), single batch, unpaired. The research question asks which co-expression modules the genes form across all 120 samples and which modules track case/control status — this is a WGCNA co-expression + module-trait association question, not a differential expression question, though DE-style QC and normalization steps are the standard precursor the knowledge base grounds for this exact situation (R-0033, R-0002/R-0029, R-0026). Track T1 does sample-structure QC and low-count filtering on the raw counts; track T2 runs the signed WGCNA network (soft-threshold by scale-free fit, dynamic tree cut modules, module eigengenes) and correlates each module eigengene against case/control status (and any other sample-level covariates in metadata.csv), ranking genes within significant modules by module membership (kME) to name hub genes; track T3 optionally contextualizes the trait-associated modules against MSigDB Hallmark / GO gene sets (both staged for human) so a module's function has an independent annotation beyond its member list. A final report step assembles the full co-expression report per R-0151 (module sizes, eigengene-trait correlations with adjusted p-values, hub genes, reproducibility record). Caveat carried through the plan: WGCNA on a two-group cohort of 60 vs 60 gives a module-trait correlation that is an association within this cohort, not a validated pathway or a causal claim, and with 12000 genes across 121 columns (metadata reports 120 rows for 121 count columns — an off-by-one the QC step must reconcile explicitly before any module-trait test)."
+  },
+  "usage": {
+    "inputTokens": 324392,
+    "outputTokens": 6834,
+    "cacheCreationInputTokens": 194727,
+    "cacheReadInputTokens": 129617,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "WGCNA"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "MSigDB"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind), PCA, sample distances, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "WGCNA signed network, dynamic tree cut, module eigengenes",
+            "package": "WGCNA",
+            "parameters": [
+              {
+                "name": "network_type",
+                "value": "signed"
+              },
+              {
+                "name": "min_module_size",
+                "value": 30
+              },
+              {
+                "name": "merge_cut_height",
+                "value": 0.25
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Co-expression module report with eigengene-trait correlations",
+            "package": "WGCNA"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "WGCNA co-expression modules, case vs control blood",
+          "analytical_narrative": "The dataset is 12000 x 121 raw Salmon gene-level counts across 120 whole-blood samples (60 case, 60 control), single batch, unpaired. The research question asks which co-expression modules the genes form across all 120 samples and which modules track case/control status — this is a WGCNA co-expression + module-trait association question, not a differential expression question, though DE-style QC and normalization steps are the standard precursor the knowledge base grounds for this exact situation (R-0033, R-0002/R-0029, R-0026). Track T1 does sample-structure QC and low-count filtering on the raw counts; track T2 runs the signed WGCNA network (soft-threshold by scale-free fit, dynamic tree cut modules, module eigengenes) and correlates each module eigengene against case/control status (and any other sample-level covariates in metadata.csv), ranking genes within significant modules by module membership (kME) to name hub genes; track T3 optionally contextualizes the trait-associated modules against MSigDB Hallmark / GO gene sets (both staged for human) so a module's function has an independent annotation beyond its member list. A final report step assembles the full co-expression report per R-0151 (module sizes, eigengene-trait correlations with adjusted p-values, hub genes, reproducibility record). Caveat carried through the plan: WGCNA on a two-group cohort of 60 vs 60 gives a module-trait correlation that is an association within this cohort, not a validated pathway or a causal claim, and with 12000 genes across 121 columns (metadata reports 120 rows for 121 count columns — an off-by-one the QC step must reconcile explicitly before any module-trait test).",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load counts/metadata, reconcile sample IDs, sample-structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 121 count columns and 120 metadata rows align one-to-one by sample ID, do the case (n=60) and control (n=60) samples separate or mix on a blinded-VST PCA and sample-distance heatmap, and is there a library-size or outlier issue before any co-expression network is built?",
+              "acceptance_criteria": [
+                "Reports the exact reconciliation of the 121 counts columns vs 120 metadata rows (e.g., a gene-symbol first column mistaken as a sample, or a genuinely extra/missing sample) and documents the resolved sample set used downstream",
+                "Produces a blind VST transform (DESeq2), PCA on top 500 variable genes, and a sample-distance heatmap colored by case/control status",
+                "Flags any sample whose library size or PCA position is a clear outlier, with a stated numeric criterion",
+                "States final n per group after reconciliation"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level Salmon counts, 12000 genes x 121 sample columns (first column gene symbol); metadata.csv has 120 rows x 2 columns (sample, condition). The row/column count mismatch (121 vs 120) must be resolved by ID matching, not assumed to be an off-by-one error — could be a header/index column issue.",
+              "constraints": [
+                "Use blind VST (not design-aware) per grounded rule R-0033",
+                "PCA on top 500 variance genes",
+                "Do not drop any sample without stating the numeric criterion used"
+              ],
+              "caveats": [
+                "A library-size or batch-driven outlier undetected here will distort the co-expression network module structure downstream"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC (blind vst, PCA, sample distance) grounded by R-0033 for every raw-count dataset before any downstream model"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count filtering and variance-stabilizing transform for network input",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "Which of the 12000 genes have too few reads across the 120 whole-blood samples to support a reliable correlation-based network, and what does the resulting variance-stabilized expression matrix (genes x 120 samples) look like after filtering?",
+              "acceptance_criteria": [
+                "Applies filterByExpr (edgeR) using the case/control grouping with min.count=10, keeping a gene only if it clears the threshold in at least the smallest group size (60) of samples",
+                "Reports the number of genes retained vs the starting 12000",
+                "Produces the DESeq2 VST matrix (genes-by-samples) on the filtered gene set as the WGCNA input, explicitly not further scaling/normalizing on top of VST",
+                "Checks for and flags genes/samples with zero variance that WGCNA's goodSamplesGenes would reject"
+              ],
+              "packages": [
+                "edgeR",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 genes is already a fairly compact starting set for a bulk RNA-seq gene matrix; filtering should still be applied since Salmon-derived low-count genes destabilize correlation estimates in WGCNA even more than they do t-tests.",
+              "constraints": [
+                "min_count=10, min_samples=60 (smallest group size)",
+                "Do not additionally TMM/CPM normalize on top of the VST output — normalization is inside DESeq2's size-factor step per R-0026"
+              ],
+              "caveats": [
+                "Over-filtering removes real but modest hub genes; keep the filter minimal per R-0029"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1"
+                ],
+                "template": "tpl-edger-ql@1.0.0",
+                "reason": "Minimal filterByExpr pre-filter and DESeq2 median-of-ratios normalization grounded for raw-count WGCNA input"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "WGCNA signed co-expression network, module detection, eigengenes",
+              "track": "T2",
+              "step_type": "coexpression",
+              "question": "Across all 120 whole-blood samples, what co-expression modules do the filtered, variance-stabilized genes form under a signed weighted network (soft-threshold chosen by scale-free topology fit), what is each module's size, and who are the top hub genes (highest module membership, kME) in each module?",
+              "acceptance_criteria": [
+                "Runs goodSamplesGenes QC and reports any genes/samples removed",
+                "Picks the soft-threshold power as the lowest power reaching scale-free fit index ~0.8 (pickSoftThreshold), reports the chosen power, the fit index, and mean connectivity at that power",
+                "Builds a signed network, computes TOM, performs dynamic tree cut with min module size 30",
+                "Merges eigengenes at a merge-cut-height of 0.25 and reports the final module count and sizes (with color labels)",
+                "Produces a full gene-to-module assignment table and, for every module, the module membership (kME) of each gene, with top-10 hub genes per module listed",
+                "States the sample count (120, or the reconciled count from T1S1) that entered the network explicitly"
+              ],
+              "packages": [
+                "WGCNA"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent",
+              "context": "Input is the VST-transformed, filterByExpr-filtered gene expression matrix (genes x 120 samples) from T1S2. This step builds the module structure the research question asks for directly.",
+              "constraints": [
+                "network_type=signed",
+                "soft_threshold_criterion=scale_free_fit_index_0.8",
+                "module_detection=topological_overlap_dynamic_tree_cut",
+                "min_module_size=30",
+                "merge_cut_height=0.25",
+                "hub_ranking=module_membership_kME"
+              ],
+              "caveats": [
+                "A signed network on 120 samples gives module structure that is a hypothesis about coordinated expression in this cohort, not a validated regulatory pathway",
+                "Module count and boundaries are sensitive to min_module_size and merge_cut_height — both are stated so the result is reproducible"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0139@0008"
+                ],
+                "template": "tpl-wgcna-modules@1.0.0",
+                "reason": "Signed WGCNA network with soft-threshold by scale-free fit, dynamic tree cut modules, and kME-based hub ranking directly grounded by R-0139 for a co-expression question on raw counts"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Module eigengene vs case/control trait association",
+              "track": "T2",
+              "step_type": "coexpression",
+              "question": "Which of the WGCNA modules' eigengenes correlate significantly with case-versus-control status across the 120 samples, after adjusting for the number of modules tested?",
+              "acceptance_criteria": [
+                "Computes module eigengenes (already produced in T2S1) and correlates each against a binary case/control trait (and any other sample-level metadata column present) using Pearson or biweight midcorrelation",
+                "Reports raw p-value and BH-adjusted p-value for every module-trait pair (adjustment across the product of module count x trait count)",
+                "Produces a labeled eigengene-trait heatmap (module rows, trait columns, correlation + adjusted p-value annotated)",
+                "Explicitly flags modules whose adjusted p-value < 0.05 as case/control-associated, and reports the effect direction (higher/lower eigengene in cases)",
+                "States that a significant module-trait correlation is an association in this cohort, not a causal or mechanistic claim"
+              ],
+              "packages": [
+                "WGCNA"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "context": "Uses module eigengenes from T2S1 and the case/control (and any other) trait columns from metadata.csv (reconciled sample set from T1S1).",
+              "constraints": [
+                "BH-adjust across (n_modules x n_traits) tests, not just across modules",
+                "Report both correlation coefficient and adjusted p-value for every module-trait pair, not only the significant ones"
+              ],
+              "caveats": [
+                "With only two conditions and single-batch structure but no covariates known beyond case/control, an unmeasured confounder (e.g., age, sex, cell-composition shift in whole blood) could produce or mask a module-trait association — note this explicitly if metadata carries no further covariates"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0139@0008",
+                  "R-0151@c88b"
+                ],
+                "reason": "Eigengene-trait correlation with adjusted p-values across modules and traits grounded by R-0139/R-0151"
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Functional annotation of trait-associated modules",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "What biological processes or hallmark states do the genes of each case/control-associated WGCNA module represent, using the module's full gene membership as an over-representation test?",
+              "acceptance_criteria": [
+                "For every module with BH-adjusted eigengene-trait p<0.05 from T2S2, runs an over-representation test (e.g., against MSigDB Hallmark and GO Biological Process gene sets for human) using that module's gene list as the query and the full set of genes that entered the WGCNA network (post-filter) as the statistical universe",
+                "Reports gene set size window applied (15-500 genes) and collapses redundant overlapping significant sets to one representative per group",
+                "States the MSigDB collection version used",
+                "If no module reaches significance in T2S2, this step reports that explicitly and stops rather than fabricating an enrichment on non-significant modules"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Reference data: MSigDB Hallmark human gene sets (50 sets, HGNC symbols, 2026.1) and MSigDB human GO Biological Process gene sets (7,538 sets, HGNC symbols, 2026.1) are staged in the reference store for this organism. Use the tested/filtered gene set from T1S2/T2S1 as the universe, per grounded enrichment rules, not the whole genome.",
+              "constraints": [
+                "universe = genes that entered the WGCNA network (post-filterByExpr), never the whole genome or whole annotation (R-0046)",
+                "gene set size window 15-500 members among tested genes (R-0047)",
+                "collapse redundant significant sets before reporting (R-0052)"
+              ],
+              "caveats": [
+                "This step only enriches modules already shown to associate with case/control status in T2S2 — it is descriptive annotation of the module's gene content, not an independent statistical test of the case/control contrast itself"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0048@500d"
+                ],
+                "reason": "Over-representation with tested-gene universe, gene-set size window, and redundancy collapse; hallmark-first ordering per R-0048"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Co-expression analysis report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the complete, reproducible summary of the co-expression module structure across the 120 case/control whole-blood samples, which modules track case/control status, and what is their functional annotation?",
+              "acceptance_criteria": [
+                "States n_samples entering the network (reconciled from T1S1), n_genes after filtering, network type (signed), soft-threshold power with scale-free fit index and mean connectivity",
+                "Lists every module with its size and color label, and includes the full gene-to-module table with kME module membership",
+                "Reports eigengene-trait correlations and BH-adjusted p-values for every module-trait pair from T2S2, with significant modules flagged",
+                "Includes functional annotation results from T3S1 for significant modules",
+                "Includes a reproducibility record: sessionInfo/package versions, random seeds used (WGCNA network construction, any permutation), and the MSigDB/annotation release version(s) used",
+                "Explicitly states the sample-count reconciliation finding from T1S1 and any samples excluded, with reasons"
+              ],
+              "packages": [
+                "WGCNA"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S2",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Assembles outputs of T1S1/T1S2 (QC, filtering), T2S1/T2S2 (modules, eigengene-trait correlations), and T3S1 (functional annotation) into one report per the grounded co-expression report checklist.",
+              "constraints": [
+                "Report every module-trait pair, not only significant ones",
+                "State that a module is a correlated gene group and not a proven pathway, and a module-trait correlation is an association in this cohort, per R-0151"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0151@c88b"
+                ],
+                "reason": "Reproducibility record and co-expression report content checklist grounded by R-0086/R-0151"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

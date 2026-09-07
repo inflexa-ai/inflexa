@@ -588,6 +588,32 @@ events before the model. The classifier plan fits the filter and the
 scaling outside the folds. Each of these is a parameter of a rule or a
 template, thus the check can ask for it in a later snapshot.
 
+## Required parameters in the check
+
+A rule parameter can carry `required: true`. The check then warns when a
+drafted step omits the parameter, and the warning names the value and its
+source. The five parameters that the judge missed carry the flag:
+
+- the minimum module size and the merge threshold of a WGCNA network
+- the scale of a survival score, and the event count before a Cox model
+- the fold scope of the filter and the scaling of a classifier
+
+Campaign `required-check` in `results/`: the three affected tasks ran once
+more with Sonnet 5 and the plane, judged by Fable.
+
+| Task | Rubric before | Rubric after | Parameters in the plan |
+| --- | --- | --- | --- |
+| Co-expression, 60 per group | 78 | 83 | both stated |
+| Survival, 60 per group | 78 | 91 | both stated |
+| Classifier, 60 per group | 76 | 71 | stated, as prose |
+
+Each plan sent the parameters to the check, and every run used one check
+call. The classifier plan fell for a different reason: it padded the
+question with a differential expression step, an enrichment step, and a
+deconvolution step that the user did not ask for. The judge scored that
+padding, not the classifier step. A question kind for a classifier would
+remove the padding, and the tree has none yet.
+
 ## What the campaign does not show
 
 - One frontier model and one mid-size model, two runs per task. The design

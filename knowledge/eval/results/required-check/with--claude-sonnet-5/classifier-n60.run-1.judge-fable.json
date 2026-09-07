@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The classifier step matches the reference well: glmnet elastic net, nested CV with filterByExpr, scaling and lambda selection inside each outer training fold, out-of-fold ROC-AUC with a CI, per-fold selection frequency, and an explicit internal-estimate/external-validation caveat. It omits stratified outer folds, a final refit on all 120 samples with reported coefficients, a balanced accuracy or Brier score, and the warning that a depth or batch axis separating the classes inflates the AUC. The plan pads the classification question with DE, camera/fgsea enrichment and immune deconvolution that were not asked, and the enrichment section is scored as unwarranted rather than correctly omitted; the DE step also mixes an apeglm shrinkage from a parallel DESeq2 fit into a limma-voom result and asserts a dubious claim that NB models fail at 60 per group. QC and normalization are sound, with a library-size flag but no stated outlier policy."
+}

@@ -9,8 +9,10 @@ assertion: >-
   dendrogram into modules, compute the module eigengenes, and correlate each
   eigengene with each trait of the sample metadata. Rank the genes of a
   module by their module membership, the correlation of the gene with the
-  eigengene, and report the top genes as the hubs. A small cohort gives
-  unstable correlations, thus state the sample count beside every module.
+  eigengene, and report the top genes as the hubs. State the minimum module
+  size and the eigengene merge threshold, because both change the module
+  count. A small cohort gives unstable correlations, thus state the sample
+  count beside every module.
 modality: bulk_rna_seq
 conditions:
   - field: data_state
@@ -32,6 +34,14 @@ action:
     - name: hub_ranking
       value: module_membership_kME
       default_source: "doi:10.1186/1471-2105-9-559"
+    - name: min_module_size
+      value: 30
+      default_source: "doi:10.1186/1471-2105-9-559"
+      required: true
+    - name: merge_cut_height
+      value: 0.25
+      default_source: "doi:10.1186/1471-2105-9-559"
+      required: true
 severity: info
 strength: common_practice
 evidence_quality: moderate

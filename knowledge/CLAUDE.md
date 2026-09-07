@@ -56,6 +56,10 @@ resolves its types.
 - A rule is a declarative claim with conditions over the Situation fields, an
   action, a severity, and a strength. It carries at least one evidence line
   with a paraphrase and an anchor. A verbatim span holds at most 25 words.
+- A rule parameter with `required: true` must appear on a drafted step. The
+  check warns when the step omits it, and the warning names the value and
+  its source. Use the flag for a value that changes the result and that a
+  plan tends to omit.
 - The rule with more conditions wins a step type. A broad default has one
   condition. A narrower rule adds conditions. A tie breaks by strength, then
   by id. Give a rule the conditions that make it fire only in its situation.

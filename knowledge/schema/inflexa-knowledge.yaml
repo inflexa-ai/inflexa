@@ -309,6 +309,9 @@ classes:
         required: true
       default_source:
         description: A DOI, a vignette locator, or a rule id that gives the default.
+      required:
+        range: boolean
+        description: A drafted step must state this parameter. The check warns when the step omits it.
 
   Action:
     description: What an applicable rule contributes to the procedure.

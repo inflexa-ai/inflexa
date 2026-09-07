@@ -1,0 +1,613 @@
+{
+  "campaign": "required-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "survival-n60",
+  "run": 1,
+  "startedAt": "2026-09-06T08:09:42.362Z",
+  "elapsedMs": 61817,
+  "outcome": "plan_submitted",
+  "planId": "pln-b7c830fe",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and sample structure check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Confirm the counts.csv sample count (121 columns) reconciles with the 120-row metadata table; report and resolve any discrepancy (e.g., a gene-symbol first column miscounted as a sample) before proceeding."
+        ],
+        "context": "Raw Salmon gene-level counts, 12000 genes x 121 sample columns (60 case/60 control), single batch, unpaired cohort with follow-up time+event.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 121 samples (60 cases, 60 controls) in counts.csv align correctly with metadata.csv (condition, time, event), and does sample structure (PCA, distance heatmap, library size) reveal outliers, batch structure, or condition-driven separation before any modeling?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances per R-0033@40bf",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500 for PCA per rule R-0033",
+          "transform = vst(blind=TRUE)"
+        ],
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv columns match metadata.csv rows 1:1 with no unresolved mismatches (report any dropped/renamed samples)",
+          "Blind VST computed and PCA plot (colored by condition) and sample-distance heatmap produced",
+          "Library size distribution reported per sample, flagging any sample far below median depth"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count filter and VST normalization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This is not a DE contrast — filtering here only supports the VST matrix for scoring the pre-specified 20-gene signature."
+        ],
+        "context": "12000 x 121 raw integer counts from Salmon; minimal pre-filter keeps power for the downstream signature score without discovery testing.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2"
+        ],
+        "question": "After removing genes with insufficient counts across the case/control cohort, what variance-stabilized, normalized expression matrix should feed the signature scoring step?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0058@99e1",
+            "R-0002@087b",
+            "R-0026@9ab1"
+          ],
+          "reason": "Minimal pre-filter (filterByExpr) plus median-of-ratios normalization per R-0029/R-0002/R-0026",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-edger-ql@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count = 10, min_samples = smallest_group_size (60)",
+          "filter = filterByExpr",
+          "normalize = median_of_ratios size factors (DESeq2), no separate scaling before the model"
+        ],
+        "acceptance_criteria": [
+          "Genes pre-filtered with filterByExpr (edgeR) using group=condition, min.count=10, keeping a gene expressed in at least the smallest group size (60)",
+          "Median-of-ratios size factors computed (DESeq2) and a blind-independent VST expression matrix produced for downstream scoring",
+          "Number of genes retained after filtering is reported"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "UCell signature scoring of the 20-gene signature",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The 20-gene list carries no weights or direction; UCell's unsigned enrichment score is the closest fit. If any signature genes are absent from the 12000-gene matrix, state exactly which and how the score was computed on the remainder."
+        ],
+        "context": "signature_genes.csv holds 20 unweighted gene symbols, no direction/weights provided, so an unsigned rank-based score (UCell) is the appropriate default rather than a directional method like singscore.",
+        "maxSteps": 200,
+        "packages": [
+          "UCell"
+        ],
+        "question": "What is the per-sample UCell score of the pre-specified 20-gene signature (signature_genes.csv), computed on the normalized log-scale expression matrix, and how many of the 20 signature genes are actually present in the count matrix?",
+        "grounding": {
+          "claims": [
+            "R-0133@ce76",
+            "R-0135@f02d"
+          ],
+          "reason": "UCell rank-based per-sample scoring is the default for a single unweighted gene-list signature per R-0133",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-signature-scoring@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "signature_scoring",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "score_method = rank_based_per_sample (UCell)",
+          "input_scale = log_normalized_expression (VST matrix from T1S2)",
+          "preprocessing_scope = the VST/normalization used is fit once on the full cohort (this is a fixed, pre-defined signature being scored, not a discovered/selected feature set requiring per-fold refitting)",
+          "signature_provenance: state the source file (signature_genes.csv), gene count (20), and number present in the matrix"
+        ],
+        "acceptance_criteria": [
+          "UCell rank-based score computed per sample on the VST expression matrix using the exact 20 gene symbols from signature_genes.csv",
+          "Report states how many of the 20 genes were found in the 12000-gene matrix (present/missing list)",
+          "Score distribution summarized by condition (case vs control) descriptively (not as the primary inferential test)"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Cox model: signature score and time-to-event, adjusted for case/control",
+        "agent": "statistical-modeling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "No external validation cohort is available; if the PH assumption fails for either term, report a stratified-by-condition Cox model or a time-varying coefficient instead of a single hazard ratio, and say so explicitly.",
+          "This is a single pre-specified signature and a single covariate adjustment — no multiple-testing correction is needed since only one score is tested, but state this explicitly rather than implying a broader screen was done."
+        ],
+        "context": "metadata.csv carries condition (case/control), time, and event per sample for this 60 vs 60 unpaired cohort; the research question is explicitly a prognostic association of the pre-specified signature score with time-to-event, controlling for case/control status, not a de novo biomarker discovery.",
+        "maxSteps": 200,
+        "packages": [
+          "survival",
+          "survminer"
+        ],
+        "question": "Does the per-sample UCell score of the 20-gene signature associate with time to the event (Surv(time, event)), after adjusting for case versus control status in the same Cox model?",
+        "grounding": {
+          "claims": [
+            "R-0153@92b8"
+          ],
+          "reason": "Cox model with continuous per-SD score, clinical covariate (condition) in the same model, PH check via Schoenfeld residuals, per R-0153; event/censoring/follow-up statement required per the same rule",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-survival-cox@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "survival",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "score_term = continuous, no pre-test cut",
+          "score_scale = per_standard_deviation",
+          "covariates = condition included in the same Cox model",
+          "ph_check = scaled Schoenfeld residuals (cox.zph)",
+          "event_count_statement: report number of events, number censored, and median follow-up time explicitly in the output"
+        ],
+        "acceptance_criteria": [
+          "Cox proportional hazards model fit as Surv(time,event) ~ score_per_SD + condition, with condition as a covariate in the same model (not a stratified or separate analysis)",
+          "Score standardized (per-SD) before entering the model; no median-split or optimized cutpoint used for inference",
+          "Hazard ratio per SD of score reported with 95% CI and Wald/LR p-value, plus the HR for the condition covariate",
+          "Proportional hazards assumption checked via scaled Schoenfeld residuals (cox.zph) for both the score and condition terms, with the result stated",
+          "Events, censored count, and median follow-up time reported before interpreting the model",
+          "Kaplan-Meier curve stratified by score tertile plotted for visualization only, with the stated caveat that inference rests on the continuous Cox model, not the tertile split"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Consolidated report and reproducibility record",
+        "agent": "statistical-modeling-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "Do not overstate the prognostic finding as validated or generalizable beyond this single cohort."
+        ],
+        "context": "Final synthesis step tying together QC, scoring, and survival analysis outputs into one decision-ready report for the research question.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the combined narrative of sample QC, signature scoring provenance, and the Cox survival result for the 20-gene signature adjusted for case/control status, with a full reproducibility record?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf"
+          ],
+          "reason": "Reproducibility record required in every report per R-0086",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "none"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1",
+          "T3S1"
+        ],
+        "constraints": [
+          "reproducibility_record = session_info, seed, package_versions, collection_version if applicable, annotation_release if applicable"
+        ],
+        "acceptance_criteria": [
+          "Report integrates: QC findings (T1S1), gene filtering/normalization summary (T1S2), signature scoring provenance and gene coverage (T2S1), and the full Cox model output with PH diagnostics and event/censoring/follow-up statement (T3S1)",
+          "Reproducibility record included: session info, package versions (DESeq2, edgeR, UCell, survival, survminer), any random seed used, and signature file version/provenance",
+          "Report explicitly states the single pre-specified hypothesis test performed (no discovery/multiple-testing scope) and notes the absence of an external validation cohort"
+        ]
+      }
+    ],
+    "title": "20-gene signature score vs time-to-event, adjusted for case/control",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The cohort is 60 cases vs 60 controls with raw Salmon gene-level counts (12000 genes x 121 samples/columns) and follow-up time+event per sample, plus a pre-defined 20-gene signature (no weights). The question is whether a per-sample score of that signature associates with time-to-event once case/control status is held constant in the model — this is a prognostic association test of a fixed signature, not a discovery or classifier-building exercise, so no new gene selection or DE screen is warranted for the central test. Pipeline: (1) import/QC the count matrix and sample metadata, confirming sample-ID alignment across counts/metadata/signature files and running standard sample-structure QC (blind VST, PCA, sample-distance heatmap, library size check) to catch outliers or mislabeling before anything else runs; (2) minimal low-count pre-filter (filterByExpr, edgeR) followed by DESeq2 variance-stabilizing transformation (median-of-ratios size factors) to produce a normalized, log-scale expression matrix suitable for signature scoring; (3) score the 20-gene signature per sample with UCell (rank-based, depth-independent), reporting how many of the 20 genes are present in the count matrix and dropping/flagging any missing; (4) fit a Cox proportional hazards model with time-to-event and the event indicator as outcome, the continuous per-SD UCell score as the term of interest, and case/control status as a covariate in the same model (not two separate models) — check the proportional-hazards assumption via scaled Schoenfeld residuals, report the hazard ratio per SD of score with 95% CI and p-value, state events/censored/median follow-up, and draw a Kaplan-Meier curve by score tertile for illustration only (inference stays in the continuous Cox model); (5) report step consolidating QC findings, signature provenance (source, gene count present), Cox model output, PH diagnostic, and a full reproducibility record (session info, package versions, seed). No enrichment, DE, or classifier step is added since the research question is a direct prognostic-association test of a pre-specified score, not gene discovery — adding those would be unasked scope per the translational-considerations guidance for a fixed biomarker test."
+  },
+  "usage": {
+    "inputTokens": 216002,
+    "outputTokens": 5778,
+    "cacheCreationInputTokens": 136988,
+    "cacheReadInputTokens": 78978,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "survival",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "covariates": [
+          "condition"
+        ],
+        "extra_analyses": [
+          "signature_scoring"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "signature scoring gene set"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "survival",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "covariates": [
+          "condition"
+        ],
+        "extra_analyses": [
+          "signature_scoring"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind), PCA, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors (DESeq2 vst for downstream scoring)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "UCell rank-based signature score per sample on the 20-gene signature",
+            "package": "UCell",
+            "parameters": [
+              {
+                "name": "input_scale",
+                "value": "log_normalized_expression"
+              },
+              {
+                "name": "score_method",
+                "value": "rank_based_per_sample"
+              }
+            ]
+          },
+          {
+            "step_type": "survival",
+            "method": "Cox proportional hazards model with signature score (continuous, per-SD) and case/control status as covariate",
+            "package": "survival",
+            "parameters": [
+              {
+                "name": "score_scale",
+                "value": "per_standard_deviation"
+              },
+              {
+                "name": "covariates",
+                "value": "condition"
+              },
+              {
+                "name": "ph_check",
+                "value": "scaled_schoenfeld_residuals"
+              },
+              {
+                "name": "score_term",
+                "value": "continuous_no_cut_before_the_test"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record + Cox results + KM curves by score tertile for illustration",
+            "package": "survival"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "20-gene signature score vs time-to-event, adjusted for case/control",
+          "analytical_narrative": "The cohort is 60 cases vs 60 controls with raw Salmon gene-level counts (12000 genes x 121 samples/columns) and follow-up time+event per sample, plus a pre-defined 20-gene signature (no weights). The question is whether a per-sample score of that signature associates with time-to-event once case/control status is held constant in the model — this is a prognostic association test of a fixed signature, not a discovery or classifier-building exercise, so no new gene selection or DE screen is warranted for the central test. Pipeline: (1) import/QC the count matrix and sample metadata, confirming sample-ID alignment across counts/metadata/signature files and running standard sample-structure QC (blind VST, PCA, sample-distance heatmap, library size check) to catch outliers or mislabeling before anything else runs; (2) minimal low-count pre-filter (filterByExpr, edgeR) followed by DESeq2 variance-stabilizing transformation (median-of-ratios size factors) to produce a normalized, log-scale expression matrix suitable for signature scoring; (3) score the 20-gene signature per sample with UCell (rank-based, depth-independent), reporting how many of the 20 genes are present in the count matrix and dropping/flagging any missing; (4) fit a Cox proportional hazards model with time-to-event and the event indicator as outcome, the continuous per-SD UCell score as the term of interest, and case/control status as a covariate in the same model (not two separate models) — check the proportional-hazards assumption via scaled Schoenfeld residuals, report the hazard ratio per SD of score with 95% CI and p-value, state events/censored/median follow-up, and draw a Kaplan-Meier curve by score tertile for illustration only (inference stays in the continuous Cox model); (5) report step consolidating QC findings, signature provenance (source, gene count present), Cox model output, PH diagnostic, and a full reproducibility record (session info, package versions, seed). No enrichment, DE, or classifier step is added since the research question is a direct prognostic-association test of a pre-specified score, not gene discovery — adding those would be unasked scope per the translational-considerations guidance for a fixed biomarker test.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and sample structure check",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 121 samples (60 cases, 60 controls) in counts.csv align correctly with metadata.csv (condition, time, event), and does sample structure (PCA, distance heatmap, library size) reveal outliers, batch structure, or condition-driven separation before any modeling?",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv columns match metadata.csv rows 1:1 with no unresolved mismatches (report any dropped/renamed samples)",
+                "Blind VST computed and PCA plot (colored by condition) and sample-distance heatmap produced",
+                "Library size distribution reported per sample, flagging any sample far below median depth"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw Salmon gene-level counts, 12000 genes x 121 sample columns (60 case/60 control), single batch, unpaired cohort with follow-up time+event.",
+              "constraints": [
+                "n_top_genes = 500 for PCA per rule R-0033",
+                "transform = vst(blind=TRUE)"
+              ],
+              "caveats": [
+                "Confirm the counts.csv sample count (121 columns) reconciles with the 120-row metadata table; report and resolve any discrepancy (e.g., a gene-symbol first column miscounted as a sample) before proceeding."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances per R-0033@40bf",
+                "template": "tpl-qc-eda@1.0.0"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count filter and VST normalization",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "After removing genes with insufficient counts across the case/control cohort, what variance-stabilized, normalized expression matrix should feed the signature scoring step?",
+              "acceptance_criteria": [
+                "Genes pre-filtered with filterByExpr (edgeR) using group=condition, min.count=10, keeping a gene expressed in at least the smallest group size (60)",
+                "Median-of-ratios size factors computed (DESeq2) and a blind-independent VST expression matrix produced for downstream scoring",
+                "Number of genes retained after filtering is reported"
+              ],
+              "packages": [
+                "edgeR",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 x 121 raw integer counts from Salmon; minimal pre-filter keeps power for the downstream signature score without discovery testing.",
+              "constraints": [
+                "min_count = 10, min_samples = smallest_group_size (60)",
+                "filter = filterByExpr",
+                "normalize = median_of_ratios size factors (DESeq2), no separate scaling before the model"
+              ],
+              "caveats": [
+                "This is not a DE contrast — filtering here only supports the VST matrix for scoring the pre-specified 20-gene signature."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0058@99e1",
+                  "R-0002@087b",
+                  "R-0026@9ab1"
+                ],
+                "reason": "Minimal pre-filter (filterByExpr) plus median-of-ratios normalization per R-0029/R-0002/R-0026",
+                "template": "tpl-edger-ql@1.0.0"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "UCell signature scoring of the 20-gene signature",
+              "track": "T2",
+              "step_type": "signature_scoring",
+              "question": "What is the per-sample UCell score of the pre-specified 20-gene signature (signature_genes.csv), computed on the normalized log-scale expression matrix, and how many of the 20 signature genes are actually present in the count matrix?",
+              "acceptance_criteria": [
+                "UCell rank-based score computed per sample on the VST expression matrix using the exact 20 gene symbols from signature_genes.csv",
+                "Report states how many of the 20 genes were found in the 12000-gene matrix (present/missing list)",
+                "Score distribution summarized by condition (case vs control) descriptively (not as the primary inferential test)"
+              ],
+              "packages": [
+                "UCell"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "signature_genes.csv holds 20 unweighted gene symbols, no direction/weights provided, so an unsigned rank-based score (UCell) is the appropriate default rather than a directional method like singscore.",
+              "constraints": [
+                "score_method = rank_based_per_sample (UCell)",
+                "input_scale = log_normalized_expression (VST matrix from T1S2)",
+                "preprocessing_scope = the VST/normalization used is fit once on the full cohort (this is a fixed, pre-defined signature being scored, not a discovered/selected feature set requiring per-fold refitting)",
+                "signature_provenance: state the source file (signature_genes.csv), gene count (20), and number present in the matrix"
+              ],
+              "caveats": [
+                "The 20-gene list carries no weights or direction; UCell's unsigned enrichment score is the closest fit. If any signature genes are absent from the 12000-gene matrix, state exactly which and how the score was computed on the remainder."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0133@ce76",
+                  "R-0135@f02d"
+                ],
+                "reason": "UCell rank-based per-sample scoring is the default for a single unweighted gene-list signature per R-0133",
+                "template": "tpl-signature-scoring@1.0.0"
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Cox model: signature score and time-to-event, adjusted for case/control",
+              "track": "T3",
+              "step_type": "survival",
+              "question": "Does the per-sample UCell score of the 20-gene signature associate with time to the event (Surv(time, event)), after adjusting for case versus control status in the same Cox model?",
+              "acceptance_criteria": [
+                "Cox proportional hazards model fit as Surv(time,event) ~ score_per_SD + condition, with condition as a covariate in the same model (not a stratified or separate analysis)",
+                "Score standardized (per-SD) before entering the model; no median-split or optimized cutpoint used for inference",
+                "Hazard ratio per SD of score reported with 95% CI and Wald/LR p-value, plus the HR for the condition covariate",
+                "Proportional hazards assumption checked via scaled Schoenfeld residuals (cox.zph) for both the score and condition terms, with the result stated",
+                "Events, censored count, and median follow-up time reported before interpreting the model",
+                "Kaplan-Meier curve stratified by score tertile plotted for visualization only, with the stated caveat that inference rests on the continuous Cox model, not the tertile split"
+              ],
+              "packages": [
+                "survival",
+                "survminer"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "context": "metadata.csv carries condition (case/control), time, and event per sample for this 60 vs 60 unpaired cohort; the research question is explicitly a prognostic association of the pre-specified signature score with time-to-event, controlling for case/control status, not a de novo biomarker discovery.",
+              "constraints": [
+                "score_term = continuous, no pre-test cut",
+                "score_scale = per_standard_deviation",
+                "covariates = condition included in the same Cox model",
+                "ph_check = scaled Schoenfeld residuals (cox.zph)",
+                "event_count_statement: report number of events, number censored, and median follow-up time explicitly in the output"
+              ],
+              "caveats": [
+                "No external validation cohort is available; if the PH assumption fails for either term, report a stratified-by-condition Cox model or a time-varying coefficient instead of a single hazard ratio, and say so explicitly.",
+                "This is a single pre-specified signature and a single covariate adjustment — no multiple-testing correction is needed since only one score is tested, but state this explicitly rather than implying a broader screen was done."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0153@92b8"
+                ],
+                "reason": "Cox model with continuous per-SD score, clinical covariate (condition) in the same model, PH check via Schoenfeld residuals, per R-0153; event/censoring/follow-up statement required per the same rule",
+                "template": "tpl-survival-cox@1.0.0"
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "Consolidated report and reproducibility record",
+              "track": "T4",
+              "step_type": "report",
+              "question": "What is the combined narrative of sample QC, signature scoring provenance, and the Cox survival result for the 20-gene signature adjusted for case/control status, with a full reproducibility record?",
+              "acceptance_criteria": [
+                "Report integrates: QC findings (T1S1), gene filtering/normalization summary (T1S2), signature scoring provenance and gene coverage (T2S1), and the full Cox model output with PH diagnostics and event/censoring/follow-up statement (T3S1)",
+                "Reproducibility record included: session info, package versions (DESeq2, edgeR, UCell, survival, survminer), any random seed used, and signature file version/provenance",
+                "Report explicitly states the single pre-specified hypothesis test performed (no discovery/multiple-testing scope) and notes the absence of an external validation cohort"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "statistical-modeling-agent",
+              "context": "Final synthesis step tying together QC, scoring, and survival analysis outputs into one decision-ready report for the research question.",
+              "constraints": [
+                "reproducibility_record = session_info, seed, package_versions, collection_version if applicable, annotation_release if applicable"
+              ],
+              "caveats": [
+                "Do not overstate the prognostic finding as validated or generalizable beyond this single cohort."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf"
+                ],
+                "reason": "Reproducibility record required in every report per R-0086",
+                "template": "none"
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

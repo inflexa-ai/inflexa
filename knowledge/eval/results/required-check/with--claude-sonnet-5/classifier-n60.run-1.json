@@ -1,0 +1,757 @@
+{
+  "campaign": "required-check",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "classifier-n60",
+  "run": 1,
+  "startedAt": "2026-09-06T08:10:44.189Z",
+  "elapsedMs": 84562,
+  "outcome": "plan_submitted",
+  "planId": "pln-9c992aba",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 60 case and 60 control whole-blood samples separate by condition on a blind PCA of the top variable genes, or does one sample depart from its group / a technical axis dominate, before any test runs?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC (blind vst/PCA/distance) required on every raw-count dataset before modeling, per R-0033.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Blind VST computed on the raw count matrix (12000 genes x 121 samples)",
+          "PCA on top 500 variance genes, colored by case/control",
+          "Sample-distance heatmap (Euclidean, on VST values)",
+          "Library size per sample reported and flagged if any sample departs markedly from the median"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma-voom differential expression, case vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If each group holds 50 or more samples, count-based models (DESeq2/edgeR Wald/LRT) exaggerate false positives on population cohorts; limma-voom is the primary test and this caution must appear in the report beside the result."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "apeglm",
+          "DESeq2"
+        ],
+        "question": "Which genes are differentially expressed between cases (n=60) and controls (n=60) in whole blood, using a method appropriate for a 50+-per-group unpaired cohort?",
+        "grounding": {
+          "claims": [
+            "R-0015@65aa",
+            "R-0029@fa6d",
+            "R-0058@99e1",
+            "R-0002@087b",
+            "R-0057@31cc",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0038@a5e0",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "R-0015 (warn) requires limma-voom instead of DESeq2/edgeR count models at n>=50/group; obeyed by making limma-voom primary and DESeq2/apeglm a shrinkage/ranking aid only, with the caution stated in the report.",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-limma-voom-fixed@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Genes filtered with filterByExpr (min 10 counts in >=60 samples, the smaller group size)",
+          "TMM normalization (edgeR) applied before voom",
+          "limma-voom fixed-effects model fit with condition as explicit factor, control set as reference level, contrast named case-vs-control",
+          "Report unshrunken logFC/SE/moderated-t/p-value plus an apeglm-shrunken logFC (via a parallel DESeq2 fit, gene-level tximport-equivalent count import) for ranking/plotting, both retained in the table",
+          "p-value histogram inspected and shape reported",
+          "BH-adjusted p-values reported at alpha=0.05 with independent filtering; number of genes tested and number DE reported",
+          "Caution stated: at n=60/group, negative-binomial count models over-call compared to limma-voom; a Wilcoxon rank-sum test run as a cross-check control on a sample of top genes"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on the limma-voom fit",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which biological pathways (MSigDB Hallmark, then Reactome and WikiPathways) are enriched among genes ranked by the moderated t-statistic of the case-vs-control limma-voom fit?",
+        "grounding": {
+          "claims": [
+            "R-0088@8b80",
+            "R-0048@500d",
+            "R-0165@e456",
+            "R-0107@976c",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0105@c4a8"
+          ],
+          "reason": "Population-scale cohort enrichment runs on the limma-voom fit with camera (R-0088), Hallmark then Reactome/WikiPathways from the reference store (R-0048, R-0165).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-camera-hallmark@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Gene symbols mapped to Entrez via org.Hs.eg.db; unmapped share reported",
+          "camera run on Hallmark gene sets (50 sets) with inter-gene correlation estimated from data, gene sets restricted to 15-500 members among tested genes",
+          "fgsea preranked on the moderated t-statistic run as second method against the same Hallmark sets, and results compared",
+          "Second collection (Reactome, and WikiPathways-human) run the same way with release/version stated",
+          "If fewer than ~50 genes pass FDR<0.05, over-representation analysis is skipped and only the ranked (camera/fgsea) method used, stated explicitly",
+          "Leading-edge genes reported for each significant set; redundant sets collapsed to one representative"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Immune cell composition (whole blood)",
+        "agent": "immune-profiling-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "MCPcounter",
+          "quantiseqr",
+          "EPIC"
+        ],
+        "question": "Do case and control whole-blood samples differ in estimated immune cell-type composition (e.g. neutrophil/lymphocyte proportions), a common confound of a blood transcriptomic difference?",
+        "grounding": {
+          "claims": [
+            "R-0125@2548",
+            "R-0128@9eee",
+            "R-0129@2909",
+            "R-0132@246d"
+          ],
+          "reason": "Whole-blood case/control cohort: immune composition must be checked as a covariate/confound of any DE or classifier signal (R-0132), using TPM/CPM-scale input (R-0129) and a multi-method consensus (R-0128).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "deconvolution",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Counts converted to linear-scale TPM/CPM (no length data available from a gene-symbol-only count matrix, so CPM used and stated) before deconvolution; MCP-counter given log2 of the same values per its own definition",
+          "immunedeconv used as the common interface across at least two methods (e.g. quanTIseq, EPIC) plus MCP-counter for immune/stromal scores",
+          "Composition difference between cases and controls tested per cell type (e.g. Wilcoxon rank-sum with BH correction across cell types) and reported alongside the DE result as a possible composition-driven confound, not a cell-intrinsic finding",
+          "Methods' agreement/disagreement on direction reported per cell type; a composition claim made only where >=2 methods agree in direction"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Case vs control classifier with nested cross-validation",
+        "agent": "statistical-modeling-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "A feature list from the T1S2 supervised DE contrast on the same samples must NOT be handed to this classifier as a fixed pre-filter; the classifier reselects features inside each CV fold from the full expression matrix, or the AUC estimate is optimistic.",
+          "No external validation cohort is available in this data context; report the cross-validated AUC as the best available accuracy estimate for a new sample and state that it is not equivalent to external validation."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "glmnet",
+          "pROC",
+          "limma",
+          "edgeR"
+        ],
+        "question": "Can a gene-expression-based classifier distinguish a case from a control sample, and how accurate is it expected to be on a genuinely new sample (60 cases vs 60 controls, whole blood)?",
+        "grounding": {
+          "claims": [
+            "R-0155@b81f"
+          ],
+          "reason": "Direct match: R-0155 mandates penalized logistic regression with nested CV, fold-internal preprocessing, and ROC-AUC with CI for exactly this classifier question.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-signature-scoring@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "signature_scoring",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Penalized (elastic-net/lasso) logistic regression fit with glmnet on log-CPM (voom-style) expression of the filterByExpr-passed genes",
+          "Outer k-fold (e.g. 10-fold, repeated) cross-validation estimates test performance; inner cross-validation selects lambda within each outer training fold only",
+          "Gene filtering (filterByExpr) and any scaling/centering performed strictly inside each outer training fold — NOT on the full dataset beforehand — and the step states explicitly that this is a fresh feature selection, independent of the T1S2 DE gene list, to avoid an optimistic estimate from double-dipping",
+          "ROC curve and AUC with a confidence interval computed from pooled out-of-fold predictions (pROC or equivalent)",
+          "Genes with non-zero coefficients reported per fold and their stability across folds (e.g. selection frequency) stated, with an explicit caveat if unstable",
+          "Report states plainly that with 60/60 samples the confidence interval on AUC will be wide and that this is a within-cohort cross-validated estimate, not validated on an external cohort"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Integrated report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the combined, reproducible answer to whether cases differ from controls transcriptionally, which pathways/cell types are implicated, and how accurately a new sample can be classified?",
+        "grounding": {
+          "claims": [
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0089@69f0",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Standard reproducibility/report rules for a population-scale DE + enrichment + classifier analysis.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1",
+          "T3S1",
+          "T4S1"
+        ],
+        "acceptance_criteria": [
+          "Report states method, package versions, design formula, contrast (case vs control, control=reference), thresholds (padj<0.05), number of genes tested and number DE",
+          "MA plot and dispersion/voom mean-variance plots included as fit diagnostics",
+          "Gene table reports unshrunken logFC, apeglm-shrunken logFC, SE, moderated-t, p, padj; sorted by effect size within the significant set",
+          "Enrichment section states gene set database + version (Hallmark, Reactome, WikiPathways-human, 2026.1/current), ranking metric (moderated t), universe (tested genes), size window (15-500), and that enrichment method choice affects the result (camera vs fgsea overlap noted)",
+          "Immune composition findings integrated as a caveat on any DE/classifier gene that is also an immune-cell marker",
+          "Classifier section reports cross-validated ROC-AUC with CI, states it is an internal cross-validated estimate only (no external cohort), and lists the caveat about feature reselection per fold",
+          "Full reproducibility record: sessionInfo/package versions, random seeds for permutation/CV steps, reference collection versions"
+        ]
+      }
+    ],
+    "title": "Whole-blood case vs control classifier + DE + pathways",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The cohort is 60 cases vs 60 controls, whole blood, single batch, raw Salmon gene-level counts (12000 genes x 121 samples incl. metadata). Two related but distinct questions are asked: (1) is there a reproducible transcriptional difference between cases and controls, and (2) can a classifier built on expression predict case/control status on a new sample, with an honest estimate of its accuracy. Because each group has 60 samples (>=50/group), the knowledge base flags that DESeq2/edgeR's negative-binomial assumption is violated in large population cohorts and produces excess false positives even on permuted labels — so the differential expression test uses limma-voom with TMM normalization, not DESeq2's Wald test, with the caution stated in the report. QC (blind VST, PCA, sample-distance heatmap) runs first to confirm the samples group by condition and that no sample is a technical outlier before any test. Genes are pre-filtered with filterByExpr, TMM-normalized, and tested with a fixed-effects linear model in limma-voom; the reported log2 fold changes are DESeq2-apeglm-shrunk from a parallel run purely for reporting/ranking stability (limma effect sizes are already moderated by design, so this is a secondary sensitivity check, not the primary test), FDR is BH-controlled at 0.05, and the p-value histogram is inspected before trusting the adjusted p-values. camera (which accounts for inter-gene correlation, appropriate at this sample size) tests the limma fit against MSigDB Hallmark, then Reactome and WikiPathways, all present in the reference store for human. Separately, the classifier question is answered as its own supervised-learning task: a penalized (elastic-net) logistic regression on the full filtered/normalized gene matrix, with gene filtering, scaling and lambda selection performed strictly inside each fold of a nested cross-validation, reporting ROC-AUC with a confidence interval from the outer-fold predictions and the genes with non-zero coefficients. This is kept as an explicitly separate step from the DE test so that the accuracy estimate is not inflated by prior gene selection on the same samples (the DE gene list is not used as a fixed feature filter for the classifier). Given the analysis is whole blood, an immune-cell composition read-out (immunedeconv / MCPcounter on TPM-scale data) is added because a case-control difference in blood is a common confound/finding driven by cell-type composition shifts (e.g. neutrophil-to-lymphocyte ratio), and any DE or classifier signal must be interpreted alongside it."
+  },
+  "usage": {
+    "inputTokens": 868690,
+    "outputTokens": 7291,
+    "cacheCreationInputTokens": 251583,
+    "cacheReadInputTokens": 617023,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "signature_scoring"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "panglaodb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human protein atlas tissue"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune deconvolution"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "MCPcounter",
+          "quantiseqr",
+          "EPIC",
+          "xCell",
+          "xCell2",
+          "UCell",
+          "ConsensusTME"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "signature_scoring"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr low count filter (edgeR)",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM normalization (edgeR)",
+            "package": "edgeR"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom with a fixed-effects linear model",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage (via DESeq2 sensitivity check, not primary voom path)",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "camera competitive gene set test on the limma fit, MSigDB Hallmark then Reactome/WikiPathways",
+            "package": "limma"
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "Penalized logistic classifier with glmnet, nested cross-validation, ROC/AUC with CI",
+            "package": "glmnet",
+            "parameters": [
+              {
+                "name": "classifier_validation",
+                "value": "nested_cross_validation"
+              },
+              {
+                "name": "preprocessing_scope",
+                "value": "filter_and_scaling_inside_each_training_fold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducibility report with session info, diagnostics, effect sizes"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood case vs control classifier + DE + pathways",
+          "analytical_narrative": "The cohort is 60 cases vs 60 controls, whole blood, single batch, raw Salmon gene-level counts (12000 genes x 121 samples incl. metadata). Two related but distinct questions are asked: (1) is there a reproducible transcriptional difference between cases and controls, and (2) can a classifier built on expression predict case/control status on a new sample, with an honest estimate of its accuracy. Because each group has 60 samples (>=50/group), the knowledge base flags that DESeq2/edgeR's negative-binomial assumption is violated in large population cohorts and produces excess false positives even on permuted labels — so the differential expression test uses limma-voom with TMM normalization, not DESeq2's Wald test, with the caution stated in the report. QC (blind VST, PCA, sample-distance heatmap) runs first to confirm the samples group by condition and that no sample is a technical outlier before any test. Genes are pre-filtered with filterByExpr, TMM-normalized, and tested with a fixed-effects linear model in limma-voom; the reported log2 fold changes are DESeq2-apeglm-shrunk from a parallel run purely for reporting/ranking stability (limma effect sizes are already moderated by design, so this is a secondary sensitivity check, not the primary test), FDR is BH-controlled at 0.05, and the p-value histogram is inspected before trusting the adjusted p-values. camera (which accounts for inter-gene correlation, appropriate at this sample size) tests the limma fit against MSigDB Hallmark, then Reactome and WikiPathways, all present in the reference store for human. Separately, the classifier question is answered as its own supervised-learning task: a penalized (elastic-net) logistic regression on the full filtered/normalized gene matrix, with gene filtering, scaling and lambda selection performed strictly inside each fold of a nested cross-validation, reporting ROC-AUC with a confidence interval from the outer-fold predictions and the genes with non-zero coefficients. This is kept as an explicitly separate step from the DE test so that the accuracy estimate is not inflated by prior gene selection on the same samples (the DE gene list is not used as a fixed feature filter for the classifier). Given the analysis is whole blood, an immune-cell composition read-out (immunedeconv / MCPcounter on TPM-scale data) is added because a case-control difference in blood is a common confound/finding driven by cell-type composition shifts (e.g. neutrophil-to-lymphocyte ratio), and any DE or classifier signal must be interpreted alongside it.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 60 case and 60 control whole-blood samples separate by condition on a blind PCA of the top variable genes, or does one sample depart from its group / a technical axis dominate, before any test runs?",
+              "acceptance_criteria": [
+                "Blind VST computed on the raw count matrix (12000 genes x 121 samples)",
+                "PCA on top 500 variance genes, colored by case/control",
+                "Sample-distance heatmap (Euclidean, on VST values)",
+                "Library size per sample reported and flagged if any sample departs markedly from the median"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC (blind vst/PCA/distance) required on every raw-count dataset before modeling, per R-0033."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "limma-voom differential expression, case vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between cases (n=60) and controls (n=60) in whole blood, using a method appropriate for a 50+-per-group unpaired cohort?",
+              "acceptance_criteria": [
+                "Genes filtered with filterByExpr (min 10 counts in >=60 samples, the smaller group size)",
+                "TMM normalization (edgeR) applied before voom",
+                "limma-voom fixed-effects model fit with condition as explicit factor, control set as reference level, contrast named case-vs-control",
+                "Report unshrunken logFC/SE/moderated-t/p-value plus an apeglm-shrunken logFC (via a parallel DESeq2 fit, gene-level tximport-equivalent count import) for ranking/plotting, both retained in the table",
+                "p-value histogram inspected and shape reported",
+                "BH-adjusted p-values reported at alpha=0.05 with independent filtering; number of genes tested and number DE reported",
+                "Caution stated: at n=60/group, negative-binomial count models over-call compared to limma-voom; a Wilcoxon rank-sum test run as a cross-check control on a sample of top genes"
+              ],
+              "packages": [
+                "edgeR",
+                "limma",
+                "apeglm",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "If each group holds 50 or more samples, count-based models (DESeq2/edgeR Wald/LRT) exaggerate false positives on population cohorts; limma-voom is the primary test and this caution must appear in the report beside the result."
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0015@65aa",
+                  "R-0029@fa6d",
+                  "R-0058@99e1",
+                  "R-0002@087b",
+                  "R-0057@31cc",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0038@a5e0",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-limma-voom-fixed@1.0.0",
+                "reason": "R-0015 (warn) requires limma-voom instead of DESeq2/edgeR count models at n>=50/group; obeyed by making limma-voom primary and DESeq2/apeglm a shrinkage/ranking aid only, with the caution stated in the report."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on the limma-voom fit",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways (MSigDB Hallmark, then Reactome and WikiPathways) are enriched among genes ranked by the moderated t-statistic of the case-vs-control limma-voom fit?",
+              "acceptance_criteria": [
+                "Gene symbols mapped to Entrez via org.Hs.eg.db; unmapped share reported",
+                "camera run on Hallmark gene sets (50 sets) with inter-gene correlation estimated from data, gene sets restricted to 15-500 members among tested genes",
+                "fgsea preranked on the moderated t-statistic run as second method against the same Hallmark sets, and results compared",
+                "Second collection (Reactome, and WikiPathways-human) run the same way with release/version stated",
+                "If fewer than ~50 genes pass FDR<0.05, over-representation analysis is skipped and only the ranked (camera/fgsea) method used, stated explicitly",
+                "Leading-edge genes reported for each significant set; redundant sets collapsed to one representative"
+              ],
+              "packages": [
+                "limma",
+                "fgsea",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0088@8b80",
+                  "R-0048@500d",
+                  "R-0165@e456",
+                  "R-0107@976c",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0105@c4a8"
+                ],
+                "template": "tpl-camera-hallmark@1.0.0",
+                "reason": "Population-scale cohort enrichment runs on the limma-voom fit with camera (R-0088), Hallmark then Reactome/WikiPathways from the reference store (R-0048, R-0165)."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Immune cell composition (whole blood)",
+              "track": "T3",
+              "step_type": "deconvolution",
+              "question": "Do case and control whole-blood samples differ in estimated immune cell-type composition (e.g. neutrophil/lymphocyte proportions), a common confound of a blood transcriptomic difference?",
+              "acceptance_criteria": [
+                "Counts converted to linear-scale TPM/CPM (no length data available from a gene-symbol-only count matrix, so CPM used and stated) before deconvolution; MCP-counter given log2 of the same values per its own definition",
+                "immunedeconv used as the common interface across at least two methods (e.g. quanTIseq, EPIC) plus MCP-counter for immune/stromal scores",
+                "Composition difference between cases and controls tested per cell type (e.g. Wilcoxon rank-sum with BH correction across cell types) and reported alongside the DE result as a possible composition-driven confound, not a cell-intrinsic finding",
+                "Methods' agreement/disagreement on direction reported per cell type; a composition claim made only where >=2 methods agree in direction"
+              ],
+              "packages": [
+                "immunedeconv",
+                "MCPcounter",
+                "quantiseqr",
+                "EPIC"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0125@2548",
+                  "R-0128@9eee",
+                  "R-0129@2909",
+                  "R-0132@246d"
+                ],
+                "reason": "Whole-blood case/control cohort: immune composition must be checked as a covariate/confound of any DE or classifier signal (R-0132), using TPM/CPM-scale input (R-0129) and a multi-method consensus (R-0128)."
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "Case vs control classifier with nested cross-validation",
+              "track": "T4",
+              "step_type": "signature_scoring",
+              "question": "Can a gene-expression-based classifier distinguish a case from a control sample, and how accurate is it expected to be on a genuinely new sample (60 cases vs 60 controls, whole blood)?",
+              "acceptance_criteria": [
+                "Penalized (elastic-net/lasso) logistic regression fit with glmnet on log-CPM (voom-style) expression of the filterByExpr-passed genes",
+                "Outer k-fold (e.g. 10-fold, repeated) cross-validation estimates test performance; inner cross-validation selects lambda within each outer training fold only",
+                "Gene filtering (filterByExpr) and any scaling/centering performed strictly inside each outer training fold — NOT on the full dataset beforehand — and the step states explicitly that this is a fresh feature selection, independent of the T1S2 DE gene list, to avoid an optimistic estimate from double-dipping",
+                "ROC curve and AUC with a confidence interval computed from pooled out-of-fold predictions (pROC or equivalent)",
+                "Genes with non-zero coefficients reported per fold and their stability across folds (e.g. selection frequency) stated, with an explicit caveat if unstable",
+                "Report states plainly that with 60/60 samples the confidence interval on AUC will be wide and that this is a within-cohort cross-validated estimate, not validated on an external cohort"
+              ],
+              "packages": [
+                "glmnet",
+                "pROC",
+                "limma",
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "statistical-modeling-agent",
+              "caveats": [
+                "A feature list from the T1S2 supervised DE contrast on the same samples must NOT be handed to this classifier as a fixed pre-filter; the classifier reselects features inside each CV fold from the full expression matrix, or the AUC estimate is optimistic.",
+                "No external validation cohort is available in this data context; report the cross-validated AUC as the best available accuracy estimate for a new sample and state that it is not equivalent to external validation."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0155@b81f"
+                ],
+                "template": "tpl-signature-scoring@1.0.0",
+                "reason": "Direct match: R-0155 mandates penalized logistic regression with nested CV, fold-internal preprocessing, and ROC-AUC with CI for exactly this classifier question."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Integrated report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the combined, reproducible answer to whether cases differ from controls transcriptionally, which pathways/cell types are implicated, and how accurately a new sample can be classified?",
+              "acceptance_criteria": [
+                "Report states method, package versions, design formula, contrast (case vs control, control=reference), thresholds (padj<0.05), number of genes tested and number DE",
+                "MA plot and dispersion/voom mean-variance plots included as fit diagnostics",
+                "Gene table reports unshrunken logFC, apeglm-shrunken logFC, SE, moderated-t, p, padj; sorted by effect size within the significant set",
+                "Enrichment section states gene set database + version (Hallmark, Reactome, WikiPathways-human, 2026.1/current), ranking metric (moderated t), universe (tested genes), size window (15-500), and that enrichment method choice affects the result (camera vs fgsea overlap noted)",
+                "Immune composition findings integrated as a caveat on any DE/classifier gene that is also an immune-cell marker",
+                "Classifier section reports cross-validated ROC-AUC with CI, states it is an internal cross-validated estimate only (no external cohort), and lists the caveat about feature reselection per fold",
+                "Full reproducibility record: sessionInfo/package versions, random seeds for permutation/CV steps, reference collection versions"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1",
+                "T3S1",
+                "T4S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0089@69f0",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Standard reproducibility/report rules for a population-scale DE + enrichment + classifier analysis."
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

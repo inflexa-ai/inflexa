@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly frames this as a WGCNA question on 120 samples: blind VST input, signed network, soft power chosen as lowest power reaching scale-free fit 0.8, TOM, dynamic tree cut with min size 30, merge at cut height 0.25, eigengene-trait correlation with BH across all module-trait pairs, and ORA against MSigDB Hallmark/GO BP with the network genes as universe and a 15-500 size window. It deviates from the reference by running the network on all filterByExpr-retained genes rather than the top ~5000 variable genes, ranks hubs by kME alone without gene significance, and reports only the chosen power's fit index rather than the full fit curve. The binary trait coding/reference level is implied through direction reporting rather than stated explicitly. QC, filtering justification, normalization inside DESeq2, and the report checklist (versions, seeds, sample reconciliation, all module-trait pairs) are well specified."
+}

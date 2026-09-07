@@ -6,7 +6,9 @@ assertion: >-
   of the tested genes. Never estimate the performance on the samples that
   trained the model. Select the lambda in an inner cross-validation and
   measure the performance in an outer cross-validation, thus each prediction
-  comes from a model that did not see that sample. Report the ROC curve and
+  comes from a model that did not see that sample. Fit the gene filter and
+  the scaling inside each training fold, because a selection on all the
+  samples makes the error estimate optimistic. Report the ROC curve and
   the area under it with a confidence interval from the outer predictions,
   and report the genes with a nonzero coefficient. With few samples per
   class, state that the interval is wide and that the gene set is unstable
@@ -29,11 +31,26 @@ action:
     - name: classifier_performance
       value: roc_auc_with_confidence_interval
       default_source: "doi:10.1186/1471-2105-12-77"
+    - name: preprocessing_scope
+      value: filter_and_scaling_inside_each_training_fold
+      default_source: "doi:10.1073/pnas.102102699"
+      required: true
 severity: info
 strength: common_practice
 evidence_quality: moderate
 recommendation_strength: conditional
 evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0146
+    paraphrase: >-
+      A gene selection on all the samples before the cross-validation gives
+      an optimistic error estimate, near zero on data with no class signal,
+      and the bias disappears only when the selection runs inside each
+      training fold of the cross-validation.
+    anchor: "Abstract; Selection bias; Results"
+    retrieved: "2026-09-06"
   - direction: supports
     eco: ECO:0000033
     cito: cito:usesMethodIn
