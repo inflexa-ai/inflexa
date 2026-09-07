@@ -24,6 +24,12 @@ import { buildPlanSkeleton, type SkeletonStep } from "./skeleton.js";
 
 export interface KnowledgeRecommendDeps extends EnvironmentPaths {
     readonly client: KnowledgeClient;
+    /**
+     * Receives each answer the planner sees. The planner keeps the skeleton of
+     * the invocation, thus `submit_plan` can restore a grounding field that the
+     * model dropped when it copied a skeleton step.
+     */
+    readonly onAnswer?: (answer: KnowledgeRecommendAnswer) => void;
 }
 
 /**
@@ -115,7 +121,9 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps) {
                 ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
                 ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
             });
-            return ok(toPlannerAnswer(joined));
+            const planner = toPlannerAnswer(joined);
+            deps.onAnswer?.(planner);
+            return ok(planner);
         },
     });
 }

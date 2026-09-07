@@ -197,3 +197,19 @@ At dispatch the parent MUST intersect the `grounding.settings` of the step with 
 - **GIVEN** a step with a grounding that names a template
 - **WHEN** the briefing composes
 - **THEN** the seed carries the status, the template, the snapshot, the claims, and the reason
+
+### Requirement: The planner restores the template of a skeleton step
+
+The recommend tool MUST give each answer to the planner invocation that holds it. `submit_plan` MUST restore an absent `grounding.template` of a candidate step from the skeleton step with the same id. The restore applies only when the snapshot digest of the candidate step equals the snapshot of the skeleton. The restore MUST NOT change a step that carries a template, a step with a different snapshot, or a step the skeleton does not hold. The tool MUST log the ids of the restored steps.
+
+#### Scenario: The model drops the template
+
+- **GIVEN** a recommend answer whose differential expression skeleton step names `tpl-deseq2-two-group@1.0.0`
+- **WHEN** the planner submits that step with the claims, the snapshot, and no `template`
+- **THEN** the stored step carries `grounding.template: tpl-deseq2-two-group@1.0.0`
+
+#### Scenario: A different snapshot is left as it is
+
+- **GIVEN** the same answer
+- **WHEN** the planner submits a step with the same id and a snapshot of `none`
+- **THEN** the stored step carries no template

@@ -10,8 +10,9 @@ import { withSchema } from "../../__tests__/setup/postgres.js";
 import { PLANNABLE_AGENT_IDS } from "../../agents/sandbox-catalog.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../../loop/__fixtures__/scripted-provider.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import type { DataProfileResult } from "../../state/index.js";
+import { loadPlan, type DataProfileResult } from "../../state/index.js";
 import type { Tool, ToolContext } from "../define-tool.js";
+import { fakeKnowledgeClient, SNAPSHOT } from "../knowledge/__fixtures__/fake-client.js";
 import { createGeneratePlanTool } from "./generate-plan.js";
 
 /** The key slice the search tools of the planner take. An empty key keeps every tool constructible offline. */
@@ -325,6 +326,72 @@ describe("generatePlan loop-driving tool", () => {
             expect(context).toContain("20000 x 12");
             expect(context).not.toContain("PROVISIONAL");
             expect(seed).toContain("## Research Question");
+        });
+
+        it("restores the template of a skeleton step that the model dropped", async () => {
+            const analysisId = "an-restored-template";
+            await seedAnalysis(pool, analysisId, { dpStatus: null });
+            const { client } = fakeKnowledgeClient();
+            const situation = {
+                question: "differential_expression",
+                modality: "bulk_rna_seq",
+                data_state: "counts",
+                organism: "human",
+                n_groups: 2,
+                n_per_group_min: 6,
+                n_per_group_max: 6,
+                paired: false,
+                batch: "none",
+            };
+            // The model copies the T1S2 skeleton step with its claims and snapshot,
+            // and it leaves the template out; the host puts it back.
+            const grounded = validCandidate({
+                id: "T1S2",
+                grounding: { status: "grounded", snapshot: SNAPSHOT.digest, claims: ["R-0001@e7d0"], reason: "DESeq2 Wald test per R-0001@e7d0" },
+            });
+            const provider = scriptedProvider([
+                makeMessage([toolUseBlock("t1", "knowledge_recommend", situation)], "tool_use"),
+                makeMessage([toolUseBlock("t2", "submit_plan", { plan: grounded })], "tool_use"),
+            ]);
+            const tool = createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, knowledge: client });
+
+            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+
+            expect(result.event).toBe("plan_complete");
+            const stored = (await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap() as { steps: { grounding?: { template?: string } }[] };
+            expect(stored.steps[0]?.grounding?.template).toBe("tpl-deseq2-two-group@1.0.0");
+        });
+
+        it("leaves a step with a different snapshot as it is", async () => {
+            const analysisId = "an-other-snapshot";
+            await seedAnalysis(pool, analysisId, { dpStatus: null });
+            const { client } = fakeKnowledgeClient();
+            const situation = {
+                question: "differential_expression",
+                modality: "bulk_rna_seq",
+                data_state: "counts",
+                organism: "human",
+                n_groups: 2,
+                n_per_group_min: 6,
+                n_per_group_max: 6,
+                paired: false,
+                batch: "none",
+            };
+            const ungrounded = validCandidate({
+                id: "T1S2",
+                grounding: { status: "ungrounded", snapshot: "none", claims: [], reason: "planned from own knowledge" },
+            });
+            const provider = scriptedProvider([
+                makeMessage([toolUseBlock("t1", "knowledge_recommend", situation)], "tool_use"),
+                makeMessage([toolUseBlock("t2", "submit_plan", { plan: ungrounded })], "tool_use"),
+            ]);
+            const tool = createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, knowledge: client });
+
+            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+
+            expect(result.event).toBe("plan_complete");
+            const stored = (await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap() as { steps: { grounding?: { template?: string } }[] };
+            expect(stored.steps[0]?.grounding?.template).toBeUndefined();
         });
 
         it("accepts a plan that the model sent as a JSON-encoded string", async () => {

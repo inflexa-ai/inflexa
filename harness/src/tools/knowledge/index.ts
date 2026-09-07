@@ -12,7 +12,7 @@
 import type { Tool } from "../define-tool.js";
 import type { KnowledgeClient } from "./client.js";
 import { createKnowledgeCheckTool } from "./check.js";
-import { createKnowledgeRecommendTool } from "./recommend.js";
+import { createKnowledgeRecommendTool, type KnowledgeRecommendDeps } from "./recommend.js";
 
 export * from "./client.js";
 export * from "./environment.js";
@@ -28,6 +28,8 @@ export interface KnowledgeToolsDeps {
     readonly farmLockFile?: string;
     /** Host path of the reference store, for the same join. */
     readonly refStorePath?: string;
+    /** Receives each recommend answer the planner sees; see `KnowledgeRecommendDeps.onAnswer`. */
+    readonly onRecommend?: KnowledgeRecommendDeps["onAnswer"];
 }
 
 /** The planner tools: `knowledge_recommend` and `knowledge_check`, or an empty list with no client. */
@@ -38,6 +40,7 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
             client: deps.client,
             ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
             ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
+            ...(deps.onRecommend ? { onAnswer: deps.onRecommend } : {}),
         }),
         createKnowledgeCheckTool({ client: deps.client }),
     ];

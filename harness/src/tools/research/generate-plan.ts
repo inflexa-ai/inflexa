@@ -44,7 +44,7 @@ import { createReportBlockerToolFor } from "../sandbox/report-blocker.js";
 import { degenerateTerminalText } from "../terminal-text.js";
 import { searchGeoDatasetsTool } from "../bio/search-geo-datasets.js";
 import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
-import { createKnowledgeTools, type KnowledgeClient } from "../knowledge/index.js";
+import { createKnowledgeTools, type KnowledgeClient, type SkeletonStep } from "../knowledge/index.js";
 import { queryDocsTool, resolveLibraryIdTool } from "./context7-docs.js";
 import { searchArxivTool } from "./search-arxiv.js";
 import { createSearchGithubReposTool } from "./search-github-repos.js";
@@ -449,6 +449,37 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
     }));
 }
 
+/** The skeleton steps of the last `knowledge_recommend` answer of one invocation, by step id. */
+type SkeletonById = ReadonlyMap<string, SkeletonStep>;
+
+/**
+ * Restore the `grounding.template` of each candidate step from the skeleton
+ * step with the same id and the same snapshot digest. A model copies the
+ * skeleton into the plan, and it drops the template field at times, while it
+ * keeps the claims and the settings. The template is what the host binds the
+ * contract to, thus the host restores it and does not depend on the copy.
+ * Returns the ids of the restored steps beside the new candidate. A candidate
+ * that is not a plan-shaped object comes back as it is.
+ */
+function restoreSkeletonTemplates(candidate: unknown, skeleton: SkeletonById): { readonly candidate: unknown; readonly restored: readonly string[] } {
+    const decoded = decodeObjectString(candidate);
+    if (skeleton.size === 0 || typeof decoded !== "object" || decoded === null || !Array.isArray((decoded as { steps?: unknown }).steps)) {
+        return { candidate: decoded, restored: [] };
+    }
+    const restored: string[] = [];
+    const steps = (decoded as { steps: unknown[] }).steps.map((step) => {
+        if (typeof step !== "object" || step === null) return step;
+        const { id, grounding } = step as { id?: unknown; grounding?: unknown };
+        if (typeof id !== "string" || typeof grounding !== "object" || grounding === null) return step;
+        const current = grounding as { template?: unknown; snapshot?: unknown };
+        const source = skeleton.get(id);
+        if (current.template !== undefined || source?.grounding.template === undefined || current.snapshot !== source.grounding.snapshot) return step;
+        restored.push(id);
+        return { ...step, grounding: { ...current, template: source.grounding.template } };
+    });
+    return { candidate: { ...decoded, steps }, restored };
+}
+
 /**
  * Full validation: Zod schema + semantic checks. The plan is valid only if
  * BOTH pass.
@@ -520,6 +551,7 @@ function buildInnerTools(
     pool: Pool,
     resourcePolicy: ResourcePolicy | undefined,
     logger: Logger,
+    skeleton: SkeletonById,
 ): InnerTools {
     const submitPlanTool = defineTool({
         id: "submit_plan",
@@ -560,7 +592,9 @@ function buildInnerTools(
             }
 
             const attempt = ++trace.submitAttempts;
-            const result = fullyValidate(input.plan, resourcePolicy);
+            const { candidate, restored } = restoreSkeletonTemplates(input.plan, skeleton);
+            if (restored.length > 0) logger.info("submit_plan restored the template of skeleton steps", { steps: restored });
+            const result = fullyValidate(candidate, resourcePolicy);
             if (!result.valid) {
                 trace.rejectedAttempts++;
                 const rejection = toRejectionRecord(attempt, result.issues);
@@ -932,7 +966,7 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
  * A tool here never writes and never computes. Thus the worst outcome of a
  * needless call is latency, and the prompt is what bounds that.
  */
-export function buildPlannerSearchTools(deps: GeneratePlanDeps): Tool[] {
+export function buildPlannerSearchTools(deps: GeneratePlanDeps, hooks: { readonly onRecommend?: (steps: readonly SkeletonStep[]) => void } = {}): Tool[] {
     const bioKeys = deps.bioKeys;
     const ncbi = createNcbiTools(bioKeys);
     return [
@@ -968,6 +1002,7 @@ export function buildPlannerSearchTools(deps: GeneratePlanDeps): Tool[] {
             ...(deps.knowledge === undefined ? {} : { client: deps.knowledge }),
             ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
             ...(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath }),
+            ...(hooks.onRecommend === undefined ? {} : { onRecommend: (answer) => hooks.onRecommend?.(answer.plan_skeleton) }),
         }),
     ];
 }
@@ -1167,7 +1202,10 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 analysisId,
                 parentPlanId: input.parentPlanId ?? null,
             };
-            const innerTools = buildInnerTools(holder, trace, persistCtx, deps.pool, deps.resourcePolicy, logger);
+            // The skeleton of the last recommend answer of this invocation, by step
+            // id, thus `submit_plan` restores a template the model dropped.
+            const skeleton = new Map<string, SkeletonStep>();
+            const innerTools = buildInnerTools(holder, trace, persistCtx, deps.pool, deps.resourcePolicy, logger, skeleton);
             // Built here rather than at construction: a `describeCall` hook reads no
             // dep, thus the tool must stay constructible from an empty bag. The tool
             // definitions are identical across invocations, thus the request prefix
@@ -1177,12 +1215,20 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // tool, answers a refusal that says to continue. The terminal tools
             // stay outside it, because a refused submit would strand the plan.
             let refusals = 0;
-            const searchTools = guardRepeatedCalls(buildPlannerSearchTools(deps), {
-                onRefusal: (refusal) => {
-                    refusals += 1;
-                    logger.warn("planner call refused by the guard", { ...refusal, refusals });
+            const searchTools = guardRepeatedCalls(
+                buildPlannerSearchTools(deps, {
+                    onRecommend: (steps) => {
+                        skeleton.clear();
+                        for (const step of steps) skeleton.set(step.id, step);
+                    },
+                }),
+                {
+                    onRefusal: (refusal) => {
+                        refusals += 1;
+                        logger.warn("planner call refused by the guard", { ...refusal, refusals });
+                    },
                 },
-            });
+            );
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
