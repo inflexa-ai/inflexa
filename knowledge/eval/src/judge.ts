@@ -7,6 +7,13 @@
  * this file does not replace: the judge is accepted at a weighted kappa of at
  * least 0.7, and the report says when that calibration has not run.
  *
+ * The judge is frozen in the campaign manifest by provider, model, tag, and
+ * the digest of its prompt (the system text and the criteria). Every verdict
+ * file carries that identity, a failed call leaves a `failed` file that the
+ * report counts as an absent judgment, and a later run retries the failed
+ * files only. A judge outside the manifest is refused unless `--exploratory`
+ * is passed.
+ *
  *   bun eval/src/judge.ts --campaign c1 --judge-model claude-opus-5 --provider cliproxy
  *   bun eval/src/judge.ts --campaign c1 --judge-model claude-sonnet-5 --judge-tag sonnet   (a second judge, beside the first)
  */
@@ -15,6 +22,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
+import { promptDigest, readManifest, type Manifest } from "./freeze.js";
 import { buildProvider, replyText, type ModelConnection } from "./provider.js";
 import type { RunRecord } from "./run.js";
 import { EVAL_ROOT, loadTasks, type Task } from "./tasks.js";
@@ -31,15 +39,42 @@ export const CRITERIA = [
     ["report_completeness", "The report names the method, the versions, the design, the thresholds, the counts of tested and significant genes, and the caveats of the design."],
 ] as const;
 
+export type Criteria = readonly (readonly [string, string])[];
+
 export const JudgeVerdictSchema = z.object({
     scores: z.object(Object.fromEntries(CRITERIA.map(([key]) => [key, z.number().min(0).max(10)])) as Record<(typeof CRITERIA)[number][0], z.ZodNumber>),
     rationale: z.string(),
 });
 export type JudgeVerdict = z.infer<typeof JudgeVerdictSchema>;
 
+/** The frozen identity of the judge, as the manifest and every verdict file carry it. */
+export interface JudgeIdentity {
+    readonly provider: ModelConnection["provider"];
+    readonly model: string;
+    readonly tag?: string;
+    readonly prompt_digest: string;
+}
+
 function argument(name: string): string | undefined {
     const index = process.argv.indexOf(name);
     return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
+/** The system text of the judge. The prompt digest of the manifest covers it. */
+export function judgeSystem(criteria: Criteria = CRITERIA): string {
+    return (
+        "You are a senior bioinformatics statistician who reviews analysis plans for bulk RNA-seq. " +
+        "You score one plan against a reference on eight criteria, each from 0 (absent or wrong) to 10 (correct and complete). " +
+        "Judge the plan only on what it states. A plan that does the right thing but does not say so scores low on that criterion. " +
+        "A plan that could apply to any dataset scores low on the design criteria. Do not reward length. " +
+        "Answer with one JSON object only, of the form " +
+        `{"scores": {${criteria.map(([key]) => `"${key}": <0-10>`).join(", ")}}, "rationale": "<two to five sentences>"}.`
+    );
+}
+
+/** The criteria as the judge reads them. The prompt digest of the manifest covers it. */
+export function criteriaText(criteria: Criteria = CRITERIA): string {
+    return criteria.map(([key, text]) => `- ${key}: ${text}`).join("\n");
 }
 
 /** The plan as the judge reads it: the step fields only, no grounding and no ids that could reveal the arm. */
@@ -59,20 +94,12 @@ function planForJudge(plan: PlanLike | undefined): string {
 }
 
 export function judgePrompt(task: Task, record: RunRecord): { system: string; user: string } {
-    const system =
-        "You are a senior bioinformatics statistician who reviews analysis plans for bulk RNA-seq. " +
-        "You score one plan against a reference on eight criteria, each from 0 (absent or wrong) to 10 (correct and complete). " +
-        "Judge the plan only on what it states. A plan that does the right thing but does not say so scores low on that criterion. " +
-        "A plan that could apply to any dataset scores low on the design criteria. Do not reward length. " +
-        "Answer with one JSON object only, of the form " +
-        `{"scores": {${CRITERIA.map(([key]) => `"${key}": <0-10>`).join(", ")}}, "rationale": "<two to five sentences>"}.`;
-    const criteria = CRITERIA.map(([key, text]) => `- ${key}: ${text}`).join("\n");
     const outcome = record.outcome === "plan_submitted" ? "The planner submitted the plan below." : `The planner ended with: ${record.outcome}${record.question ? ` (question to the user: ${record.question})` : ""}${record.error ? ` (${record.error})` : ""}.`;
     const user =
         `## The task\n${task.question}\n\n## The dataset\n${task.experimental_design}\nTissue: ${task.tissue}. Condition: ${task.condition}.` +
         (task.concerns.length ? `\nConcerns: ${task.concerns.join("; ")}` : "") +
-        `\n\n## The reference (what a correct plan does)\n${task.reference}\n\n## The criteria\n${criteria}\n\n## The outcome\n${outcome}\n\n## The plan\n${planForJudge(record.plan as PlanLike | undefined)}`;
-    return { system, user };
+        `\n\n## The reference (what a correct plan does)\n${task.reference}\n\n## The criteria\n${criteriaText()}\n\n## The outcome\n${outcome}\n\n## The plan\n${planForJudge(record.plan as PlanLike | undefined)}`;
+    return { system: judgeSystem(), user };
 }
 
 export async function judgeRun(connection: ModelConnection, task: Task, record: RunRecord): Promise<JudgeVerdict> {
@@ -87,6 +114,75 @@ export async function judgeRun(connection: ModelConnection, task: Task, record: 
     return JudgeVerdictSchema.parse(JSON.parse(match[0]));
 }
 
+/** The fields on which a judge differs from the frozen one; empty when the judge is the frozen judge. */
+export function manifestDifferences(manifest: Manifest | undefined, identity: JudgeIdentity): string[] {
+    if (!manifest) return ["the campaign has no manifest"];
+    const differences: string[] = [];
+    const fields = ["provider", "model", "tag", "prompt_digest"] as const;
+    for (const field of fields) {
+        const frozen = manifest.judge[field];
+        const given = identity[field];
+        if (frozen !== given) differences.push(`the judge ${field} ${given ?? "(none)"} is not the frozen ${frozen ?? "(none)"}`);
+    }
+    return differences;
+}
+
+/** True when the file holds a verdict. A failed file, a missing file, and a broken file are retried. */
+export async function isVerdictFile(path: string): Promise<boolean> {
+    const file = Bun.file(path);
+    if (!(await file.exists())) return false;
+    try {
+        return JudgeVerdictSchema.safeParse(JSON.parse(await file.text())).success;
+    } catch {
+        return false;
+    }
+}
+
+const RECORD_FILE = /\.json$/;
+const JUDGE_FILE = /\.judge(-[a-z0-9]+)?\.json$/;
+
+/** Judge every record of the campaign that has no verdict yet. Every verdict and every failure carries the judge identity. */
+export async function judgeCampaign(options: {
+    readonly root: string;
+    readonly tasks: ReadonlyMap<string, Task>;
+    readonly identity: JudgeIdentity;
+    readonly judge: (task: Task, record: RunRecord) => Promise<JudgeVerdict>;
+    readonly log?: (line: string) => void;
+}): Promise<{ judged: number; failed: number; skipped: number }> {
+    const { root, tasks, identity } = options;
+    const log = options.log ?? ((line: string) => console.log(line));
+    const suffix = identity.tag ? `.judge-${identity.tag}.json` : ".judge.json";
+    const stamp = { judge: identity.model, provider: identity.provider, model: identity.model, ...(identity.tag ? { tag: identity.tag } : {}), prompt_digest: identity.prompt_digest };
+    const counts = { judged: 0, failed: 0, skipped: 0 };
+    for (const arm of await readdir(root, { withFileTypes: true })) {
+        if (!arm.isDirectory()) continue;
+        const dir = join(root, arm.name);
+        for (const file of (await readdir(dir)).filter((name) => RECORD_FILE.test(name) && !JUDGE_FILE.test(name))) {
+            const judgePath = join(dir, file.replace(RECORD_FILE, suffix));
+            if (await isVerdictFile(judgePath)) {
+                counts.skipped += 1;
+                continue;
+            }
+            const record = (await Bun.file(join(dir, file)).json()) as RunRecord;
+            const task = tasks.get(record.task);
+            if (!task) continue;
+            try {
+                const verdict = await options.judge(task, record);
+                await Bun.write(judgePath, `${JSON.stringify({ ...stamp, ...verdict }, null, 2)}\n`);
+                const total = Object.values(verdict.scores).reduce((sum, value) => sum + value, 0) * 1.25;
+                counts.judged += 1;
+                log(`judge ${arm.name}/${file} ... ${total.toFixed(0)}/100`);
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : String(error);
+                await Bun.write(judgePath, `${JSON.stringify({ failed: reason, ...stamp }, null, 2)}\n`);
+                counts.failed += 1;
+                log(`judge ${arm.name}/${file} ... failed: ${reason}`);
+            }
+        }
+    }
+    return counts;
+}
+
 if (import.meta.main) {
     const campaign = argument("--campaign") ?? "phase0";
     const connection: ModelConnection = {
@@ -95,30 +191,24 @@ if (import.meta.main) {
         ...(argument("--base-url") ? { baseUrl: argument("--base-url") } : {}),
         ...(argument("--api-key-env") ? { apiKeyEnv: argument("--api-key-env") } : {}),
     };
-    const tasks = new Map((await loadTasks()).map((task) => [task.id, task]));
     const root = join(argument("--out") ?? join(EVAL_ROOT, "results"), campaign);
     // A second judge writes beside the first under a tag, thus two judges of one
     // campaign can be compared without one overwriting the other.
     const tag = argument("--judge-tag");
-    const judgeSuffix = tag ? `.judge-${tag}.json` : ".judge.json";
-    for (const arm of await readdir(root, { withFileTypes: true })) {
-        if (!arm.isDirectory()) continue;
-        const dir = join(root, arm.name);
-        for (const file of (await readdir(dir)).filter((name) => name.endsWith(".json") && !/\.judge(-[a-z0-9]+)?\.json$/.test(name))) {
-            const judgePath = join(dir, file.replace(/\.json$/, judgeSuffix));
-            if (await Bun.file(judgePath).exists()) continue;
-            const record = (await Bun.file(join(dir, file)).json()) as RunRecord;
-            const task = tasks.get(record.task);
-            if (!task) continue;
-            process.stdout.write(`judge ${arm.name}/${file} ... `);
-            try {
-                const verdict = await judgeRun(connection, task, record);
-                await Bun.write(judgePath, `${JSON.stringify({ judge: connection.model, ...verdict }, null, 2)}\n`);
-                const total = Object.values(verdict.scores).reduce((sum, value) => sum + value, 0) * 1.25;
-                console.log(`${total.toFixed(0)}/100`);
-            } catch (error) {
-                console.log(`failed: ${error instanceof Error ? error.message : String(error)}`);
-            }
+    const identity: JudgeIdentity = { provider: connection.provider, model: connection.model, ...(tag ? { tag } : {}), prompt_digest: promptDigest() };
+
+    const manifestPath = join(root, "manifest.json");
+    const manifest = (await Bun.file(manifestPath).exists()) ? await readManifest(manifestPath) : undefined;
+    const differences = manifestDifferences(manifest, identity);
+    if (differences.length > 0) {
+        if (!process.argv.includes("--exploratory")) {
+            console.error(`${differences.join("; ")}. Pass --exploratory to judge outside the manifest ${manifestPath}.`);
+            process.exit(1);
         }
+        console.warn(`exploratory judge: ${differences.join("; ")}`);
     }
+
+    const tasks = new Map((await loadTasks()).map((task) => [task.id, task]));
+    const counts = await judgeCampaign({ root, tasks, identity, judge: (task, record) => judgeRun(connection, task, record) });
+    console.log(`judged ${counts.judged}, failed ${counts.failed}, skipped ${counts.skipped} (verdict present)`);
 }

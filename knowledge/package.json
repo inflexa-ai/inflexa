@@ -17,8 +17,11 @@
         "typecheck": "tsc --noEmit",
         "templates:test": "bun src/build/template-tests.ts",
         "eval:simulate": "bun eval/src/simulate.ts",
+        "eval:freeze": "bun eval/src/freeze.ts",
         "eval:run": "bun eval/src/run.ts",
-        "eval:report": "bun eval/src/report.ts"
+        "eval:run-full": "bun eval/src/run-full.ts",
+        "eval:report": "bun eval/src/report.ts",
+        "eval:calibrate": "bun eval/src/calibrate.ts"
     },
     "dependencies": {
         "pg": "^8.16.0",
