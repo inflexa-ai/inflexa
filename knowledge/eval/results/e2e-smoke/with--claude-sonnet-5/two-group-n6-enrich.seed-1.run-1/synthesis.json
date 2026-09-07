@@ -1,0 +1,185 @@
+{
+  "runId": "619852b4-1723-48f1-b3fe-f19dbee5d2d9",
+  "overview": "A 12-sample (6 control/6 treated) bulk RNA-seq DESeq2 + fgsea pipeline identifies 875 differentially expressed genes and a highly concordant Hallmark/Reactome enrichment signature — inflammatory/interferon/cytokine pathways up, oxidative phosphorylation and mitochondrial pathways down — anchored by a massive, interferon-axis-consistent induction of IL15RA and a coincident p53/CDKN2B-SASP senescence signal. The dominant pattern is a well-established immunometabolic/inflammaging transcriptional program rather than a novel biological discovery, and its clinical meaning is unresolved because the dataset carries no disease, treatment, tissue, or organism-confirming metadata beyond \"human,\" \"control,\" and \"treated.\"",
+  "conclusions": "The strongest evidence this run produces is methodological, not biological: two independently curated pathway databases (Hallmark and Reactome), scored against the same ranked gene list but with different set definitions and different granularities, converge on the same direction for inflammatory/interferon signaling (up) and oxidative phosphorylation/mitochondrial function (down), with a Jaccard overlap of 0.56 on the strongest leading-edge pair. That concordance is reassuring given that 63.8% of the tested gene identifiers are non-HGNC placeholder symbols that cannot be biologically interpreted at all — it indicates the ~36% of genes that do carry real symbols (including IL15RA, UQCRC2, CDKN2B) reflect genuine, coherent transcriptional biology rather than statistical noise riding on a corrupted identifier space.\n\nThe immune-activation/OXPHOS-suppression axis itself is textbook immunometabolism, not new biology: it is the same transcriptional signature reported for LPS/IFN-γ-activated macrophages and dendritic cells, for chronic inflammatory disease tissue (rheumatoid arthritis synovium), and — most tellingly — for normal human aging across dozens of tissues in pan-tissue transcriptomic studies. That last point matters: because this exact directional pattern is essentially treatment-agnostic in the literature, its presence here confirms an activated-inflammatory, mitochondrially-suppressed state but cannot by itself distinguish an acute stimulus, a chronic disease process, an immunotherapy effect, or an aging/senescence-driven process. Bulk RNA-seq also cannot establish whether the OXPHOS-down and inflammation-up signals arise in the same cells or in different co-resident cell populations.\n\nIL15RA — the single most significant, largest-effect DE gene in the dataset (~87-fold up) — is the most actionable-looking but also the most ambiguous result. The IL-15/IL-15Rα trans-presentation axis is a clinically validated immunostimulatory target with an FDA-approved agonist (nogapendekin alfa inbakicept / N-803 / ANKTIVA, approved for BCG-unresponsive bladder cancer) and multiple active clinical trials in oncology and HIV. IL15RA is also a well-documented interferon-γ/IRF1-inducible gene in autoimmune and inflammatory RNA-seq datasets. Both explanations predict exactly what is observed: a massive, near-binary induction of this one transcript. Without knowing whether \"treated\" means administration of an IL-15Rα-based biologic or an endogenous inflammatory/interferon stimulus, this result cannot be classified as either a novel disease signature or a trivial confirmation of drug pharmacodynamics — this ambiguity is the single most important open question this analysis raises for the requester to resolve before any biological claim is finalized.\n\nThe p53/CDKN2B upregulation paired with Reactome's SASP pathway enrichment adds a partially discordant thread rather than a clean confirmation of one senescence model: mitochondrial-dysfunction-induced senescence (MiDAS) is documented to have an attenuated IL-1-dependent inflammatory arm, yet this dataset shows strong IL-1 family and complement signaling alongside the p53/CDKN2B signal. That argues the senescence-associated program here more likely co-occurs with, rather than is causally driven purely by, the dominant NF-κB/interferon inflammatory response — two literature-documented but mechanistically distinct programs converging on the same direction. None of these findings currently clear discovery/biomarker-candidate stage for this specific, context-free dataset; the IL-15/IL15RA axis is the only one with an existing clinical/approved-drug anchor, and even that anchor cannot be applied here without confirming what \"treated\" actually means.",
+  "findings": [
+    {
+      "stepId": "T1S2",
+      "title": "IL15RA is the single strongest differentially expressed gene, induced ~87-fold in treated vs. control",
+      "description": "Among 875 genes significant at padj<0.05, IL15RA (IL-15 receptor alpha) is the top hit by p-value and among the largest effect sizes: apeglm-shrunken log2FC = 6.45 (padj = 3.9e-49), i.e. roughly 87-fold up in treated relative to control.",
+      "confidence": "medium",
+      "noveltyStatus": "novel",
+      "literatureInterpretation": "IL15RA's core biology (interferon-γ/IRF1-inducible trans-presentation receptor driving NK/CD8 T-cell activation) is well established, and its upregulation in interferon-driven autoimmune/inflammatory RNA-seq datasets has precedent. What is not commonly reported is IL15RA appearing as the single strongest genome-wide DE hit by a wide margin — the magnitude and specificity are more consistent with a discrete, potent immune-activating stimulus (endogenous strong IFN signaling, or direct administration of an IL-15/IL-15Rα-based agonist, a clinically approved drug class) than a subtle disease-state shift. The treatment/condition identity is not available in this dataset's metadata, so this result cannot yet be attributed to either mechanism.",
+      "references": [
+        {
+          "pmid": "34893528",
+          "citation": "Kim et al. 2022, J Immunol",
+          "relevance": "Shows IFN-γ and type I IFN induce IL-15/IL-15Rα trans-presentation via IRF1 in epithelial cells, activating NK cells — the mechanistic explanation for a large, specific IL15RA induction under interferon-driven immune activation.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "25879761",
+          "citation": "Santos Savio et al. 2015, BMC Musculoskelet Disord",
+          "relevance": "Elevated IL-15Rα in rheumatoid arthritis synovial fluid correlates with disease activity, establishing precedent for IL15RA as a chronic-inflammation biomarker outside oncology.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "36738683",
+          "citation": "Wu et al. 2023, Int Immunopharmacol",
+          "relevance": "Direct RNA-seq precedent: IL15RA is among interferon-signature genes upregulated in SLE CD4+ T cells, though not as the top hit of an unbiased screen.",
+          "concordance": "extends"
+        },
+        {
+          "pmid": "40956664",
+          "citation": "Chang et al. 2026, J Urol",
+          "relevance": "36-month follow-up confirming FDA approval and durable efficacy of N-803/ANKTIVA (an IL-15/IL-15Rα-Fc superagonist) for bladder cancer, establishing the IL-15Rα axis as a clinically validated, druggable target class.",
+          "concordance": "contextualizes"
+        },
+        {
+          "pmid": "29628312",
+          "citation": "Wrangle et al. 2018, Lancet Oncol",
+          "relevance": "Phase 1b trial of ALT-803 (the same IL-15 superagonist) combined with nivolumab in NSCLC, illustrating the axis is actively used as a therapeutic agonist in trials — relevant to distinguishing endogenous biology from a drug-exposure explanation for this result.",
+          "concordance": "contextualizes"
+        }
+      ],
+      "translationalRelevance": {
+        "stage": "biomarker-candidate",
+        "actionType": "pharmacodynamic-biomarker",
+        "rationale": "IL15RA transcript induction is exactly the kind of readout used to monitor engagement of clinically approved IL-15/IL-15Rα agonists (e.g., N-803/ANKTIVA), but with treatment identity unconfirmed in this dataset this could equally reflect endogenous interferon-driven immune activation rather than drug pharmacodynamics."
+      }
+    },
+    {
+      "stepId": "T2S1",
+      "title": "Concordant Hallmark and Reactome enrichment defines an immune-activation / OXPHOS-suppression transcriptional program",
+      "description": "Inflammatory, interferon, and cytokine/interleukin signaling pathways are strongly and consistently enriched as upregulated, while oxidative phosphorylation and mitochondrial protein import/degradation pathways are strongly enriched as downregulated, independently in both the Hallmark and Reactome collections, with the top matched pair (HALLMARK_OXIDATIVE_PHOSPHORYLATION vs. Reactome respiratory electron transport) sharing 49 leading-edge genes (Jaccard 0.56, both NES negative).",
+      "confidence": "medium",
+      "noveltyStatus": "confirmed",
+      "literatureInterpretation": "This is a well-characterized immunometabolic reprogramming signature: activated innate and adaptive immune responses (via NF-κB and IFN-γ/STAT1 signaling) are mechanistically coupled to suppression of oxidative phosphorylation, documented from acute macrophage/dendritic cell activation through chronic inflammatory disease tissue to normal human aging across dozens of tissues. The cross-collection statistical concordance here corroborates that the analysis captured a real signal, but the pattern itself is not disease- or treatment-specific in the literature and cannot discriminate among acute stimulus, chronic inflammatory disease, immunotherapy response, or aging/senescence as the underlying cause.",
+      "references": [
+        {
+          "pmid": "26694970",
+          "citation": "O'Neill & Pearce 2016, J Exp Med",
+          "relevance": "Foundational review establishing that innate immune activation drives profound metabolic reprogramming away from oxidative metabolism — the general mechanistic basis for the observed pathway direction.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "29463472",
+          "citation": "Wang et al. 2018, EBioMedicine",
+          "relevance": "Shows IFN-γ specifically drives a glycolysis-up/OXPHOS-down metabolic switch in M1 macrophages to sustain inflammatory activity, directly paralleling the interferon-up/OXPHOS-down pairing seen here.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "27732846",
+          "citation": "Van den Bossche et al. 2016, Cell Rep",
+          "relevance": "Shows inflammatory macrophage activation itself causes OXPHOS inhibition, indicating OXPHOS suppression is intrinsic to the inflammatory state rather than a coincidental co-occurrence.",
+          "concordance": "extends"
+        },
+        {
+          "pmid": "40295347",
+          "citation": "Arif et al. 2025, GeroScience",
+          "relevance": "Pan-tissue human aging transcriptomic analysis across 40 tissues shows the identical bidirectional axis (inflammation up / OXPHOS down), demonstrating the pattern is generic and treatment-agnostic rather than diagnostic of a specific condition.",
+          "concordance": "contextualizes"
+        }
+      ]
+    },
+    {
+      "stepId": "T2S1",
+      "title": "p53/CDKN2B upregulation coincides with SASP pathway enrichment but shows an atypical strong IL-1 component",
+      "description": "CDKN2B is among the top DE genes (log2FC ~2.9, padj 5.5e-26), HALLMARK_P53_PATHWAY is significantly enriched (NES 1.80), and Reactome's Senescence-Associated Secretory Phenotype (SASP) pathway is independently enriched (NES 2.12) alongside strong Interleukin-1 family signaling (NES 2.33) and complement activation (NES 1.60).",
+      "confidence": "medium",
+      "noveltyStatus": "partially_confirmed",
+      "literatureInterpretation": "Mitochondrial dysfunction is a documented trigger of p53-dependent senescence (via AMPK/NAD+ sensing) and, through ROS-JNK retrograde signaling and mtDNA release activating cGAS-STING, of the SASP — a plausible mechanistic bridge given the concurrent OXPHOS suppression in this dataset. However, the canonical mitochondrial-dysfunction-associated senescence phenotype (MiDAS) is reported to have an attenuated IL-1-dependent inflammatory arm, whereas this dataset shows strong IL-1 family and complement signaling. This suggests the observed senescence-associated signal is not a pure MiDAS phenotype and more likely co-occurs with, rather than is solely caused by, the dominant NF-κB/interferon inflammatory program identified separately.",
+      "references": [
+        {
+          "pmid": "26686024",
+          "citation": "Wiley et al. 2016, Cell Metab",
+          "relevance": "Defines MiDAS: mitochondrial dysfunction triggers AMPK-mediated p53 activation and senescence with an IL-1-attenuated SASP, providing the mechanistic link to CDKN2B/p53 activation but also the basis for the discordance noted (strong IL-1 signal here vs. attenuated IL-1 in classic MiDAS).",
+          "concordance": "extends"
+        },
+        {
+          "pmid": "32001510",
+          "citation": "Vizioli et al. 2020, Genes Dev",
+          "relevance": "Shows loss of nuclear-encoded OXPHOS gene expression triggers ROS-JNK retrograde signaling and cGAS-STING-driven SASP, a direct mechanistic bridge between the OXPHOS-down and SASP-up signals observed together in this dataset.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "37821702",
+          "citation": "Victorelli et al. 2023, Nature",
+          "relevance": "Demonstrates mtDNA release via mitochondrial outer-membrane permeabilization activates cGAS-STING as a major SASP driver, reinforcing the mitochondria-to-inflammation coupling relevant to the CDKN2B/SASP co-occurrence.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "40948769",
+          "citation": "Huang et al. 2025, Front Immunol",
+          "relevance": "Independent bulk RNA-seq disease study finding mitochondrial-dysfunction genes, p53/p16-family senescence markers, and SASP factors co-clustering as a coordinated module, providing precedent for this same combined signature in an unrelated dataset.",
+          "concordance": "extends"
+        }
+      ]
+    }
+  ],
+  "themes": [
+    {
+      "name": "A canonical immune-activation / OXPHOS-suppression program, not novel biology, dominates the treated-vs-control signal",
+      "findings": [
+        {
+          "stepId": "T1S2",
+          "title": "IL15RA is the single strongest differentially expressed gene, induced ~87-fold in treated vs. control"
+        },
+        {
+          "stepId": "T2S1",
+          "title": "Concordant Hallmark and Reactome enrichment defines an immune-activation / OXPHOS-suppression transcriptional program"
+        }
+      ],
+      "narrative": "IL15RA's massive, specific induction is a gene-level instance of the same interferon/NF-κB-driven immune activation that the pathway-level Hallmark/Reactome concordance captures at the systems level — both point to a coherent inflammatory-activation state accompanied by suppressed oxidative phosphorylation. This exact directional pattern is well documented across acute immune activation, chronic inflammatory disease, and normal aging, so its presence confirms an activated state without identifying which of those contexts (or an IL-15-agonist drug exposure) actually produced it. The convergence of two independently curated pathway databases and a specific, mechanistically grounded top DE gene gives confidence the signal is real, even though the unconfirmed treatment/disease identity means the biological narrative remains provisional."
+    }
+  ],
+  "limitations": [
+    "63.8% of the 9,782 tested gene identifiers are non-HGNC placeholder symbols (GENE#####) unresolvable via org.Hs.eg.db; every gene-level and leading-edge claim above is restricted to the ~36% mappable fraction, and no biological interpretation is possible for the majority of the tested transcriptome.",
+    "Treatment, disease, and tissue identity are entirely unconfirmed in the input metadata (only \"human,\" \"control,\" and \"treated\" labels exist), so the IL15RA and immunometabolic findings cannot be attributed to a specific stimulus, drug, or disease process — including whether the IL-15/IL-15Rα axis result reflects direct agonist administration versus endogenous interferon signaling.",
+    "Bulk RNA-seq cannot deconvolve whether the inflammation-up, OXPHOS-down, and SASP-up signals originate in the same cells or in distinct co-resident cell populations (e.g., infiltrating activated immune cells vs. a separate senescent stromal/epithelial compartment); single-cell or deconvolution analysis would be needed to resolve this.",
+    "The shallow control sample (sample_01, library size 0.26x the cohort median) was retained in the DESeq2 model per upstream QC judgment and was down-weighted by its own small size factor, but no leave-one-out sensitivity re-run was performed to confirm the top DE genes or GSEA results are insensitive to its inclusion.",
+    "GSEA robustness rests on one ranking metric (Wald statistic) and one algorithm (fgseaMultilevel) with cross-collection (Hallmark/Reactome) agreement as the only robustness check; no alternative ranking metric or ORA-style enrichment test was run to independently confirm the significant-pathway list."
+  ],
+  "keyReferences": [
+    {
+      "pmid": "34893528",
+      "citation": "Kim et al. 2022, J Immunol",
+      "description": "Establishes IFN-γ/type I IFN-driven induction of IL-15/IL-15Rα trans-presentation, the key mechanistic candidate for the IL15RA finding."
+    },
+    {
+      "pmid": "40956664",
+      "citation": "Chang et al. 2026, J Urol",
+      "description": "Confirms FDA approval and durable clinical efficacy of the IL-15/IL-15Rα agonist N-803 (ANKTIVA), establishing the axis as a validated drug target class relevant to interpreting the IL15RA result."
+    },
+    {
+      "pmid": "25879761",
+      "citation": "Santos Savio et al. 2015, BMC Musculoskelet Disord",
+      "description": "Precedent for IL-15Rα as a chronic-inflammation biomarker (rheumatoid arthritis) outside oncology contexts."
+    },
+    {
+      "pmid": "26694970",
+      "citation": "O'Neill & Pearce 2016, J Exp Med",
+      "description": "Foundational immunometabolism review explaining the mechanistic coupling of immune activation to suppressed oxidative phosphorylation."
+    },
+    {
+      "pmid": "29463472",
+      "citation": "Wang et al. 2018, EBioMedicine",
+      "description": "Direct evidence that IFN-γ drives the glycolysis/OXPHOS metabolic switch in macrophages, mirroring this dataset's interferon-up/OXPHOS-down pairing."
+    },
+    {
+      "pmid": "40295347",
+      "citation": "Arif et al. 2025, GeroScience",
+      "description": "Pan-tissue human aging transcriptomics showing the same inflammation-up/OXPHOS-down axis, demonstrating the pattern's generality and limiting its diagnostic specificity."
+    },
+    {
+      "pmid": "26686024",
+      "citation": "Wiley et al. 2016, Cell Metab",
+      "description": "Defines mitochondrial-dysfunction-associated senescence (MiDAS) and its p53 dependency, plus the atypical IL-1 SASP profile relevant to the CDKN2B/SASP discordance noted."
+    },
+    {
+      "pmid": "32001510",
+      "citation": "Vizioli et al. 2020, Genes Dev",
+      "description": "Mechanistic bridge from OXPHOS gene loss to SASP via retrograde signaling, directly relevant to the co-occurring OXPHOS-down and SASP-up signals."
+    }
+  ]
+}

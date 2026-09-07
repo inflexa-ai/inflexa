@@ -48,6 +48,47 @@ mkdir -p node_modules/@inflexa-ai && ln -s ../../../harness node_modules/@inflex
 The harness must be built (`cd ../harness && bun run build`) before the link
 resolves its types.
 
+### The end-to-end runner
+
+`eval:run-full` runs one task through the whole product path: the input
+staging, the data profiler, the planner, the sandbox steps, and the run
+synthesis. It boots the harness in the eval process, with no CLI. `eval:run`
+stays the cheap plan-only run.
+
+```bash
+bun eval/src/run-full.ts --campaign e2e-smoke --condition with --model claude-sonnet-5 --provider cliproxy \
+    --tasks two-group-n6-enrich --runs 1 --pg-url postgres://inflexa:inflexa@127.0.0.1:8432/eval_e2e_smoke \
+    --embedding http://127.0.0.1:8899/v1 --embedding-dimensions 384
+```
+
+These services must be up before a run:
+
+- Postgres with pgvector on 127.0.0.1:8432. The runner makes one database
+  for each campaign, `eval_<campaign>`, because DBOS owns the `dbos` schema
+  of the database that it launches in.
+- A Docker or Podman engine with the sandbox image present. The harness
+  never pulls. Pass `--engine-socket` for a socket that is not the default.
+- The package store with the catalog farm, `<store>/farms/catalog/inflexa.lock`,
+  and the reference store. The defaults are the two stores under
+  `~/.local/share/inflexa`.
+- An OpenAI-shaped embeddings endpoint on `--embedding`. On this machine a
+  local `llama-server --embeddings` with the bge-small model is sufficient.
+  Give its key with `--embedding-key-env`. The bge-small model holds 512
+  tokens, and a bare server refuses a longer input with an HTTP error. The
+  harness contains that failure, and the search index then lacks the chunk.
+  The CLI cuts such an input before the call, but the eval does not.
+- The knowledge service on 127.0.0.1:8790 for the `with` arm.
+- The model connection, for example cliproxy.
+
+The attempt directory is
+`eval/results/<campaign>/<condition>--<model>/<task>.seed-<s>.run-<n>/`. It
+holds `record.json`, `calls.jsonl`, `usage.jsonl`, `events.jsonl`,
+`profile.json`, `plan.json`, the transcripts under `steps/`, the copied run
+files, and the workspace. Run one attempt at a time on this machine: the
+runtime, Postgres, the engine, and one sandbox for each step share the
+memory. The runner is serial by design. Do not start a second runner or a
+CLI runtime on the same campaign database.
+
 ## Rules of the tree
 
 - A rule cites a source id from `kb/sources/` only. Never write a DOI, a PMID,
@@ -63,12 +104,27 @@ resolves its types.
 - The rule with more conditions wins a step type. A broad default has one
   condition. A narrower rule adds conditions. A tie breaks by strength, then
   by id. Give a rule the conditions that make it fire only in its situation.
+- A parameter of a rule that names a method belongs to that method. The
+  engine gives the parameter to a step only when the step selects that
+  method. A rule with no method scopes a method-specific parameter with
+  `methods`. A parameter with no scope on a rule with no method is generic.
+- A rule for a step that depends on the inferential test puts a condition
+  on `inferential_method`. The engine sets that field from the method of the
+  inferential step, after the first pass. A caller cannot set it, and the
+  field is not a Situation slot.
 - A flag rule that removes inference (`outcome: descriptive_only` or a stop)
   and names a method makes that method the only method of the step. The
   other methods of the step are forbidden, not alternatives.
 - A method with two or more templates lists them in order. The engine takes
   the first template whose `applicability` holds in the situation, thus a
   template without conditions comes last.
+- A template that runs a test between the groups declares `honors`: the
+  design requirements that its script realizes, from `pairing`,
+  `blocking_factor`, `covariates`, and `batch`. An empty list says that the
+  script honors none. A template with no `honors` key is not subject to the
+  design requirements. The engine skips a template whose `honors` lacks a
+  requirement of the situation. The gate refuses a group test with no
+  declaration.
 - The golden test `src/service/tree.test.ts` encodes the intended winner of
   each evaluation situation and of the edge situations. A rule that changes
   a winner fails there first. Add a case when you add a situation.
@@ -76,10 +132,19 @@ resolves its types.
   `{{#unless slot}}`. Every adaptable slot lands on a line that ends with
   `# [adaptable: slot]`. A pinned slot carries a default and a source.
 - A template is R (`body.R`, run with `Rscript`) or Python (`body.py`, run
-  with `python3`). A Python template attaches to the same method as its R
-  mirror, after the R templates, with the same applicability. The caller
-  selects the language with a preference on the recommend request. A
-  preference never changes a rule or a method.
+  with `python3`). A Python template that runs the same test attaches to the
+  same method as its R mirror, after the R templates, with the same
+  applicability. The caller selects the language with a preference on the
+  recommend request. A preference never changes a rule.
+- A mirror that runs a different test attaches to its own method, and it
+  names the method of record in `substitute_for`. The method of record lists
+  that mirror after its R templates. When the preference selects the mirror,
+  the step names the substitute method, and `substitution.for` records the
+  method of record.
+- A method with no template of its own, for example a filter method, lists
+  the templates that realize its step. A method with its own template that
+  lists a template of a different method asks for a substitute. The gate
+  refuses that template when it has no `substitute_for`.
 - A published snapshot is never edited. A correction is a new snapshot. After
   the first published snapshot, a rule is never deleted: it becomes deprecated
   with a `replaced_by` link, because a claim id in a decision record must

@@ -1,0 +1,202 @@
+{
+  "status": "completed",
+  "error": null,
+  "startedAt": "2026-09-07T09:06:55.436Z",
+  "completedAt": "2026-09-07T09:08:04.031Z",
+  "result": {
+    "domain": "transcriptomics",
+    "groups": [
+      {
+        "id": "bulk-rna-seq-raw-count-matrix",
+        "name": "Bulk RNA-seq raw count matrix",
+        "role": "data",
+        "count": 1,
+        "formats": [
+          {
+            "count": 1,
+            "format": "csv"
+          }
+        ],
+        "subtype": "bulk-rna-seq raw counts",
+        "category": "expression-matrix",
+        "fileCount": 1,
+        "totalBytes": 570381,
+        "description": "A single CSV of raw (integer-valued, unnormalized) RNA-seq counts: 5702 genes (rows) by 12 samples (sample_01..sample_12, columns), gene symbols as row identifiers. This is the primary measurement table for differential expression analysis.",
+        "displayPattern": "data/inputs/local/counts.csv",
+        "memberRepresents": "The gene x sample raw read-count matrix for the entire experiment (one row per gene, one column per sample)"
+      },
+      {
+        "id": "sample-sheet",
+        "name": "Sample sheet",
+        "role": "metadata",
+        "count": 1,
+        "formats": [
+          {
+            "count": 1,
+            "format": "csv"
+          }
+        ],
+        "category": "sample-annotation",
+        "fileCount": 1,
+        "totalBytes": 285,
+        "description": "A 12-row sample sheet with columns `sample` (sample_01..sample_12, matching the count matrix's column names exactly) and `condition` (control/treated, 6 vs 6). This is the design table that defines the two-group comparison.",
+        "displayPattern": "data/inputs/local/metadata.csv",
+        "memberRepresents": "The full sample-to-condition mapping for the experiment (one row per sample)"
+      },
+      {
+        "id": "gene-length-reference-table",
+        "name": "Gene length reference table",
+        "role": "reference",
+        "count": 1,
+        "formats": [
+          {
+            "count": 1,
+            "format": "csv"
+          }
+        ],
+        "category": "reference-data",
+        "fileCount": 1,
+        "totalBytes": 184945,
+        "description": "A two-column lookup table (gene, length) for 12000 genes, a superset of the genes in the count matrix. Consumed, not produced, by this analysis — used to convert raw counts to length-normalized units (e.g. TPM/FPKM) if needed downstream.",
+        "categoryReason": "A static gene-id-to-length lookup table the analysis consumes for normalization; it is not itself a measurement, so reference-data (role reference) fits better than sample-annotation or expression-matrix.",
+        "displayPattern": "data/inputs/local/gene_lengths.csv",
+        "memberRepresents": "The transcript/gene length in bp for one gene, used for length-normalization"
+      }
+    ],
+    "probes": [
+      {
+        "probe": "subject",
+        "reason": "metadata.csv has only `sample` and `condition` columns; each sample_XX appears to be an independent biological replicate with no subject-level identifier or repeated-measures structure.",
+        "outcome": "not-found",
+        "searched": [
+          "data/inputs/local/metadata.csv"
+        ]
+      },
+      {
+        "probe": "sample",
+        "outcome": "found",
+        "dimension": "condition (control vs treated)"
+      },
+      {
+        "probe": "cohort-arm",
+        "outcome": "found",
+        "dimension": "condition (control vs treated)"
+      },
+      {
+        "probe": "timepoint",
+        "reason": "No date, visit, day, or cycle column in metadata.csv; only sample id and condition.",
+        "outcome": "not-found",
+        "searched": [
+          "data/inputs/local/metadata.csv"
+        ]
+      },
+      {
+        "probe": "batch",
+        "reason": "No plate, lane, run, or centre column in metadata.csv; only sample id and condition.",
+        "outcome": "not-found",
+        "searched": [
+          "data/inputs/local/metadata.csv"
+        ]
+      }
+    ],
+    "recipe": [
+      {
+        "op": "group",
+        "paths": [
+          "data/inputs/local/counts.csv"
+        ],
+        "groupIds": [
+          "bulk-rna-seq-raw-count-matrix"
+        ],
+        "templates": []
+      },
+      {
+        "op": "group",
+        "paths": [
+          "data/inputs/local/metadata.csv"
+        ],
+        "groupIds": [
+          "sample-sheet"
+        ],
+        "templates": []
+      },
+      {
+        "op": "group",
+        "paths": [
+          "data/inputs/local/gene_lengths.csv"
+        ],
+        "groupIds": [
+          "gene-length-reference-table"
+        ],
+        "templates": []
+      }
+    ],
+    "tissue": null,
+    "caveats": [
+      "Organism is not stated anywhere in the inputs; identification as human rests solely on HGNC-style all-caps gene symbol casing, a weak indirect signal — confirm before selecting species-specific annotation/pathway references.",
+      "Normalization state of counts.csv is raw, unnormalized integer read counts (values include small integers alongside larger ones, no evidence of library-size or length scaling) — appropriate for count-based DE tools (e.g. DESeq2/edgeR) but not for direct cross-sample comparison without normalization.",
+      "No batch, timepoint, pairing, or subject-level metadata exists beyond sample id and condition — the design supports only a simple two-group comparison, not blocking or repeated-measures models.",
+      "gene_lengths.csv covers 12000 genes versus roughly 5702 genes in counts.csv; the two were not cross-checked for full gene-id overlap here, so a downstream step doing length-normalization should verify how many count-matrix genes actually have a matching length entry.",
+      "Gene set size (~5702 genes) is small relative to a typical whole-transcriptome bulk RNA-seq matrix (~15,000-20,000+ detected genes), consistent with this being a reduced/smoke-test dataset rather than a full production count matrix."
+    ],
+    "subtype": "bulk-rna-seq",
+    "summary": "The dataset is a minimal bulk RNA-seq experiment ready for a two-group differential expression analysis: a raw gene x sample count matrix (5702 genes x 12 samples), a matching 12-row sample sheet assigning each sample to 'control' (n=6) or 'treated' (n=6), and a gene-length reference table (12000 genes) for length-normalization. There are no documents, READMEs, or accessions in the input tree to corroborate organism, tissue, or study context — all three files are local CSVs with no accompanying metadata beyond the sample sheet itself. Organism is inferred only weakly (from gene symbol casing) as Homo sapiens; tissue and cell type are not stated and are left null. The design is a clean, balanced two-arm case/control comparison with no batch, timepoint, or pairing structure evidenced, and the small gene count suggests this is a reduced or smoke-test dataset rather than a full-scale transcriptome-wide study — appropriate for exercising a DE + downstream enrichment pipeline end-to-end, but not for drawing biological conclusions about a real tissue/condition without further context.",
+    "cellType": null,
+    "organism": {
+      "notes": "No explicit organism label anywhere in the inputs (no README/metadata organism column). Gene symbols (ABCA1, ABCB8, ACAA2, ACADL, ...) are in the all-caps HGNC convention typically used for human, as opposed to the Title-case MGI convention used for mouse. This is only a weak, indirect signal — orthologous genes share symbols across species — so confidence is low and this should be verified before choosing a species-specific reference/annotation.",
+      "source": "inferred",
+      "taxonId": "9606",
+      "confidence": "low",
+      "scientificName": "Homo sapiens"
+    },
+    "condition": null,
+    "partition": {
+      "groups": 3,
+      "keptFiles": 3,
+      "quarantine": {
+        "count": 0,
+        "sample": [],
+        "reasons": [],
+        "totalBytes": 0
+      },
+      "keptMembers": 3,
+      "scannedFiles": 3,
+      "unclassifiedFiles": 0,
+      "unclassifiedMembers": 0
+    },
+    "accessions": [],
+    "dimensions": [
+      {
+        "label": "condition (control vs treated)",
+        "scope": "biological",
+        "category": "cohort-arm",
+        "description": "Design-assigned two-arm grouping: 6 samples labeled 'control', 6 labeled 'treated' in metadata.csv. This is the primary comparison axis for differential expression.",
+        "observations": [
+          {
+            "kind": "column",
+            "note": "Balanced 6 vs 6 split across sample_01..sample_12",
+            "path": "data/inputs/local/metadata.csv",
+            "column": "condition",
+            "exampleValues": [
+              "control",
+              "treated"
+            ],
+            "distinctValues": 2
+          }
+        ]
+      }
+    ],
+    "profiledAt": "2026-09-07T09:08:03.907Z",
+    "inputSignature": {
+      "count": 3,
+      "digest": "abda4e0390969b730b8116c381d28e76b2263262453048cd24738ca50a438ec0"
+    },
+    "experimentalDesign": "Simple two-group case/control bulk RNA-seq design: 12 samples total, balanced 6 control vs 6 treated, one sample per condition-replicate (no stated pairing, batch, or timepoint structure). Sized and shaped like a minimal/smoke-test dataset (5702 genes) rather than a full transcriptome-wide production dataset, suitable for a straightforward two-group differential expression comparison (e.g. control vs treated) followed by downstream enrichment analysis."
+  },
+  "workflowId": "dataprofile:eval-e2e-smoke-with-two-group-n6-enrich-s1-1:add81b60-459b-4836-b69f-73ed3a3e5833",
+  "seedInputFileIds": [
+    "3nhhddlxj87km",
+    "y6p3tvpd06ed",
+    "17euvfks1ko8i"
+  ]
+}

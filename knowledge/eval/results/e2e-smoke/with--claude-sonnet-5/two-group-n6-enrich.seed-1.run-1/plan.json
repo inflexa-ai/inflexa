@@ -1,0 +1,188 @@
+{
+  "steps": [
+    {
+      "id": "T1S1",
+      "name": "Sample structure QC and low-depth sample assessment",
+      "agent": "bulk-transcriptomics-agent",
+      "track": "T1",
+      "status": "pending",
+      "maxSteps": 200,
+      "packages": [
+        "DESeq2",
+        "ggplot2",
+        "pheatmap"
+      ],
+      "question": "Among the 12 samples (6 control, 6 treated) in the raw count matrix, does the flagged shallow sample separate from its condition group on PCA/sample-distance structure, and what are its library size and detected-gene count relative to the other 11 samples?",
+      "grounding": {
+        "claims": [
+          "R-0033@40bf",
+          "R-0008@440d",
+          "R-0066@5d2d"
+        ],
+        "reason": "Sample structure QC (blind VST, PCA on top-500 variable genes, sample-distance heatmap, library-size table) per R-0033@40bf; low-depth sample kept/inspected/reported per R-0008@440d; count provenance verified per R-0066@5d2d before any model is fit.",
+        "status": "grounded",
+        "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+        "template": "tpl-qc-eda@1.0.0"
+      },
+      "resources": {
+        "cpu": 2,
+        "memoryGb": 4
+      },
+      "step_type": "qc_sample_structure",
+      "depends_on": [],
+      "description": "Loads the raw gene x sample count matrix and sample sheet, confirms values are integer raw counts (not TPM/FPKM), computes per-sample library size and detected-gene count, applies DESeq2's blind variance-stabilizing transform, runs PCA on the top 500 most-variable genes, and draws a sample-distance heatmap, all colored by condition. Flags the shallow sample explicitly with its metrics rather than dropping it silently; states a keep/exclude recommendation with reasoning for step T1S2 to act on.",
+      "acceptance_criteria": [
+        "Library size and detected-gene count reported for all 12 samples, with the shallow sample highlighted against the study median",
+        "PCA plot and sample-distance heatmap produced, colored by condition (control vs treated)",
+        "Explicit statement confirming counts.csv holds integer raw counts (not pre-normalized values)",
+        "A stated, reasoned recommendation on whether to keep or exclude the shallow sample, not a default removal"
+      ]
+    },
+    {
+      "id": "T1S2",
+      "name": "DESeq2 differential expression: treated vs control",
+      "agent": "bulk-transcriptomics-agent",
+      "track": "T1",
+      "status": "pending",
+      "maxSteps": 200,
+      "packages": [
+        "DESeq2",
+        "apeglm"
+      ],
+      "question": "Which genes are differentially expressed between treated (n=6) and control (n=6) samples, using DESeq2 with median-of-ratios normalization, a minimal low-count pre-filter, Wald test, and apeglm-shrunken log2 fold changes?",
+      "grounding": {
+        "claims": [
+          "R-0029@fa6d",
+          "R-0002@087b",
+          "R-0026@9ab1",
+          "R-0036@9786",
+          "R-0001@9a17",
+          "R-0039@e17a",
+          "R-0009@f54e",
+          "R-0083@12de",
+          "R-0010@91a5",
+          "R-0043@4f55"
+        ],
+        "reason": "DESeq2 Wald test with apeglm shrinkage is the grounded consensus method for a fixed two-group design with 6 replicates/group (R-0001@9a17); minimal pre-filter (R-0029@fa6d, R-0002@087b), explicit reference level and named contrast (R-0036@9786), median-of-ratios normalization inside the model (R-0026@9ab1), BH at alpha 0.05 with independent filtering (R-0010@91a5, R-0043@4f55).",
+        "status": "grounded",
+        "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+        "template": "tpl-deseq2-two-group@1.0.0"
+      },
+      "resources": {
+        "cpu": 2,
+        "memoryGb": 4
+      },
+      "step_type": "differential_expression",
+      "depends_on": [
+        "T1S1"
+      ],
+      "description": "Applies a minimal pre-filter (>=10 counts in >=6 samples, the smaller group size), fits DESeq2 with design ~condition and control set explicitly as the reference level, runs the Wald test for the treated_vs_control contrast, and shrinks log2 fold changes with apeglm. Reports the count-outlier NA policy (Cook's distance flags with <7 replicates per cell), the p-value histogram shape before BH adjustment, and selects DE genes by BH-adjusted p<0.05 with DESeq2's independent filtering left on (not by raw p-value or fold change alone). Carries forward the shallow-sample decision from T1S1; if kept, its down-weighting via the DESeq2 size factor is the expected and correct handling per the QC step's guidance.",
+      "acceptance_criteria": [
+        "Design formula and reference level (control) stated explicitly, contrast named as condition: treated vs control",
+        "Results table includes unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, raw p-value, and BH-adjusted p-value per gene",
+        "Number of genes tested after pre-filter and number of DE genes at padj<0.05 reported",
+        "MA plot and dispersion plot produced as fit diagnostics",
+        "P-value histogram inspected and its shape reported before trusting the BH adjustment",
+        "Count-outlier NA genes (if any) reported separately from independent-filtering NAs"
+      ]
+    },
+    {
+      "id": "T2S1",
+      "name": "Hallmark pathway GSEA on the treated vs control contrast",
+      "agent": "enrichment-agent",
+      "track": "T2",
+      "status": "pending",
+      "maxSteps": 200,
+      "packages": [
+        "fgsea",
+        "org.Hs.eg.db",
+        "data.table"
+      ],
+      "question": "Which MSigDB Hallmark pathways are enriched (up or down) between treated and control samples, based on the full ranked gene list from the DESeq2 treated-vs-control contrast?",
+      "grounding": {
+        "claims": [
+          "R-0107@976c",
+          "R-0048@500d",
+          "R-0165@e456",
+          "R-0101@06c8",
+          "R-0045@f652",
+          "R-0047@fd9d",
+          "R-0052@620a",
+          "R-0099@0a77",
+          "R-0108@409f",
+          "R-0105@c4a8"
+        ],
+        "reason": "fgsea preranked GSEA on the full ranked gene list against MSigDB Hallmark human (available in reference store) is the grounded default (R-0107@976c, R-0048@500d); Reactome named as the stated second collection (R-0165@e456); ranking statistic (Wald 'stat') chosen and stated per the disputed rule R-0108@409f; leading edge reported per R-0105@c4a8.",
+        "status": "grounded",
+        "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+        "template": "tpl-fgsea-preranked@1.0.0"
+      },
+      "resources": {
+        "cpu": 2,
+        "memoryGb": 4
+      },
+      "step_type": "enrichment",
+      "depends_on": [
+        "T1S2"
+      ],
+      "description": "Maps all tested gene symbols in the DESeq2 results table to Entrez IDs via org.Hs.eg.db, reporting the unmapped share. Ranks the full list of tested genes (not thresholded) by the DESeq2 Wald statistic and runs fgsea preranked GSEA against the MSigDB Hallmark human gene sets (50 sets, 2026.1 release, at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt), with gene-set size window 15-500 and BH-adjusted p-values. Collapses redundant significant pathways and reports leading-edge genes per significant Hallmark set. As a stated secondary collection, repeats the same preranked test against Reactome pathways (/mnt/refs/managed/reactome-pathways/current/ReactomePathways.gmt, filtered to Homo sapiens via ReactomePathways.txt) for cross-checking, reporting both collections' releases separately and not merging them.",
+      "acceptance_criteria": [
+        "Ranking metric (Wald statistic) stated explicitly; full tested-gene list used (no pre-threshold)",
+        "Gene identifier mapping share (mapped vs unmapped) to Entrez reported",
+        "Hallmark GSEA results table with NES, p-value, BH-adjusted p-value per pathway, gene set size window 15-500 applied",
+        "Reactome preranked GSEA run as a second, separately reported collection with its release stated",
+        "Leading-edge genes listed for each significant (padj<0.05) Hallmark and Reactome pathway",
+        "Redundant overlapping significant pathways collapsed to representative sets in the primary report, full table kept as supplement"
+      ]
+    },
+    {
+      "id": "T1S3",
+      "name": "Integrated DE + pathway report",
+      "agent": "bulk-transcriptomics-agent",
+      "track": "T1",
+      "status": "pending",
+      "maxSteps": 200,
+      "packages": [
+        "DESeq2",
+        "fgsea"
+      ],
+      "question": "What is the consolidated, reproducible summary of differentially expressed genes and enriched Hallmark/Reactome pathways between treated and control samples, including the handling of the shallow sample?",
+      "grounding": {
+        "claims": [
+          "R-0042@54e1",
+          "R-0085@c24d",
+          "R-0087@c53d",
+          "R-0041@059a",
+          "R-0051@01ca",
+          "R-0055@107a",
+          "R-0105@c4a8",
+          "R-0086@becf"
+        ],
+        "reason": "Report step assembles the reproducibility record, effect columns, and enrichment reporting fields per R-0041@059a, R-0051@01ca, R-0086@becf; not templated but every field is rule-sourced.",
+        "status": "grounded",
+        "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+        "template": "none"
+      },
+      "resources": {
+        "cpu": 1,
+        "memoryGb": 2
+      },
+      "step_type": "report",
+      "depends_on": [
+        "T1S2",
+        "T2S1"
+      ],
+      "description": "Assembles the QC findings (shallow-sample handling and rationale), the DESeq2 method/design/thresholds/diagnostics, the full DE gene table ranked by shrunken log2FoldChange, and the Hallmark/Reactome enrichment tables with leading-edge genes into one report. Includes a reproducibility record: R/Bioconductor package versions (DESeq2, apeglm, fgsea, org.Hs.eg.db), gene set collection versions (MSigDB Hallmark 2026.1, Reactome current release), random seed, and session info. States the enrichment-method-dependence caveat and, if applicable, the overlap/disagreement between Hallmark and Reactome hits.",
+      "acceptance_criteria": [
+        "Report states method, package versions, design formula, contrast, thresholds (padj<0.05), number of genes tested, number of DE genes",
+        "Report states the shallow sample's disposition (kept or excluded) and the reasoning from T1S1",
+        "Gene table ranked by shrunken log2FoldChange with unshrunken LFC, lfcSE, padj alongside",
+        "Pathway tables from both Hallmark and Reactome included with database version, ranking metric, universe, and size window stated",
+        "Full session info / reproducibility record included"
+      ]
+    }
+  ],
+  "title": "Treated vs control bulk RNA-seq DE + Hallmark GSEA",
+  "created_at": "2026-09-07T00:00:00Z",
+  "analytical_narrative": "12-sample (6 control / 6 treated) bulk RNA-seq raw count matrix, human, balanced two-group design, no batch/pairing structure, one flagged low-depth sample. Plan follows the grounded DESeq2 procedure: (1) sample-structure QC (blind VST, PCA, sample-distance heatmap, library-size/detected-gene table) to characterize the shallow sample without silently dropping it; (2) minimal low-count pre-filter; (3) DESeq2 model with condition as explicit factor (control = reference), median-of-ratios normalization inside the model; (4) Wald test with apeglm LFC shrinkage, count-outlier NA policy reported; (5) BH multiple testing at alpha 0.05 with independent filtering, p-value histogram inspected; (6) fgsea preranked GSEA on the Wald statistic against MSigDB Hallmark (2026.1, 50 human sets), with Reactome as a stated second collection; (7) integrated report with fit diagnostics, gene table (shrunken + unshrunken LFC), leading-edge genes, and full reproducibility record. Count provenance (quantifier/tool) is not stated in the profile, so step 2 verifies the values are integer raw counts before modeling per rule R-0066."
+}
