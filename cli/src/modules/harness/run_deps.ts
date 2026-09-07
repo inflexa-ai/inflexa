@@ -252,6 +252,10 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): CoreWorkflowDe
  * workflow observes the swap without re-registration. The body reads that member alone;
  * the other two ride along because the seam is one type. With no installed seam the field
  * is absent, which the harness reads as absence and never as an error.
+ *
+ * `knowledge` is the same client the step agents and the planner draw: the parent reads
+ * the template contract of a grounded step through it at dispatch and binds the plan
+ * settings to the render. Absent, the seed says the contract was not retrieved.
  */
 export function buildExecuteAnalysisDeps(
     comp: RunEngineComposition,
@@ -268,6 +272,7 @@ export function buildExecuteAnalysisDeps(
         bioKeys: comp.bioKeys,
         runCharge: createNoopRunCharge(),
         runAuthorizer,
+        ...(comp.knowledge ? { knowledge: comp.knowledge } : {}),
         provenance: provenanceSeam(),
         // The run-observation seam, injected beside the provenance one and sharing nothing with it.
         // Unlike the run emit this is NOT a swappable delegating handle: it binds no model and no

@@ -4,16 +4,21 @@ import { DATA_PROFILE_ORIENTATION_MAX_CHARS } from "../app/data-profile-orientat
 import type { DataProfileResult } from "../state/data-profile.js";
 import { AnalysisStepSchema } from "../schemas/workflow-state.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
+import { contractAnswer } from "../tools/knowledge/__fixtures__/fake-client.js";
 import {
+    MAX_TEMPLATE_SLOTS,
     MAX_UPSTREAM_ARTIFACTS,
     MAX_UPSTREAM_DEPS,
     STEP_NON_TASK_FIELDS,
     STEP_TASK_FIELDS,
+    TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS,
     UPSTREAM_SUMMARY_MAX_CHARS,
     composeStepBriefing,
     renderOrientation,
     renderTask,
+    renderTemplateContract,
     renderUpstream,
+    type TemplateBrief,
     type UpstreamHandoff,
 } from "./briefing.js";
 
@@ -35,6 +40,7 @@ function fullyPopulatedStep(): AnalysisStep {
             snapshot: "sha256:SENTINEL_SNAPSHOT",
             claims: ["SENTINEL_CLAIM"],
             template: "tpl-sentinel@1.0.0",
+            settings: [{ step: "differential_expression", name: "lfc_shrink", value: "apeglm", source: "doi:10.1093/bioinformatics/bty895" }],
             reason: "SENTINEL_REASON",
         },
         depends_on: [],
@@ -61,6 +67,29 @@ const WORKSPACE = {
     analysisId: "an-1",
     workingDir: "/an-1/runs/run-1/T1S2",
 } as const;
+
+/**
+ * The brief of the fake contract as the parent composes it: every parameter of
+ * the contract (the pinned `alpha` included, thus the renderer's own filter is
+ * what the tests prove), the inputs, one bound setting, and one unbound line.
+ */
+function brief(overrides: Partial<TemplateBrief> = {}): TemplateBrief {
+    const contract = contractAnswer();
+    return {
+        ref: "tpl-deseq2-two-group@1.0.0",
+        version_served: contract.version,
+        slots: contract.parameters,
+        inputs: contract.inputs ?? [],
+        bound: [{ name: "lfc_shrink", value: "apeglm", source: "doi:10.1093/bioinformatics/bty895" }],
+        unbound_settings: ["`alpha` = 0.05 (differential_expression): pinned by the template at the same value"],
+        ...overrides,
+    };
+}
+
+/** The names of the adaptable slots of the fake contract. */
+const ADAPTABLE_SLOTS = contractAnswer()
+    .parameters.filter((slot) => slot.adaptable)
+    .map((slot) => slot.name);
 
 // ── renderTask ───────────────────────────────────────────────────────
 
@@ -107,6 +136,87 @@ describe("renderTask", () => {
         for (const v of ["C1", "C2", "C3", "C4", "AC1", "AC2"]) {
             expect(prompt).toContain(v);
         }
+    });
+});
+
+// ── renderTemplateContract ───────────────────────────────────────────
+
+describe("renderTemplateContract", () => {
+    it("renders every adaptable slot by name and never the pinned one", () => {
+        const rendered = renderTemplateContract(brief());
+        expect(ADAPTABLE_SLOTS.length).toBeGreaterThan(0);
+        for (const name of ADAPTABLE_SLOTS) expect(rendered).toContain(`- \`${name}\` (`);
+        expect(rendered).not.toContain("- `alpha` (");
+    });
+
+    it("renders the permitted values, the pattern, the sourced default, and the required state", () => {
+        const rendered = renderTemplateContract(brief({ bound: [], unbound_settings: [] }));
+        // The enum of lfc_shrink, as JSON values.
+        expect(rendered).toContain('Permitted: "apeglm", "ashr", "none".');
+        // The pattern of the design slot.
+        expect(rendered).toContain("Pattern: `condition\\s*$`.");
+        // A default with its source.
+        expect(rendered).toContain("`min_count` (integer; default 10 [doi:10.12688/f1000research.7035.1]; min 0)");
+        // A required slot without a default, and an optional one.
+        expect(rendered).toContain("`counts_path` (string; required)");
+        expect(rendered).toContain("`min_samples` (integer; optional; min 1)");
+    });
+
+    it("renders the inputs with the slot path that gives each", () => {
+        const rendered = renderTemplateContract(brief());
+        expect(rendered).toContain("counts: `{{counts_path}}` — Gene by sample integer counts, CSV.");
+        expect(rendered).toContain("metadata: `{{metadata_path}}`");
+    });
+
+    it("renders each bound setting with its value and source, under the override rule", () => {
+        const rendered = renderTemplateContract(brief());
+        expect(rendered).toContain("Bound by the plan");
+        expect(rendered).toContain('`lfc_shrink` = "apeglm" (doi:10.1093/bioinformatics/bty895)');
+        expect(rendered).toContain("`overrides`");
+    });
+
+    it("names the unbound settings", () => {
+        const rendered = renderTemplateContract(brief());
+        expect(rendered).toContain("Unbound settings");
+        expect(rendered).toContain("`alpha` = 0.05 (differential_expression): pinned by the template at the same value");
+    });
+
+    it("collapses the bound and unbound lists when they are empty", () => {
+        const rendered = renderTemplateContract(brief({ bound: [], unbound_settings: [] }));
+        expect(rendered).not.toContain("Bound by the plan");
+        expect(rendered).not.toContain("Unbound settings");
+        expect(rendered).not.toMatch(/\n{3,}/);
+    });
+
+    it("renders nothing when no contract was retrieved", () => {
+        expect(renderTemplateContract(undefined)).toBe("");
+    });
+
+    it("states a served version that differs from the plan as a caveat", () => {
+        const rendered = renderTemplateContract(brief({ version_served: "1.1.0", bound: [] }));
+        expect(rendered).toContain("the plan names version 1.0.0, and the service serves version 1.1.0");
+        expect(rendered).toContain("not bound");
+    });
+
+    it("renders no version caveat when the reference names no version", () => {
+        const rendered = renderTemplateContract(brief({ ref: "tpl-deseq2-two-group" }));
+        expect(rendered).not.toContain("Caveat");
+    });
+
+    it("bounds the slot count and clamps each description", () => {
+        const wide = Array.from({ length: MAX_TEMPLATE_SLOTS + 16 }, (_, i) => ({
+            name: `slot_${i}`,
+            type: "string",
+            description: `D${i}_${"x".repeat(2_000)}`,
+            adaptable: true,
+        }));
+        const rendered = renderTemplateContract(brief({ slots: wide, inputs: [], bound: [], unbound_settings: [] }));
+        for (let i = 0; i < MAX_TEMPLATE_SLOTS; i++) expect(rendered).toContain(`\`slot_${i}\``);
+        expect(rendered).not.toContain(`\`slot_${MAX_TEMPLATE_SLOTS}\``);
+        expect(rendered).toContain("+16 more");
+        const longestRun = Math.max(...(rendered.match(/x+/g) ?? [""]).map((run) => run.length));
+        expect(longestRun).toBeLessThan(TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS);
+        expect(rendered.length).toBeLessThan(MAX_TEMPLATE_SLOTS * (TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS + 80) + 600);
     });
 });
 
@@ -265,8 +375,42 @@ describe("composeStepBriefing", () => {
             workspace: WORKSPACE,
             profile,
             upstream: [handoff(), handoff({ stepId: "T1S9", summaryMarkdown: "OTHER" })],
+            template: brief(),
         };
         expect(composeStepBriefing(briefing)).toBe(composeStepBriefing(briefing));
+    });
+
+    it("carries the template contract of a grounded step: every adaptable slot with its permitted values, and not the pinned alpha", () => {
+        const seed = composeStepBriefing({ step: fullyPopulatedStep(), workspace: WORKSPACE, profile: null, upstream: [], template: brief() });
+        expect(seed).toContain("## Template contract");
+        for (const name of ADAPTABLE_SLOTS) expect(seed).toContain(`- \`${name}\` (`);
+        expect(seed).toContain('"apeglm", "ashr", "none"');
+        expect(seed).not.toContain("- `alpha` (");
+        expect(seed).not.toContain("not retrieved");
+        // The section sits between the task and the workspace, and no gap opens.
+        expect(seed.indexOf("## Template contract")).toBeGreaterThan(seed.indexOf("## Grounding"));
+        expect(seed.indexOf("## Template contract")).toBeLessThan(seed.indexOf("## Workspace"));
+        expect(seed).not.toMatch(/\n{3,}/);
+    });
+
+    it("says the contract was not retrieved, with the reason, when the grounding names a template and the seed carries none", () => {
+        const seed = composeStepBriefing({
+            step: fullyPopulatedStep(),
+            workspace: WORKSPACE,
+            profile: null,
+            upstream: [],
+            templateNotRetrieved: "the knowledge service did not answer: timeout",
+        });
+        expect(seed).toContain("- Template contract: not retrieved (the knowledge service did not answer: timeout)");
+        expect(seed).not.toContain("## Template contract");
+        expect(seed).not.toMatch(/\n{3,}/);
+    });
+
+    it("says nothing about a contract for a step whose grounding names no template", () => {
+        const step = fullyPopulatedStep();
+        const ungrounded = { ...step, grounding: { ...step.grounding!, template: undefined } };
+        const seed = composeStepBriefing({ step: ungrounded, workspace: WORKSPACE, profile: null, upstream: [] });
+        expect(seed).not.toContain("Template contract");
     });
 });
 
@@ -317,14 +461,19 @@ describe("AnalysisStep field-coverage guard", () => {
             const current = (base as Record<string, unknown>)[field];
             // An object-valued field (the grounding) keeps its shape, and each of its
             // string members carries the sentinel, thus the renderer must emit the
-            // members and not only the presence of the field.
-            step[field] = Array.isArray(current)
-                ? [sentinel]
-                : typeof current === "object" && current !== null
-                  ? Object.fromEntries(
-                        Object.entries(current).map(([key, value]) => [key, Array.isArray(value) ? [sentinel] : typeof value === "string" ? sentinel : value]),
-                    )
-                  : sentinel;
+            // members and not only the presence of the field. A list of objects
+            // (the settings) keeps one object whose string members carry it.
+            const withSentinel = (value: unknown): unknown => {
+                if (Array.isArray(value)) {
+                    const first: unknown = value[0];
+                    return typeof first === "object" && first !== null ? [withSentinel(first)] : [sentinel];
+                }
+                if (typeof value === "object" && value !== null) {
+                    return Object.fromEntries(Object.entries(value).map(([key, member]) => [key, withSentinel(member)]));
+                }
+                return typeof value === "string" ? sentinel : value;
+            };
+            step[field] = withSentinel(current);
         }
         const prompt = renderTask(step as unknown as AnalysisStep);
         for (const [field, sentinel] of sentinels) {

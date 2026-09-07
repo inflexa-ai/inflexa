@@ -65,14 +65,18 @@ f7c414af feat: bind the plan settings to the template, and return only the used 
 | U20 | W02 | G4 | Import-state rules, the service default, template exclusions, and the eval tasks | Done and verified. Commit f7c414af. |
 | U21 | W03 | G4 | Harness client contract operation | Done and verified. Commit f7c414af. |
 | U22 | W03 | G4 | One representation for the planner, plan settings, and the skeleton | Done and verified. Commit f7c414af. |
-| U23 | W03 | G5 | Service: referenced claims only, and the contract inputs and notes | Done. No verifier ran. Commit f7c414af. |
-| U24 | W03 | G5 | Template tool binding and the durable binding input | Done. No verifier ran. Commit f7c414af. |
-| U25 | W03 | G6 | Template contract in the step briefing and the seed | Not started. |
+| U23 | W03 | G5 | Service: referenced claims only, and the contract inputs and notes | Done and verified. Commit f7c414af. |
+| U24 | W03 | G5 | Template tool binding and the durable binding input | Done and verified. Commit f7c414af. |
+| U25 | W03 | G6 | Template contract in the step briefing and the seed | Done and verified. Commit after d6bff3c1. |
 
 
 ## The work that remains
 
-One unit is not started, and two units have no verifier result.
+Every unit is done and verified. A verifier passed U23, U24, and U25 together
+on 2026-09-07. The live-run part of the U25 acceptance is not proven. The knowledge
+service on this machine ran the code from before the change. The embedding
+endpoint of the end-to-end runner gave no answer. The text below
+describes U25 as it was before that verifier pass.
 
 ### The unit that remains: U25
 

@@ -380,6 +380,7 @@ export async function composeEvalRuntime(options: EvalRuntimeOptions): Promise<E
                 bioKeys: NO_BIO_KEYS,
                 runCharge: createNoopRunCharge(),
                 runAuthorizer,
+                ...(knowledge ? { knowledge } : {}),
             }),
             executeTargetAssessment: {
                 pool,

@@ -25,6 +25,8 @@
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../app/data-profile-orientation.js";
 import type { DataProfileResult } from "../state/data-profile.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
+import type { TemplateParameter } from "../tools/knowledge/client.js";
+import type { TemplateBindingValue } from "../tools/knowledge/template.js";
 
 // ── Bounds ────────────────────────────────────────────────────────────
 
@@ -36,6 +38,12 @@ export const UPSTREAM_SUMMARY_MAX_CHARS = 500;
 
 /** Artifact paths listed per dependency; the rest are reachable from its output directory. */
 export const MAX_UPSTREAM_ARTIFACTS = 8;
+
+/** Adaptable slots rendered in the Template contract section; the tail is counted, not rendered. */
+export const MAX_TEMPLATE_SLOTS = 24;
+
+/** Characters of one slot description carried in the seed — the constraint, not the manual. */
+export const TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS = 160;
 
 // ── Field partition (the coverage guard's two halves) ─────────────────
 
@@ -111,7 +119,7 @@ function clamp(text: string, max: number): string {
  * folded in here — otherwise the agent runs against the bare question and
  * improvises the rest.
  */
-export function renderTask(step: AnalysisStep): string {
+export function renderTask(step: AnalysisStep, contract: Pick<StepBriefing, "template" | "templateNotRetrieved"> = {}): string {
     const parts: string[] = [`# ${step.name}`, section("Task", step.question)];
 
     if (step.description?.trim()) {
@@ -130,7 +138,7 @@ export function renderTask(step: AnalysisStep): string {
         parts.push(section("Caveats", bullets(step.caveats)));
     }
     if (step.grounding) {
-        parts.push(section("Grounding", renderGrounding(step.grounding)));
+        parts.push(section("Grounding", renderGrounding(step.grounding, contract)));
     }
 
     return parts.join("\n\n");
@@ -140,14 +148,145 @@ export function renderTask(step: AnalysisStep): string {
  * The grounding as data lines. The template id is the one value the agent
  * acts on (it names it to `knowledge_template`), thus it renders first after
  * the status. The claim identifiers and the digest are for the record.
+ *
+ * A grounding that names a template promises a Template contract section.
+ * When the seed carries none, one line says so with the reason, thus the
+ * agent knows the contract was not fetched rather than guessing at slots.
  */
-function renderGrounding(grounding: NonNullable<AnalysisStep["grounding"]>): string {
+function renderGrounding(grounding: NonNullable<AnalysisStep["grounding"]>, contract: Pick<StepBriefing, "template" | "templateNotRetrieved">): string {
     const lines = [`- Status: ${grounding.status}`];
-    if (grounding.template) lines.push(`- Template: \`${grounding.template}\``);
+    if (grounding.template) {
+        lines.push(`- Template: \`${grounding.template}\``);
+        if (!contract.template) lines.push(`- Template contract: not retrieved (${contract.templateNotRetrieved ?? "no contract was fetched for this step"})`);
+    }
     lines.push(`- Snapshot: ${grounding.snapshot}`);
     lines.push(`- Claims: ${grounding.claims.length > 0 ? grounding.claims.join(", ") : "none"}`);
     lines.push(`- Reason: ${grounding.reason}`);
     return lines.join("\n");
+}
+
+// ── (1b) Template contract ────────────────────────────────────────────
+
+/** A file the script of the template reads. `path` names the slot that gives it, for example `{{counts_path}}`. */
+export interface TemplateBriefInput {
+    readonly name: string;
+    readonly path: string;
+    readonly description?: string;
+}
+
+/** One plan setting bound to an adaptable slot of the template. */
+export interface TemplateBoundSetting {
+    readonly name: string;
+    readonly value: TemplateBindingValue;
+    /** The source of the value (a doi or a document), or `plan` when the procedure names none. */
+    readonly source: string;
+}
+
+/**
+ * The contract of the template a step renders, projected for the seed. The
+ * parent fetches it at dispatch and binds the plan settings to it; the
+ * section is what lets an agent that has never seen the template make one
+ * valid render call.
+ */
+export interface TemplateBrief {
+    /** The template reference of the plan step, with its version when the plan names one. */
+    readonly ref: string;
+    /** The version the service serves. Differs from the version of `ref` when the snapshot moved on. */
+    readonly version_served: string;
+    /** The adaptable slots of the contract, in the order the template declares them. A pinned slot is never rendered. */
+    readonly slots: readonly TemplateParameter[];
+    readonly inputs: readonly TemplateBriefInput[];
+    /** The plan settings bound to a slot, in plan order. Empty when the served version differs from the plan. */
+    readonly bound: readonly TemplateBoundSetting[];
+    /** The plan settings no bound slot carries, one line each with the reason. */
+    readonly unbound_settings: readonly string[];
+}
+
+/** A value as the render request carries it: JSON, thus `"apeglm"` and `10` cannot be confused. */
+function slotValue(value: unknown): string {
+    return JSON.stringify(value);
+}
+
+/** The version of a template reference (`tpl-x@1.0.0` gives `1.0.0`), or `undefined` when the reference has none. */
+function versionOfRef(ref: string): string | undefined {
+    const at = ref.indexOf("@");
+    return at < 0 ? undefined : ref.slice(at + 1);
+}
+
+/**
+ * One adaptable slot as a bullet: the name, the type, the default with its
+ * source or the required state, the description, and the constraints the
+ * render enforces. A slot without a default is required unless the contract
+ * says otherwise, which is the rule of the renderer.
+ */
+function renderSlot(slot: TemplateParameter): string {
+    const facts: string[] = [slot.type];
+    if (slot.default !== undefined) {
+        facts.push(`default ${slotValue(slot.default)}${slot.default_source ? ` [${slot.default_source}]` : ""}`);
+    } else {
+        facts.push(slot.required === false ? "optional" : "required");
+    }
+    if (slot.minimum !== undefined) facts.push(`min ${slot.minimum}`);
+    if (slot.maximum !== undefined) facts.push(`max ${slot.maximum}`);
+
+    const tail: string[] = [];
+    if (slot.enum && slot.enum.length > 0) tail.push(`Permitted: ${slot.enum.map(slotValue).join(", ")}.`);
+    if (slot.pattern) tail.push(`Pattern: \`${slot.pattern}\`.`);
+
+    const description = clamp(slot.description.trim(), TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS);
+    return `\`${slot.name}\` (${facts.join("; ")})${description ? `: ${description}` : ""}${tail.length > 0 ? ` ${tail.join(" ")}` : ""}`;
+}
+
+/**
+ * The Template contract section. Only the adaptable slots render, bounded by
+ * {@link MAX_TEMPLATE_SLOTS} and the description clamp, so a wide template
+ * cannot blow the seed. A served version that differs from the plan renders
+ * as a caveat: the render refuses the plan version, and the settings are not
+ * bound to a version the plan did not name.
+ */
+export function renderTemplateContract(brief: TemplateBrief | undefined): string {
+    if (!brief) return "";
+
+    const refVersion = versionOfRef(brief.ref);
+    const lead = [
+        `\`${brief.ref}\` (the service serves version ${brief.version_served}). Send only the slots listed here to \`knowledge_template\`; a slot not listed is pinned or unknown, and the render refuses it.`,
+    ];
+    if (refVersion !== undefined && refVersion !== brief.version_served) {
+        lead.push(
+            `Caveat: the plan names version ${refVersion}, and the service serves version ${brief.version_served}. The plan settings are not bound to this render. Render the served version, and state each plan value yourself.`,
+        );
+    }
+    const blocks: string[] = [lead.join("\n")];
+
+    const adaptable = brief.slots.filter((slot) => slot.adaptable);
+    if (adaptable.length > 0) {
+        const shown = adaptable.slice(0, MAX_TEMPLATE_SLOTS);
+        const lines = [bullets(shown.map(renderSlot))];
+        const omitted = adaptable.length - shown.length;
+        if (omitted > 0)
+            lines.push(`(+${omitted} more adaptable ${omitted === 1 ? "slot" : "slots"} not listed. The render answer names a required one that is absent.)`);
+        blocks.push(`Slots:\n${lines.join("\n")}`);
+    }
+
+    if (brief.inputs.length > 0) {
+        blocks.push(
+            `Inputs the script reads:\n${bullets(brief.inputs.map((input) => `${input.name}: \`${input.path}\`${input.description ? ` — ${input.description}` : ""}`))}`,
+        );
+    }
+
+    if (brief.bound.length > 0) {
+        blocks.push(
+            `Bound by the plan (send each value as it is, or add an \`overrides\` entry with the slot and the reason for the change; a changed value without an override is refused):\n${bullets(
+                brief.bound.map((setting) => `\`${setting.name}\` = ${slotValue(setting.value)} (${setting.source})`),
+            )}`,
+        );
+    }
+
+    if (brief.unbound_settings.length > 0) {
+        blocks.push(`Unbound settings (the plan states them, and no bound slot carries them):\n${bullets(brief.unbound_settings)}`);
+    }
+
+    return section("Template contract", blocks.join("\n\n"));
 }
 
 // ── (2) Workspace ─────────────────────────────────────────────────────
@@ -284,6 +423,14 @@ export interface StepBriefing {
     readonly profile: DataProfileResult | null;
     /** The step's completed dependencies, in the plan's declared `depends_on` order. */
     readonly upstream: readonly UpstreamHandoff[];
+    /** The contract of the template the step renders, with the plan settings bound to it. Absent when none was retrieved. */
+    readonly template?: TemplateBrief;
+    /**
+     * Why the seed carries no template contract for a step whose grounding
+     * names one: no client is bound, the service did not answer, or the
+     * service does not hold the template. Read only when `template` is absent.
+     */
+    readonly templateNotRetrieved?: string;
 }
 
 /**
@@ -296,7 +443,8 @@ export interface StepBriefing {
  */
 export function composeStepBriefing(briefing: StepBriefing): string {
     return [
-        renderTask(briefing.step),
+        renderTask(briefing.step, briefing),
+        renderTemplateContract(briefing.template),
         renderWorkspace(briefing.workspace),
         renderResources(briefing.step.resources),
         renderOrientation(briefing.profile, briefing.workspace.analysisId),

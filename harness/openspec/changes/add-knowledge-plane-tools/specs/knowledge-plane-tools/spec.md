@@ -2,7 +2,7 @@
 
 ### Requirement: The knowledge client is an optional seam
 
-The harness MUST declare a `KnowledgeClient` interface with three operations: `recommend(situation)`, `check(situation, steps)`, and `render(template, slots, farm?)`. The harness MUST ship `createHttpKnowledgeClient({ baseUrl, apiKey })` as the realization over HTTPS with the retry and timeout policy of the other external tools. An embedder MUST bind a client at its composition root, or none. The harness MUST NOT read a license, a key, or an endpoint from the environment.
+The harness MUST declare a `KnowledgeClient` interface with four operations: `recommend(situation)`, `check(situation, steps)`, `render(template, slots, farm?)`, and `contract(template)`. The `contract` operation MUST read `GET /v1/templates/{id}` of the service, and it MUST answer `{ match: "rejected" }` with the field `template` on a 404. The harness MUST ship `createHttpKnowledgeClient({ baseUrl, apiKey })` as the realization over HTTPS with the retry and timeout policy of the other external tools. An embedder MUST bind a client at its composition root, or none. The harness MUST NOT read a license, a key, or an endpoint from the environment.
 
 #### Scenario: No client is bound
 
@@ -131,6 +131,50 @@ The input of `knowledge_recommend` and `knowledge_check` MUST be the flat situat
 - **GIVEN** an agent built with `readOnly: true`
 - **WHEN** its tools resolve
 - **THEN** `knowledge_template` is absent
+
+### Requirement: The step briefing carries the template contract
+
+When a plan step grounds on a template and the composition binds a knowledge client, the parent workflow MUST read the contract at dispatch. The read MUST use `contract(template)`, inside the checkpointed step that composes the seed. The child MUST NOT fetch the contract. The seed MUST carry a `Template contract` section with the adaptable slots of the contract only. For each slot the section MUST give the name, the type, the permitted values, and the pattern. It MUST give the default with its source, or the required state. The section MUST list the inputs of the template. The section MUST NOT list a pinned slot. The section MUST render at most `MAX_TEMPLATE_SLOTS` slots, and it MUST clamp each description. The contract can be absent: no client is bound, the service does not answer, or the service does not hold the template. Then the Grounding section MUST carry one line `Template contract: not retrieved (<reason>)`. In that case the seed MUST carry no `Template contract` section, and the child input MUST carry no binding.
+
+#### Scenario: A grounded step with a bound client
+
+- **GIVEN** a plan step whose grounding names `tpl-deseq2-two-group@1.0.0` and a composition that binds a knowledge client
+- **WHEN** the parent composes the seed of the step
+- **THEN** the seed lists each adaptable slot with its type, its permitted values, and its pattern. Each slot shows its default with the source, or its required state. The seed lists the inputs and no pinned slot
+
+#### Scenario: No client, or no answer
+
+- **GIVEN** a plan step whose grounding names a template, and a composition that binds no client or a service that does not answer
+- **WHEN** the parent composes the seed
+- **THEN** the Grounding section carries `Template contract: not retrieved (<reason>)`, the seed carries no `Template contract` section, and the child input carries no binding
+
+#### Scenario: The served version differs from the plan
+
+- **GIVEN** a plan step whose grounding names version 1.0.0 of a template, and a service that serves version 1.1.0
+- **WHEN** the parent composes the seed
+- **THEN** the section names the served version beside the reference as a caveat, and it lists each plan setting as unbound. The child input carries no binding
+
+### Requirement: The plan settings bind to the render request
+
+At dispatch the parent MUST intersect the `grounding.settings` of the step with the adaptable slots of the served contract, by name. Each setting that names an adaptable slot MUST become a bound slot of the `templateBinding` of the child input, with its source. The seed MUST list each bound setting under `Bound by the plan` with its value and its source. The seed MUST list each other setting under `Unbound settings` with the reason. A setting that names a pinned slot with a different value is a pinned conflict. A setting that names no slot stays a plan setting. `knowledge_template` MUST merge the bound slots under the model values. The tool MUST refuse a model value that differs from a bound value when no `overrides` entry names the slot with a reason. The refusal MUST come before the service call, and it MUST name the slot, the bound value, and its source. The decision record on disk MUST carry `bound_slots` and `settings_overrides`.
+
+#### Scenario: A bound slot rides without a model value
+
+- **GIVEN** a child input whose binding holds `lfc_shrink = apeglm` from the plan
+- **WHEN** the agent calls `knowledge_template` with the template and the paths only
+- **THEN** the render request carries `lfc_shrink = apeglm`, and the decision record lists it under `bound_slots` with its source
+
+#### Scenario: A changed value without an override is refused
+
+- **GIVEN** a child input whose binding holds `lfc_shrink = apeglm`
+- **WHEN** the agent calls `knowledge_template` with `lfc_shrink = ashr` and no `overrides` entry
+- **THEN** the tool answers `{ match: "rejected" }` before the service call, the issue names `lfc_shrink`, the value `apeglm`, and its source, and no file is written
+
+#### Scenario: An override with a reason renders
+
+- **GIVEN** a child input whose binding holds `lfc_shrink = apeglm`
+- **WHEN** the agent calls `knowledge_template` with `lfc_shrink = ashr` and an `overrides` entry that names `lfc_shrink` with a reason
+- **THEN** the script renders with `ashr`. The decision record lists the change under `settings_overrides` with the plan value, the new value, and the reason
 
 ### Requirement: The plan step carries an optional grounding
 

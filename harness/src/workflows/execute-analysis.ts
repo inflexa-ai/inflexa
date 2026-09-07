@@ -98,10 +98,12 @@ import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
-import { MAX_UPSTREAM_ARTIFACTS, composeStepBriefing, type UpstreamHandoff } from "../prompts/briefing.js";
-import type { AnalysisStep } from "../schemas/workflow-state.js";
+import { MAX_UPSTREAM_ARTIFACTS, composeStepBriefing, type StepBriefing, type TemplateBoundSetting, type UpstreamHandoff } from "../prompts/briefing.js";
+import type { AnalysisStep, GroundingSetting } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
+import type { KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable, TemplateContract } from "../tools/knowledge/client.js";
+import type { TemplateBinding, TemplateBindingValue } from "../tools/knowledge/template.js";
 import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
 import type { EmitFn } from "../loop/types.js";
 import type { RunCharge } from "../billing/run-charge.js";
@@ -284,6 +286,14 @@ export interface ExecuteAnalysisDeps {
      * recorder.
      */
     readonly usageRecorder?: UsageRecorder;
+    /**
+     * The knowledge client of the composition, when the embedder binds one.
+     * The seed composition reads the contract of the template a grounded step
+     * renders through it, and binds the plan settings to that contract.
+     * Absent, the seed says the contract was not retrieved, and the step agent
+     * learns the slots from the render answers alone.
+     */
+    readonly knowledge?: KnowledgeClient;
 
     /**
      * The provenance seam of the composition. The body reads its run emit member,
@@ -420,8 +430,9 @@ export function buildChildInput(args: {
     runId: string;
     workflowId: string;
     prompt: string;
+    templateBinding?: TemplateBinding;
 }): Omit<SandboxStepInput, "runSession"> {
-    const { input, stepId, level, runId, workflowId, prompt } = args;
+    const { input, stepId, level, runId, workflowId, prompt, templateBinding } = args;
     const resources = input.resourcesByStepId[stepId];
     if (!resources) {
         throw new Error(`executeAnalysis: step "${stepId}" missing from resourcesByStepId — every step must declare resources`);
@@ -443,6 +454,9 @@ export function buildChildInput(args: {
         // genuinely declared nothing, and it silently deletes every same-run edge
         // the step was entitled to.
         dependsOn: planStep.depends_on,
+        // Composed beside the seed, thus the same checkpoint carries both and a
+        // replay hands the child the binding its briefing describes.
+        ...(templateBinding ? { templateBinding } : {}),
         level,
         prompt,
         parentWorkflowId: workflowId,
@@ -467,12 +481,16 @@ export function buildChildInput(args: {
  * (`cortex_analysis_state`) — never live in-flight state, which would not
  * reproduce.
  *
- * REPLAY: the caller wraps this in a `DBOS.runStep`, so the composed string is
- * checkpointed and a replay returns it verbatim — the DB and disk are not read
- * again and cannot drift the seed under a recovered run. Never call it
- * unwrapped from the workflow body.
+ * The template contract of a grounded step is fetched here too, and the plan
+ * settings are bound to it: the seed describes the binding, and the child
+ * input carries it, from one checkpoint. The child fetches nothing.
+ *
+ * REPLAY: the caller wraps this in a `DBOS.runStep`, so the composed seed is
+ * checkpointed and a replay returns it verbatim — the DB, the disk, and the
+ * knowledge service are not read again and cannot drift the seed under a
+ * recovered run. Never call it unwrapped from the workflow body.
  */
-export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepId: string; runId: string; deps: ExecuteAnalysisDeps }): Promise<string> {
+export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepId: string; runId: string; deps: ExecuteAnalysisDeps }): Promise<StepSeed> {
     const { input, stepId, runId, deps } = args;
 
     const step = input.planStepById[stepId];
@@ -504,12 +522,148 @@ export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepI
         pool: deps.pool,
     });
 
-    return composeStepBriefing({
+    const contract = await resolveTemplateContract(step, deps.knowledge);
+
+    const prompt = composeStepBriefing({
         step,
         workspace,
         profile: profile?.result ?? null,
         upstream,
+        ...contract.briefing,
     });
+    return { prompt, ...(contract.binding ? { templateBinding: contract.binding } : {}) };
+}
+
+/**
+ * What `composeStepSeed` checkpoints: the seed, and the binding of the plan
+ * settings to the template of the step when the contract was retrieved and
+ * its served version is the version the plan names. JSON-serialisable, as a
+ * durable step result must be.
+ */
+export interface StepSeed {
+    readonly prompt: string;
+    readonly templateBinding?: TemplateBinding;
+}
+
+/** The template part of a seed: the brief or the reason for its absence, and the binding when one holds. */
+interface TemplateSeedPart {
+    readonly briefing: Pick<StepBriefing, "template" | "templateNotRetrieved">;
+    readonly binding?: TemplateBinding;
+}
+
+/** A served contract carries no `match`; the two refusals do. */
+function isTemplateContract(answer: TemplateContract | KnowledgeUnavailable | KnowledgeRejected): answer is TemplateContract {
+    return !("match" in answer);
+}
+
+/**
+ * Fetch the contract of the template a step grounds on, and bind the plan
+ * settings to it. A step without a template has no template part. A step
+ * with one and no way to read it (no client, no answer, or an unknown
+ * template) gets the reason, thus the seed reports the absence rather than
+ * hiding it, and no binding.
+ */
+async function resolveTemplateContract(step: AnalysisStep, client: KnowledgeClient | undefined): Promise<TemplateSeedPart> {
+    const ref = step.grounding?.template;
+    if (!ref) return { briefing: {} };
+    if (!client) return { briefing: { templateNotRetrieved: "no knowledge client is bound" } };
+
+    const answer = await client.contract(ref);
+    if (!isTemplateContract(answer)) {
+        const reason =
+            answer.match === "unavailable"
+                ? `the knowledge service did not answer: ${answer.reason}`
+                : `the knowledge service refused the lookup: ${answer.message}`;
+        return { briefing: { templateNotRetrieved: reason } };
+    }
+    return bindTemplateContract(ref, answer, step.grounding?.settings ?? []);
+}
+
+/** The version of a template reference (`tpl-x@1.0.0` gives `1.0.0`), or `undefined` when the reference has none. */
+function versionOfRef(ref: string): string | undefined {
+    const at = ref.indexOf("@");
+    return at < 0 ? undefined : ref.slice(at + 1);
+}
+
+/** Two setting values agree when their JSON agrees: the values are scalars or lists of strings. */
+function sameSettingValue(a: unknown, b: unknown): boolean {
+    return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Project the served contract for the seed, and intersect the plan settings
+ * with its slots by name. Each setting lands in exactly one place:
+ *
+ * - a setting that names an adaptable slot is bound (the first value wins
+ *   when two procedure steps set the same slot; a later different value is
+ *   reported, not bound)
+ * - a setting that names a pinned slot cannot be sent: a different value is
+ *   a pinned conflict the agent must know about, an equal value is satisfied
+ * - a setting that names no slot stays a plan setting the agent applies itself
+ *
+ * A served version that differs from the version the plan names binds
+ * nothing: the render refuses the plan version, and the settings then ride
+ * as unbound lines under the caveat the section renders.
+ */
+function bindTemplateContract(ref: string, contract: TemplateContract, settings: readonly GroundingSetting[]): TemplateSeedPart {
+    const refVersion = versionOfRef(ref);
+    const versionMatches = refVersion === undefined || refVersion === contract.version;
+    const adaptable = contract.parameters.filter((slot) => slot.adaptable);
+    const adaptableNames = new Set(adaptable.map((slot) => slot.name));
+    const pinnedByName = new Map(contract.parameters.filter((slot) => !slot.adaptable).map((slot) => [slot.name, slot]));
+
+    const bound: TemplateBoundSetting[] = [];
+    const unbound: string[] = [];
+    const slots: Record<string, TemplateBindingValue> = {};
+    const sources: Record<string, string> = {};
+
+    for (const setting of settings) {
+        const shown = `\`${setting.name}\` = ${JSON.stringify(setting.value)} (${setting.step})`;
+        if (!versionMatches) {
+            unbound.push(`${shown}: not bound, because the served version differs from the plan`);
+            continue;
+        }
+        if (adaptableNames.has(setting.name)) {
+            const prior = slots[setting.name];
+            if (prior !== undefined) {
+                if (!sameSettingValue(prior, setting.value)) unbound.push(`${shown}: differs from the bound value ${JSON.stringify(prior)} of the same slot`);
+                continue;
+            }
+            slots[setting.name] = setting.value;
+            if (setting.source) sources[setting.name] = setting.source;
+            bound.push({ name: setting.name, value: setting.value, source: setting.source ?? "plan" });
+            continue;
+        }
+        const pinned = pinnedByName.get(setting.name);
+        if (pinned) {
+            const pinnedValue = pinned.default === undefined ? "a fixed value" : JSON.stringify(pinned.default);
+            unbound.push(
+                sameSettingValue(pinned.default, setting.value)
+                    ? `${shown}: pinned by the template at the same value`
+                    : `${shown}: the template pins \`${setting.name}\` at ${pinnedValue}, and the plan value cannot be sent`,
+            );
+            continue;
+        }
+        unbound.push(`${shown}: no slot of the template carries it`);
+    }
+
+    return {
+        briefing: {
+            template: {
+                ref,
+                version_served: contract.version,
+                slots: adaptable,
+                inputs: (contract.inputs ?? []).map((input) => ({
+                    name: input.name,
+                    path: input.path,
+                    ...(input.description ? { description: input.description } : {}),
+                })),
+                bound,
+                unbound_settings: unbound,
+            },
+        },
+        ...(versionMatches ? { binding: { template: ref, slots, sources } } : {}),
+    };
 }
 
 /**
@@ -1158,20 +1312,24 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             // can be named. Checkpointed so a replay re-dispatches the child
             // with a byte-identical prompt instead of re-reading the DB/disk.
             const seedStepName = `compose-step-seed:${stepId}`;
-            const prompt = await DBOS.runStep(
+            const checkpointed: StepSeed | string = await DBOS.runStep(
                 () => {
                     stableSpan(seedStepName, "compose-step-seed", { [ATTR_INFLEXA_STEP_ID]: stepId });
                     return composeStepSeed({ input, stepId, runId, deps });
                 },
                 { name: seedStepName },
             );
+            // A run recovered from a checkpoint written when this step returned the
+            // bare seed string replays that string: it carries no binding.
+            const seed: StepSeed = typeof checkpointed === "string" ? { prompt: checkpointed } : checkpointed;
             const baseChildInput = buildChildInput({
                 input,
                 stepId,
                 level: levels.get(stepId) ?? 0,
                 runId,
                 workflowId,
-                prompt,
+                prompt: seed.prompt,
+                ...(seed.templateBinding ? { templateBinding: seed.templateBinding } : {}),
             });
             const childInput: SandboxStepInput = {
                 ...baseChildInput,

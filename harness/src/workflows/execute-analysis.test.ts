@@ -40,6 +40,8 @@ import type { RunProvenanceEvent } from "../provenance/seam.js";
 import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
+import type { KnowledgeClient } from "../tools/knowledge/client.js";
+import { fakeKnowledgeClient } from "../tools/knowledge/__fixtures__/fake-client.js";
 import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 import { captureMetrics } from "../__tests__/setup/metrics.js";
 
@@ -263,6 +265,7 @@ function makeDeps(opts: {
     pool: FakePool;
     emitRunEvent?: (event: RunProvenanceEvent, session: RunSession) => void;
     observeRun?: (observation: RunObservation) => void;
+    knowledge?: KnowledgeClient;
 }): {
     deps: ExecuteAnalysisDeps;
     record: FakeDepsRecord;
@@ -305,6 +308,7 @@ function makeDeps(opts: {
         // a genuinely undefined dep, not a present-but-undefined field.
         ...(opts.emitRunEvent ? { provenance: { emitRunEvent: opts.emitRunEvent } } : {}),
         ...(opts.observeRun ? { observeRun: opts.observeRun } : {}),
+        ...(opts.knowledge ? { knowledge: opts.knowledge } : {}),
     };
 
     return { deps, record };
@@ -1594,6 +1598,70 @@ describe("executeAnalysis child input projection", () => {
 
         expect(dbosState.childInputs.find((i) => i.stepId === "A")!.dependsOn).toEqual([]);
         expect(dbosState.childInputs.find((i) => i.stepId === "B")!.dependsOn).toEqual(["A"]);
+    });
+
+    it("carries the template binding composed beside the seed into the child input of a grounded step, and none into an ungrounded one", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps } = makeDeps({
+            pool,
+            knowledge: fakeKnowledgeClient().client,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+            ]),
+        });
+        const base = input([{ id: "A" }, { id: "B", depends_on: ["A"] }]);
+        const grounded: ExecuteAnalysisInput = {
+            ...base,
+            planStepById: {
+                ...base.planStepById,
+                B: {
+                    ...base.planStepById.B!,
+                    grounding: {
+                        status: "grounded",
+                        snapshot: "sha256:71ac",
+                        claims: ["R-0001@e7d0"],
+                        template: "tpl-deseq2-two-group@1.0.0",
+                        settings: [{ step: "differential_expression", name: "lfc_shrink", value: "apeglm", source: "doi:10.1093/bioinformatics/bty895" }],
+                        reason: "DESeq2 Wald per R-0001@e7d0",
+                    },
+                },
+            },
+        };
+
+        const result = await runExecuteAnalysisBody(grounded, deps);
+        expect(result.status).toBe("completed");
+
+        const childB = dbosState.childInputs.find((i) => i.stepId === "B")!;
+        expect(childB.templateBinding).toEqual({
+            template: "tpl-deseq2-two-group@1.0.0",
+            slots: { lfc_shrink: "apeglm" },
+            sources: { lfc_shrink: "doi:10.1093/bioinformatics/bty895" },
+        });
+        expect(childB.prompt).toContain("## Template contract");
+        expect(dbosState.childInputs.find((i) => i.stepId === "A")!.templateBinding).toBeUndefined();
+    });
+
+    it("hands the child the seed of a checkpoint written as a bare string, with no binding", async () => {
+        // A run recovered across the change of the seed shape replays the string
+        // the old step returned; the dispatch must still hand the child a prompt.
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+        dbosState.resultOnStep.set("compose-step-seed:A", "LEGACY SEED");
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+        expect(result.status).toBe("completed");
+
+        const childA = dbosState.childInputs.find((i) => i.stepId === "A")!;
+        expect(childA.prompt).toBe("LEGACY SEED");
+        expect(childA.templateBinding).toBeUndefined();
     });
 });
 
