@@ -15,6 +15,9 @@ conditions:
     value: three_prime
   - field: library_type
     op: not_null
+  - field: data_state
+    op: eq
+    value: counts
 action:
   step_type: model_design
   parameters:
@@ -23,6 +26,9 @@ action:
       default_source: "vignette:tximport/2026-04-28#3-tagged-rna-seq"
     - name: counts_from_abundance
       value: "no"
+      default_source: "vignette:tximport/2026-04-28#3-tagged-rna-seq"
+    - name: length_offset
+      value: none
       default_source: "vignette:tximport/2026-04-28#3-tagged-rna-seq"
 severity: warn
 strength: common_practice
@@ -57,5 +63,5 @@ license: CC-BY-4.0
 curator: "radu@geneguard.bio"
 llm_drafted: true
 drafting_model: "claude-fable-5-1"
-curated: "2026-09-04"
+curated: "2026-09-07"
 tags: [library-type, three-prime, tximport]

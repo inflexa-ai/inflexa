@@ -17,6 +17,9 @@ applicability:
     - field: paired
       op: eq
       value: true
+    - field: import_state
+      op: not_in
+      value: [quantifications, estimated_counts_with_lengths]
   notes: >-
     A count matrix whose first column is the gene identifier and whose header
     holds the sample identifiers, plus a sample table with one row per sample.

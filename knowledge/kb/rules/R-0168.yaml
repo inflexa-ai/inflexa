@@ -1,0 +1,71 @@
+id: R-0168
+title: "Length-corrected counts from abundance: fit the model on the counts with no offset, and state the correction mode"
+assertion: >-
+  If the input is a gene-level table of counts from abundance, made with
+  countsFromAbundance at lengthScaledTPM or at scaledTPM, the length
+  correction is inside the counts. Give the table to the count model as it
+  is, with no length offset, because an offset on top of the scaled counts
+  corrects the length two times. State the correction mode in the plan and
+  in the report, and take the mode from the pipeline record, not from the
+  value range. A table whose mode is not recorded is of unknown state, and
+  the missing input rule applies. The scaled counts are not integers: DESeq2
+  rounds them inside the import, and edgeR takes them as they are.
+modality: bulk_rna_seq
+conditions:
+  - field: count_source
+    op: in
+    value: [salmon, kallisto, rsem]
+  - field: data_state
+    op: eq
+    value: counts
+  - field: import_state
+    op: eq
+    value: corrected_counts
+action:
+  step_type: model_design
+  parameters:
+    - name: import
+      value: length_corrected_counts_no_offset
+      default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor"
+    - name: counts_from_abundance
+      value: lengthScaledTPM_or_scaledTPM_as_delivered
+      default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor"
+      required: true
+    - name: length_offset
+      value: none
+      default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0010
+    paraphrase: >-
+      The vignette states that the lengthScaledTPM and the scaledTPM counts
+      from abundance carry the length correction inside the counts, thus the
+      downstream object takes them as a count matrix with no offset, and it
+      recommends the lengthScaledTPM counts for limma-voom, which takes no
+      offset.
+    anchor: "Downstream DGE in Bioconductor; limma-voom"
+    retrieved: "2026-09-07"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0009
+    paraphrase: >-
+      The paper gives two ways to carry the transcript length into the
+      gene-level inference: an offset on the original counts, or counts
+      scaled from the abundance and the average length, with the same gain
+      over simple counting on the genes with differential transcript usage.
+    anchor: "Incorporating transcript-level estimates leads to more accurate DGE results; Methods"
+    retrieved: "2026-09-07"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-07"
+tags: [import, quantification, tximport, counts-from-abundance]

@@ -20,6 +20,9 @@ applicability:
       value: 3
     - field: n_timepoints
       op: is_null
+    - field: import_state
+      op: not_in
+      value: [quantifications, estimated_counts_with_lengths]
   notes: >-
     The Python mirror of tpl-deseq2-multigroup. A count matrix whose first
     column is the gene identifier and whose header holds the sample

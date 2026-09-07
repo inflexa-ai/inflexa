@@ -13,6 +13,10 @@ applicability:
   design_patterns: [two_group_paired, two_group_with_blocking_factor, repeated_measures, two_group_with_covariates]
   honors: [pairing, blocking_factor, covariates, batch]
   min_replicates: 2
+  conditions:
+    - field: import_state
+      op: not_in
+      value: [quantifications, estimated_counts_with_lengths]
   notes: >-
     A count matrix whose first column is the gene identifier and whose header
     holds the sample identifiers, plus a sample table with one row per sample.

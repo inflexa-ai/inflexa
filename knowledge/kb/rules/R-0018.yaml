@@ -1,29 +1,43 @@
 id: R-0018
 title: "Salmon or kallisto quantifications: import with tximport at the gene level and carry the length offsets"
 assertion: >-
-  If the counts come from Salmon or kallisto, import the transcript estimates
-  with tximport and sum them to the gene level. Carry the average transcript
-  length per gene and sample into the count model as an offset, or use the
-  lengthScaledTPM counts from abundance for a tool that takes no offset.
-  The length offset prevents a false call from a change in isoform use, and
-  the gain over simple counting is largest for a gene with differential
-  transcript usage. Do not round transcript-level TPM to counts without the
-  length correction. For a three prime tag library the three prime rule
-  applies instead, with no length offset.
+  If the per-sample transcript quantifications of Salmon or kallisto are in
+  hand, the quant.sf or abundance.h5 file of each sample, import them with
+  tximport at the gene level with the transcript-to-gene map of the
+  annotation. Keep countsFromAbundance at no, thus the counts stay the
+  estimated counts, and carry the average transcript length per gene and
+  sample into the count model as an offset. The length offset prevents a
+  false call from a change in isoform use, and the gain over simple counting
+  is largest for a gene with differential transcript usage. State the
+  transcript-to-gene map and its annotation version, and report the
+  transcripts that the map does not cover. Do not round transcript-level TPM
+  to counts without the length correction. For a three prime tag library the
+  three prime rule applies instead, with no length offset.
 modality: bulk_rna_seq
 conditions:
   - field: count_source
     op: in
     value: [salmon, kallisto]
+  - field: import_state
+    op: eq
+    value: quantifications
 action:
   step_type: model_design
   parameters:
     - name: import
-      value: tximport_lengthScaledTPM_or_offsets
+      value: tximport_gene_level_avg_tx_length_offset
       default_source: "doi:10.12688/f1000research.7563.2"
     - name: import_tool
       value: tximport
       default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor"
+    - name: tx2gene
+      value: transcript_to_gene_map_of_the_annotation
+      default_source: "vignette:tximport/2026-04-28#import-transcript-level-estimates"
+      required: true
+    - name: counts_from_abundance
+      value: "no"
+      default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor"
+      required: true
 severity: info
 strength: consensus
 evidence_quality: high
@@ -70,5 +84,5 @@ license: CC-BY-4.0
 curator: "radu@geneguard.bio"
 llm_drafted: true
 drafting_model: "claude-fable-5-1"
-curated: "2026-09-04"
+curated: "2026-09-07"
 tags: [import, quantification, tximport]

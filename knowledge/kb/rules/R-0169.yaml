@@ -1,0 +1,71 @@
+id: R-0169
+title: "A count table from a transcript quantifier with no length input: report the missing input, and state that the length offset is lost"
+assertion: >-
+  A quantifier name alone does not establish that the length correction
+  occurred. If the counts come from Salmon, kallisto, or RSEM as a gene-level
+  table, with no per-sample quantification files and no average transcript
+  length table, the import state is not established. Ask for the per-sample
+  quantification files, quant.sf, abundance.h5, or genes.results, or for the
+  average transcript length table per gene and sample. If neither arrives,
+  fit the count model on the counts as delivered, with no length offset, and
+  state in the plan and in the report that the length offset is lost and
+  that a change in isoform use can show as differential expression. Do not
+  run tximport on a gene table, because tximport imports transcript
+  estimates, and do not invent a length input.
+modality: bulk_rna_seq
+conditions:
+  - field: count_source
+    op: in
+    value: [salmon, kallisto, rsem]
+  - field: data_state
+    op: eq
+    value: counts
+  - field: import_state
+    op: in
+    value: [integer_counts, unknown]
+action:
+  step_type: model_design
+  outcome: report_missing_length_input
+  parameters:
+    - name: import
+      value: gene_counts_without_length_offset
+      default_source: "doi:10.12688/f1000research.7563.2"
+    - name: missing_input
+      value: quantification_directories_or_avg_tx_length_table
+      default_source: "vignette:tximport/2026-04-28#import-transcript-level-estimates"
+      required: true
+severity: warn
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0009
+    paraphrase: >-
+      The offset from the average transcript length corrects the gene-level
+      count for a change in the length of the expressed transcripts between
+      the samples, and without the offset a shift in isoform use looks like
+      differential expression, thus a gene table without the lengths loses
+      that correction.
+    anchor: "Incorporating transcript-level estimates leads to more accurate DGE results"
+    retrieved: "2026-09-07"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0010
+    paraphrase: >-
+      tximport reads the per-sample quantification files of Salmon, kallisto,
+      or RSEM and returns the gene-level counts beside the average transcript
+      length per gene and sample, thus the lengths exist only where the
+      per-sample files are imported, and a summarized gene table carries none.
+    anchor: "Import transcript-level estimates; Downstream DGE in Bioconductor"
+    retrieved: "2026-09-07"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-07"
+tags: [import, quantification, missing-input]

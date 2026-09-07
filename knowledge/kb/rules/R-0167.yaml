@@ -1,0 +1,74 @@
+id: R-0167
+title: "Estimated gene counts with average transcript lengths: keep the estimates, and give the model the lengths as an offset"
+assertion: >-
+  If the input is a gene-level table of estimated counts from Salmon or
+  kallisto, with a table of the average transcript length per gene and
+  sample beside it, keep the counts as estimated and give the model the
+  lengths as an offset. Such a table comes from a tximport call with
+  countsFromAbundance at no, thus the counts hold no length correction, and
+  the offset carries it: DESeq2 takes the lengths as its normalization
+  matrix, and edgeR takes the log lengths as an offset. Do not round the
+  estimates by hand and do not rescale them. DESeq2 rounds inside the
+  import, and edgeR takes the estimates as they are. If a gene has a length
+  of zero in a sample, set the length to one before the offset. The length
+  table is a required input, because without it the counts lose the
+  correction for a change in isoform use.
+modality: bulk_rna_seq
+conditions:
+  - field: count_source
+    op: in
+    value: [salmon, kallisto]
+  - field: data_state
+    op: eq
+    value: counts
+  - field: import_state
+    op: eq
+    value: estimated_counts_with_lengths
+action:
+  step_type: model_design
+  parameters:
+    - name: import
+      value: estimated_counts_with_avg_tx_length_offset
+      default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor"
+    - name: length_input
+      value: per_gene_per_sample_average_transcript_length
+      default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor"
+      required: true
+    - name: counts_from_abundance
+      value: "no"
+      default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor"
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0010
+    paraphrase: >-
+      The vignette builds the DESeq2 object from the tximport output with the
+      estimated counts and the average transcript length per gene and sample
+      as the normalization matrix, and it builds the edgeR object from the
+      same counts with the log of the lengths as an offset, scaled to the
+      library size, when countsFromAbundance is no.
+    anchor: "Downstream DGE in Bioconductor; DESeq2; edgeR"
+    retrieved: "2026-09-07"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0009
+    paraphrase: >-
+      A change in the average transcript length of a gene between the samples
+      enters the count model as an offset, and without the offset a shift in
+      isoform use looks like differential expression, thus the gene-level
+      count estimates and the lengths belong together.
+    anchor: "Incorporating transcript-level estimates leads to more accurate DGE results"
+    retrieved: "2026-09-07"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-07"
+tags: [import, quantification, tximport, length-offset]

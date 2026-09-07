@@ -50,19 +50,37 @@ Each operation of the client MUST answer a typed value and MUST NOT throw on a s
 
 ### Requirement: The recommend answer carries the environment and a plan skeleton
 
-When the host binds a farm lock or a reference store, `knowledge_recommend` MUST join each step of the procedure with the environment: whether the farm holds the package of the step and at which version, and whether the reference store holds the collection the step names and at which path. The tool MUST NOT fill a gap and MUST NOT name a path it did not read. The answer MUST carry a `plan_skeleton`: the procedure folded into plan steps with the id, the name, the track, the agent, the packages, the dependencies, the constraints, the caveats, and the grounding filled. The situation MUST accept an optional `enrichment_input` field, and the answer MUST list in `dropped` the steps a flag removed.
+When the host binds a farm lock or a reference store, `knowledge_recommend` MUST join each step of the procedure with the environment. The environment says whether the farm holds the package of the step, and at which version. It says whether the reference store holds the collection the step names, and at which path. The tool MUST NOT fill a gap and MUST NOT name a path it did not read.
+
+The tool MUST give the planner one representation: `plan_skeleton` and `claims`. The model-facing answer MUST NOT carry the `procedure` of the service. `plan_skeleton` MUST be the procedure folded into plan steps. Each skeleton step MUST carry these fields, filled from the procedure:
+
+- the id, the name, the track, the agent, the packages, and the dependencies
+- the constraints and the caveats
+- the `alternatives` of the central step, the `disputed` sides, and the `forbids` list
+- the `environment` of the central step
+- the grounding, with `settings` filled
+
+Each entry of `settings` is one parameter of a procedure step of the group. The entry MUST name the procedure step, the name, the value, and the source.
+
+`claims` MUST hold only the claims the procedure references, in match order. A referenced claim is a rule of a step, a flag, an alternative, or a disputed rule. The full view of a claim is at `GET /v1/claims/{claim}` of the service, and the tool MUST NOT fetch it. The situation MUST accept an optional `enrichment_input` field, and the answer MUST list in `dropped` the steps a flag removed.
 
 #### Scenario: The farm holds the package and the store holds the collection
 
 - **GIVEN** a farm lock that lists DESeq2 and a reference store that holds the human Hallmark collection
 - **WHEN** the planner calls `knowledge_recommend` for a two-group design
-- **THEN** the differential expression step reads `environment.package.present: true` with the version, and the enrichment step reads `environment.collection.present: true` with its path
+- **THEN** the differential expression skeleton step reads `environment.package.present: true` with the version, and the enrichment skeleton step reads `environment.collection.present: true` with its path
 
 #### Scenario: No store is bound
 
 - **GIVEN** a host that binds no farm lock and no reference store
 - **WHEN** the planner calls `knowledge_recommend`
-- **THEN** no step carries an environment, and `environment_source` reads unknown for both
+- **THEN** no skeleton step carries an environment, and `environment_source` reads unknown for both
+
+#### Scenario: The planner receives one representation
+
+- **GIVEN** a two-group design whose differential expression rule names an alternative method, a forbidden method, and the alpha of the test with its source
+- **WHEN** the planner calls `knowledge_recommend`
+- **THEN** the answer carries `plan_skeleton` and `claims` and no `procedure`. The differential expression skeleton step carries the alternative in `alternatives`, the forbidden method in `forbids`, and the alpha with its step and source in `grounding.settings`. Each claim id a skeleton step cites has one view in `claims`.
 
 ### Requirement: A language preference selects among the templates that honor the design
 
@@ -116,13 +134,19 @@ The input of `knowledge_recommend` and `knowledge_check` MUST be the flat situat
 
 ### Requirement: The plan step carries an optional grounding
 
-`AnalysisStepSchema` and `PlanStepSchema` MUST carry an optional `grounding` object with `status` (`grounded`, `ungrounded`, `flagged`), `snapshot`, `claims`, an optional `template`, and `reason`. A plan without the field MUST validate as before. The briefing MUST render the field beside the task fields.
+`AnalysisStepSchema` and `PlanStepSchema` MUST carry an optional `grounding` object with `status` (`grounded`, `ungrounded`, `flagged`), `snapshot`, `claims`, an optional `template`, an optional `settings` list, and `reason`. Each entry of `settings` MUST carry the procedure step, the name, the value, and an optional source. The value is a string, a number, a boolean, or a list of strings. The planner MUST copy `settings` from the skeleton step as it is. A plan without the field MUST validate as before. The briefing MUST render the field beside the task fields.
 
 #### Scenario: A stored plan without grounding loads
 
 - **GIVEN** a plan persisted before the field existed
 - **WHEN** it is loaded and validated
 - **THEN** validation passes
+
+#### Scenario: A grounded step keeps its settings
+
+- **GIVEN** a skeleton step whose grounding holds the alpha of the test with its step and source
+- **WHEN** the planner submits the plan with the step copied as it is
+- **THEN** the plan validates, and the stored step carries the setting with its step, name, value, and source
 
 #### Scenario: A grounded step reaches its agent
 

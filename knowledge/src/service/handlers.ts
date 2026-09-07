@@ -5,7 +5,7 @@
  */
 
 import { checkSteps } from "../engine/check.js";
-import { assembleProcedure, INFERENTIAL_METHOD_FIELD, type Catalog } from "../engine/procedure.js";
+import { assembleProcedure, INFERENTIAL_METHOD_FIELD, type Catalog, type ProcedureFlag, type ProcedureStep } from "../engine/procedure.js";
 import type { StoredRule } from "../engine/rules.js";
 import type { Modality, Situation, Template } from "../model.js";
 import { matchEnvironment } from "../render/environment.js";
@@ -45,6 +45,16 @@ const OPTIONAL_FLAGS: ReadonlySet<string> = new Set(["interaction", "classifier"
  */
 const DERIVED_FIELDS: ReadonlySet<string> = new Set([INFERENTIAL_METHOD_FIELD]);
 
+/**
+ * The one derived default of the situation. A count table has an import
+ * state, and a caller that gives none has not established it: the state is
+ * `unknown`, and the rule for the missing length input fires. The default
+ * also keeps the field present for a template condition (`not_in` over an
+ * absent field is false), thus the count templates stay eligible for a caller
+ * that predates the field.
+ */
+const DEFAULT_IMPORT_STATE: NonNullable<Situation["import_state"]> = "unknown";
+
 export function normalizeSituation(situation: Situation): Situation {
     const normalized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(situation)) {
@@ -54,6 +64,7 @@ export function normalizeSituation(situation: Situation): Situation {
         if (Array.isArray(value) && value.length === 0) continue;
         normalized[key] = value;
     }
+    if (normalized.data_state === "counts" && normalized.import_state === undefined) normalized.import_state = DEFAULT_IMPORT_STATE;
     // Every kept value came from the validated situation, thus the shape holds.
     return normalized as unknown as Situation;
 }
@@ -109,6 +120,25 @@ export function claimView(snapshot: LoadedSnapshot, stored: StoredRule, detailed
     };
 }
 
+/**
+ * The claim ids a procedure references: the rules of each step, the rule of
+ * each step flag, the rules of each alternative, the rule of a dispute, and
+ * the top-level flags. The step rules cover the other four today, because the
+ * engine draws them from the same candidates, but the union keeps the
+ * invariant explicit against a later cross-step reference.
+ */
+function referencedClaims(steps: readonly ProcedureStep[], flags: readonly ProcedureFlag[]): Set<string> {
+    const referenced = new Set<string>();
+    for (const step of steps) {
+        for (const claim of step.rules) referenced.add(claim);
+        for (const flag of step.flags ?? []) referenced.add(flag.rule);
+        for (const alternative of step.alternatives ?? []) for (const claim of alternative.rules) referenced.add(claim);
+        if (step.disputed) referenced.add(step.disputed.rule);
+    }
+    for (const flag of flags) referenced.add(flag.rule);
+    return referenced;
+}
+
 export function recommend(snapshot: LoadedSnapshot, request: RecommendRequest): RecommendResponse | ValidationFailure {
     const situation = normalizeSituation(request.situation);
     const modality = snapshot.modalities.get(situation.modality);
@@ -130,7 +160,10 @@ export function recommend(snapshot: LoadedSnapshot, request: RecommendRequest): 
             return true;
         });
     const match: RecommendResponse["match"] = procedure.flagged ? "flag" : procedure.central_covered ? "applicable" : "none";
-    const claims = procedure.applicable.map((stored) => claimView(snapshot, stored, detailed));
+    // The answer carries the claims the procedure references, in match order. A rule for a step outside the walk
+    // is applicable but unused, and its view is on demand at GET /v1/claims/{claim}.
+    const referenced = referencedClaims(procedure.steps, flags);
+    const claims = procedure.applicable.filter((stored) => referenced.has(stored.claim)).map((stored) => claimView(snapshot, stored, detailed));
     return {
         match,
         snapshot: snapshotRef(snapshot),
@@ -189,7 +222,9 @@ export function templateContract(snapshot: LoadedSnapshot, id: string): Template
         applicability: template.applicability,
         ...(template.applicability.honors ? { honors: template.applicability.honors } : {}),
         parameters: template.parameters,
+        inputs: template.inputs ?? [],
         outputs: template.outputs,
+        ...(template.applicability.notes ? { notes: template.applicability.notes } : {}),
         environment: template.environment,
         bioconductor: template.bioconductor,
     };

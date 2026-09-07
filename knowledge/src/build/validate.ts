@@ -11,7 +11,9 @@
  * `substitute_for`, every substitute names a method of record that shares a
  * step type, every
  * template that runs a test between groups declares the design requirements
- * it honors, and every claim id is unique. With `--resolve-dois` the gate
+ * it honors, every count-model template that a transcript quantifier can feed
+ * either imports the quantifications or excludes the import states that
+ * carry lengths, and every claim id is unique. With `--resolve-dois` the gate
  * also asks the DOI resolver for each DOI and each PMID, because a citation
  * that exists is the floor of a citation that supports.
  *
@@ -54,6 +56,38 @@ function runsGroupTest(template: Template): boolean {
     if (!(template.inputs ?? []).some((input) => input.name === "metadata")) return false;
     const replicates = template.applicability.min_replicates;
     return replicates === undefined || replicates >= 2;
+}
+
+/** The count sources whose output is a transcript estimate: a count table from one of them has an import state. */
+const QUANTIFIER_SOURCES = new Set<string>(["salmon", "kallisto", "rsem"]);
+
+/** The import states whose input carries the average transcript lengths, thus the input is not an integer CSV. */
+const IMPORT_STATES_WITH_LENGTHS = ["quantifications", "estimated_counts_with_lengths"] as const;
+
+/**
+ * Whether a template realizes the count model on the output of a transcript
+ * quantifier, and thus must say what it does with the quantification states:
+ * it names the `model_design` step, and its `count_sources` list a quantifier.
+ * A template that reads a results table or a per-sample score never imports
+ * the counts, whatever its `count_sources` say.
+ */
+function modelsQuantifierCounts(template: Template): boolean {
+    if (!template.step_types.includes("model_design")) return false;
+    return (template.applicability.count_sources ?? []).some((source) => QUANTIFIER_SOURCES.has(source));
+}
+
+/** Whether the template imports the quantifications itself: it declares the transcript-to-gene slot. */
+function importsQuantifications(template: Template): boolean {
+    return template.parameters.some((parameter) => parameter.name === "tx2gene_path");
+}
+
+/** Whether the template excludes every import state that carries lengths with one `import_state not_in [...]` condition. */
+function excludesLengthStates(template: Template): boolean {
+    return (template.applicability.conditions ?? []).some((condition) => {
+        if (condition.field !== "import_state" || condition.op !== "not_in" || !Array.isArray(condition.value)) return false;
+        const excluded = condition.value;
+        return IMPORT_STATES_WITH_LENGTHS.every((state) => excluded.includes(state));
+    });
 }
 
 /**
@@ -166,6 +200,10 @@ export function validateKnowledgeBase(kb: KnowledgeBase): ValidationIssue[] {
             else if (!template.step_types.some((step) => stepTypes.get(record)?.has(step))) issues.push({ where, message: `substitute_for names ${record}, and no template or rule of that method shares a step type with this template` });
         }
         if (runsGroupTest(template) && template.applicability.honors === undefined) issues.push({ where, message: "runs a test between groups and must declare applicability.honors (an empty list declares that the script honors no design requirement)" });
+        // An integer-CSV template that a quantifier can feed would receive a quantification state it cannot read.
+        if (modelsQuantifierCounts(template) && !importsQuantifications(template) && !excludesLengthStates(template)) {
+            issues.push({ where, message: `lists a transcript quantifier in count_sources and must either declare a tx2gene_path slot or carry the condition import_state not_in [${IMPORT_STATES_WITH_LENGTHS.join(", ")}]` });
+        }
         for (const citation of template.citations ?? []) {
             if (!sources.has(citation)) issues.push({ where, message: `cites an unknown source ${citation}` });
         }

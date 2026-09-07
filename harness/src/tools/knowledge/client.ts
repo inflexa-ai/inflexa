@@ -2,7 +2,7 @@
  * The knowledge service seam of the harness.
  *
  * `KnowledgeClient` is the one contract between the harness and the remote
- * knowledge service: three typed operations and the snapshot they answer
+ * knowledge service: four typed operations and the snapshot they answer
  * from. The harness never knows about a license. It sees a client, or it sees
  * nothing, and an absent client is a normal state in which no knowledge tool
  * attaches. `createHttpKnowledgeClient` is the shipped realization over plain
@@ -11,7 +11,8 @@
  * Every operation answers a data variant. A service that is configured but
  * unreachable gives `{ match: "unavailable" }` after the retry policy, and the
  * caller continues from the prose skills. A 400 names the field and the
- * permitted values, thus a model corrects itself in one turn. The response
+ * permitted values, thus a model corrects itself in one turn. A 404 on the
+ * contract lookup names the `template` field the same way. The response
  * shapes below are the harness copy of the wire contract of the service, kept
  * lenient with `looseObject`, thus a richer answer of a later snapshot still
  * parses.
@@ -147,6 +148,62 @@ export const RenderResponseSchema = z.looseObject({
 });
 export type RenderResponse = z.infer<typeof RenderResponseSchema>;
 
+// ── The template contract ───────────────────────────────────────────
+
+const SlotScalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+
+/** A slot value on the wire: a scalar, or a list of scalars. */
+const SlotValueSchema = z.union([SlotScalarSchema, z.array(SlotScalarSchema)]);
+
+/**
+ * One slot of a template with the constraint a caller value must obey.
+ * `adaptable: false` marks a pinned slot: the render refuses a caller value
+ * for it. An adaptable slot without a default is required unless `required`
+ * is false.
+ */
+const TemplateParameterSchema = z.looseObject({
+    name: z.string(),
+    type: z.string(),
+    description: z.string(),
+    adaptable: z.boolean(),
+    required: z.boolean().optional(),
+    default: SlotValueSchema.optional(),
+    default_source: z.string().optional(),
+    enum: z.array(z.string()).optional(),
+    pattern: z.string().optional(),
+    minimum: z.number().optional(),
+    maximum: z.number().optional(),
+});
+export type TemplateParameter = z.infer<typeof TemplateParameterSchema>;
+
+/** A file the script reads. The path names the slot that gives it, for example `{{counts_path}}`. */
+const TemplateInputSchema = z.looseObject({ name: z.string(), path: z.string(), description: z.string().optional() });
+
+/**
+ * The contract of one template as `GET /v1/templates/{id}` serves it: every
+ * slot, pinned ones included, the inputs, and the outputs. The service adds
+ * fields such as `step_types` and `environment`; they pass through the loose
+ * remainder.
+ */
+export const TemplateContractSchema = z.looseObject({
+    id: z.string(),
+    version: z.string(),
+    label: z.string(),
+    /** The catalog id of the method the script runs. */
+    method: z.string(),
+    /** The catalog id of the method of record when the template is a declared substitute. */
+    substitute_for: z.string().optional(),
+    language: z.string(),
+    /** The design requirements the script realizes. Absent: not subject to them. */
+    honors: z.array(z.string()).optional(),
+    parameters: z.array(TemplateParameterSchema),
+    inputs: z.array(TemplateInputSchema).optional(),
+    outputs: z.array(z.looseObject({ name: z.string(), path: z.string(), description: z.string().optional() })),
+    /** The input requirements in prose, from the applicability of the template. */
+    notes: z.string().optional(),
+});
+export type TemplateContract = z.infer<typeof TemplateContractSchema>;
+
 const ValidationFailureSchema = z.looseObject({
     error: z.literal("validation"),
     message: z.string(),
@@ -214,6 +271,13 @@ export interface KnowledgeClient {
         slots: Readonly<Record<string, unknown>>,
         farm?: readonly FarmPackage[],
     ): Promise<RenderResponse | KnowledgeUnavailable | KnowledgeRejected>;
+    /**
+     * The slot contract of a template, by reference (`tpl-x@1.0.0`) or by id.
+     * The service serves one version per snapshot, thus the answer carries the
+     * version it serves and the caller compares it with the reference. An
+     * unknown template is `rejected` with the field `template`.
+     */
+    contract(template: string): Promise<TemplateContract | KnowledgeUnavailable | KnowledgeRejected>;
 }
 
 export interface HttpKnowledgeClientConfig {
@@ -225,8 +289,35 @@ export interface HttpKnowledgeClientConfig {
     readonly maxRetries?: number;
 }
 
-function rejectedOf(error: ApiError): KnowledgeRejected | undefined {
-    if (error.type !== "http_status" || error.status !== 400) return undefined;
+/** The `message` of an error envelope, or the body itself when it is not one. */
+function messageOf(body: string): string | undefined {
+    try {
+        const raw: unknown = JSON.parse(body);
+        if (raw !== null && typeof raw === "object" && "message" in raw && typeof raw.message === "string") return raw.message;
+    } catch {
+        // Not JSON: the body is the message.
+    }
+    return body || undefined;
+}
+
+/** The template id of a reference: `tpl-x@1.0.0` gives `tpl-x`. The service serves one version, thus the route takes the id alone. */
+function templateIdOf(reference: string): string {
+    const at = reference.indexOf("@");
+    return at < 0 ? reference : reference.slice(0, at);
+}
+
+/**
+ * A 400 is a rejection that names the field and the permitted values. A 404
+ * is one only on a lookup route, where `notFoundField` names the field whose
+ * value the service does not hold. Every other failure is `unavailable`.
+ */
+function rejectedOf(error: ApiError, notFoundField?: string): KnowledgeRejected | undefined {
+    if (error.type !== "http_status") return undefined;
+    if (error.status === 404 && notFoundField) {
+        const message = messageOf(error.body) ?? `no such ${notFoundField}`;
+        return { match: "rejected", message, issues: [{ field: notFoundField, message }] };
+    }
+    if (error.status !== 400) return undefined;
     let raw: unknown;
     try {
         raw = JSON.parse(error.body);
@@ -240,30 +331,40 @@ function rejectedOf(error: ApiError): KnowledgeRejected | undefined {
 
 export function createHttpKnowledgeClient(config: HttpKnowledgeClientConfig): KnowledgeClient {
     const base = config.baseUrl.replace(/\/+$/, "");
-    const options = {
-        method: "POST" as const,
-        headers: { "content-type": "application/json", authorization: `Bearer ${config.apiKey}` },
-        timeoutMs: config.timeoutMs ?? 30_000,
-        maxRetries: config.maxRetries ?? 2,
-        retryDelayMs: 500,
-    };
+    const authorization = `Bearer ${config.apiKey}`;
+    const policy = { timeoutMs: config.timeoutMs ?? 30_000, maxRetries: config.maxRetries ?? 2, retryDelayMs: 500 };
 
-    async function post<S extends z.ZodType>(path: string, body: unknown, schema: S): Promise<z.infer<S> | KnowledgeUnavailable | KnowledgeRejected> {
-        const result = await apiFetchValidated(`${base}${path}`, schema, { ...options, body: JSON.stringify(body) });
+    /** One call of the service: a POST with a JSON body, or a GET without one. Every call carries the bearer key. */
+    async function call<S extends z.ZodType>(
+        method: "GET" | "POST",
+        path: string,
+        body: unknown,
+        schema: S,
+        notFoundField?: string,
+    ): Promise<z.infer<S> | KnowledgeUnavailable | KnowledgeRejected> {
+        const headers: Record<string, string> = body === undefined ? { authorization } : { "content-type": "application/json", authorization };
+        const result = await apiFetchValidated(`${base}${path}`, schema, {
+            ...policy,
+            method,
+            headers,
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        });
         if (result.isOk()) return result.value;
-        const rejected = rejectedOf(result.error);
+        const rejected = rejectedOf(result.error, notFoundField);
         if (rejected) return rejected;
         return { match: "unavailable", reason: describeApiError(result.error) };
     }
 
     return {
         recommend: (situation, responseFormat, preferences) =>
-            post(
+            call(
+                "POST",
                 "/v1/recommend",
                 { situation, ...(responseFormat ? { response_format: responseFormat } : {}), ...(preferences ? { preferences } : {}) },
                 RecommendResponseSchema,
             ),
-        check: (situation, steps) => post("/v1/check", { situation, steps }, CheckResponseSchema),
-        render: (template, slots, farm) => post("/v1/template/render", { template, slots, ...(farm ? { farm } : {}) }, RenderResponseSchema),
+        check: (situation, steps) => call("POST", "/v1/check", { situation, steps }, CheckResponseSchema),
+        render: (template, slots, farm) => call("POST", "/v1/template/render", { template, slots, ...(farm ? { farm } : {}) }, RenderResponseSchema),
+        contract: (template) => call("GET", `/v1/templates/${encodeURIComponent(templateIdOf(template))}`, undefined, TemplateContractSchema, "template"),
     };
 }

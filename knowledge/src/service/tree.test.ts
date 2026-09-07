@@ -14,11 +14,13 @@ import { join } from "node:path";
 
 import { loadKnowledgeBase } from "../build/load-kb.js";
 import { validateKnowledgeBase } from "../build/validate.js";
-import type { Situation } from "../model.js";
+import { templateHolds } from "../engine/procedure.js";
+import type { KnowledgeBase, Situation } from "../model.js";
 import { openSnapshot, writeSnapshot, type LoadedSnapshot } from "../store.js";
-import { check, recommend, render } from "./handlers.js";
+import { check, claimView, recommend, render } from "./handlers.js";
 import type { CheckRequest, RecommendResponse } from "./api.js";
 
+/** A Salmon count table with no import state: the service derives `unknown`, and the missing length input is reported. */
 const BASE: Situation = {
     question: "full_plan",
     modality: "bulk_rna_seq",
@@ -33,6 +35,7 @@ const BASE: Situation = {
 };
 
 let snapshot: LoadedSnapshot;
+let kb: KnowledgeBase;
 let dir: string;
 
 beforeAll(async () => {
@@ -40,6 +43,7 @@ beforeAll(async () => {
     if (!loaded.ok) throw new Error(loaded.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
     const issues = validateKnowledgeBase(loaded.kb);
     if (issues.length > 0) throw new Error(issues.map((issue) => `${issue.where}: ${issue.message}`).join("\n"));
+    kb = loaded.kb;
     dir = mkdtempSync(join(tmpdir(), "kb-tree-"));
     const path = join(dir, "snapshot.sqlite");
     writeSnapshot(path, { kb: loaded.kb, date: "2026-09-04", schemaVersion: "test", vocabularies: [], toolDefinitionHash: "sha256:test" });
@@ -90,7 +94,11 @@ describe("the curated tree on the evaluation situations", () => {
         expect(parameter(response, "enrichment", "gene_set_collection")).toBe("msigdb_hallmark_human");
         // R-0046 names the over-representation method (M-0011), thus its universe stays with that method and not with GSEA.
         expect(hasParameter(response, "enrichment", "universe")).toBe(false);
-        expect(parameter(response, "model_design", "import")).toBe("tximport_lengthScaledTPM_or_offsets");
+        // A quantifier name alone establishes no length correction: the state is unknown, and the missing input is reported.
+        expect(response.situation.import_state).toBe("unknown");
+        expect(parameter(response, "model_design", "import")).toBe("gene_counts_without_length_offset");
+        expect(step(response, "model_design").flags?.some((flag) => flag.severity === "warn" && flag.outcome === "report_missing_length_input")).toBe(true);
+        expect(hasParameter(response, "model_design", "import_tool")).toBe(false);
         expect(response.uncovered).toEqual([]);
     });
 
@@ -183,10 +191,97 @@ describe("the curated tree on the evaluation situations", () => {
         expect(hasParameter(population, "multiple_testing", "independent_filtering")).toBe(false);
     });
 
-    it("a three prime library with Salmon counts imports raw counts with no offset", () => {
-        const response = answer({ ...BASE, library_type: "three_prime" });
-        expect(parameter(response, "model_design", "import")).toBe("tximport_raw_counts_no_offset");
+    it("a three prime library with Salmon counts takes no length offset, in the unknown state and on quantifications", () => {
+        const unknown = answer({ ...BASE, library_type: "three_prime" });
+        // The missing input rule is the most specific rule of the step, and the three prime rule sets the two offset facts.
+        expect(parameter(unknown, "model_design", "import")).toBe("gene_counts_without_length_offset");
+        expect(parameter(unknown, "model_design", "counts_from_abundance")).toBe("no");
+        expect(parameter(unknown, "model_design", "length_offset")).toBe("none");
+        const quantifications = answer({ ...BASE, library_type: "three_prime", import_state: "quantifications" });
+        // The three prime rule is more specific than the tximport rule, thus it owns the import as its own text states.
+        expect(parameter(quantifications, "model_design", "import")).toBe("tximport_raw_counts_no_offset");
+        expect(parameter(quantifications, "model_design", "counts_from_abundance")).toBe("no");
+        expect(parameter(quantifications, "model_design", "length_offset")).toBe("none");
+        expect(step(quantifications, "model_design").conflicts).toBeUndefined();
+    });
+
+    it("quantifications: the two-group template imports them with tximport, the mapping is required, and no integer-CSV template applies", () => {
+        const situation: Situation = { ...BASE, import_state: "quantifications" };
+        const response = answer(situation);
+        expect(response.match).toBe("applicable");
+        expect(response.situation.import_state).toBe("quantifications");
+        expect(step(response, "differential_expression").method?.id).toBe("M-0001");
+        expect(step(response, "differential_expression").template).toBe("tpl-deseq2-two-group@1.1.0");
+        expect(parameter(response, "model_design", "import")).toBe("tximport_gene_level_avg_tx_length_offset");
+        expect(parameter(response, "model_design", "import_tool")).toBe("tximport");
         expect(parameter(response, "model_design", "counts_from_abundance")).toBe("no");
+        const tx2gene = step(response, "model_design").parameters?.find((entry) => entry.name === "tx2gene");
+        expect(tx2gene).toMatchObject({ value: "transcript_to_gene_map_of_the_annotation", required: true });
+        expect(step(response, "model_design").flags?.some((flag) => flag.outcome === "report_missing_length_input")).toBeFalsy();
+        expect(hasParameter(response, "model_design", "missing_input")).toBe(false);
+        // A Python preference finds no template that reads the quantifications: the R template stays, with the limit.
+        const python = answer(situation, { language: "python" });
+        expect(step(python, "differential_expression").template).toBe("tpl-deseq2-two-group@1.1.0");
+        expect(step(python, "differential_expression").limit?.requested_language).toBe("python");
+        expect(step(python, "differential_expression").substitution).toBeUndefined();
+        // Every count template without an import branch is excluded from the quantification states.
+        const excluded = [...snapshot.templates.values()].filter((template) => template.step_types.includes("model_design") && template.id !== "tpl-deseq2-two-group" && template.id !== "tpl-limma-trend-logvalues");
+        expect(excluded.length).toBe(13);
+        for (const state of ["quantifications", "estimated_counts_with_lengths"] as const) {
+            for (const template of excluded) {
+                expect(templateHolds(template, "differential_expression", { ...situation, import_state: state })).toBe(false);
+            }
+        }
+        for (const groups of [{ n_per_group_min: 2, n_per_group_max: 2 }, { n_per_group_min: 60, n_per_group_max: 60 }, { paired: true, blocking_factor: "subject" }]) {
+            const other = answer({ ...situation, ...groups });
+            expect(step(other, "differential_expression").template).toBeUndefined();
+        }
+    });
+
+    it("estimated counts with lengths and corrected counts: each state carries its import and its required fact", () => {
+        const estimated = answer({ ...BASE, import_state: "estimated_counts_with_lengths" });
+        expect(step(estimated, "differential_expression").template).toBe("tpl-deseq2-two-group@1.1.0");
+        expect(parameter(estimated, "model_design", "import")).toBe("estimated_counts_with_avg_tx_length_offset");
+        expect(step(estimated, "model_design").parameters?.find((entry) => entry.name === "length_input")).toMatchObject({ value: "per_gene_per_sample_average_transcript_length", required: true });
+        expect(parameter(estimated, "model_design", "counts_from_abundance")).toBe("no");
+        expect(hasParameter(estimated, "model_design", "missing_input")).toBe(false);
+        const corrected = answer({ ...BASE, import_state: "corrected_counts" });
+        expect(step(corrected, "differential_expression").template).toBe("tpl-deseq2-two-group@1.1.0");
+        expect(parameter(corrected, "model_design", "import")).toBe("length_corrected_counts_no_offset");
+        expect(step(corrected, "model_design").parameters?.find((entry) => entry.name === "counts_from_abundance")).toMatchObject({ value: "lengthScaledTPM_or_scaledTPM_as_delivered", required: true });
+        expect(parameter(corrected, "model_design", "length_offset")).toBe("none");
+        // The corrected counts are an integer-CSV input: the Python mirror applies under its preference.
+        expect(step(answer({ ...BASE, import_state: "corrected_counts" }, { language: "python" }), "differential_expression").template).toBe("tpl-pydeseq2-two-group@1.0.0");
+        // RSEM gene results are estimates with effective lengths: the type rsem rule keeps its step, with no conflict.
+        const rsem = answer({ ...BASE, count_source: "rsem", import_state: "estimated_counts_with_lengths" });
+        expect(parameter(rsem, "model_design", "import")).toBe("tximport_rsem_expected_counts_with_effective_lengths");
+        expect(step(rsem, "model_design").conflicts).toBeUndefined();
+        expect(step(answer({ ...BASE, count_source: "rsem" }), "model_design").flags?.some((flag) => flag.outcome === "report_missing_length_input")).toBe(true);
+    });
+
+    it("the check asks a model design draft for the missing input on a Salmon table of unknown state", () => {
+        // A draft that promises tximport on a gene table resolves by its package; the step then owes the missing input.
+        const promise: CheckRequest["steps"][number] = { step_type: "model_design", method: "tximport at the gene level, then ~ condition", package: "tximport" };
+        const silent = check(snapshot, { situation: BASE, steps: [promise] });
+        if ("error" in silent) throw new Error(silent.message);
+        expect(silent.violations).toEqual([]);
+        expect(silent.warnings.map((warning) => warning.parameter)).toEqual(["missing_input"]);
+        expect(silent.warnings[0]?.rule).toMatch(/^R-0169@/);
+        expect(silent.ok).toBe(false);
+        const stated = check(snapshot, { situation: BASE, steps: [{ ...promise, parameters: [{ name: "missing_input", value: "quant.sf directories requested from the core" }] }] });
+        if ("error" in stated) throw new Error(stated.message);
+        expect(stated.warnings).toEqual([]);
+        const quantifications = check(snapshot, { situation: { ...BASE, import_state: "quantifications" }, steps: [promise] });
+        if ("error" in quantifications) throw new Error(quantifications.message);
+        expect(quantifications.warnings.map((warning) => warning.parameter).sort()).toEqual(["counts_from_abundance", "tx2gene"]);
+    });
+
+    it("the gate refuses a count template that a quantifier can feed when it neither imports the quantifications nor excludes the length states", () => {
+        const edger = kb.templates.find((template) => template.id === "tpl-edger-ql")!;
+        const conditions = (edger.applicability.conditions ?? []).filter((condition) => condition.field !== "import_state");
+        const bare = { ...edger, applicability: { ...edger.applicability, conditions } };
+        const issues = validateKnowledgeBase({ ...kb, templates: kb.templates.map((template) => (template.id === edger.id ? bare : template)) });
+        expect(issues).toEqual([{ where: "template tpl-edger-ql", message: expect.stringContaining("import_state not_in [quantifications, estimated_counts_with_lengths]") }]);
     });
 
     it("mouse and other organisms get their own collections; enrichment only reports enrichment fields", () => {
@@ -222,6 +317,17 @@ describe("the curated tree on the evaluation situations", () => {
         expect(result.script).toContain('REFERENCE_LEVEL  <- "control"');
         expect(result.script).not.toContain("{{");
         expect(result.decision_record.slots.find((slot) => slot.name === "alpha")).toMatchObject({ source: "default", adaptable: false });
+        // The quantifications state: the slot report carries the mapping and the correction mode, thus the decision record does too.
+        const quantifications = await render(snapshot, {
+            template: "tpl-deseq2-two-group@1.1.0",
+            slots: { import_state: "quantifications", quant_dir: "/a/data/inputs/local/quant", tx2gene_path: "/a/data/inputs/local/tx2gene.csv", metadata_path: "/a/data/inputs/local/metadata.csv", condition_column: "condition", reference_level: "control", test_level: "treated" },
+        });
+        if ("error" in quantifications) throw new Error(quantifications.message);
+        expect(quantifications.slots.find((slot) => slot.name === "tx2gene_path")).toMatchObject({ source: "caller", value: "/a/data/inputs/local/tx2gene.csv", adaptable: true });
+        expect(quantifications.slots.find((slot) => slot.name === "counts_from_abundance")).toMatchObject({ source: "default", value: "no" });
+        expect(quantifications.slots.find((slot) => slot.name === "length_offset")).toMatchObject({ source: "default", value: true });
+        expect(quantifications.decision_record.slots.map((slot) => slot.name)).toEqual(expect.arrayContaining(["import_state", "tx2gene_path", "counts_from_abundance", "length_offset"]));
+        expect(quantifications.slots.find((slot) => slot.name === "counts_path")).toBeUndefined();
     });
 
     it("three groups: the LRT with pairwise contrasts and ashr; paired with three groups: the subject in both models", () => {
@@ -493,4 +599,52 @@ describe("the curated tree on the evaluation situations", () => {
         const transcripts = answer({ ...BASE, extra_analyses: ["transcript_level"] });
         expect(transcripts.flags.some((flag) => flag.outcome?.startsWith("stop"))).toBe(true);
     });
+
+    it("the answer carries the claims the procedure references and no other, for each question kind and under a flag", () => {
+        const cases: Record<string, Situation> = {
+            qc: { ...BASE, question: "qc" },
+            differential_expression: { ...BASE, question: "differential_expression" },
+            enrichment: { ...BASE, question: "enrichment" },
+            full_plan: BASE,
+            no_replicates: { ...BASE, n_per_group_min: 1, n_per_group_max: 1 },
+        };
+        for (const [label, situation] of Object.entries(cases)) {
+            const response = answer(situation);
+            const returned = new Set(response.claims.map((claim) => claim.id));
+            const referenced = new Set(response.procedure.flatMap((entry) => entry.rules));
+            expect(returned, label).toEqual(referenced);
+            // One view per claim, and every flag, alternative, and dispute of the answer resolves in the claims.
+            expect(response.claims.length, label).toBe(referenced.size);
+            expect(returned, label).toEqual(referencedOf(response));
+        }
+        // A QC answer holds one claim, on its own step: no method claim of another step reaches it.
+        const qc = answer(cases.qc!);
+        expect(qc.procedure.map((entry) => entry.step)).toEqual(["qc_sample_structure"]);
+        expect(qc.claims.map((claim) => claim.step_type)).toEqual(["qc_sample_structure"]);
+        const flagged = answer({ ...cases.qc!, quality_flags: ["low_depth_sample"] });
+        expect(flagged.claims.map((claim) => claim.rule).sort()).toEqual(["R-0008", "R-0033"]);
+        // No replicates: the enrichment flag that removes inference names the DE rule, and that claim is in the answer.
+        const none = answer(cases.no_replicates!);
+        const descriptive = step(none, "enrichment").flags?.find((flag) => flag.outcome === "descriptive_only");
+        expect(descriptive).toBeDefined();
+        expect(none.claims.find((claim) => claim.id === descriptive!.rule)?.rule).toBe("R-0003");
+        // The view of a claim the answer omits stays on demand, by id, from the snapshot.
+        const omitted = [...snapshot.rulesByClaim.values()].find((stored) => stored.rule.action.step_type === "enrichment" && stored.rule.status === "active");
+        expect(omitted).toBeDefined();
+        expect(qc.claims.some((claim) => claim.id === omitted!.claim)).toBe(false);
+        expect(claimView(snapshot, omitted!, true).id).toBe(omitted!.claim);
+    });
 });
+
+/** The claim ids a procedure references: the step rules, the step flags, the alternatives, the disputes, and the top-level flags. */
+function referencedOf(response: RecommendResponse): Set<string> {
+    const ids = new Set<string>();
+    for (const entry of response.procedure) {
+        for (const rule of entry.rules) ids.add(rule);
+        for (const flag of entry.flags ?? []) ids.add(flag.rule);
+        for (const alternative of entry.alternatives ?? []) for (const rule of alternative.rules) ids.add(rule);
+        if (entry.disputed) ids.add(entry.disputed.rule);
+    }
+    for (const flag of response.flags) ids.add(flag.rule);
+    return ids;
+}

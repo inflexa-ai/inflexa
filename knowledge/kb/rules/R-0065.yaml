@@ -8,7 +8,11 @@ assertion: >-
   model uses the lengths as an offset. Do not round the expected counts by
   hand, and do not use the TPM column as the count. If a gene has an
   effective length of zero in a sample, set the length to one before the
-  offset, as the tximport documentation describes.
+  offset, as the tximport documentation describes. The gene results files
+  hold the gene identifiers already, thus the type rsem path takes no
+  transcript-to-gene map. If only a summarized matrix of expected counts is
+  in hand, without the per-sample files or the effective lengths, this rule
+  does not apply, and the missing input rule applies instead.
 modality: bulk_rna_seq
 conditions:
   - field: count_source
@@ -17,6 +21,9 @@ conditions:
   - field: data_state
     op: eq
     value: counts
+  - field: import_state
+    op: in
+    value: [quantifications, estimated_counts_with_lengths]
 action:
   step_type: model_design
   parameters:
@@ -62,5 +69,5 @@ license: CC-BY-4.0
 curator: "radu@geneguard.bio"
 llm_drafted: true
 drafting_model: "claude-fable-5-1"
-curated: "2026-09-05"
+curated: "2026-09-07"
 tags: [import, quantification, rsem, tximport]

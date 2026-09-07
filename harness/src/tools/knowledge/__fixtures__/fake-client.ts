@@ -16,6 +16,7 @@ import type {
     RecommendResponse,
     RenderResponse,
     KnowledgePreferences,
+    TemplateContract,
 } from "../client.js";
 
 export const SNAPSHOT = { date: "2026-09-04", digest: "sha256:71ac0000000000000000000000000000000000000000000000000000000000ab" };
@@ -195,10 +196,81 @@ export function substituteRenderAnswer(): RenderResponse {
     };
 }
 
+/**
+ * The contract of the two-group template that `renderAnswer` renders. The
+ * adaptable slots cover an enum (`lfc_shrink`), a pattern (`design`), a
+ * sourced default (`min_count`), a required slot without a default
+ * (`counts_path`, where an absent `required` means required), and an optional
+ * slot without a default (`min_samples`). `alpha` is the one pinned slot.
+ */
+export function contractAnswer(): TemplateContract {
+    return {
+        id: "tpl-deseq2-two-group",
+        version: "1.0.0",
+        label: "DESeq2 two-group",
+        method: DE_METHOD.id,
+        language: "R",
+        parameters: [
+            { name: "counts_path", type: "string", description: "Path of the count matrix CSV, first column gene id, header sample ids.", adaptable: true },
+            { name: "metadata_path", type: "string", description: "Path of the sample table CSV with one row per sample.", adaptable: true },
+            { name: "condition_column", type: "string", description: "The column of the sample table that holds the condition of interest.", adaptable: true },
+            {
+                name: "design",
+                type: "formula",
+                description: "The design formula. It must end with condition.",
+                adaptable: true,
+                default: "~ condition",
+                default_source: "doi:10.1186/s13059-014-0550-8",
+                pattern: "condition\\s*$",
+            },
+            {
+                name: "min_count",
+                type: "integer",
+                description: "A gene stays when it has at least this many counts in at least min_samples samples.",
+                adaptable: true,
+                default: 10,
+                default_source: "doi:10.12688/f1000research.7035.1",
+                minimum: 0,
+            },
+            {
+                name: "min_samples",
+                type: "integer",
+                description: "The minimum number of samples for the count filter. Absent, the script uses the smallest group size.",
+                adaptable: true,
+                required: false,
+                minimum: 1,
+            },
+            {
+                name: "alpha",
+                type: "number",
+                description: "The adjusted p-value cutoff, passed to results() so the independent filter is optimized for it.",
+                adaptable: false,
+                default: 0.05,
+                default_source: "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing",
+            },
+            {
+                name: "lfc_shrink",
+                type: "string",
+                description: "The shrinkage estimator of the reported log2 fold change.",
+                adaptable: true,
+                default: "apeglm",
+                default_source: "doi:10.1093/bioinformatics/bty895",
+                enum: ["apeglm", "ashr", "none"],
+            },
+        ],
+        inputs: [
+            { name: "counts", path: "{{counts_path}}", description: "Gene by sample integer counts, CSV." },
+            { name: "metadata", path: "{{metadata_path}}", description: "The sample table, one row per sample, CSV." },
+        ],
+        outputs: [{ name: "results", path: "output/de_results.csv", description: "One row per tested gene." }],
+    };
+}
+
 export interface FakeCalls {
     readonly recommend: { situation: KnowledgeSituation; preferences?: KnowledgePreferences }[];
     readonly check: { situation: KnowledgeSituation; steps: readonly DraftedStep[] }[];
     readonly render: { template: string; slots: Readonly<Record<string, unknown>>; farm?: readonly FarmPackage[] }[];
+    readonly contract: { template: string }[];
 }
 
 export function fakeKnowledgeClient(
@@ -206,9 +278,10 @@ export function fakeKnowledgeClient(
         recommend: Awaited<ReturnType<KnowledgeClient["recommend"]>>;
         check: Awaited<ReturnType<KnowledgeClient["check"]>>;
         render: Awaited<ReturnType<KnowledgeClient["render"]>>;
+        contract: Awaited<ReturnType<KnowledgeClient["contract"]>>;
     }> = {},
 ): { client: KnowledgeClient; calls: FakeCalls } {
-    const calls: FakeCalls = { recommend: [], check: [], render: [] };
+    const calls: FakeCalls = { recommend: [], check: [], render: [], contract: [] };
     const checkAnswer: CheckResponse = { ok: true, snapshot: SNAPSHOT, violations: [], warnings: [], not_assessed: [] };
     const client: KnowledgeClient = {
         async recommend(situation, _responseFormat, preferences) {
@@ -222,6 +295,10 @@ export function fakeKnowledgeClient(
         async render(template, slots, farm) {
             calls.render.push({ template, slots, ...(farm ? { farm } : {}) });
             return answers.render ?? renderAnswer();
+        },
+        async contract(template) {
+            calls.contract.push({ template });
+            return answers.contract ?? contractAnswer();
         },
     };
     return { client, calls };

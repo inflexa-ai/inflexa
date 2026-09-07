@@ -10,12 +10,28 @@ import { z } from "zod";
 // ── Plan structures ─────────────────────────────────────────────────
 
 /**
+ * One scientific setting of a grounded step: a parameter of the procedure
+ * that `knowledge_recommend` returned, with the procedure step it belongs to
+ * and the source of its value. The host binds the settings to the template
+ * of the step at dispatch, thus a template default never replaces a plan
+ * decision silently.
+ */
+export const GroundingSettingSchema = z.object({
+    step: z.string().describe("The procedure step the setting belongs to (for example `differential_expression` or `normalize`)."),
+    name: z.string().describe("The parameter name as the procedure names it (for example `alpha` or `lfc_shrink`)."),
+    value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]).describe("The value the procedure sets."),
+    source: z.string().optional().describe("The source of the value (a doi or a document) when the procedure names one. Absent otherwise."),
+});
+export type GroundingSetting = z.infer<typeof GroundingSettingSchema>;
+
+/**
  * The grounding of one method step: the claim identifiers and the snapshot
  * digest that `knowledge_recommend` returned in this run, the template the
- * step renders, and a one-line reason. Optional on both step schemas, thus a
- * stored plan and a plan made without the knowledge service load and
- * validate as before. Phase 0 validates the shape only. An empty field is
- * visible: the evaluation counts a method step without a value as ungrounded.
+ * step renders, the settings of the procedure, and a one-line reason.
+ * Optional on both step schemas, thus a stored plan and a plan made without
+ * the knowledge service load and validate as before. Phase 0 validates the
+ * shape only. An empty field is visible: the evaluation counts a method step
+ * without a value as ungrounded.
  */
 export const GroundingSchema = z.object({
     status: z
@@ -31,6 +47,14 @@ export const GroundingSchema = z.object({
         .string()
         .optional()
         .describe("The template id with its version (for example `tpl-deseq2-two-group@1.0.0`) when the step renders a template. Absent otherwise."),
+    settings: z
+        .array(GroundingSettingSchema)
+        .optional()
+        .describe(
+            "The scientific settings of the step: the parameters of the procedure steps the plan step holds, as `knowledge_recommend` returned them. " +
+                "Copy the `grounding.settings` of the skeleton step as it is, one entry per parameter, with its step, name, value, and source. " +
+                "Do not restate a setting as prose only, and do not change a value here: state a different value in the step and its reason. Absent when the step is ungrounded.",
+        ),
     reason: z
         .string()
         .describe(

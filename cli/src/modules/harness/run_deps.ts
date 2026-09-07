@@ -175,6 +175,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
             allowedWritePrefix: ctx.stepWritePrefix,
             nextFunctionId: ctx.nextFunctionId,
             deadlineMs: ctx.deadlineMs,
+            ...(ctx.input.templateBinding ? { templateBinding: ctx.input.templateBinding } : {}),
         },
     };
 

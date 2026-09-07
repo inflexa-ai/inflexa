@@ -79,7 +79,7 @@ import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import type { Logger } from "../../lib/logger.js";
 import type { CitationResolver } from "../../citations/types.js";
 import { createResolveCitationTool } from "../../tools/research/resolve-citation.js";
-import { createKnowledgeTemplateTool, type KnowledgeClient } from "../../tools/knowledge/index.js";
+import { createKnowledgeTemplateTool, type KnowledgeClient, type TemplateBinding } from "../../tools/knowledge/index.js";
 import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
 
 /**
@@ -105,6 +105,12 @@ export interface SandboxStepCoords {
     readonly nextFunctionId: () => string;
     /** Absolute unix-ms deadline for `awaitExec`. */
     readonly deadlineMs: () => number;
+    /**
+     * The plan settings bound to the template of this step, from the durable
+     * step input. Reaches `knowledge_template` alone. Absent when the step
+     * grounds on no template, or when the host bound nothing.
+     */
+    readonly templateBinding?: TemplateBinding;
 }
 
 /** The shared dependency graph every sandbox agent draws from. */
@@ -219,7 +225,12 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         comptox: chemDb.comptox,
         knowledgeTemplate:
             deps.knowledge && mutator
-                ? createKnowledgeTemplateTool({ client: deps.knowledge, mutator, ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}) })
+                ? createKnowledgeTemplateTool({
+                      client: deps.knowledge,
+                      mutator,
+                      ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
+                      ...(deps.step.templateBinding ? { binding: deps.step.templateBinding } : {}),
+                  })
                 : undefined,
     };
 

@@ -1,20 +1,39 @@
 /**
  * The plan skeleton: the procedure of the service folded into the steps of a
- * plan, with the agent, the packages, the dependencies, the constraints, and
- * the grounding of each step filled from the answer. A small model edits a
- * skeleton where it fails to compose a plan from a procedure; a frontier
- * model pays nothing for it. The skeleton carries only the fields the
- * answer can fill. The question, the acceptance criteria, the resources, and
- * the step budget come from the data profile, and the planner adds them.
+ * plan, with the agent, the packages, the dependencies, the constraints, the
+ * caveats, the alternatives, the disputed sides, the forbidden methods, the
+ * environment, and the grounding of each step filled from the answer. It is
+ * the one representation the planner receives: the procedure itself never
+ * reaches the model, thus nothing the procedure holds may be lost here. A
+ * small model edits a skeleton where it fails to compose a plan from a
+ * procedure; a frontier model pays nothing for it. The skeleton carries only
+ * the fields the answer can fill. The question, the acceptance criteria, the
+ * resources, and the step budget come from the data profile, and the planner
+ * adds them.
  *
  * The fold is fixed: one QC step, one differential expression step that
  * holds the filter, the normalization, the design, the test, the shrinkage,
  * and the multiple testing (the templates cover the same span), one
  * enrichment step on its own track, and one report step. A group with no
  * step in the procedure is absent from the skeleton.
+ *
+ * The central step of a group names the method of the skeleton step, and it
+ * gives the alternatives, the template, and the environment: an alternative
+ * of a folded step (a normalization in the differential expression group)
+ * is not a permitted replacement of the step method, and it stays out. The
+ * settings, the constraints, the caveats, and the forbidden methods come
+ * from every step of the group, each setting with the step it belongs to.
  */
 
-import type { RecommendWithEnvironment } from "./environment.js";
+import type { GroundingSetting } from "../../schemas/workflow-state.js";
+import type { RecommendWithEnvironment, StepEnvironment } from "./environment.js";
+
+export interface SkeletonAlternative {
+    readonly method: string;
+    readonly label: string;
+    readonly when: string;
+    readonly rules: readonly string[];
+}
 
 export interface SkeletonStep {
     readonly id: string;
@@ -26,11 +45,21 @@ export interface SkeletonStep {
     readonly depends_on: readonly string[];
     readonly constraints: readonly string[];
     readonly caveats: readonly string[];
+    /** The other permitted methods of the step, from the central procedure step. */
+    readonly alternatives: readonly SkeletonAlternative[];
+    /** A disputed rule of the group with its sides. The planner chooses one side and states the choice. */
+    readonly disputed?: { readonly rule: string; readonly sides: readonly string[] };
+    /** The method ids the rules forbid in the steps of the group. */
+    readonly forbids: readonly string[];
+    /** The environment of the central step, when the host bound the stores: the package in the farm and the collection in the reference store. */
+    readonly environment?: StepEnvironment;
     readonly grounding: {
         readonly status: "grounded" | "ungrounded" | "flagged";
         readonly snapshot: string;
         readonly claims: readonly string[];
         readonly template?: string;
+        /** One entry per parameter of the procedure steps of the group, with the step it belongs to. */
+        readonly settings: readonly GroundingSetting[];
         readonly reason: string;
     };
 }
@@ -99,6 +128,31 @@ function renderValue(value: unknown): string {
     return Array.isArray(value) ? value.map(String).join(", ") : String(value);
 }
 
+/** A parameter value as a setting: a scalar stays, a list becomes a list of strings, anything else its text. */
+function settingValue(value: unknown): GroundingSetting["value"] {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+    if (Array.isArray(value)) return value.map(String);
+    return String(value);
+}
+
+/** The settings of the steps of a group: one entry per parameter, with the step it belongs to. */
+function stepSettings(steps: readonly ProcedureStep[]): GroundingSetting[] {
+    return steps.flatMap((step) =>
+        (step.parameters ?? []).map((parameter) => ({
+            step: step.step,
+            name: parameter.name,
+            value: settingValue(parameter.value),
+            ...(parameter.default_source ? { source: parameter.default_source } : {}),
+        })),
+    );
+}
+
+/** The forbidden method ids of a step. The client schema reads the field through the loose object. */
+function forbidsOf(step: ProcedureStep): readonly string[] {
+    const forbids = (step as { forbids?: unknown }).forbids;
+    return Array.isArray(forbids) ? forbids.filter((method): method is string => typeof method === "string") : [];
+}
+
 /** `a and b`, or `a, b and c` for a longer list. */
 function joinWithAnd(items: readonly string[]): string {
     if (items.length <= 1) return items.join("");
@@ -158,6 +212,10 @@ export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonSte
         const method = central?.method;
         const status = hardFlag ? "flagged" : method ? "grounded" : "ungrounded";
         const name = method && group.id !== "T1S1" && group.id !== "T1S3" ? method.label : group.name;
+        const alternatives = (central?.alternatives ?? []).map(({ method: id, label, when, rules }) => ({ method: id, label, when, rules }));
+        // One dispute per skeleton step: the central step first, else the first folded step that carries one.
+        const disputed = central?.disputed ?? steps.find((step) => step.disputed !== undefined)?.disputed;
+        const forbids = [...new Set(steps.flatMap(forbidsOf))];
         return {
             id: group.id,
             name,
@@ -168,11 +226,16 @@ export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonSte
             depends_on: dependsOn(group.id, keptIds),
             constraints,
             caveats: hardFlag ? [hardFlag.message, ...caveats] : caveats,
+            alternatives,
+            ...(disputed ? { disputed: { rule: disputed.rule, sides: disputed.sides } } : {}),
+            forbids,
+            ...(central?.environment ? { environment: central.environment } : {}),
             grounding: {
                 status,
                 snapshot: answer.snapshot.digest,
                 claims,
                 ...(central?.template ? { template: central.template } : {}),
+                settings: stepSettings(steps),
                 reason: hardFlag ? `flagged by ${hardFlag.rule}` : method ? `${method.label} per ${claims[0] ?? "the procedure"}` : "no rule covers this step",
             },
         };

@@ -1,7 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
 import { createHttpKnowledgeClient, RecommendResponseSchema, type KnowledgeSituation } from "./client.js";
-import { limitAnswer, notAssessedCheckAnswer, recommendAnswer, SNAPSHOT, substituteRenderAnswer, substitutionAnswer } from "./__fixtures__/fake-client.js";
+import {
+    contractAnswer,
+    fakeKnowledgeClient,
+    limitAnswer,
+    notAssessedCheckAnswer,
+    recommendAnswer,
+    SNAPSHOT,
+    substituteRenderAnswer,
+    substitutionAnswer,
+} from "./__fixtures__/fake-client.js";
 
 const SITUATION: KnowledgeSituation = {
     question: "differential_expression",
@@ -15,6 +24,9 @@ const SITUATION: KnowledgeSituation = {
     batch: "none",
 };
 
+/** The requests the stub served, for the assertions on the route and the method. */
+const served: { method: string; pathname: string }[] = [];
+
 /** A stub of the service: one route per behavior the client must classify. */
 function stubService() {
     return Bun.serve({
@@ -22,7 +34,15 @@ function stubService() {
         hostname: "127.0.0.1",
         async fetch(request) {
             const url = new URL(request.url);
+            served.push({ method: request.method, pathname: url.pathname });
             if (request.headers.get("authorization") !== "Bearer secret") return Response.json({ error: "unauthorized" }, { status: 401 });
+            const templateMatch = url.pathname.match(/^\/v1\/templates\/(.+)$/);
+            if (request.method === "GET" && templateMatch) {
+                const id = decodeURIComponent(templateMatch[1]!);
+                if (id === "tpl-boom") return Response.json({ error: "server", message: "boom" }, { status: 500 });
+                if (id !== "tpl-deseq2-two-group") return Response.json({ error: "not_found", message: "no such template in this snapshot" }, { status: 404 });
+                return Response.json({ ...contractAnswer(), step_types: ["model_design"], environment: [] });
+            }
             if (url.pathname === "/v1/recommend") {
                 const body = (await request.json()) as { situation: KnowledgeSituation };
                 if (body.situation.n_groups === 99) {
@@ -118,6 +138,58 @@ describe("createHttpKnowledgeClient", () => {
         const dead = createHttpKnowledgeClient({ baseUrl: "http://127.0.0.1:9", apiKey: "k", maxRetries: 0, timeoutMs: 2_000 });
         const answer = await dead.recommend(SITUATION);
         expect(answer.match).toBe("unavailable");
+    });
+
+    it("gets the contract by the template id with the bearer key and parses every slot", async () => {
+        served.length = 0;
+        const answer = await client().contract("tpl-deseq2-two-group@1.0.0");
+        expect(served).toEqual([{ method: "GET", pathname: "/v1/templates/tpl-deseq2-two-group" }]);
+        expect("id" in answer).toBe(true);
+        if (!("id" in answer)) return;
+        expect(answer.id).toBe("tpl-deseq2-two-group");
+        expect(answer.version).toBe("1.0.0");
+        expect(answer.method).toBe("M-0001");
+        expect(answer.parameters.map((slot) => slot.name)).toEqual([
+            "counts_path",
+            "metadata_path",
+            "condition_column",
+            "design",
+            "min_count",
+            "min_samples",
+            "alpha",
+            "lfc_shrink",
+        ]);
+        expect(answer.parameters.find((slot) => slot.name === "alpha")).toMatchObject({ adaptable: false, default: 0.05 });
+        expect(answer.parameters.find((slot) => slot.name === "lfc_shrink")?.enum).toEqual(["apeglm", "ashr", "none"]);
+        expect(answer.parameters.find((slot) => slot.name === "design")?.pattern).toBe("condition\\s*$");
+        expect(answer.parameters.find((slot) => slot.name === "min_samples")?.required).toBe(false);
+        expect(answer.inputs?.map((input) => input.path)).toEqual(["{{counts_path}}", "{{metadata_path}}"]);
+        expect(answer.outputs).toEqual([{ name: "results", path: "output/de_results.csv", description: "One row per tested gene." }]);
+        // The fields the service adds beside the typed ones pass through the loose remainder.
+        expect(answer).toMatchObject({ step_types: ["model_design"] });
+    });
+
+    it("classifies a 404 on the contract route as rejected naming the template field", async () => {
+        const answer = await client().contract("tpl-missing@1.0.0");
+        expect(answer).toEqual({
+            match: "rejected",
+            message: "no such template in this snapshot",
+            issues: [{ field: "template", message: "no such template in this snapshot" }],
+        });
+    });
+
+    it("classifies a 500 on the contract route as unavailable", async () => {
+        const answer = await client().contract("tpl-boom");
+        expect(answer.match).toBe("unavailable");
+    });
+
+    it("exposes the same contract operation on the fake client and records the call", async () => {
+        const { client: fake, calls } = fakeKnowledgeClient();
+        const answer = await fake.contract("tpl-deseq2-two-group@1.0.0");
+        expect(calls.contract).toEqual([{ template: "tpl-deseq2-two-group@1.0.0" }]);
+        expect(answer).toEqual(contractAnswer());
+        const { client: rejecting } = fakeKnowledgeClient({ contract: { match: "rejected", message: "no such template", issues: [{ field: "template" }] } });
+        expect((await rejecting.contract("tpl-missing")).match).toBe("rejected");
     });
 
     it("parses the check answer with the steps it did not assess", async () => {

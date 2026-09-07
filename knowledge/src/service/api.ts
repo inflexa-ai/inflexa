@@ -111,6 +111,12 @@ export interface RecommendResponse {
     /** Step types the procedure dropped because a flag removed inference. Absent when none. */
     readonly dropped?: readonly StepType[];
     readonly flags: readonly ProcedureFlag[];
+    /**
+     * The claim views of the rules the procedure references: the rules of each
+     * step, the step flags, the alternatives, the disputes, and the top-level
+     * flags, in match order. An applicable rule for a step outside the walk is
+     * not here. The full view of any claim is at `GET /v1/claims/{claim}`.
+     */
     readonly claims: readonly ClaimView[];
     readonly nearest?: readonly NearMiss[];
     readonly reason?: string;
@@ -190,7 +196,11 @@ export interface TemplateContract {
     /** The design requirements the script realizes. Absent: not subject to them. Empty: subject, and honors none. */
     readonly honors?: readonly DesignRequirement[];
     readonly parameters: readonly TemplateParameter[];
+    /** The files the script reads. A path names the slot that gives it, for example `{{counts_path}}`. Empty when the template declares none. */
+    readonly inputs: readonly { readonly name: string; readonly path: string; readonly format?: string; readonly description?: string }[];
     readonly outputs: readonly { readonly name: string; readonly path: string; readonly format?: string; readonly description?: string }[];
     readonly environment: readonly { readonly name: string; readonly version: string; readonly track: string }[];
     readonly bioconductor: string;
+    /** The input requirements in prose, from the applicability of the template. Absent when the template gives none. */
+    readonly notes?: string;
 }
