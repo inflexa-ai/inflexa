@@ -247,6 +247,7 @@ export function buildStepAgent(comp: EvalComposition, ctx: SandboxAgentBuildCont
             allowedWritePrefix: ctx.stepWritePrefix,
             nextFunctionId: ctx.nextFunctionId,
             deadlineMs: ctx.deadlineMs,
+            ...(ctx.input.templateBinding ? { templateBinding: ctx.input.templateBinding } : {}),
         },
     };
     const agent = createSandboxAgents(deps)[ctx.input.agentId];

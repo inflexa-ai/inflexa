@@ -367,6 +367,38 @@ describe("composeStepSeed template contract", () => {
         expect(seed.prompt).not.toContain("`min_count` = 10 (normalize)");
     });
 
+    it("binds a number to a number slot, and leaves a policy word of the plan unbound with the reason", async () => {
+        const root = await makeWorkspace();
+        const fake = fakeKnowledgeClient();
+
+        const seed = await composeStepSeed({
+            input: input([
+                planStep(
+                    "T1S2",
+                    [],
+                    grounded([
+                        { step: "filter_low_counts", name: "min_samples", value: "smallest_group_size" },
+                        { step: "filter_low_counts", name: "min_count", value: 10, source: "doi:10.12688/f1000research.7035.1" },
+                    ]),
+                ),
+            ]),
+            stepId: "T1S2",
+            runId: RUN_ID,
+            deps: deps(root, {}, fake.client),
+        });
+
+        // The integer binds; the policy word stays with the agent, which states the integer it gives.
+        expect(seed.prompt).toContain("`min_count` = 10 (doi:10.12688/f1000research.7035.1)");
+        expect(seed.prompt).toContain(
+            '`min_samples` = "smallest_group_size" (filter_low_counts): a policy of the plan, not a value of the `min_samples` slot (integer)',
+        );
+        expect(seed.templateBinding).toEqual({
+            template: TEMPLATE_REF,
+            slots: { min_count: 10 },
+            sources: { min_count: "doi:10.12688/f1000research.7035.1" },
+        });
+    });
+
     it("says the contract was not retrieved when no client is bound, and renders no section", async () => {
         const root = await makeWorkspace();
 

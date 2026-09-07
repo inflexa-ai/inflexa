@@ -1,0 +1,261 @@
+{
+  "status": "completed",
+  "error": null,
+  "startedAt": "2026-09-07T16:50:47.557Z",
+  "completedAt": "2026-09-07T16:54:03.659Z",
+  "result": {
+    "domain": "transcriptomics",
+    "groups": [
+      {
+        "id": "raw-rna-seq-count-matrix",
+        "name": "raw RNA-seq count matrix",
+        "role": "data",
+        "count": 1,
+        "slots": [
+          {
+            "id": "set-1.slot-1",
+            "index": 0,
+            "location": "name",
+            "tokenClass": "word",
+            "sampleValues": [
+              "counts"
+            ],
+            "distinctValues": 1
+          }
+        ],
+        "reason": "counts.csv and metadata.csv share the local/<word>.csv naming template but are different substrates: one is the numeric expression matrix consumed as measurement data, the other is a small sample-annotation table consumed as design metadata to interpret the matrix's columns. A downstream step (e.g. differential expression) reads them through entirely different code paths.",
+        "formats": [
+          {
+            "count": 1,
+            "format": "csv"
+          }
+        ],
+        "category": "expression-matrix",
+        "fileCount": 1,
+        "totalBytes": 570381,
+        "description": "A 12000-gene x 12-sample table of raw (integer, unnormalized) RNA-seq counts. Gene identifiers are a mix of ~4384 real HGNC-style gene symbols (many from lipid/fatty-acid metabolism and adipocyte biology, e.g. ABCA1, ADIPOQ, ACOX1, ACADM, ACADL, ACLY) and ~7616 synthetic placeholder IDs (GENE00001-GENE07616) with no biological annotation. Sample columns sample_01..sample_12 correspond 1:1 to the rows of the metadata sheet.",
+        "displayPattern": "data/inputs/local/<word>.csv",
+        "memberRepresents": "the complete gene x sample raw read-count matrix for the bulk RNA-seq experiment (all 12 samples, one row per gene)",
+        "memberAnnotations": [
+          {
+            "note": "Confirmed via full-file scan: 12000 gene rows, all count values are non-negative integers (raw counts, not normalized). Gene ID column mixes real gene symbols (first ~4384 rows, thematically clustered around lipid/fatty-acid oxidation and adipocyte genes) with placeholder IDs GENE00001-GENE07616 (remaining ~7616 rows) - consistent with a simulated/benchmark dataset rather than a real annotated transcriptome.",
+            "path": "data/inputs/local/counts.csv"
+          }
+        ]
+      },
+      {
+        "id": "sample-design-sheet",
+        "name": "sample design sheet",
+        "role": "metadata",
+        "count": 1,
+        "slots": [
+          {
+            "id": "set-1.slot-1",
+            "index": 0,
+            "location": "name",
+            "tokenClass": "word",
+            "sampleValues": [
+              "metadata"
+            ],
+            "distinctValues": 1
+          }
+        ],
+        "reason": "counts.csv and metadata.csv share the local/<word>.csv naming template but are different substrates: one is the numeric expression matrix consumed as measurement data, the other is a small sample-annotation table consumed as design metadata to interpret the matrix's columns. A downstream step (e.g. differential expression) reads them through entirely different code paths.",
+        "formats": [
+          {
+            "count": 1,
+            "format": "csv"
+          }
+        ],
+        "category": "sample-annotation",
+        "fileCount": 1,
+        "totalBytes": 285,
+        "description": "Two-column sample sheet (sample, condition) mapping each of the 12 sample IDs to a two-arm design: sample_01-06 = control, sample_07-12 = treated. Balanced 6 vs 6.",
+        "displayPattern": "data/inputs/local/<word>.csv",
+        "memberRepresents": "the sample-to-arm assignment table used to interpret each count-matrix column",
+        "memberAnnotations": [
+          {
+            "note": "Read in full (13 lines): only columns are sample and condition; condition takes exactly two values, control (6 samples) and treated (6 samples), in perfect balance and matching the count matrix's 12 sample columns.",
+            "path": "data/inputs/local/metadata.csv"
+          }
+        ]
+      },
+      {
+        "id": "gene-length-reference-table",
+        "name": "gene length reference table",
+        "role": "reference",
+        "count": 1,
+        "formats": [
+          {
+            "count": 1,
+            "format": "csv"
+          }
+        ],
+        "category": "reference-data",
+        "fileCount": 1,
+        "totalBytes": 184945,
+        "description": "A two-column (gene, length) lookup table covering exactly the same 12000 gene identifiers as the count matrix (1:1 match confirmed by set comparison), with lengths ranging ~236-18887 bp (median ~1999 bp). This is external reference data the analysis would consume - not produced by the experiment - typically used for length-based normalization (TPM/FPKM) or length-bias correction in downstream enrichment testing (e.g. goseq-style methods).",
+        "displayPattern": "data/inputs/local/gene_lengths.csv",
+        "memberRepresents": "the canonical length in base pairs of one gene, keyed to the same gene identifier used in the count matrix"
+      }
+    ],
+    "probes": [
+      {
+        "probe": "subject",
+        "reason": "metadata.csv carries only sample and condition columns; there is no subject identifier distinct from sample and no repeated-measures structure - each of the 12 samples is treated as an independent biological replicate.",
+        "outcome": "not-found",
+        "searched": [
+          "data/inputs/local/metadata.csv"
+        ]
+      },
+      {
+        "probe": "sample",
+        "outcome": "found",
+        "dimension": "sample identity"
+      },
+      {
+        "probe": "cohort-arm",
+        "outcome": "found",
+        "dimension": "treatment arm (control vs treated)"
+      },
+      {
+        "probe": "timepoint",
+        "reason": "no visit/day/timepoint column or filename token; the design is a single-timepoint two-arm comparison.",
+        "outcome": "not-found",
+        "searched": [
+          "data/inputs/local/metadata.csv"
+        ]
+      },
+      {
+        "probe": "batch",
+        "reason": "no plate/lane/run/centre column or run-date token; metadata.csv records only sample and condition.",
+        "outcome": "not-found",
+        "searched": [
+          "data/inputs/local/metadata.csv"
+        ]
+      }
+    ],
+    "recipe": [
+      {
+        "op": "split",
+        "groupIds": [
+          "raw-rna-seq-count-matrix",
+          "sample-design-sheet"
+        ],
+        "slotIndex": 0,
+        "templates": [
+          "data/inputs/local/<word>.csv"
+        ],
+        "valueMapping": [
+          {
+            "values": [
+              "counts"
+            ],
+            "groupId": "raw-rna-seq-count-matrix"
+          },
+          {
+            "values": [
+              "metadata"
+            ],
+            "groupId": "sample-design-sheet"
+          }
+        ]
+      },
+      {
+        "op": "group",
+        "paths": [
+          "data/inputs/local/gene_lengths.csv"
+        ],
+        "groupIds": [
+          "gene-length-reference-table"
+        ],
+        "templates": []
+      }
+    ],
+    "tissue": null,
+    "caveats": [
+      "Organism is not stated anywhere in the inputs (no organism/species column, no README, no accession). The non-placeholder gene symbols follow human-style all-caps HGNC nomenclature (e.g. ABCA1, ADIPOQ) rather than mouse Title-case, but per policy this alone does not establish species - organism is recorded as unknown/null until confirmed by the user or another source.",
+      "~7616 of the 12000 genes (~63%) are synthetic placeholder IDs (GENE00001-GENE07616) carrying no real biological annotation; only ~4384 genes have real HGNC-style symbols, many clustered thematically around lipid/fatty-acid oxidation and adipocyte biology (ABCA1, ADIPOQ, ACOX1, ACADM, ACADL, ACLY, ACO2, ANGPTL4, etc.). This pattern is characteristic of a synthetic/simulated benchmark built to test differential expression + pathway-enrichment recovery of a planted metabolic signal against a large uninformative background - any gene-set enrichment step will only be able to map the non-placeholder subset to real pathway databases, and the placeholder genes should be expected to enter downstream results as unannotated background, not as evidence against the biological signal.",
+      "No README, paper, or accession was provided; every identity and design fact above comes solely from the three CSV files' own content.",
+      "Count matrix holds raw, unnormalized integer values (verified: no non-integer entries) - any differential-expression step must apply its own size-factor/library-size normalization; gene_lengths.csv is available if TPM/FPKM-style length normalization or length-bias correction (e.g. goseq) is wanted.",
+      "Design is perfectly balanced (6 control vs 6 treated) with no recorded batch, timepoint, or subject covariates - there is nothing to adjust for beyond the two-arm comparison itself."
+    ],
+    "subtype": "bulk-rna-seq (raw counts, likely simulated/benchmark dataset)",
+    "summary": "This is a small, self-contained bulk RNA-seq dataset built for a two-group differential-expression (and likely downstream enrichment) analysis: a 12000-gene x 12-sample raw count matrix (counts.csv), a 12-row sample sheet assigning each sample to a control or treated arm in a balanced 6-vs-6 design (metadata.csv), and a gene-length reference table covering the identical 12000 genes 1:1 (gene_lengths.csv), presumably for length-based normalization or enrichment bias correction. Organism is not stated by any input; gene symbols use human-style HGNC nomenclature but that alone does not establish species, so organism is left null. Roughly 63% of the genes in the matrix are synthetic placeholder IDs (GENE00001-GENE07616) rather than real annotated genes, while the remaining ~4384 real gene symbols skew toward lipid/fatty-acid metabolism and adipocyte biology - a pattern consistent with a simulated/benchmark dataset engineered to test recovery of a planted metabolic gene-set signal via DE + enrichment, rather than a dataset from a real sequencing experiment. No documentation, README, or public accession accompanies the files. The data supports a straightforward two-group DE analysis (e.g. control vs treated) but enrichment/pathway analysis will only be able to annotate the non-placeholder subset of genes, and the synthetic nature of the placeholder genes should be disclosed in any downstream report rather than treated as biological signal or noise.",
+    "cellType": null,
+    "organism": null,
+    "condition": null,
+    "partition": {
+      "groups": 3,
+      "keptFiles": 3,
+      "quarantine": {
+        "count": 0,
+        "sample": [],
+        "reasons": [],
+        "totalBytes": 0
+      },
+      "keptMembers": 3,
+      "scannedFiles": 3,
+      "unclassifiedFiles": 0,
+      "unclassifiedMembers": 0
+    },
+    "accessions": [],
+    "dimensions": [
+      {
+        "label": "treatment arm (control vs treated)",
+        "scope": "biological",
+        "category": "cohort-arm",
+        "description": "Two-arm design assigned by the experiment: 6 samples labeled control, 6 labeled treated (sample_01-06 vs sample_07-12). This is the primary comparison the count matrix supports.",
+        "observations": [
+          {
+            "kind": "column",
+            "path": "data/inputs/local/metadata.csv",
+            "column": "condition",
+            "checked": {
+              "of": 12,
+              "matched": 12
+            },
+            "exampleValues": [
+              "control",
+              "treated"
+            ],
+            "checkedAgainst": "data/inputs/local/counts.csv sample column headers (sample_01..sample_12)",
+            "distinctValues": 2
+          }
+        ]
+      },
+      {
+        "label": "sample identity",
+        "scope": "biological",
+        "category": "sample",
+        "description": "12 sample IDs, each mapping 1:1 to one column of the count matrix. No subject or replicate hierarchy above the sample level was found.",
+        "observations": [
+          {
+            "kind": "column",
+            "path": "data/inputs/local/metadata.csv",
+            "column": "sample",
+            "exampleValues": [
+              "sample_01",
+              "sample_02",
+              "sample_07",
+              "sample_12"
+            ],
+            "distinctValues": 12
+          }
+        ]
+      }
+    ],
+    "profiledAt": "2026-09-07T16:54:03.511Z",
+    "inputSignature": {
+      "count": 3,
+      "digest": "abda4e0390969b730b8116c381d28e76b2263262453048cd24738ca50a438ec0"
+    },
+    "experimentalDesign": "Two-group (unpaired) bulk RNA-seq design: 6 control vs 6 treated samples, balanced, no subject/timepoint/batch structure recorded. Count matrix is 12000 genes x 12 samples of raw integer counts; a companion gene-length reference table covers the identical 12000-gene set 1:1, letting length-based normalization or enrichment bias correction be applied downstream. No replicate pairing or repeated measures - each sample is treated as one independent biological replicate."
+  },
+  "workflowId": "dataprofile:eval-u25-live-3-with-two-group-n6-enrich-s1-1:a3bbf893-d1f5-4a8a-8c9c-4c64d7fcd8bf",
+  "seedInputFileIds": [
+    "3nhhddlxj87km",
+    "y6p3tvpd06ed",
+    "17euvfks1ko8i"
+  ]
+}

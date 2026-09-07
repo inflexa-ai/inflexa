@@ -1,0 +1,472 @@
+{
+  "steps": [
+    {
+      "id": "T1S1",
+      "name": "Sample structure QC and shallow-sample handling",
+      "agent": "bulk-transcriptomics-agent",
+      "track": "T1",
+      "status": "pending",
+      "caveats": [
+        "If one sample has a library size several times below the median, keep it through QC, inspect it on PCA and the distance heatmap, and report it explicitly. DESeq2's size factors already account for depth differences; removal is a judgment call requiring a stated reason, not a default action.",
+        "Organism is not stated in the inputs; this plan proceeds provisionally using human reference/annotation resources, and this assumption is stated in the report."
+      ],
+      "context": "Design: two-group unpaired, 6 control vs 6 treated, raw integer counts (12000 genes x 12 samples), sample-to-arm mapping in metadata.csv (columns: sample, condition). Data context flags one sample as shallow. No batch/subject/timepoint structure recorded.",
+      "maxSteps": 200,
+      "packages": [
+        "DESeq2",
+        "pheatmap",
+        "ggplot2"
+      ],
+      "question": "Do the 12 samples (6 control, 6 treated) separate by condition, and what is the status of the sample flagged as shallow — is it an outlier that should be removed, or a low-depth sample the model should simply down-weight?",
+      "grounding": {
+        "claims": [
+          "R-0033@40bf",
+          "R-0008@440d"
+        ],
+        "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf; shallow-sample handling per R-0008@440d",
+        "status": "grounded",
+        "settings": [
+          {
+            "name": "n_top_genes",
+            "step": "qc_sample_structure",
+            "value": 500,
+            "source": "doi:10.12688/f1000research.7035.1"
+          },
+          {
+            "name": "transform",
+            "step": "qc_sample_structure",
+            "value": "vst_blind",
+            "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+          },
+          {
+            "name": "low_depth_policy",
+            "step": "qc_sample_structure",
+            "value": "keep_inspect_report",
+            "source": "doi:10.1186/s13059-016-0881-8"
+          }
+        ],
+        "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+        "template": "tpl-qc-eda@1.0.0"
+      },
+      "resources": {
+        "cpu": 2,
+        "memoryGb": 4
+      },
+      "step_type": "qc",
+      "depends_on": [],
+      "constraints": [
+        "n_top_genes = 500",
+        "transform = vst_blind",
+        "low_depth_policy = keep_inspect_report — do not silently drop the shallow sample; report its library size and gene-detection count beside the others and only exclude it with a stated reason from the QC itself (e.g., a clear outlier on PCA/clustering unrelated to condition), not from depth alone"
+      ],
+      "acceptance_criteria": [
+        "Blind VST computed on the raw count matrix (counts.csv, 12000 genes x 12 samples)",
+        "PCA on the top 500 most-variable genes, colored by condition (control vs treated)",
+        "Sample-to-sample Euclidean distance heatmap produced",
+        "Library size (total counts) and number of detected genes reported per sample, with the shallow sample explicitly identified and compared to the group median",
+        "A stated, reasoned decision on whether to keep or exclude the shallow sample is recorded (default: keep, since depth alone is not adequate justification for removal per best practice) before proceeding to modeling"
+      ]
+    },
+    {
+      "id": "T1S2",
+      "name": "DESeq2 differential expression: treated vs control (Wald test, apeglm shrinkage, BH-adjusted)",
+      "agent": "bulk-transcriptomics-agent",
+      "track": "T1",
+      "status": "pending",
+      "caveats": [
+        "Count source/quantifier is not documented in the inputs; the data profile confirms integer, non-negative raw counts, but no pipeline/README is present to confirm the quantifier. State this explicitly in the report rather than assuming a specific upstream tool.",
+        "A gene-length reference table is provided; it is not needed for the DESeq2 count model itself (median-of-ratios normalization does not require gene length), but can be used as a QC diagnostic for length bias if warranted — this is not a standard requirement and should not block the DE analysis."
+      ],
+      "context": "Two-group unpaired design, no batch/covariates. Count source and quantifier are unknown (no README/pipeline documentation); the data profile confirms non-negative integer counts consistent with raw counts, so the standard DESeq2 raw-count workflow applies. Reference level for the condition factor is 'control'.",
+      "maxSteps": 200,
+      "packages": [
+        "DESeq2",
+        "apeglm"
+      ],
+      "question": "Which genes are differentially expressed between treated (n=6) and control (n=6) samples, using raw counts, DESeq2's median-of-ratios normalization, and BH-adjusted significance at alpha=0.05?",
+      "grounding": {
+        "claims": [
+          "R-0029@22ca",
+          "R-0002@087b",
+          "R-0026@9ab1",
+          "R-0036@9786",
+          "R-0039@968d",
+          "R-0009@310d",
+          "R-0166@bbcd",
+          "R-0083@12de",
+          "R-0010@6072",
+          "R-0043@4f55",
+          "R-0037@e6d8",
+          "R-0066@5d2d"
+        ],
+        "reason": "DESeq2 Wald test with apeglm log fold change shrinkage per R-0029@22ca, template tpl-deseq2-two-group@1.1.0",
+        "status": "grounded",
+        "settings": [
+          {
+            "name": "filter_policy",
+            "step": "filter_low_counts",
+            "value": "minimal_then_independent",
+            "source": "doi:10.1073/pnas.0914005107"
+          },
+          {
+            "name": "min_count",
+            "step": "filter_low_counts",
+            "value": 10,
+            "source": "doi:10.12688/f1000research.7035.1"
+          },
+          {
+            "name": "min_samples",
+            "step": "filter_low_counts",
+            "value": "smallest_group_size",
+            "source": "vignette:DESeq2/1.52.0#pre-filtering"
+          },
+          {
+            "name": "size_factors",
+            "step": "normalize",
+            "value": "median_of_ratios_named_in_the_plan",
+            "source": "doi:10.1186/s13059-014-0550-8"
+          },
+          {
+            "name": "depth_policy",
+            "step": "normalize",
+            "value": "size_factors_account_for_depth",
+            "source": "doi:10.1186/s13059-014-0550-8"
+          },
+          {
+            "name": "reference_level",
+            "step": "model_design",
+            "value": "explicit",
+            "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+          },
+          {
+            "name": "contrast_form",
+            "step": "model_design",
+            "value": "factor_numerator_denominator",
+            "source": "vignette:DESeq2/1.52.0#contrasts"
+          },
+          {
+            "name": "test",
+            "step": "differential_expression",
+            "value": "Wald",
+            "source": "doi:10.1186/s13059-014-0550-8"
+          },
+          {
+            "name": "count_outlier_policy",
+            "step": "differential_expression",
+            "value": "flag_and_report_na",
+            "source": "vignette:DESeq2/1.52.0#approach-to-count-outliers"
+          },
+          {
+            "name": "lfc_shrink",
+            "step": "shrink_lfc",
+            "value": "apeglm",
+            "source": "doi:10.1093/bioinformatics/bty895"
+          },
+          {
+            "name": "independent_filtering",
+            "step": "multiple_testing",
+            "value": true,
+            "source": "doi:10.1073/pnas.0914005107"
+          },
+          {
+            "name": "alpha",
+            "step": "multiple_testing",
+            "value": 0.05,
+            "source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+          },
+          {
+            "name": "adjustment",
+            "step": "multiple_testing",
+            "value": "BH",
+            "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+          },
+          {
+            "name": "filter_results_by",
+            "step": "multiple_testing",
+            "value": "adjusted_pvalue",
+            "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+          }
+        ],
+        "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+        "template": "tpl-deseq2-two-group@1.1.0"
+      },
+      "resources": {
+        "cpu": 2,
+        "memoryGb": 4
+      },
+      "step_type": "analysis",
+      "depends_on": [
+        "T1S1"
+      ],
+      "constraints": [
+        "min_count = 10, min_samples = smallest_group_size (6)",
+        "reference_level = explicit ('control')",
+        "contrast_form = condition, treated, control (positive log2FC = higher in treated)",
+        "test = Wald",
+        "lfc_shrink = apeglm",
+        "independent_filtering = true, alpha = 0.05, adjustment = BH",
+        "count_outlier_policy = flag_and_report_na",
+        "Do NOT pre-normalize or scale the raw counts before DESeq2 — normalization (median-of-ratios) happens inside the model"
+      ],
+      "acceptance_criteria": [
+        "Genes pre-filtered to >=10 counts in at least 6 samples (the smaller group size); minimal-then-independent-filtering policy stated",
+        "DESeq2 dataset built with condition as an explicit factor, reference level set to 'control' (not left to alphabetical default)",
+        "Wald test run for the contrast condition: treated vs control",
+        "apeglm shrinkage applied to log2FoldChange (coefficient-based, not ashr, since this is a single 2-group coefficient)",
+        "Independent filtering left on; results() called with alpha=0.05 matching the reporting threshold",
+        "p-value histogram inspected and reported before trusting BH-adjusted values",
+        "Count-outlier NA flags (Cook's distance) reported separately from independent-filtering NAs",
+        "Full results table (baseMean, log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue, padj) written out, ranked by shrunken log2FoldChange for reporting purposes",
+        "MA plot and dispersion plot produced as fit diagnostics",
+        "Number of genes tested after filtering and number significant at padj<0.05 reported",
+        "The shallow sample's disposition from T1S1 (kept or removed, with the stated reason) is applied consistently in this step"
+      ]
+    },
+    {
+      "id": "T1S6",
+      "name": "Gene identifier annotation and mapping-coverage report",
+      "agent": "bulk-transcriptomics-agent",
+      "track": "T1",
+      "status": "pending",
+      "caveats": [
+        "Given that a majority of gene IDs are synthetic placeholders, expect low mapping/annotation coverage overall; downstream enrichment results will only reflect the mappable minority of genes and this must be stated as a limitation, not glossed over.",
+        "Organism assumption (human) is unverified — no organism/species field exists in the inputs."
+      ],
+      "context": "Data profile states ~7616 of 12000 genes (~63%) are synthetic placeholder IDs (GENE00001-GENE07616) with no real biological annotation; the remainder presumably carry real gene identifiers/symbols. Organism is not stated anywhere in the inputs (no organism/species column, README, or accession); human org.Hs.eg.db is used as the provisional default and this assumption is stated in the report.",
+      "maxSteps": 200,
+      "packages": [
+        "org.Hs.eg.db",
+        "AnnotationDbi"
+      ],
+      "question": "What fraction of the 12000 gene identifiers in the count matrix map to real HGNC symbols / Entrez IDs via org.Hs.eg.db, given that ~63% (~7616) are synthetic GENE##### placeholders carrying no real biological annotation?",
+      "grounding": {
+        "claims": [
+          "R-0160@d858"
+        ],
+        "reason": "Gene identifier annotation with the organism package per R-0160@d858; tissue-context cross-check (R-0161@cdaf) omitted because organism/tissue identity cannot be verified from the inputs",
+        "status": "grounded",
+        "settings": [
+          {
+            "name": "id_map_source",
+            "step": "annotation",
+            "value": "organism_package_and_ncbi_gene_info_with_release",
+            "source": "doi:10.1038/nprot.2009.97"
+          },
+          {
+            "name": "identifier_space",
+            "step": "annotation",
+            "value": "one_space_per_column_stable_id_as_key",
+            "source": "doi:10.1038/nprot.2009.97"
+          },
+          {
+            "name": "unmapped_share",
+            "step": "annotation",
+            "value": "report_unmapped_and_one_to_many",
+            "source": "doi:10.1016/j.xinn.2021.100141"
+          }
+        ],
+        "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+        "template": "tpl-annotation-map@1.0.0"
+      },
+      "resources": {
+        "cpu": 1,
+        "memoryGb": 2
+      },
+      "step_type": "analysis",
+      "depends_on": [
+        "T1S1"
+      ],
+      "constraints": [
+        "id_map_source = organism package (org.Hs.eg.db) with stated version",
+        "identifier_space = one stable-id space per column, never mixed",
+        "report_unmapped_share = true"
+      ],
+      "acceptance_criteria": [
+        "Every gene ID in the DESeq2 results table is attempted to be mapped to an Entrez ID and HGNC symbol using org.Hs.eg.db (human assumed, organism unstated in inputs)",
+        "Share of unmapped IDs reported explicitly, expected to be substantial (~63%) given the synthetic placeholder IDs noted in the data profile",
+        "One-to-many mappings flagged and handled with a stated rule (e.g., keep first, or drop with count reported)",
+        "Mapped identifiers preserved as a separate column alongside the original gene ID (never overwriting/mixing identifier spaces)",
+        "This mapped table feeds the downstream enrichment step"
+      ]
+    },
+    {
+      "id": "T2S1",
+      "name": "fgsea preranked GSEA against MSigDB Hallmark (with Reactome and WikiPathways as secondary collections)",
+      "agent": "enrichment-agent",
+      "track": "T2",
+      "status": "pending",
+      "caveats": [
+        "If fewer than ~50 genes pass the significance threshold in T1S2, do not additionally run an over-representation analysis on that short list — the ranked (fgsea) method on the full list is already the primary and sufficient method here.",
+        "Enrichment results depend on the chosen ranking metric; report the metric used (Wald statistic) and treat findings as hypotheses pending confirmation with an alternative metric or method, not as proven mechanisms.",
+        "Given the ~63% synthetic placeholder gene IDs, effective gene-set coverage may be substantially reduced from the nominal Hallmark set sizes; report this per-set."
+      ],
+      "context": "MSigDB Hallmark human gene sets (50 sets, HGNC symbols, 2026.1 release) are available in the reference store, along with Reactome pathways (current release) and WikiPathways human pathways (2026.07.10 release) as secondary collections. Ranking uses the DESeq2 Wald statistic per the mapped gene table from T1S6.",
+      "maxSteps": 200,
+      "packages": [
+        "fgsea"
+      ],
+      "question": "Which MSigDB Hallmark pathways (and, secondarily, Reactome/WikiPathways pathways) are enriched among genes ranked by their treated-vs-control DESeq2 Wald statistic?",
+      "grounding": {
+        "claims": [
+          "R-0098@d01b",
+          "R-0165@e456",
+          "R-0107@976c",
+          "R-0048@500d",
+          "R-0101@06c8",
+          "R-0103@93aa",
+          "R-0108@409f",
+          "R-0045@be9e",
+          "R-0047@fd9d",
+          "R-0052@620a",
+          "R-0099@0e8a"
+        ],
+        "reason": "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark (human) per R-0098@d01b, disputed ranking metric resolved to Wald statistic per R-0108@409f",
+        "status": "grounded",
+        "settings": [
+          {
+            "name": "rank_metric",
+            "step": "enrichment",
+            "value": "stat",
+            "source": "doi:10.1101/060012"
+          },
+          {
+            "name": "gene_set_collection",
+            "step": "enrichment",
+            "value": "msigdb_hallmark_human",
+            "source": "doi:10.1016/j.cels.2015.12.004"
+          },
+          {
+            "name": "second_collection",
+            "step": "enrichment",
+            "value": "reactome_c2_cp",
+            "source": "doi:10.1093/nar/gkz1031"
+          },
+          {
+            "name": "further_collections",
+            "step": "enrichment",
+            "value": [
+              "reactome_gmt",
+              "wikipathways"
+            ],
+            "source": "doi:10.1093/nar/gkz1031"
+          },
+          {
+            "name": "min_size",
+            "step": "enrichment",
+            "value": 15,
+            "source": "doi:10.1073/pnas.0506580102"
+          },
+          {
+            "name": "max_size",
+            "step": "enrichment",
+            "value": 500,
+            "source": "doi:10.1073/pnas.0506580102"
+          },
+          {
+            "name": "collapse_redundant",
+            "step": "enrichment",
+            "value": true,
+            "source": "doi:10.1101/060012"
+          },
+          {
+            "name": "gsea_input",
+            "step": "enrichment",
+            "value": "full_ranked_list",
+            "source": "doi:10.1073/pnas.0506580102"
+          }
+        ],
+        "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+        "template": "tpl-fgsea-preranked@1.0.0"
+      },
+      "resources": {
+        "cpu": 2,
+        "memoryGb": 4
+      },
+      "step_type": "enrichment",
+      "depends_on": [
+        "T1S2",
+        "T1S6"
+      ],
+      "constraints": [
+        "rank_metric = stat (DESeq2 Wald statistic)",
+        "gene_set_collection = msigdb_hallmark_human (primary)",
+        "second_collection = reactome_pathways; further_collection = wikipathways_human",
+        "min_size = 15, max_size = 500",
+        "collapse_redundant = true",
+        "gsea_input = full_ranked_list (not thresholded)"
+      ],
+      "acceptance_criteria": [
+        "Full ranked list of all genes tested in T1S2 (not just significant ones) ranked by the DESeq2 Wald statistic ('stat' column) is used as fgsea input",
+        "fgsea run against the MSigDB Hallmark human gene set collection (50 sets), version stated (2026.1)",
+        "Gene set size window applied: keep sets with 15-500 members among the tested/mapped genes",
+        "BH-adjusted p-values reported per pathway; redundant/overlapping significant sets collapsed and reported with one representative plus full table as supplement",
+        "Leading-edge genes reported for each significant Hallmark pathway",
+        "Secondary passes run against Reactome pathways and WikiPathways human collections (both available in the reference store) with their releases stated, same size window and ranking metric",
+        "Ranking metric (Wald 'stat') explicitly stated in the report given this is a disputed methodological choice",
+        "Coverage caveat carried forward from T1S6: report what fraction of genes in each Hallmark/Reactome/WikiPathways set were actually present/mapped in this dataset given the high share of synthetic placeholder IDs"
+      ]
+    },
+    {
+      "id": "T1S3",
+      "name": "Combined DE + pathway enrichment report",
+      "agent": "bulk-transcriptomics-agent",
+      "track": "T1",
+      "status": "pending",
+      "caveats": [
+        "Do not overstate biological conclusions given the unverified organism assumption and the large synthetic-ID fraction; frame pathway findings as hypotheses grounded only in the mappable gene subset."
+      ],
+      "context": "Final synthesis of DE and enrichment outputs into a single decision-ready report, explicitly carrying forward all caveats identified in the data profile (unstated organism, high share of synthetic/unannotated gene IDs, undocumented count source, and the shallow sample).",
+      "maxSteps": 200,
+      "packages": [
+        "knitr",
+        "rmarkdown"
+      ],
+      "question": "What is the full, reproducible summary of which genes and which hallmark (and Reactome/WikiPathways) pathways change between treated and control, including all caveats about sample quality, organism uncertainty, and gene-ID coverage?",
+      "grounding": {
+        "claims": [
+          "R-0085@bb37",
+          "R-0087@3dcc",
+          "R-0041@059a",
+          "R-0051@01ca",
+          "R-0055@107a",
+          "R-0105@c4a8",
+          "R-0086@becf"
+        ],
+        "reason": "Report synthesis step has no single covering rule in the procedure but assembles the reporting requirements (R-0085, R-0087, R-0041, R-0051, R-0055, R-0105, R-0086) named for the DE and enrichment steps",
+        "status": "ungrounded",
+        "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+      },
+      "resources": {
+        "cpu": 1,
+        "memoryGb": 2
+      },
+      "step_type": "report",
+      "depends_on": [
+        "T1S2",
+        "T2S1",
+        "T1S6"
+      ],
+      "constraints": [
+        "rank_genes_by = shrunken_log2FoldChange",
+        "fit_diagnostics = ma_plot, dispersion_plot",
+        "report_fields = method, versions, design, thresholds, n_tested, n_de, session_info",
+        "enrichment_report fields = database, version, rank_metric, universe, size_window",
+        "leading_edge = per_significant_set",
+        "reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release"
+      ],
+      "acceptance_criteria": [
+        "Report states: method (DESeq2 Wald + apeglm), package versions, design formula, contrast (treated vs control, reference=control), alpha (0.05), number of genes tested after filtering, number of DE genes at padj<0.05",
+        "Gene table includes unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, and is ranked/plotted by shrunken value",
+        "MA plot and dispersion plot included with interpretation",
+        "p-value histogram included and its shape interpreted (flat/left-skewed = good fit)",
+        "Sample QC section explicitly documents the shallow sample's library size, PCA position, and the stated decision (keep/exclude) with reasoning",
+        "Enrichment section states: gene set database + version (Hallmark 2026.1, Reactome current, WikiPathways 2026.07.10), ranking metric (Wald stat), universe, size window (15-500), leading-edge genes per significant set",
+        "Explicit limitations section: organism was not stated in inputs and human references were used provisionally; ~63% of gene IDs are synthetic placeholders with no real annotation, limiting both annotation and enrichment coverage; count source/quantifier undocumented",
+        "Reproducibility record: sessionInfo, package versions, gene-set collection versions, any random seeds used"
+      ]
+    }
+  ],
+  "title": "Control vs treated DE + Hallmark GSEA (n=6/6)",
+  "created_at": "2026-09-08T00:00:00Z",
+  "analytical_narrative": "The 12-sample (6 control / 6 treated) raw count matrix (12000 genes, human by working assumption since organism is unstated) is analyzed with the standard DESeq2 pipeline: sample-structure QC (with explicit, careful handling of the one shallow sample rather than silent removal), pre-filtering, DESeq2 Wald test with apeglm log2FC shrinkage, BH-adjusted significance calling, gene identifier annotation, and fgsea preranked GSEA against MSigDB Hallmark (with Reactome and WikiPathways as secondary collections) on the Wald statistic. Because organism is not stated in the inputs and ~63% of gene IDs are synthetic placeholders with no real annotation, the plan flags this explicitly: annotation, tissue-identity, and pathway enrichment steps will only resolve for the subset of genes carrying real, mappable identifiers, and coverage will be reported rather than assumed complete. A gene-length reference table is provided in the input data and is passed through for provenance/QC (e.g., checking for length bias) but does not change the DESeq2 model, which uses raw counts with median-of-ratios normalization internally."
+}

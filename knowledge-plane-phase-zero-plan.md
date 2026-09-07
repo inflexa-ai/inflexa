@@ -73,10 +73,14 @@ f7c414af feat: bind the plan settings to the template, and return only the used 
 ## The work that remains
 
 Every unit is done and verified. A verifier passed U23, U24, and U25 together
-on 2026-09-07. The live-run part of the U25 acceptance is not proven. The knowledge
-service on this machine ran the code from before the change. The embedding
-endpoint of the end-to-end runner gave no answer. The text below
-describes U25 as it was before that verifier pass.
+on 2026-09-07. The live-run part of the U25 acceptance holds since the
+campaign `u25-live-3`. The plan carries the template of each grounded step. Each
+step agent renders its script through `knowledge_template`. The decision
+record of the differential expression step lists `min_count` and `lfc_shrink`
+under `bound_slots` with no override. Two fixes after the verifier pass made
+that true. The planner restores a template that the model dropped from the
+skeleton, and a plan setting binds only when its value fits the slot. The text
+below describes U25 as it was before that verifier pass.
 
 ### The unit that remains: U25
 

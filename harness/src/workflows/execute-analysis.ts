@@ -102,7 +102,7 @@ import { MAX_UPSTREAM_ARTIFACTS, composeStepBriefing, type StepBriefing, type Te
 import type { AnalysisStep, GroundingSetting } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
-import type { KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable, TemplateContract } from "../tools/knowledge/client.js";
+import type { KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable, TemplateContract, TemplateParameter } from "../tools/knowledge/client.js";
 import type { TemplateBinding, TemplateBindingValue } from "../tools/knowledge/template.js";
 import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
 import type { EmitFn } from "../loop/types.js";
@@ -591,6 +591,22 @@ function sameSettingValue(a: unknown, b: unknown): boolean {
 }
 
 /**
+ * Whether a plan value is a value of the slot, and not a policy word. A
+ * procedure parameter and a template slot share a name, but not always a
+ * value domain: `min_samples = smallest_group_size` names a rule the agent
+ * applies, and the slot takes the resulting integer. Only a member of the
+ * enum of the slot, a number for a number slot, or a boolean for a boolean
+ * slot binds. A free-text slot never binds, because the host cannot tell a
+ * policy word from a value there.
+ */
+function fitsSlot(slot: TemplateParameter, value: unknown): boolean {
+    if (slot.enum) return typeof value === "string" && slot.enum.includes(value);
+    if (slot.type === "integer" || slot.type === "number") return typeof value === "number";
+    if (slot.type === "boolean") return typeof value === "boolean";
+    return false;
+}
+
+/**
  * Project the served contract for the seed, and intersect the plan settings
  * with its slots by name. Each setting lands in exactly one place:
  *
@@ -624,6 +640,11 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
             continue;
         }
         if (adaptableNames.has(setting.name)) {
+            const slot = adaptable.find((candidate) => candidate.name === setting.name);
+            if (slot && !fitsSlot(slot, setting.value)) {
+                unbound.push(`${shown}: a policy of the plan, not a value of the \`${setting.name}\` slot (${slot.type}); state the value it gives`);
+                continue;
+            }
             const prior = slots[setting.name];
             if (prior !== undefined) {
                 if (!sameSettingValue(prior, setting.value)) unbound.push(`${shown}: differs from the bound value ${JSON.stringify(prior)} of the same slot`);
