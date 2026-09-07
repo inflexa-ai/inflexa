@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildManifest, type Manifest, parseArm, promptDigest, readManifest, tasksDigest, TASKS_PATH, writeManifest } from "./freeze.js";
+import { buildManifest, type Manifest, parseArm, parseProviderOrders, promptDigest, readManifest, tasksDigest, TASKS_PATH, withProviderOrders, writeManifest } from "./freeze.js";
 import { CRITERIA, isVerdictFile, judgeCampaign, type JudgeIdentity, manifestDifferences } from "./judge.js";
 import { TaskSchema } from "./tasks.js";
 
@@ -105,9 +105,34 @@ describe("the campaign manifest", () => {
         expect(() => buildManifest({ ...base, tasksDev: ["a"], tasksHeld: ["a"] })).toThrow(/development and held out/);
         expect(() => buildManifest({ ...base, seedsDev: [1], seedsHeld: [1] })).toThrow(/development and held out/);
         expect(() => buildManifest({ ...base, tasksHeld: ["zzz"] })).toThrow(/no task zzz/);
-        expect(() => buildManifest({ ...base, arms: [parseArm("x=with:frontier:cliproxy:m1"), parseArm("y=with:frontier:cliproxy:m2")] })).toThrow(/slot frontier_with/);
+        expect(() => buildManifest({ ...base, arms: [parseArm("x=with:frontier:cliproxy:m1"), parseArm("y=with:frontier:cliproxy:m1")] })).toThrow(/slot frontier_with run the model m1/);
         const defaulted = buildManifest({ ...base, tasksHeld: ["b"] });
         expect(defaulted.task_set.split).toEqual({ development: ["a"], held_out: ["b"] });
+    });
+
+    it("pairs every arm of two slots, the primary slot pair first, and gives one arm its own provider order", () => {
+        const base = { campaign: "probe", taskIds: ["a"], tasksPath: "p", tasksDigest: "d", tasksHeld: [], seedsDev: [1], seedsHeld: [], corpus: CORPUS, runtime: RUNTIME, judge: JUDGE, margin: 5, runsPerTask: 1 };
+        const settings = { baseUrl: "https://openrouter.ai/api/v1", providerOrder: ["shared/fp8"] };
+        const arms = withProviderOrders(
+            [
+                parseArm("glm_with=with:economical:openai-compatible:z-ai/glm-5.3-flash", settings),
+                parseArm("qwen_with=with:economical:openai-compatible:qwen/qwen3.8-27b", settings),
+                parseArm("sonnet_without=without:frontier:cliproxy:claude-sonnet-5"),
+                parseArm("opus_without=without:frontier:cliproxy:claude-opus-5"),
+            ],
+            parseProviderOrders(["qwen_with=ionstream/fp8,akashml/fp8"]),
+        );
+        expect(arms[0]?.providerOrder).toEqual(["shared/fp8"]);
+        expect(arms[1]?.providerOrder).toEqual(["ionstream/fp8", "akashml/fp8"]);
+        const manifest = buildManifest({ ...base, arms });
+        expect(manifest.statistics.contrasts).toEqual([
+            ["glm_with", "sonnet_without"],
+            ["glm_with", "opus_without"],
+            ["qwen_with", "sonnet_without"],
+            ["qwen_with", "opus_without"],
+        ]);
+        expect(() => withProviderOrders(arms, parseProviderOrders(["nobody=a"]))).toThrow(/names no arm nobody/);
+        expect(() => withProviderOrders(arms, parseProviderOrders(["sonnet_without=a"]))).toThrow(/not openai-compatible/);
     });
 
     it("keeps a colon inside the model of an arm", () => {

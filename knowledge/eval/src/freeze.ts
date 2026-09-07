@@ -17,10 +17,13 @@
  *
  * Options: --service-url (default http://127.0.0.1:8790), --out (default
  * eval/results), and --base-url, --provider-order, --request-timeout-ms: the
- * settings of every openai-compatible arm, as run.ts receives them. An arm name
- * is free. The contrasts name the arms by role and condition, the primary
- * (economical with tools versus frontier without) first. Without --tasks-dev,
- * every task outside the held-out list is a development task.
+ * settings of every openai-compatible arm, as run.ts receives them.
+ * --provider-orders <arm>=<a,b> ... sets the order of one arm and wins over
+ * --provider-order. An arm name is free. A role and condition slot can hold
+ * several arms, one per model. The contrasts pair the arms of two slots, every
+ * pair, the primary slot pair (economical with tools versus frontier without)
+ * first. Without --tasks-dev, every task outside the held-out list is a
+ * development task.
  *
  * The weights and the price basis are placeholders until W01 sets them: every
  * task weighs 1 and the price basis is empty.
@@ -141,7 +144,7 @@ export function parseArm(spec: string, settings: Pick<Arm, "baseUrl" | "provider
         model: model.join(":"),
         ...(openai && settings.baseUrl ? { baseUrl: settings.baseUrl } : {}),
         ...(openai && settings.providerOrder ? { providerOrder: settings.providerOrder } : {}),
-        ...(settings.requestTimeoutMs ? { requestTimeoutMs: settings.requestTimeoutMs } : {}),
+        ...(openai && settings.requestTimeoutMs ? { requestTimeoutMs: settings.requestTimeoutMs } : {}),
     });
 }
 
@@ -164,6 +167,33 @@ export interface FreezeInput {
     readonly frozenAt?: string;
 }
 
+function armModel(arms: readonly Arm[], name: string): string | undefined {
+    return arms.find((arm) => arm.name === name)?.model;
+}
+
+/** Give each named openai-compatible arm its own provider order; an unnamed arm keeps its order. */
+export function withProviderOrders(arms: readonly Arm[], orders: ReadonlyMap<string, readonly string[]>): Arm[] {
+    const unknown = [...orders.keys()].filter((name) => !arms.some((arm) => arm.name === name));
+    if (unknown.length > 0) throw new Error(`--provider-orders names no arm ${unknown.join(", ")}`);
+    return arms.map((arm) => {
+        const order = orders.get(arm.name);
+        if (!order) return arm;
+        if (arm.provider !== "openai-compatible") throw new Error(`the arm ${arm.name} is not openai-compatible and takes no provider order`);
+        return ArmSchema.parse({ ...arm, providerOrder: [...order] });
+    });
+}
+
+/** `<arm>=<a,b>` entries into a map of orders. */
+export function parseProviderOrders(entries: readonly string[]): Map<string, string[]> {
+    const orders = new Map<string, string[]>();
+    for (const entry of entries) {
+        const equals = entry.indexOf("=");
+        if (equals <= 0) throw new Error(`the provider order ${entry} is not <arm>=<a,b>`);
+        orders.set(entry.slice(0, equals), idList(entry.slice(equals + 1)));
+    }
+    return orders;
+}
+
 function disjoint<T>(label: string, a: readonly T[], b: readonly T[]): void {
     const shared = a.filter((item) => b.includes(item));
     if (shared.length > 0) throw new Error(`the ${label} ${shared.join(", ")} cannot be development and held out at once`);
@@ -182,19 +212,20 @@ export function buildManifest(input: FreezeInput): Manifest {
     const ids = input.taskIds.filter((id) => development.includes(id) || held.includes(id));
 
     const names = new Set<string>();
-    const bySlot = new Map<string, string>();
+    const bySlot = new Map<string, string[]>();
     for (const arm of input.arms) {
         if (names.has(arm.name)) throw new Error(`two arms are named ${arm.name}`);
         names.add(arm.name);
         const slot = `${arm.role}_${arm.condition}`;
-        if (bySlot.has(slot)) throw new Error(`two arms fill the slot ${slot}: ${bySlot.get(slot)} and ${arm.name}`);
-        bySlot.set(slot, arm.name);
+        const held = bySlot.get(slot) ?? [];
+        if (held.some((name) => armModel(input.arms, name) === arm.model)) throw new Error(`two arms of the slot ${slot} run the model ${arm.model}`);
+        bySlot.set(slot, [...held, arm.name]);
     }
-    const contrasts = CONTRAST_SLOTS.flatMap(([a, b]) => {
-        const left = bySlot.get(a);
-        const right = bySlot.get(b);
-        return left && right ? [[left, right] as [string, string]] : [];
-    });
+    // Every pair of the two slots: with two models per role, the primary slot
+    // pair gives four contrasts, and the family keeps the slot order.
+    const contrasts = CONTRAST_SLOTS.flatMap(([a, b]) =>
+        (bySlot.get(a) ?? []).flatMap((left) => (bySlot.get(b) ?? []).map((right) => [left, right] as [string, string])),
+    );
 
     return ManifestSchema.parse({
         campaign: input.campaign,
@@ -285,7 +316,10 @@ if (import.meta.main) {
         seedsHeld: seedList("--seeds-held", argument("--seeds-held")),
         corpus,
         runtime: { harness_commit: await gitIdentity("harness"), knowledge_commit: await gitIdentity("knowledge"), bun: Bun.version },
-        arms: argumentList("--arms").map((spec) => parseArm(spec, settings)),
+        arms: withProviderOrders(
+            argumentList("--arms").map((spec) => parseArm(spec, settings)),
+            parseProviderOrders(argumentList("--provider-orders")),
+        ),
         judge: {
             provider: judgeProvider as Manifest["judge"]["provider"],
             model: judgeModel.join(":"),
