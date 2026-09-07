@@ -1,11 +1,11 @@
 id: R-0010
-title: "Benjamini-Hochberg at alpha 0.05 with independent filtering; set alpha in results to the reporting cutoff"
+title: "Benjamini-Hochberg at alpha 0.05: report at the adjusted p-value and never filter by the unadjusted one"
 assertion: >-
   Adjust the p-values with the Benjamini-Hochberg procedure and report genes at
-  an adjusted p-value below 0.05. Keep the independent filtering of DESeq2 on,
-  and pass the same alpha to results() that the report uses as its cutoff,
-  because the filter threshold is optimized for that alpha. Do not filter the
-  results table by an unadjusted p-value.
+  an adjusted p-value below 0.05. Give the test the same alpha that the report
+  uses as its cutoff, and state the alpha in the report. Do not filter the
+  results table by an unadjusted p-value. On the DESeq2 path, the companion
+  rule R-0166 keeps the independent filtering on at that alpha.
 modality: bulk_rna_seq
 conditions:
   - field: data_state
@@ -21,9 +21,6 @@ action:
     - name: adjustment
       value: BH
       default_source: "doi:10.1111/j.2517-6161.1995.tb02031.x"
-    - name: independent_filtering
-      value: true
-      default_source: "doi:10.1073/pnas.0914005107"
 severity: info
 strength: consensus
 evidence_quality: high
@@ -41,24 +38,12 @@ evidence:
     retrieved: "2026-09-03"
   - direction: supports
     eco: ECO:0000033
-    cito: cito:supports
-    source: S-0018
-    paraphrase: >-
-      A filter that is independent of the test statistic under the null, such as
-      the overall mean of a gene, removes genes with little chance of a
-      discovery before the multiple testing adjustment and increases the number
-      of discoveries at the same false discovery rate.
-    anchor: "Abstract; Results"
-    retrieved: "2026-09-03"
-  - direction: supports
-    eco: ECO:0000033
     cito: cito:usesMethodIn
     source: S-0002
     paraphrase: >-
-      The vignette states that the alpha argument of results should be set to
-      the adjusted p-value cutoff that the analysis uses, because the
-      independent filtering threshold is chosen to maximize the discoveries at
-      that alpha, and it documents that the adjustment is Benjamini-Hochberg.
+      The vignette documents that the adjustment of the results is
+      Benjamini-Hochberg, and that the alpha argument of results should be
+      set to the adjusted p-value cutoff that the analysis reports.
     anchor: "Independent filtering and multiple testing; Note on p-values set to NA"
     retrieved: "2026-09-03"
   - direction: neutral

@@ -19,9 +19,11 @@ action:
     - name: rank_metric
       value: stat
       default_source: "doi:10.1186/s12859-017-1674-0"
+      methods: [M-0010, M-0029]
     - name: rank_metric_not
       value: [unshrunken_log2_fold_change_alone, signed_p_value_with_ties]
       default_source: "doi:10.1186/s12859-017-1674-0"
+      methods: [M-0010, M-0029]
 severity: info
 strength: common_practice
 evidence_quality: moderate

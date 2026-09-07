@@ -11,6 +11,7 @@ applicability:
   modality: bulk_rna_seq
   count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
   design_patterns: [two_group_with_suspected_batch]
+  honors: []
   min_replicates: 4
   conditions:
     - field: batch

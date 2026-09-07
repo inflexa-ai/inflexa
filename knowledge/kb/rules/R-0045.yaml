@@ -19,6 +19,7 @@ action:
     - name: gsea_input
       value: full_ranked_list
       default_source: "doi:10.1073/pnas.0506580102"
+      methods: [M-0010, M-0029]
 severity: info
 strength: consensus
 evidence_quality: high

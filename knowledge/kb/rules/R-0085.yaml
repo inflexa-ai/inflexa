@@ -1,7 +1,7 @@
 id: R-0085
 title: "Report the shrunken and the unshrunken log2 fold change with the standard error; never rank by the unshrunken value alone"
 assertion: >-
-  In the gene table of the report, give the unshrunken log2 fold change from
+  On the DESeq2 path, in the gene table of the report, give the unshrunken log2 fold change from
   the test, the shrunken log2 fold change from lfcShrink, and the standard
   error of the unshrunken estimate, for each gene. Rank the genes and draw
   the plots on the shrunken value, because the unshrunken estimate of a gene
@@ -21,6 +21,9 @@ conditions:
   - field: n_per_group_min
     op: gte
     value: 2
+  - field: inferential_method
+    op: in
+    value: [M-0001, M-0002]
 action:
   step_type: report
   parameters:

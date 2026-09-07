@@ -17,7 +17,7 @@ import { validateKnowledgeBase } from "../build/validate.js";
 import type { Situation } from "../model.js";
 import { openSnapshot, writeSnapshot, type LoadedSnapshot } from "../store.js";
 import { check, recommend, render } from "./handlers.js";
-import type { RecommendResponse } from "./api.js";
+import type { CheckRequest, RecommendResponse } from "./api.js";
 
 const BASE: Situation = {
     question: "full_plan",
@@ -66,12 +66,17 @@ function parameter(response: RecommendResponse, name: string, key: string): unkn
     return step(response, name).parameters?.find((entry) => entry.name === key)?.value;
 }
 
+/** True when the procedure carries the parameter on that step. A step the walk dropped or left uncovered carries nothing. */
+function hasParameter(response: RecommendResponse, name: string, key: string): boolean {
+    return response.procedure.find((entry) => entry.step === name)?.parameters?.some((entry) => entry.name === key) ?? false;
+}
+
 describe("the curated tree on the evaluation situations", () => {
     it("two groups, 6 vs 6, one low depth sample: DESeq2 Wald, apeglm, BH 0.05, QC warn, enrichment disputed", () => {
         const response = answer({ ...BASE, quality_flags: ["low_depth_sample"] });
         expect(response.match).toBe("applicable");
         expect(step(response, "differential_expression").method?.id).toBe("M-0001");
-        expect(step(response, "differential_expression").template).toBe("tpl-deseq2-two-group@1.0.0");
+        expect(step(response, "differential_expression").template).toBe("tpl-deseq2-two-group@1.1.0");
         expect(step(response, "differential_expression").alternatives?.map((a) => a.method)).toContain("M-0003");
         expect(step(response, "shrink_lfc").method?.id).toBe("M-0013");
         expect(parameter(response, "multiple_testing", "alpha")).toBe(0.05);
@@ -83,7 +88,8 @@ describe("the curated tree on the evaluation situations", () => {
         expect(step(response, "enrichment").disputed?.sides.length).toBeGreaterThanOrEqual(3);
         expect(step(response, "enrichment").alternatives?.map((a) => a.method)).toContain("M-0011");
         expect(parameter(response, "enrichment", "gene_set_collection")).toBe("msigdb_hallmark_human");
-        expect(parameter(response, "enrichment", "universe")).toBe("tested_genes");
+        // R-0046 names the over-representation method (M-0011), thus its universe stays with that method and not with GSEA.
+        expect(hasParameter(response, "enrichment", "universe")).toBe(false);
         expect(parameter(response, "model_design", "import")).toBe("tximport_lengthScaledTPM_or_offsets");
         expect(response.uncovered).toEqual([]);
     });
@@ -97,6 +103,13 @@ describe("the curated tree on the evaluation situations", () => {
         expect(step(two, "differential_expression").template).toBe("tpl-edger-ql@1.0.0");
         expect(step(two, "normalize").method?.id).toBe("M-0009");
         expect(step(two, "filter_low_counts").method?.id).toBe("M-0022");
+        // The parameters of the DESeq2 rules stay with DESeq2: no Wald test on the quasi-likelihood step,
+        // no size factors on TMM, no count floor on filterByExpr, and no apeglm without a DESeq2 fit.
+        expect(parameter(two, "differential_expression", "test")).not.toBe("Wald");
+        expect(hasParameter(two, "normalize", "size_factors")).toBe(false);
+        expect(hasParameter(two, "filter_low_counts", "min_count")).toBe(false);
+        expect(hasParameter(two, "filter_low_counts", "filter_policy")).toBe(false);
+        expect(two.uncovered).toContain("shrink_lfc");
     });
 
     it("paired: DESeq2 with the subject as a block; repeated measures over time: a random subject effect", () => {
@@ -131,6 +144,7 @@ describe("the curated tree on the evaluation situations", () => {
         expect(step(course, "differential_expression").method?.id).toBe("M-0002");
         expect(step(course, "differential_expression").template).toBe("tpl-deseq2-lrt-timecourse@1.0.0");
         expect(parameter(course, "differential_expression", "reduced")).toBe("~ condition + time");
+        expect(parameter(course, "differential_expression", "test")).not.toBe("Wald");
     });
 
     it("no replicates: a flag with the descriptive outcome and every inferential method forbidden", () => {
@@ -162,6 +176,11 @@ describe("the curated tree on the evaluation situations", () => {
         expect(step(population, "differential_expression").method?.id).toBe("M-0019");
         expect(step(population, "normalize").method?.id).toBe("M-0009");
         expect(step(population, "filter_low_counts").method?.id).toBe("M-0022");
+        // The limma-voom path carries none of the DESeq2 requirements.
+        expect(hasParameter(population, "normalize", "size_factors")).toBe(false);
+        expect(hasParameter(population, "shrink_lfc", "lfc_shrink")).toBe(false);
+        expect(hasParameter(population, "differential_expression", "outlier_replacement")).toBe(false);
+        expect(hasParameter(population, "multiple_testing", "independent_filtering")).toBe(false);
     });
 
     it("a three prime library with Salmon counts imports raw counts with no offset", () => {
@@ -194,9 +213,9 @@ describe("the curated tree on the evaluation situations", () => {
 
     it("renders the two-group template from the snapshot with the farm match", async () => {
         const result = await render(snapshot, {
-            template: "tpl-deseq2-two-group@1.0.0",
-            slots: { counts_path: "/a/data/inputs/x/counts.csv", metadata_path: "/a/data/inputs/y/metadata.csv", condition_column: "condition", reference_level: "control", test_level: "treated" },
-            farm: [{ name: "DESeq2", version: "1.52.0" }, { name: "apeglm", version: "1.34.0" }, { name: "ashr", version: "2.2-63" }, { name: "ggplot2", version: "4.0.3" }, { name: "pheatmap", version: "1.0.13" }, { name: "jsonlite", version: "2.0.0" }],
+            template: "tpl-deseq2-two-group@1.1.0",
+            slots: { import_state: "integer_counts", counts_path: "/a/data/inputs/x/counts.csv", metadata_path: "/a/data/inputs/y/metadata.csv", condition_column: "condition", reference_level: "control", test_level: "treated" },
+            farm: [{ name: "DESeq2", version: "1.52.0" }, { name: "apeglm", version: "1.34.0" }, { name: "tximport", version: "1.40.0" }, { name: "ashr", version: "2.2-63" }, { name: "ggplot2", version: "4.0.3" }, { name: "pheatmap", version: "1.0.13" }, { name: "jsonlite", version: "2.0.0" }],
         });
         if ("error" in result) throw new Error(result.message);
         expect(result.environment.match).toBe("exact");
@@ -235,7 +254,9 @@ describe("the curated tree on the evaluation situations", () => {
         expect(step(response, "differential_expression").method?.id).toBe("M-0001");
         expect(step(response, "differential_expression").alternatives?.map((a) => a.method)).toContain("M-0023");
         expect(step(response, "differential_expression").flags?.some((flag) => flag.severity === "warn")).toBe(true);
-        expect(parameter(response, "differential_expression", "outlier_sample_policy")).toBe("down_weight_not_remove");
+        // R-0067 names the weighted limma-voom (M-0023), thus its down-weight policy stays with that method:
+        // the DESeq2 step carries the warn, not a parameter it has no mechanism for.
+        expect(hasParameter(response, "differential_expression", "outlier_sample_policy")).toBe(false);
     });
 
     it("suspected batch: surrogate variables on the design with the sva template, and a warn on the multiple testing", () => {
@@ -269,6 +290,8 @@ describe("the curated tree on the evaluation situations", () => {
         const list = answer({ ...BASE, enrichment_input: "gene_list" });
         expect(step(list, "enrichment").method?.id).toBe("M-0032");
         expect(step(list, "enrichment").alternatives?.map((a) => a.method)).toEqual(expect.arrayContaining(["M-0033", "M-0010"]));
+        expect(hasParameter(list, "enrichment", "gsea_input")).toBe(false);
+        expect(hasParameter(list, "enrichment", "rank_metric")).toBe(false);
         const star = answer({ ...BASE, count_source: "star_featurecounts", enrichment_input: "gene_list" });
         expect(step(star, "enrichment").method?.id).toBe("M-0032");
         expect(step(star, "enrichment").template).toBe("tpl-ora-go@1.0.0");
@@ -295,6 +318,56 @@ describe("the curated tree on the evaluation situations", () => {
         const stated = check(snapshot, { situation, steps: [{ step_type: "differential_expression", method: "Descriptive log2 fold change of normalized counts, no test", package: "DESeq2", outcome: "descriptive_only" }] });
         if ("error" in stated) throw new Error(stated.message);
         expect(stated.violations).toEqual([]);
+        const byId = check(snapshot, { situation, steps: [{ step_type: "differential_expression", method: "descriptive log2 fold change", method_id: "M-0015", outcome: "descriptive_only" }] });
+        if ("error" in byId) throw new Error(byId.message);
+        expect(byId.ok).toBe(true);
+        expect(byId.not_assessed).toEqual([]);
+    });
+
+    it("no replicates: the three drafts of the review each fail with R-0003, alone and together", () => {
+        const situation = { ...BASE, n_per_group_min: 1, n_per_group_max: 1 };
+        const drafts: CheckRequest["steps"] = [
+            { step_type: "shrink_lfc", method: "apeglm log fold change shrinkage", package: "apeglm" },
+            { step_type: "multiple_testing", method: "Benjamini-Hochberg", package: "DESeq2", parameters: [{ name: "alpha", value: 0.05 }] },
+            { step_type: "differential_expression", method: "DESeq2 Wald test", package: "DESeq2", outcome: "descriptive_only" },
+        ];
+        for (const draft of drafts) {
+            const result = check(snapshot, { situation, steps: [draft] });
+            if ("error" in result) throw new Error(result.message);
+            expect(result.ok).toBe(false);
+            expect(result.violations).toHaveLength(1);
+            expect(result.violations[0]?.step_type).toBe(draft.step_type);
+            expect(result.violations[0]?.rule).toMatch(/^R-0003@/);
+        }
+        const together = check(snapshot, { situation, steps: drafts });
+        if ("error" in together) throw new Error(together.message);
+        expect(together.ok).toBe(false);
+        expect(together.violations).toHaveLength(3);
+        // The violation on the labeled Wald draft names the exact escape.
+        expect(together.violations[2]?.message).toContain('method_id: "M-0015"');
+    });
+
+    it("TPM input: a shrinkage draft is not assessed, because no rule covers the step there", () => {
+        const result = check(snapshot, { situation: { ...BASE, data_state: "tpm_or_fpkm" }, steps: [{ step_type: "shrink_lfc", method: "apeglm log fold change shrinkage", package: "apeglm" }] });
+        if ("error" in result) throw new Error(result.message);
+        expect(result.not_assessed).toEqual([{ step_type: "shrink_lfc", reason: "no_rule", message: expect.stringContaining("shrink_lfc") }]);
+        expect(result.violations).toEqual([]);
+        expect(result.ok).toBe(true);
+    });
+
+    it("the check asks a UCell draft for no classifier parameter, and asks a classifier draft for its preprocessing scope", () => {
+        const scoring: Situation = { ...BASE, question: "signature_scoring" };
+        const ucell = check(snapshot, { situation: scoring, steps: [{ step_type: "signature_scoring", method: "UCell rank-based signature scores per sample", package: "UCell" }] });
+        if ("error" in ucell) throw new Error(ucell.message);
+        expect(ucell.violations).toEqual([]);
+        expect(ucell.warnings).toEqual([]);
+        const glmnet = check(snapshot, {
+            situation: { ...scoring, classifier: true },
+            steps: [{ step_type: "signature_scoring", method: "Penalized logistic classifier with glmnet, nested cross-validation, and a pROC curve", package: "glmnet" }],
+        });
+        if ("error" in glmnet) throw new Error(glmnet.message);
+        expect(glmnet.violations).toEqual([]);
+        expect(glmnet.warnings.map((warning) => warning.parameter)).toEqual(["preprocessing_scope"]);
     });
 
     it("a Python preference selects the Python template of the same method, and no preference keeps the R one", () => {
@@ -304,26 +377,105 @@ describe("the curated tree on the evaluation situations", () => {
         expect(step(python, "qc_sample_structure").template).toBe("tpl-qc-python@1.0.0");
         expect(step(python, "enrichment").template).toBe("tpl-gseapy-preranked@1.0.0");
         const r = answer(BASE, { language: "R" });
-        expect(step(r, "differential_expression").template).toBe("tpl-deseq2-two-group@1.0.0");
+        expect(step(r, "differential_expression").template).toBe("tpl-deseq2-two-group@1.1.0");
         expect(step(answer(BASE), "enrichment").template).toBe("tpl-fgsea-preranked@1.0.0");
+        // A paired design has no Python template that honors the pair: the R template stays, and the step reports the limit.
         const paired = answer({ ...BASE, paired: true }, { language: "python" });
+        expect(step(paired, "differential_expression").method?.id).toBe("M-0001");
         expect(step(paired, "differential_expression").template).toBe("tpl-deseq2-blocked@1.0.0");
+        expect(step(paired, "differential_expression").package?.name).toBe("DESeq2");
+        expect(step(paired, "differential_expression").limit?.requested_language).toBe("python");
+        expect(step(paired, "differential_expression").substitution).toBeUndefined();
+        expect(step(python, "differential_expression").limit).toBeUndefined();
         const none = answer({ ...BASE, n_per_group_min: 1, n_per_group_max: 1 }, { language: "python" });
         expect(step(none, "differential_expression").template).toBe("tpl-descriptive-python@1.0.0");
         const interaction = answer({ ...BASE, n_groups: 4, n_per_group_min: 4, n_per_group_max: 4, interaction: true }, { language: "python" });
         expect(step(interaction, "differential_expression").template).toBe("tpl-pydeseq2-interaction@1.0.0");
+        // Three groups: the Python template is a declared substitute, thus the step names the substitute and keeps the method of record.
         const three = answer({ ...BASE, n_groups: 3, n_per_group_min: 4, n_per_group_max: 4 }, { language: "python" });
+        expect(step(three, "differential_expression").method?.id).toBe("M-0060");
         expect(step(three, "differential_expression").template).toBe("tpl-pydeseq2-multigroup@1.0.0");
+        expect(step(three, "differential_expression").package?.name).toBe("pydeseq2");
+        expect(step(three, "differential_expression").substitution).toEqual({ for: "M-0002", label: "DESeq2 likelihood ratio test", template: "tpl-pydeseq2-multigroup@1.0.0" });
+        expect(step(three, "differential_expression").limit).toBeUndefined();
+    });
+
+    it("per-sample scores: a paired design with a balanced batch cannot select the unpaired score test, and an unpaired design names the substitute", () => {
+        const scores: Situation = { ...BASE, enrichment_input: "sample_scores" };
+        const paired = answer({ ...scores, paired: true, batch: "known_balanced" }, { language: "python" });
+        expect(step(paired, "enrichment").method?.id).toBe("M-0034");
+        expect(step(paired, "enrichment").template).toBe("tpl-gsva-hallmark@1.0.0");
+        expect(step(paired, "enrichment").package?.name).toBe("GSVA");
+        expect(step(paired, "enrichment").substitution).toBeUndefined();
+        expect(step(paired, "enrichment").limit).toEqual({ requested_language: "python", reason: expect.stringContaining("python"), skipped: [{ template: "tpl-decoupler-scores@1.0.0", missing: ["pairing", "batch"] }] });
+        expect(paired.procedure.some((entry) => entry.template?.startsWith("tpl-decoupler-scores"))).toBe(false);
+        const unpaired = answer(scores, { language: "python" });
+        expect(step(unpaired, "enrichment").method?.id).toBe("M-0059");
+        expect(step(unpaired, "enrichment").template).toBe("tpl-decoupler-scores@1.0.0");
+        expect(step(unpaired, "enrichment").package?.name).toBe("decoupler");
+        expect(step(unpaired, "enrichment").substitution).toEqual({ for: "M-0034", label: "GSVA per-sample pathway scores with limma on the scores", template: "tpl-decoupler-scores@1.0.0" });
+        expect(step(unpaired, "enrichment").limit).toBeUndefined();
+        const r = answer(scores);
+        expect(step(r, "enrichment").method?.id).toBe("M-0034");
+        expect(step(r, "enrichment").template).toBe("tpl-gsva-hallmark@1.0.0");
+        expect(step(r, "enrichment").package?.name).toBe("GSVA");
+        expect(step(r, "enrichment").substitution).toBeUndefined();
+    });
+
+    it("the check accepts a drafted enrichment step that names the substitute for the unpaired situation, and refuses it for the paired one", () => {
+        const draft: CheckRequest["steps"][number] = { step_type: "enrichment", method: "decoupler ulm per-sample pathway scores with a two-sample t-test on the scores", package: "decoupler", method_id: "M-0059" };
+        const unpaired = check(snapshot, { situation: { ...BASE, enrichment_input: "sample_scores" }, steps: [draft] });
+        if ("error" in unpaired) throw new Error(unpaired.message);
+        expect(unpaired.violations).toEqual([]);
+        expect(unpaired.not_assessed).toEqual([]);
+        const paired = check(snapshot, { situation: { ...BASE, enrichment_input: "sample_scores", paired: true, batch: "known_balanced" }, steps: [draft] });
+        if ("error" in paired) throw new Error(paired.message);
+        expect(paired.violations).toHaveLength(1);
+        expect(paired.violations[0]?.message).toContain("not a permitted method");
+        expect(paired.violations[0]?.permitted).toContain("GSVA per-sample pathway scores with limma on the scores");
+    });
+
+    it("the render names the method the template runs and the method of record it stands in for", async () => {
+        const substitute = await render(snapshot, {
+            template: "tpl-decoupler-scores@1.0.0",
+            slots: { counts_path: "/a/data/inputs/x/counts.csv", metadata_path: "/a/data/inputs/y/metadata.csv", condition_column: "condition", reference_level: "control", test_level: "treated", gmt_path: "/a/refs/hallmark.gmt" },
+        });
+        if ("error" in substitute) throw new Error(substitute.message);
+        expect(substitute.template).toMatchObject({ id: "tpl-decoupler-scores", language: "python", method: { id: "M-0059", label: "decoupler ulm per-sample pathway scores with a two-sample t-test on the scores" }, substitute_for: { id: "M-0034", label: "GSVA per-sample pathway scores with limma on the scores" } });
+        expect(substitute.decision_record.template).toEqual({ id: "tpl-decoupler-scores", version: "1.0.0", label: expect.any(String), method: { id: "M-0059", label: expect.any(String) }, substitute_for: { id: "M-0034", label: expect.any(String) } });
+        const record = await render(snapshot, {
+            template: "tpl-gsva-hallmark@1.0.0",
+            slots: { counts_path: "/a/data/inputs/x/counts.csv", metadata_path: "/a/data/inputs/y/metadata.csv", condition_column: "condition", reference_level: "control", test_level: "treated", gmt_path: "/a/refs/hallmark.gmt" },
+        });
+        if ("error" in record) throw new Error(record.message);
+        expect(record.decision_record.template.method).toEqual({ id: "M-0034", label: "GSVA per-sample pathway scores with limma on the scores" });
+        expect(record.decision_record.template.substitute_for).toBeUndefined();
     });
 
     it("the wider computations: each new question kind has a method on its central step, and an extra analysis joins a full plan", () => {
         expect(step(answer({ ...BASE, question: "tf_activity" }), "tf_activity").method?.id).toBe("M-0035");
         expect(step(answer({ ...BASE, question: "tf_activity" }), "pathway_activity").method?.id).toBe("M-0036");
-        expect(step(answer({ ...BASE, question: "deconvolution" }), "deconvolution").method?.id).toBe("M-0041");
-        expect(step(answer({ ...BASE, question: "signature_scoring" }), "signature_scoring").method?.id).toBe("M-0045");
+        const deconvolution = answer({ ...BASE, question: "deconvolution" });
+        expect(step(deconvolution, "deconvolution").method?.id).toBe("M-0041");
+        expect(hasParameter(deconvolution, "deconvolution", "cell_types")).toBe(false);
+        const scores = answer({ ...BASE, question: "signature_scoring" });
+        expect(step(scores, "signature_scoring").method?.id).toBe("M-0045");
+        for (const name of ["classifier_model", "classifier_validation", "classifier_performance", "preprocessing_scope"]) {
+            expect(hasParameter(scores, "signature_scoring", name)).toBe(false);
+        }
+        expect(step(scores, "signature_scoring").parameters?.some((entry) => entry.required)).toBeFalsy();
+        const classifier = answer({ ...BASE, question: "signature_scoring", classifier: true });
+        expect(step(classifier, "signature_scoring").method?.id).toBe("M-0055");
+        expect(parameter(classifier, "signature_scoring", "classifier_model")).toBe("penalized_logistic_regression");
+        expect(parameter(classifier, "signature_scoring", "classifier_validation")).toBe("nested_cross_validation");
+        expect(parameter(classifier, "signature_scoring", "classifier_performance")).toBe("roc_auc_with_confidence_interval");
+        expect(parameter(classifier, "signature_scoring", "preprocessing_scope")).toBe("filter_and_scaling_inside_each_training_fold");
+        expect(step(classifier, "signature_scoring").parameters?.find((entry) => entry.name === "preprocessing_scope")?.required).toBe(true);
+        expect(hasParameter(classifier, "signature_scoring", "score_method")).toBe(false);
         expect(step(answer({ ...BASE, question: "clustering", n_per_group_min: 60, n_per_group_max: 60 }), "clustering").method?.id).toBe("M-0048");
         const survival = answer({ ...BASE, question: "survival", n_per_group_min: 60, n_per_group_max: 60 });
         expect(step(survival, "survival").method?.id).toBe("M-0053");
+        expect(hasParameter(survival, "survival", "penalty")).toBe(false);
         expect(step(survival, "signature_scoring").method?.id).toBe("M-0045");
         expect(parameter(survival, "survival", "score_scale")).toBe("per_standard_deviation");
         expect(parameter(survival, "survival", "event_count_statement")).toBe("state_events_censored_and_median_follow_up");

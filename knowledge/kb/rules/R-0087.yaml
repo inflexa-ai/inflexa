@@ -1,7 +1,7 @@
 id: R-0087
 title: "The MA plot and the dispersion plot are the two fit diagnostics that a differential expression report carries"
 assertion: >-
-  A report of a differential expression test on counts carries two
+  On the DESeq2 path, a report of a differential expression test on counts carries two
   diagnostic plots of the fit. The MA plot shows the log2 fold change of each
   gene against its mean normalized count, with the significant genes marked,
   and it shows whether the fold changes of the low count genes are shrunk and
@@ -21,6 +21,9 @@ conditions:
   - field: n_per_group_min
     op: gte
     value: 2
+  - field: inferential_method
+    op: in
+    value: [M-0001, M-0002]
 action:
   step_type: report
   parameters:

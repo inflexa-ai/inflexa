@@ -2,7 +2,8 @@ id: tpl-pydeseq2-multigroup
 version: 1.0.0
 label: "pydeseq2 for three or more groups: one Wald contrast per level against the reference, an any-difference table from the minimum p-value per gene, apeglm-style shrinkage"
 language: python
-method: M-0002
+method: M-0060
+substitute_for: M-0002
 step_types: [filter_low_counts, normalize, model_design, differential_expression, shrink_lfc, multiple_testing]
 edam_operations: [EDAM:operation_3223]
 citations: [S-0001, S-0002, S-0020, S-0040, S-0042]
@@ -11,6 +12,7 @@ applicability:
   modality: bulk_rna_seq
   count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
   design_patterns: [multi_group_unpaired, multi_group_with_blocking_factor, multi_group_with_covariates]
+  honors: [pairing, blocking_factor, covariates, batch]
   min_replicates: 2
   conditions:
     - field: n_groups

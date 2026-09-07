@@ -18,6 +18,9 @@ conditions:
   - field: n_per_group_min
     op: gte
     value: 3
+  - field: inferential_method
+    op: in
+    value: [M-0001, M-0002]
 action:
   step_type: filter_low_counts
   parameters:

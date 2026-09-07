@@ -1,0 +1,63 @@
+id: R-0166
+title: "DESeq2 path: keep the independent filtering on, and pass the reporting alpha to results"
+assertion: >-
+  On the DESeq2 path, keep the independent filtering of results() on. The
+  filter removes the genes with a low mean of normalized counts before the
+  adjustment, and it selects the threshold that maximizes the number of
+  discoveries at the target alpha. The filter statistic is independent of the
+  test statistic under the null hypothesis, thus the false discovery rate
+  control holds. Pass the same alpha to results() that the report uses as its
+  cutoff, because the filter threshold is optimized for that alpha. Report
+  the number of genes with an NA adjusted p-value from the filter. The edgeR
+  path and the limma-voom path have no independent filter, and filterByExpr
+  before the model takes its place.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: inferential_method
+    op: in
+    value: [M-0001, M-0002]
+action:
+  step_type: multiple_testing
+  parameters:
+    - name: independent_filtering
+      value: true
+      default_source: "doi:10.1073/pnas.0914005107"
+      methods: [M-0012]
+severity: info
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0018
+    paraphrase: >-
+      A filter that is independent of the test statistic under the null, such as
+      the overall mean of a gene, removes genes with little chance of a
+      discovery before the multiple testing adjustment and increases the number
+      of discoveries at the same false discovery rate.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-03"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The vignette states that the alpha argument of results should be set to
+      the adjusted p-value cutoff that the analysis uses, because the
+      independent filtering threshold is chosen to maximize the discoveries at
+      that alpha, and it lists the filter beside the count outlier as a cause
+      of an NA adjusted p-value.
+    anchor: "Independent filtering and multiple testing; Note on p-values set to NA"
+    retrieved: "2026-09-03"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-07"
+tags: [multiple-testing, independent-filtering]

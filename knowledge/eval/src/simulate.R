@@ -10,7 +10,21 @@
 #   two_group_n3, two_group_n6, paired_n5, batch_balanced_n6, interaction_2x2_n4,
 #   timecourse_2x4_n3, confounded_batch_n6, no_replicates_1v1, multi_group_3x4,
 #   outlier_n5, two_group_n60, covariates_n6, timecourse_2x2_n3, paired_3groups_n4,
-#   survival_n60, regulons_n6, coexpression_n60
+#   survival_n60, regulons_n6, coexpression_n60, salmon_two_group_n6, isoform_switch_n6
+#
+# Salmon patterns: salmon_two_group_n6 and isoform_switch_n6 take the design of
+# two_group_n6 and draw the counts per transcript, not per gene. Each gene has
+# one to four isoforms with log-normal lengths around a gene length and a base
+# usage per group; a sample draws its own usage around that base. The expected
+# reads of an isoform scale with its effective length at equal molecules, as in
+# the quantifier's model, thus a longer isoform collects more reads. The pattern
+# writes quant/<sample>/quant.sf (Name, Length, EffectiveLength, TPM, NumReads
+# with fractional NumReads), tx2gene.csv, and transcripts.csv; counts.csv keeps
+# the naive integer sum of NumReads per gene. isoform_switch_n6 moves the
+# dominant usage (0.85) of 300 expressed non-DE genes from the shortest to the
+# longest isoform in the treated group at unchanged molar abundance
+# (planted_set ISOFORM_SWITCH, de 0): the naive sum calls them, the length
+# offset does not.
 #
 # Regulons: when --regulons names a CollecTRI-style CSV (source,target,weight),
 # three regulators with enough targets in the gene universe are planted with a
@@ -42,6 +56,7 @@ OUT <- option("--out", file.path("eval", "data", PATTERN, paste0("seed-", SEED))
 HALLMARK <- option("--hallmark", NULL)
 REGULONS <- option("--regulons", NULL)
 N_GENES <- as.integer(option("--n-genes", "12000"))
+SALMON_PATTERNS <- c("salmon_two_group_n6", "isoform_switch_n6")
 set.seed(SEED)
 dir.create(OUT, showWarnings = FALSE, recursive = TRUE)
 
@@ -63,7 +78,7 @@ n_genes <- length(genes)
 make_design <- function(pattern) {
   if (pattern == "two_group_n3") {
     meta <- data.frame(condition = rep(c("control", "treated"), each = 3))
-  } else if (pattern == "two_group_n6") {
+  } else if (pattern %in% c("two_group_n6", SALMON_PATTERNS)) {
     meta <- data.frame(condition = rep(c("control", "treated"), each = 6))
   } else if (pattern == "paired_n5") {
     meta <- data.frame(subject = rep(sprintf("S%02d", 1:5), times = 2), condition = rep(c("control", "treated"), each = 5))
@@ -169,7 +184,7 @@ plant_regulons <- function(condition_column, test_level) {
   }
 }
 
-if (PATTERN %in% c("two_group_n3", "two_group_n6", "batch_balanced_n6", "confounded_batch_n6", "no_replicates_1v1", "paired_n5", "outlier_n5", "two_group_n60", "covariates_n6", "survival_n60", "regulons_n6", "coexpression_n60")) {
+if (PATTERN %in% c("two_group_n3", "two_group_n6", "batch_balanced_n6", "confounded_batch_n6", "no_replicates_1v1", "paired_n5", "outlier_n5", "two_group_n60", "covariates_n6", "survival_n60", "regulons_n6", "coexpression_n60", SALMON_PATTERNS)) {
   de_index <- sample_expressed(0.10)
   lfc <- effect_size(length(de_index))
   treated <- meta$condition == "treated"
@@ -310,9 +325,72 @@ if (PATTERN %in% c("two_group_n6", "batch_balanced_n6")) {
 
 # ── Sample counts ─────────────────────────────────────────────────────────────
 counts <- matrix(0L, nrow = n_genes, ncol = n_samples, dimnames = list(genes, meta$sample))
-for (i in seq_len(n_samples)) {
-  mu <- size_factors[i] * 2^log_mu[, i]
-  counts[, i] <- rnbinom(n_genes, mu = mu, size = 1 / dispersion)
+n_transcripts <- NA_integer_
+switch_genes <- integer(0)
+if (PATTERN %in% SALMON_PATTERNS) {
+  # ── Transcripts (the Salmon patterns only, thus the counts of every other pattern stay) ──
+  # Each gene has one to four isoforms with log-normal lengths around a gene
+  # length. The gene length of the fixture is the mean isoform length. The
+  # effective length follows the quantifier's convention, length - 200 + 1.
+  center_length <- exp(rnorm(n_genes, mean = log(2000), sd = 0.6))
+  n_tx <- sample(1:4, n_genes, replace = TRUE)
+  tx_gene <- rep(seq_len(n_genes), n_tx)
+  n_transcripts <- length(tx_gene)
+  tx_name <- paste0(genes[tx_gene], "-T", sequence(n_tx))
+  tx_length <- pmax(400L, as.integer(round(center_length[tx_gene] * exp(rnorm(n_transcripts, sd = 0.5)))))
+  tx_effective <- pmax(tx_length - 200L + 1L, 1L)
+  gene_lengths <- as.integer(round(rowsum(tx_length, tx_gene) / n_tx))
+  mean_effective <- as.numeric(rowsum(tx_effective, tx_gene) / n_tx)
+  # The base usage of a gene: the same in both groups, except for a switch gene.
+  base <- rgamma(n_transcripts, shape = 2)
+  control_p <- base / rowsum(base, tx_gene)[tx_gene]
+  treated_p <- control_p
+  if (PATTERN == "isoform_switch_n6") {
+    # 300 expressed non-DE genes with two or more isoforms and a length ratio of
+    # at least 2.5 between the longest and the shortest. The control group puts
+    # 0.85 of the usage on the shortest isoform, the treated group on the
+    # longest; the molar abundance (log_mu) does not change, thus de stays 0.
+    ratio <- vapply(split(tx_length, tx_gene), function(l) max(l) / min(l), 0)
+    candidates <- intersect(expressed, which(truth$de == 0L & n_tx >= 2 & ratio >= 2.5))
+    if (length(candidates) < 300) stop("only ", length(candidates), " genes qualify for an isoform switch")
+    switch_genes <- sort(sample(candidates, 300))
+    for (g in switch_genes) {
+      index <- which(tx_gene == g)
+      minor <- 0.15 / (length(index) - 1)
+      control_p[index] <- minor
+      control_p[index[which.min(tx_length[index])]] <- 0.85
+      treated_p[index] <- minor
+      treated_p[index[which.max(tx_length[index])]] <- 0.85
+    }
+    truth$planted_set[switch_genes] <- "ISOFORM_SWITCH"
+  }
+  # A sample draws its usage around the base of its group (a Dirichlet with
+  # concentration 50). The expected reads of an isoform are the molar abundance
+  # of the gene times its usage times its effective length, relative to the
+  # mean effective length of the gene, thus a gene with even usage keeps the
+  # expected count of the gene model. NumReads is the count with a multi-mapping
+  # share, thus it is fractional as in a quant.sf.
+  tx_counts <- matrix(0L, nrow = n_transcripts, ncol = n_samples)
+  num_reads <- matrix(0, nrow = n_transcripts, ncol = n_samples)
+  for (i in seq_len(n_samples)) {
+    base_p <- if (meta$condition[i] == "treated") treated_p else control_p
+    usage <- rgamma(n_transcripts, shape = 50 * base_p)
+    p <- usage / rowsum(usage, tx_gene)[tx_gene]
+    mu <- size_factors[i] * 2^log_mu[tx_gene, i] * p * tx_effective / mean_effective[tx_gene]
+    tx_counts[, i] <- rnbinom(n_transcripts, mu = mu, size = 1 / dispersion[tx_gene])
+    num_reads[, i] <- round(tx_counts[, i] * runif(n_transcripts, 0.85, 1.15), 3)
+  }
+  # The naive integer sum per gene: what a plan gets when it adds NumReads without a length offset.
+  counts[] <- as.integer(round(rowsum(num_reads, tx_gene)))
+  reads_per_base <- num_reads / tx_effective
+  tx_tpm <- sweep(reads_per_base, 2, colSums(reads_per_base), "/") * 1e6
+  tpm <- rowsum(tx_tpm, tx_gene)
+  dimnames(tpm) <- list(genes, meta$sample)
+} else {
+  for (i in seq_len(n_samples)) {
+    mu <- size_factors[i] * 2^log_mu[, i]
+    counts[, i] <- rnbinom(n_genes, mu = mu, size = 1 / dispersion)
+  }
 }
 
 # ── Survival outcome (drawn after the counts, thus the counts stay) ──────────
@@ -332,9 +410,12 @@ if (PATTERN == "survival_n60") {
 }
 
 # ── Gene lengths and TPM (drawn after the counts, thus the counts stay) ───────
-gene_lengths <- pmax(200L, as.integer(round(exp(rnorm(n_genes, mean = log(2000), sd = 0.6)))))
-rpk <- counts / (gene_lengths / 1000)
-tpm <- sweep(rpk, 2, colSums(rpk), "/") * 1e6
+# A Salmon pattern has its lengths and its TPM from the transcripts already.
+if (!(PATTERN %in% SALMON_PATTERNS)) {
+  gene_lengths <- pmax(200L, as.integer(round(exp(rnorm(n_genes, mean = log(2000), sd = 0.6)))))
+  rpk <- counts / (gene_lengths / 1000)
+  tpm <- sweep(rpk, 2, colSums(rpk), "/") * 1e6
+}
 
 # ── Write ─────────────────────────────────────────────────────────────────────
 write.csv(data.frame(gene = genes, counts, check.names = FALSE), file.path(OUT, "counts.csv"), row.names = FALSE)
@@ -344,10 +425,27 @@ write.csv(data.frame(gene = genes, length = gene_lengths), file.path(OUT, "gene_
 write.csv(meta, file.path(OUT, "metadata.csv"), row.names = FALSE)
 write.csv(truth, file.path(OUT, "truth.csv"), row.names = FALSE)
 if (PATTERN == "survival_n60") write.csv(data.frame(gene = genes[sig]), file.path(OUT, "signature_genes.csv"), row.names = FALSE)
+if (PATTERN %in% SALMON_PATTERNS) {
+  for (i in seq_len(n_samples)) {
+    quant_dir <- file.path(OUT, "quant", meta$sample[i])
+    dir.create(quant_dir, showWarnings = FALSE, recursive = TRUE)
+    quant <- data.frame(
+      Name = tx_name, Length = tx_length, EffectiveLength = sprintf("%.3f", tx_effective),
+      TPM = sprintf("%.6f", tx_tpm[, i]), NumReads = sprintf("%.3f", num_reads[, i])
+    )
+    write.table(quant, file.path(quant_dir, "quant.sf"), sep = "\t", quote = FALSE, row.names = FALSE)
+  }
+  write.csv(data.frame(transcript = tx_name, gene = genes[tx_gene]), file.path(OUT, "tx2gene.csv"), row.names = FALSE)
+  write.csv(
+    data.frame(transcript = tx_name, gene = genes[tx_gene], length = tx_length, control_proportion = round(control_p, 4), treated_proportion = round(treated_p, 4)),
+    file.path(OUT, "transcripts.csv"), row.names = FALSE
+  )
+}
 record <- list(
   pattern = PATTERN, seed = SEED, n_genes = n_genes, n_samples = n_samples,
   n_de = sum(truth$de), planted_sets = unique(truth$planted_set[truth$planted_set != ""]),
   hallmark_genes = length(hallmark_genes), low_depth_sample = low_depth_sample, outlier_sample = outlier_sample,
+  n_transcripts = n_transcripts, n_switch_genes = length(switch_genes),
   size_factors = as.list(setNames(round(size_factors, 3), meta$sample)),
   columns = colnames(meta)
 )

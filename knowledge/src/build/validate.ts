@@ -3,11 +3,17 @@
  *
  * The schema gate says that each record has the right shape. This gate says
  * that the records agree with each other: every reference resolves, every
- * condition names a Situation field, every adaptable slot of a template has a
- * marked line, every body placeholder is a declared slot, and every claim id
- * is unique. With `--resolve-dois` the gate also asks the DOI resolver for
- * each DOI and each PMID, because a citation that exists is the floor of a
- * citation that supports.
+ * condition names a Situation field or the engine-derived field
+ * `inferential_method`, every method scope of a parameter resolves and holds
+ * the method of its rule, every adaptable slot of a template has a marked
+ * line, every body placeholder is a declared slot, every template that a
+ * method with its own template lists runs that method or names it in
+ * `substitute_for`, every substitute names a method of record that shares a
+ * step type, every
+ * template that runs a test between groups declares the design requirements
+ * it honors, and every claim id is unique. With `--resolve-dois` the gate
+ * also asks the DOI resolver for each DOI and each PMID, because a citation
+ * that exists is the floor of a citation that supports.
  *
  * Run: `bun src/build/validate.ts [--resolve-dois]`
  */
@@ -15,7 +21,7 @@
 import { join } from "node:path";
 
 import { claimId, contentDigest } from "../canonical.js";
-import { SituationSchema, type KnowledgeBase } from "../model.js";
+import { SituationSchema, type KnowledgeBase, type StepType, type Template } from "../model.js";
 import { bodySlotNames, unmarkedAdaptableSlots } from "../render/render.js";
 import { loadKnowledgeBase } from "./load-kb.js";
 
@@ -24,7 +30,48 @@ export interface ValidationIssue {
     readonly message: string;
 }
 
-const SITUATION_FIELDS = new Set(Object.keys(SituationSchema.shape));
+/**
+ * The fields a rule condition can name: every Situation slot (thus `classifier`
+ * and `import_state` too), plus `inferential_method`. That field is not a
+ * Situation slot: the engine derives it from the method of the inferential step
+ * and a caller cannot set it.
+ */
+const SITUATION_FIELDS = new Set([...Object.keys(SituationSchema.shape), "inferential_method"]);
+
+/** The step types whose script can run a test between the groups of the sample table. */
+const GROUP_TEST_STEPS = new Set<StepType>(["differential_expression", "enrichment", "tf_activity", "pathway_activity", "signature_scoring", "deconvolution", "coexpression", "survival", "variance_partition"]);
+
+/**
+ * Whether a template runs a test between groups, and thus must declare the design
+ * requirements it honors. Three facts of the template say so: one of its step types
+ * is a group-test step type, its inputs name the sample table (an input named
+ * `metadata`), and it asks for replication (`min_replicates` absent or at least 2).
+ * An over-representation or a preranked test reads a results table and no sample
+ * table. A descriptive comparison without replicates runs no test.
+ */
+function runsGroupTest(template: Template): boolean {
+    if (!template.step_types.some((step) => GROUP_TEST_STEPS.has(step))) return false;
+    if (!(template.inputs ?? []).some((input) => input.name === "metadata")) return false;
+    const replicates = template.applicability.min_replicates;
+    return replicates === undefined || replicates >= 2;
+}
+
+/**
+ * The step types of each method: the step types of the templates whose `method` is
+ * the method, plus the step type of each rule whose action selects it. A substitute
+ * must share one of them with its method of record.
+ */
+function stepTypesByMethod(kb: KnowledgeBase): Map<string, Set<StepType>> {
+    const byMethod = new Map<string, Set<StepType>>();
+    const add = (method: string, step: StepType): void => {
+        const steps = byMethod.get(method) ?? new Set<StepType>();
+        steps.add(step);
+        byMethod.set(method, steps);
+    };
+    for (const template of kb.templates) for (const step of template.step_types) add(template.method, step);
+    for (const rule of kb.rules) if (rule.action.method) add(rule.action.method, rule.action.step_type);
+    return byMethod;
+}
 
 export function validateKnowledgeBase(kb: KnowledgeBase): ValidationIssue[] {
     const issues: ValidationIssue[] = [];
@@ -50,10 +97,22 @@ export function validateKnowledgeBase(kb: KnowledgeBase): ValidationIssue[] {
     }
 
     for (const method of kb.methods) {
-        for (const template of method.templates ?? []) {
-            if (!templates.has(template)) issues.push({ where: `method ${method.id}`, message: `names an unknown template ${template}` });
+        // A method with no template of its own (a filter, a normalization) is realized inside the
+        // templates of other methods, and it lists them. A method with its own template that lists a
+        // template of a different method asks that template to stand in for it, and the template must say so.
+        const own = kb.templates.some((template) => template.method === method.id);
+        for (const id of method.templates ?? []) {
+            const template = templates.get(id);
+            if (!template) {
+                issues.push({ where: `method ${method.id}`, message: `names an unknown template ${id}` });
+                continue;
+            }
+            if (own && template.method !== method.id && template.substitute_for !== method.id) {
+                issues.push({ where: `method ${method.id}`, message: `lists the template ${id} of the method ${template.method}, and the template does not name ${method.id} in substitute_for` });
+            }
         }
     }
+    const stepTypes = stepTypesByMethod(kb);
 
     const claims = new Map<string, string>();
     for (const rule of kb.rules) {
@@ -64,6 +123,15 @@ export function validateKnowledgeBase(kb: KnowledgeBase): ValidationIssue[] {
             if ((condition.op === "is_null" || condition.op === "not_null") && condition.value !== undefined) issues.push({ where, message: `condition ${condition.field} ${condition.op} takes no value` });
         }
         if (rule.action.method && !methods.has(rule.action.method)) issues.push({ where, message: `action names an unknown method ${rule.action.method}` });
+        for (const parameter of rule.action.parameters ?? []) {
+            for (const scoped of parameter.methods ?? []) {
+                if (!methods.has(scoped)) issues.push({ where, message: `parameter ${parameter.name} names an unknown method ${scoped}` });
+            }
+            // A scope that leaves out the method of its own rule would never reach the step that rule selects.
+            if (parameter.methods && rule.action.method && !parameter.methods.includes(rule.action.method)) {
+                issues.push({ where, message: `parameter ${parameter.name} scopes to ${parameter.methods.join(", ")} but not to the method of the rule ${rule.action.method}` });
+            }
+        }
         for (const forbidden of rule.action.forbids ?? []) {
             if (!methods.has(forbidden)) issues.push({ where, message: `forbids an unknown method ${forbidden}` });
         }
@@ -91,6 +159,13 @@ export function validateKnowledgeBase(kb: KnowledgeBase): ValidationIssue[] {
     for (const template of kb.templates) {
         const where = `template ${template.id}`;
         if (!methods.has(template.method)) issues.push({ where, message: `names an unknown method ${template.method}` });
+        if (template.substitute_for !== undefined) {
+            const record = template.substitute_for;
+            if (record === template.method) issues.push({ where, message: `substitute_for names the own method ${record}` });
+            else if (!methods.has(record)) issues.push({ where, message: `substitute_for names an unknown method ${record}` });
+            else if (!template.step_types.some((step) => stepTypes.get(record)?.has(step))) issues.push({ where, message: `substitute_for names ${record}, and no template or rule of that method shares a step type with this template` });
+        }
+        if (runsGroupTest(template) && template.applicability.honors === undefined) issues.push({ where, message: "runs a test between groups and must declare applicability.honors (an empty list declares that the script honors no design requirement)" });
         for (const citation of template.citations ?? []) {
             if (!sources.has(citation)) issues.push({ where, message: `cites an unknown source ${citation}` });
         }

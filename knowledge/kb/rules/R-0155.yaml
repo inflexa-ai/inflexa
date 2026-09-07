@@ -19,8 +19,12 @@ conditions:
   - field: data_state
     op: in
     value: [counts, tpm_or_fpkm, log_normalized]
+  - field: classifier
+    op: eq
+    value: true
 action:
   step_type: signature_scoring
+  method: M-0055
   parameters:
     - name: classifier_model
       value: penalized_logistic_regression

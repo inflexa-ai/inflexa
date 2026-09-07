@@ -1,7 +1,7 @@
 id: R-0040
 title: "Three or more groups: shrink the log2 fold change with ashr, report the shrunken and the unshrunken estimate, rank on the shrunken"
 assertion: >-
-  With three or more groups, a contrast between two non-reference levels is
+  With three or more groups on the DESeq2 path, a contrast between two non-reference levels is
   not a single coefficient, thus shrink the log2 fold change with ashr,
   which accepts a contrast, where apeglm accepts a coefficient only. Report
   the unshrunken estimate from results and the shrunken estimate from
@@ -18,6 +18,9 @@ conditions:
   - field: n_groups
     op: gte
     value: 3
+  - field: inferential_method
+    op: in
+    value: [M-0001, M-0002]
 action:
   step_type: shrink_lfc
   method: M-0014

@@ -15,6 +15,8 @@ export const QuestionEnum = z.enum(["differential_expression", "enrichment", "qc
 export const ModalityEnum = z.enum(["bulk_rna_seq"]);
 export const DataStateEnum = z.enum(["fastq", "counts", "tpm_or_fpkm", "log_normalized"]);
 export const CountSourceEnum = z.enum(["salmon", "kallisto", "star_featurecounts", "rsem", "unknown"]);
+/** The import state of a count table from a transcript quantifier: whether the length correction occurred. A quantifier name alone does not establish it. */
+export const ImportStateEnum = z.enum(["quantifications", "estimated_counts_with_lengths", "corrected_counts", "integer_counts", "unknown"]);
 export const OrganismEnum = z.enum(["human", "mouse", "other"]);
 export const BatchEnum = z.enum(["none", "known_balanced", "known_confounded", "suspected"]);
 export const LibraryTypeEnum = z.enum(["polyA", "total", "three_prime", "unknown"]);
@@ -54,6 +56,9 @@ export const DirectionEnum = z.enum(["supports", "disputes", "neutral"]);
 export const ConditionOpEnum = z.enum(["eq", "ne", "in", "not_in", "contains", "lt", "lte", "gt", "gte", "is_null", "not_null"]);
 export const PackageTrackEnum = z.enum(["bioconductor", "cran", "python"]);
 export const SlotTypeEnum = z.enum(["string", "number", "integer", "boolean", "string_list", "formula"]);
+/** A design requirement of a situation that a template script can realize. The LinkML side describes the list in the `applicability` description, because `applicability` is `Any` there. */
+export const DesignRequirementEnum = z.enum(["pairing", "blocking_factor", "covariates", "batch"]);
+export type DesignRequirement = z.infer<typeof DesignRequirementEnum>;
 
 export type StepType = z.infer<typeof StepTypeEnum>;
 
@@ -63,6 +68,8 @@ export const SituationSchema = z.object({
     modality: ModalityEnum,
     data_state: DataStateEnum,
     count_source: CountSourceEnum.optional(),
+    /** Never required. The service sets `unknown` when `data_state` is counts and the caller gives no state. */
+    import_state: ImportStateEnum.optional(),
     organism: OrganismEnum,
     n_groups: z.number().int().min(1),
     n_per_group_min: z.number().int().min(1),
@@ -75,6 +82,8 @@ export const SituationSchema = z.object({
     library_type: LibraryTypeEnum.optional(),
     strandedness: StrandednessEnum.optional(),
     interaction: z.boolean().optional(),
+    /** True when the question is a classifier of the samples into classes, not a score per sample. */
+    classifier: z.boolean().optional(),
     quality_flags: z.array(QualityFlagEnum).optional(),
     enrichment_input: EnrichmentInputEnum.optional(),
     extra_analyses: z.array(ExtraAnalysisEnum).optional(),
@@ -102,6 +111,12 @@ export const ParameterValueSchema = z.object({
     default_source: z.string().optional(),
     /** A drafted step must state this parameter. The check warns when the step omits it. */
     required: z.boolean().optional(),
+    /**
+     * The methods the parameter applies to. The parameter reaches a step only when the step selects a listed
+     * method. Absent on a rule that names `action.method`, the parameter is scoped to that method. Absent on a
+     * rule with no method, the parameter is generic.
+     */
+    methods: z.array(z.string().regex(/^M-\d{4}$/)).optional(),
 });
 export type ParameterValue = z.infer<typeof ParameterValueSchema>;
 
@@ -238,6 +253,8 @@ export const TemplateSchema = z.object({
     label: z.string().min(1),
     language: z.enum(["R", "python"]),
     method: z.string().regex(/^M-\d{4}$/),
+    /** The method of record this template stands in for, when its own `method` is a different procedure. */
+    substitute_for: z.string().regex(/^M-\d{4}$/).optional(),
     step_types: z.array(StepTypeEnum).min(1),
     edam_operations: z.array(z.string()).optional(),
     citations: z.array(z.string().regex(/^S-\d{4}$/)).optional(),
@@ -246,6 +263,8 @@ export const TemplateSchema = z.object({
         modality: ModalityEnum,
         count_sources: z.array(CountSourceEnum).optional(),
         design_patterns: z.array(z.string()).optional(),
+        /** The design requirements the script realizes. Absent: not subject to design requirements. Empty: subject, and honors none. */
+        honors: z.array(DesignRequirementEnum).optional(),
         min_replicates: z.number().int().optional(),
         /** Predicates over the Situation, in the syntax of a rule condition. Every one must hold for the template to apply. */
         conditions: z.array(ConditionSchema).optional(),

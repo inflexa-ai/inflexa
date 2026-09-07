@@ -11,6 +11,7 @@ applicability:
   modality: bulk_rna_seq
   count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
   design_patterns: [time_course_with_condition]
+  honors: [pairing, blocking_factor, covariates, batch]
   min_replicates: 2
   conditions:
     - field: n_timepoints

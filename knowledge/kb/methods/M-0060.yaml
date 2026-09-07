@@ -1,0 +1,18 @@
+id: M-0060
+label: "pydeseq2 Wald contrasts per level with a Bonferroni-Holm minimum-p any-difference table"
+edam_operation: EDAM:operation_3223
+description: >-
+  Negative binomial generalized linear model fitted once on the full design,
+  with one Wald contrast per level against the reference level. The
+  any-difference table takes the minimum p-value per gene across the
+  contrasts, multiplied by the number of contrasts (the first Holm step, a
+  Bonferroni bound), then Benjamini-Hochberg across the genes. A block, a
+  batch, or a covariate enters the full design by its own column. The Python
+  substitute for M-0002 (the DESeq2 likelihood ratio test), because pydeseq2
+  has no likelihood ratio test and fits no reduced design.
+packages:
+  - name: pydeseq2
+    track: python
+    version_range: ">=0.5"
+templates:
+  - tpl-pydeseq2-multigroup

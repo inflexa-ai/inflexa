@@ -69,6 +69,34 @@ enums:
       rsem: {}
       unknown: {}
 
+  ImportStateEnum:
+    description: >-
+      The import state of a count table from a transcript quantifier. The state
+      says whether the length correction occurred, because a quantifier name
+      alone does not establish it.
+    permissible_values:
+      quantifications:
+        description: >-
+          Per-sample quantification files (quant.sf or abundance.h5) plus a
+          transcript-to-gene map. The import runs tximport and gives the model
+          the average transcript length as an offset.
+      estimated_counts_with_lengths:
+        description: >-
+          Gene-level fractional count estimates and a per-gene, per-sample
+          average transcript length table, with countsFromAbundance set to no.
+          The model takes the lengths as an offset.
+      corrected_counts:
+        description: >-
+          Counts after the lengthScaledTPM or the scaledTPM correction. The
+          model takes no length offset.
+      integer_counts:
+        description: >-
+          Integer counts from an aligner and a counter, with no length data.
+      unknown:
+        description: >-
+          The correction state is not established. The service sets this value
+          when data_state is counts and the caller gives no state.
+
   OrganismEnum:
     permissible_values:
       human: {}
@@ -241,6 +269,12 @@ classes:
         required: true
       count_source:
         range: CountSourceEnum
+      import_state:
+        description: >-
+          The import state of a count table from a transcript quantifier. Never
+          required. The service sets unknown when data_state is counts and the
+          caller gives no state.
+        range: ImportStateEnum
       organism:
         range: OrganismEnum
         required: true
@@ -283,6 +317,9 @@ classes:
       interaction:
         description: True when the question is an interaction between two factors.
         range: boolean
+      classifier:
+        description: True when the question is a classifier of the samples into classes, not a score per sample.
+        range: boolean
       quality_flags:
         range: QualityFlagEnum
         multivalued: true
@@ -291,6 +328,11 @@ classes:
     description: One predicate over a Situation slot.
     attributes:
       field:
+        description: >-
+          The Situation slot the predicate reads, or the engine-derived field
+          inferential_method. That field holds the Method identifier of the
+          inferential step, the engine sets it after the first pass, and a
+          caller cannot set it.
         required: true
       op:
         range: ConditionOpEnum
@@ -312,6 +354,15 @@ classes:
       required:
         range: boolean
         description: A drafted step must state this parameter. The check warns when the step omits it.
+      methods:
+        description: >-
+          The Method identifiers the parameter applies to. The parameter reaches
+          a step only when the step selects a listed method. On a rule that
+          names action.method, an absent list scopes the parameter to that
+          method. On a rule with no method, an absent list makes the parameter
+          generic.
+        range: Method
+        multivalued: true
 
   Action:
     description: What an applicable rule contributes to the procedure.
@@ -580,6 +631,12 @@ classes:
       method:
         range: Method
         required: true
+      substitute_for:
+        description: >-
+          The Method of record that this template stands in for, when its own
+          method is a different procedure. Required when a method lists a
+          template whose method field differs.
+        range: Method
       step_types:
         range: StepTypeEnum
         multivalued: true
@@ -592,6 +649,13 @@ classes:
       license:
         required: true
       applicability:
+        description: >-
+          The eligibility of the template: modality, count_sources,
+          min_replicates, conditions, and notes. The optional list honors names
+          the design requirements the script realizes, from pairing,
+          blocking_factor, covariates, and batch. A template with no honors
+          list is not subject to design requirements. An empty list means
+          subject to them, and honors none.
         range: Any
         required: true
       parameters:

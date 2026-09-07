@@ -2,7 +2,8 @@ id: tpl-decoupler-scores
 version: 1.0.0
 label: "decoupler ulm per-sample pathway scores on log-CPM with a t-test on the score matrix"
 language: python
-method: M-0034
+method: M-0059
+substitute_for: M-0034
 step_types: [enrichment]
 edam_operations: [EDAM:operation_3501]
 citations: [S-0004, S-0041, S-0024, S-0031]
@@ -10,7 +11,8 @@ license: Apache-2.0
 applicability:
   modality: bulk_rna_seq
   count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
-  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates, two_group_paired, two_group_with_blocking_factor]
+  design_patterns: [two_group_unpaired]
+  honors: []
   min_replicates: 3
   conditions:
     - field: interaction

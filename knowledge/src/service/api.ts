@@ -22,8 +22,8 @@
 import { z } from "zod";
 
 import { SituationSchema, StepTypeEnum, PreferencesSchema } from "../model.js";
-import type { Situation, StepType, TemplateParameter } from "../model.js";
-import type { CheckFinding } from "../engine/check.js";
+import type { DesignRequirement, Situation, StepType, TemplateParameter } from "../model.js";
+import type { CheckFinding, CheckNotAssessed } from "../engine/check.js";
 import type { ProcedureFlag, ProcedureStep } from "../engine/procedure.js";
 import type { NearMiss } from "../engine/rules.js";
 import type { EnvironmentReport } from "../render/environment.js";
@@ -42,6 +42,8 @@ export type RecommendRequest = z.infer<typeof RecommendRequestSchema>;
 export const DraftedStepSchema = z.object({
     step_type: StepTypeEnum,
     method: z.string().min(1),
+    /** The catalog id of the method, copied from the recommendation. An exact match wins over the wording. */
+    method_id: z.string().regex(/^M-\d{4}$/).optional(),
     package: z.string().optional(),
     parameters: z.array(z.object({ name: z.string().min(1), value: z.union([z.string(), z.number(), z.boolean()]) })).optional(),
     outcome: z.string().optional(),
@@ -115,15 +117,38 @@ export interface RecommendResponse {
 }
 
 export interface CheckResponse {
+    /** True when the assessed steps carry no violation and no warning. A step in `not_assessed` does not count. */
     readonly ok: boolean;
     readonly snapshot: SnapshotRef;
     readonly violations: readonly CheckFinding[];
     readonly warnings: readonly CheckFinding[];
+    /** The drafted steps that no rule covers in this situation: neither passed nor failed. */
+    readonly not_assessed: readonly CheckNotAssessed[];
+}
+
+/** A method as a render answer names it: the id and the label of the catalog. */
+export interface MethodRef {
+    readonly id: string;
+    readonly label: string;
+}
+
+/**
+ * The identity of a rendered template: the template, the method its script
+ * runs, and the method of record it stands in for when it is a substitute.
+ * The recommend names the same method on the step, thus the decision record
+ * and the answer name one procedure.
+ */
+export interface TemplateIdentity {
+    readonly id: string;
+    readonly version: string;
+    readonly label: string;
+    readonly method: MethodRef;
+    readonly substitute_for?: MethodRef;
 }
 
 export interface DecisionRecord {
     readonly schema: "inflexa.decision_record/0.1";
-    readonly template: { readonly id: string; readonly version: string; readonly label: string; readonly method: string };
+    readonly template: TemplateIdentity;
     readonly snapshot: SnapshotRef;
     readonly rendered_at: string;
     readonly slots: readonly SlotReportEntry[];
@@ -137,7 +162,7 @@ export interface DecisionRecord {
 export interface RenderResponse {
     readonly ok: true;
     readonly snapshot: SnapshotRef;
-    readonly template: { readonly id: string; readonly version: string; readonly label: string; readonly method: string; readonly language: "R" | "python" };
+    readonly template: TemplateIdentity & { readonly language: "R" | "python" };
     readonly script: string;
     readonly slots: readonly SlotReportEntry[];
     readonly environment: EnvironmentReport;
@@ -157,9 +182,13 @@ export interface TemplateContract {
     readonly version: string;
     readonly label: string;
     readonly method: string;
+    /** The method of record this template stands in for, when `method` is a different procedure. */
+    readonly substitute_for?: string;
     readonly language: "R" | "python";
     readonly step_types: readonly StepType[];
     readonly applicability: unknown;
+    /** The design requirements the script realizes. Absent: not subject to them. Empty: subject, and honors none. */
+    readonly honors?: readonly DesignRequirement[];
     readonly parameters: readonly TemplateParameter[];
     readonly outputs: readonly { readonly name: string; readonly path: string; readonly format?: string; readonly description?: string }[];
     readonly environment: readonly { readonly name: string; readonly version: string; readonly track: string }[];

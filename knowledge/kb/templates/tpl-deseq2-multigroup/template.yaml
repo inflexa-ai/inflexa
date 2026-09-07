@@ -11,6 +11,7 @@ applicability:
   modality: bulk_rna_seq
   count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
   design_patterns: [multi_group_unpaired, multi_group_with_blocking_factor, multi_group_with_covariates]
+  honors: [pairing, blocking_factor, covariates, batch]
   min_replicates: 2
   conditions:
     - field: n_groups

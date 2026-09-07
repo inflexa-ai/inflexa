@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { join } from "node:path";
 
+import { loadKnowledgeBase } from "../build/load-kb.js";
 import type { Template } from "../model.js";
 import { matchEnvironment } from "./environment.js";
 import { bodySlotNames, renderTemplate, unmarkedAdaptableSlots } from "./render.js";
@@ -109,5 +111,53 @@ describe("renderTemplate — Python literals", () => {
         expect(rendered.script).toContain('["a", "b"]');
         expect(rendered.script).not.toContain("c(");
         expect(rendered.script).toContain("PY_FLAG = True");
+    });
+});
+
+describe("renderTemplate — the import branch of tpl-deseq2-two-group", () => {
+    const BASE = { metadata_path: "/work/data/metadata.csv", condition_column: "condition", reference_level: "control", test_level: "treated" };
+
+    async function template(): Promise<Template & { readonly body: string }> {
+        const loaded = await loadKnowledgeBase(join(import.meta.dir, "..", "..", "kb"));
+        if (!loaded.ok) throw new Error(JSON.stringify(loaded.issues));
+        return loaded.kb.templates.find((candidate) => candidate.id === "tpl-deseq2-two-group")!;
+    }
+
+    it("requires import_state, and names the five states when the value is not permitted", async () => {
+        const tpl = await template();
+        expect(tpl.version).toBe("1.1.0");
+        const absent = renderTemplate(tpl, tpl.body, { ...BASE, counts_path: "/work/data/counts.csv" });
+        expect(absent.ok).toBe(false);
+        if (!absent.ok) expect(absent.issues).toEqual([{ slot: "import_state", reason: "the slot is required and has no default" }]);
+        const wrong = renderTemplate(tpl, tpl.body, { ...BASE, import_state: "salmon", counts_path: "/work/data/counts.csv" });
+        expect(wrong.ok).toBe(false);
+        if (!wrong.ok) expect(wrong.issues[0]?.permitted).toEqual(["quantifications", "estimated_counts_with_lengths", "corrected_counts", "integer_counts", "unknown"]);
+    });
+
+    it("renders the quantifications state without counts_path, with the tximport defaults in the slot report", async () => {
+        const tpl = await template();
+        const result = renderTemplate(tpl, tpl.body, { ...BASE, import_state: "quantifications", quant_dir: "/work/data/quant", tx2gene_path: "/work/data/tx2gene.csv" });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.script).toContain('IMPORT_STATE     <- "quantifications"');
+        expect(result.script).toContain("COUNTS_PATH      <- NULL");
+        expect(result.script).toContain('QUANT_DIR        <- "/work/data/quant"');
+        expect(result.script).toContain('COUNTS_FROM_ABUNDANCE <- "no"');
+        expect(result.script).toContain("LENGTH_OFFSET    <- TRUE");
+        expect(result.script).toContain("DESeqDataSetFromTximport(");
+        expect(result.slots.find((slot) => slot.name === "counts_from_abundance")).toMatchObject({ source: "default", value: "no", default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor" });
+        expect(result.slots.find((slot) => slot.name === "length_offset")).toMatchObject({ source: "default", value: true });
+        expect(result.slots.find((slot) => slot.name === "counts_path")).toBeUndefined();
+    });
+
+    it("renders the integer_counts state with counts_path and no quantification slots", async () => {
+        const tpl = await template();
+        const result = renderTemplate(tpl, tpl.body, { ...BASE, import_state: "integer_counts", counts_path: "/work/data/counts.csv" });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.script).toContain('COUNTS_PATH      <- "/work/data/counts.csv"');
+        expect(result.script).toContain("QUANT_DIR        <- NULL");
+        expect(result.script).toContain("TX2GENE_PATH     <- NULL");
+        expect(result.script).toContain("LENGTHS_PATH     <- NULL");
     });
 });

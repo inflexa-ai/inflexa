@@ -20,9 +20,13 @@
  *   truth_set_recall <enrichment.csv> >= <fraction>   the planted sets found at padj < 0.05, by the `pathway` column
  *   truth_top_precision <results.csv> <n> >= <fraction>   the share of true DE genes among the top n rows by |log2_fold_change|
  *   truth_regulon_recall <activity.csv> >= <fraction>   the planted regulators (planted_set "TF:<name>") found at padj < 0.05, by the `regulator` column
+ *   truth_switch_calls <results.csv> <op> <fraction>   the share of the isoform-switch genes (planted_set ISOFORM_SWITCH, non-DE truth) called at adjusted_pvalue < 0.05
+ *
+ * A dataset is present when its directory holds counts.csv or a quant/ directory
+ * of per-sample quant.sf files beside it.
  */
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -138,6 +142,18 @@ export async function checkExpectation(expectation: string, stepDir: string, dat
                 const value = planted.size === 0 ? 0 : hits / planted.size;
                 return { ok: compare(value, rest[1]!, Number(rest[2])), detail: `planted regulators found ${hits}/${planted.size}` };
             }
+            case "truth_switch_calls": {
+                // The switch genes are non-DE truth: a naive gene sum calls them, the length offset does not.
+                const truthRows = await csvRows(join(dataDir, "truth.csv"));
+                const truthGenes = column(truthRows, "gene");
+                const plantedSet = column(truthRows, "planted_set");
+                const switched = new Set(truthGenes.filter((_gene, index) => plantedSet[index] === "ISOFORM_SWITCH"));
+                if (switched.size === 0) return { ok: false, detail: `${kind}: truth.csv has no ISOFORM_SWITCH gene` };
+                const called = await significantGenes(join(stepDir, rest[0]!));
+                const hits = [...switched].filter((gene) => called.has(gene)).length;
+                const value = hits / switched.size;
+                return { ok: compare(value, rest[1]!, Number(rest[2])), detail: `${kind} = ${value.toFixed(3)} (${hits}/${switched.size} switch genes called)` };
+            }
             case "truth_set_recall": {
                 const truthRows = await csvRows(join(dataDir, "truth.csv"));
                 const planted = new Set(column(truthRows, "planted_set").filter((set) => set.startsWith("HALLMARK")));
@@ -155,6 +171,15 @@ export async function checkExpectation(expectation: string, stepDir: string, dat
     } catch (error) {
         return { ok: false, detail: `${expectation}: ${error instanceof Error ? error.message : String(error)}` };
     }
+}
+
+/** A dataset is present when it holds counts.csv, or a quant/ directory of per-sample quant.sf files beside it. */
+export async function datasetPresent(dataDir: string): Promise<boolean> {
+    if (await Bun.file(join(dataDir, "counts.csv")).exists()) return true;
+    return stat(join(dataDir, "quant")).then(
+        (entry) => entry.isDirectory(),
+        () => false,
+    );
 }
 
 export async function runInSandbox(stepDir: string, dataDir: string, scriptRelative: string, language: "R" | "python" = "R"): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -201,7 +226,7 @@ if (import.meta.main) {
         for (const test of template.tests ?? []) {
             total += 1;
             const dataDir = join(DATA, test.dataset);
-            if (!(await Bun.file(join(dataDir, "counts.csv")).exists())) {
+            if (!(await datasetPresent(dataDir))) {
                 console.error(`✗ ${template.id} ${test.name}: dataset ${test.dataset} is missing; run eval:simulate first`);
                 failures += 1;
                 continue;

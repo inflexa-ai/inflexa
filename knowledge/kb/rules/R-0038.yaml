@@ -23,6 +23,7 @@ action:
     - name: outlier_replacement
       value: default_on
       default_source: "vignette:DESeq2/1.52.0#approach-to-count-outliers"
+      methods: [M-0001, M-0002]
 severity: info
 strength: common_practice
 evidence_quality: moderate

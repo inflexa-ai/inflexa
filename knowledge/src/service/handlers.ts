@@ -5,9 +5,9 @@
  */
 
 import { checkSteps } from "../engine/check.js";
-import { assembleProcedure, type Catalog } from "../engine/procedure.js";
-import { matchRules, type StoredRule } from "../engine/rules.js";
-import type { Situation, Template } from "../model.js";
+import { assembleProcedure, INFERENTIAL_METHOD_FIELD, type Catalog } from "../engine/procedure.js";
+import type { StoredRule } from "../engine/rules.js";
+import type { Modality, Situation, Template } from "../model.js";
 import { matchEnvironment } from "../render/environment.js";
 import { renderTemplate } from "../render/render.js";
 import { checkSyntax } from "../render/syntax.js";
@@ -18,12 +18,14 @@ import type {
     ClaimView,
     DecisionRecord,
     EvidenceView,
+    MethodRef,
     RecommendRequest,
     RecommendResponse,
     RenderRequest,
     RenderResponse,
     SnapshotRef,
     TemplateContract,
+    TemplateIdentity,
     ValidationFailure,
 } from "./api.js";
 
@@ -34,11 +36,19 @@ import type {
  * is a fact, thus it stays. The echo of the situation carries the normalized
  * form.
  */
-const OPTIONAL_FLAGS: ReadonlySet<string> = new Set(["interaction"]);
+const OPTIONAL_FLAGS: ReadonlySet<string> = new Set(["interaction", "classifier"]);
+
+/**
+ * The engine derives these fields in the second pass of the assembly. A value
+ * from the caller is dropped before the match, thus a caller cannot force a
+ * method through a condition field.
+ */
+const DERIVED_FIELDS: ReadonlySet<string> = new Set([INFERENTIAL_METHOD_FIELD]);
 
 export function normalizeSituation(situation: Situation): Situation {
     const normalized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(situation)) {
+        if (DERIVED_FIELDS.has(key)) continue;
         if (value === undefined || value === null) continue;
         if (value === false && OPTIONAL_FLAGS.has(key)) continue;
         if (Array.isArray(value) && value.length === 0) continue;
@@ -106,8 +116,7 @@ export function recommend(snapshot: LoadedSnapshot, request: RecommendRequest): 
         return { error: "validation", message: `the snapshot holds no modality ${situation.modality}`, issues: [{ field: "modality", message: "unknown modality", permitted: [...snapshot.modalities.keys()] }] };
     }
     const detailed = request.response_format === "detailed";
-    const { applicable, nearest } = matchRules(snapshot.rules, situation);
-    const procedure = assembleProcedure(applicable, situation, modality, catalogOf(snapshot), request.preferences);
+    const procedure = assembleProcedure(snapshot.rules, situation, modality, catalogOf(snapshot), request.preferences);
     // One rule reaches the answer once, even when its flag rides on more than one step
     // (a flag that removes inference marks the enrichment step as descriptive as well).
     const seenFlags = new Set<string>();
@@ -121,7 +130,7 @@ export function recommend(snapshot: LoadedSnapshot, request: RecommendRequest): 
             return true;
         });
     const match: RecommendResponse["match"] = procedure.flagged ? "flag" : procedure.central_covered ? "applicable" : "none";
-    const claims = applicable.map((stored) => claimView(snapshot, stored, detailed));
+    const claims = procedure.applicable.map((stored) => claimView(snapshot, stored, detailed));
     return {
         match,
         snapshot: snapshotRef(snapshot),
@@ -131,7 +140,7 @@ export function recommend(snapshot: LoadedSnapshot, request: RecommendRequest): 
         ...(procedure.dropped.length > 0 ? { dropped: procedure.dropped } : {}),
         flags,
         claims,
-        ...(match === "none" ? { nearest, reason: "no rule selects a method for the central step of this question; the nearest rules and their failed conditions are listed" } : {}),
+        ...(match === "none" ? { nearest: procedure.nearest, reason: "no rule selects a method for the central step of this question; the nearest rules and their failed conditions are listed" } : {}),
     };
 }
 
@@ -141,9 +150,13 @@ export function check(snapshot: LoadedSnapshot, request: CheckRequest): CheckRes
     if (!modality) {
         return { error: "validation", message: `the snapshot holds no modality ${situation.modality}`, issues: [{ field: "modality", message: "unknown modality", permitted: [...snapshot.modalities.keys()] }] };
     }
-    const { applicable } = matchRules(snapshot.rules, situation);
-    const result = checkSteps(applicable, situation, request.steps, modality, catalogOf(snapshot));
-    return { ok: result.ok, snapshot: snapshotRef(snapshot), violations: result.violations, warnings: result.warnings };
+    // The check assembles the procedure over the full step order, thus it takes the rules of the two-pass match
+    // over that same walk: a rule of a dependent step holds only once the inferential method is known, and the
+    // draft is judged against the procedure the recommend returned.
+    const walk: Modality = { ...modality, question_steps: { ...modality.question_steps, [situation.question]: modality.step_order } };
+    const procedure = assembleProcedure(snapshot.rules, situation, walk, catalogOf(snapshot));
+    const result = checkSteps(procedure.applicable, situation, request.steps, modality, catalogOf(snapshot));
+    return { ok: result.ok, snapshot: snapshotRef(snapshot), violations: result.violations, warnings: result.warnings, not_assessed: result.not_assessed };
 }
 
 function resolveTemplate(snapshot: LoadedSnapshot, reference: string): { template: Template; body: string } | ValidationFailure {
@@ -170,13 +183,35 @@ export function templateContract(snapshot: LoadedSnapshot, id: string): Template
         version: template.version,
         label: template.label,
         method: template.method,
+        ...(template.substitute_for ? { substitute_for: template.substitute_for } : {}),
         language: template.language,
         step_types: template.step_types,
         applicability: template.applicability,
+        ...(template.applicability.honors ? { honors: template.applicability.honors } : {}),
         parameters: template.parameters,
         outputs: template.outputs,
         environment: template.environment,
         bioconductor: template.bioconductor,
+    };
+}
+
+function methodRef(snapshot: LoadedSnapshot, id: string): MethodRef {
+    return { id, label: snapshot.methods.get(id)?.label ?? id };
+}
+
+/**
+ * The identity a render answer gives its template: the method the script
+ * runs, and the method of record when the template is a substitute. The
+ * recommend names the same method on the step under the preference that
+ * selects this template.
+ */
+function templateIdentity(snapshot: LoadedSnapshot, template: Template): TemplateIdentity {
+    return {
+        id: template.id,
+        version: template.version,
+        label: template.label,
+        method: methodRef(snapshot, template.method),
+        ...(template.substitute_for ? { substitute_for: methodRef(snapshot, template.substitute_for) } : {}),
     };
 }
 
@@ -197,7 +232,7 @@ export async function render(snapshot: LoadedSnapshot, request: RenderRequest): 
     });
     const record: DecisionRecord = {
         schema: "inflexa.decision_record/0.1",
-        template: { id: template.id, version: template.version, label: template.label, method: template.method },
+        template: templateIdentity(snapshot, template),
         snapshot: snapshotRef(snapshot),
         rendered_at: new Date().toISOString(),
         slots: rendered.slots,
@@ -209,7 +244,7 @@ export async function render(snapshot: LoadedSnapshot, request: RenderRequest): 
     return {
         ok: true,
         snapshot: snapshotRef(snapshot),
-        template: { id: template.id, version: template.version, label: template.label, method: template.method, language: template.language },
+        template: { ...templateIdentity(snapshot, template), language: template.language },
         script: rendered.script,
         slots: rendered.slots,
         environment,
