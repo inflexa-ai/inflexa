@@ -9,6 +9,8 @@
  *   bun eval/src/run.ts --campaign c1 --condition without --model claude-opus-5 --provider cliproxy --runs 3
  *   bun eval/src/run.ts --campaign c1 --condition with --model glm-5.3-flash --provider openai-compatible \
  *       --base-url https://... --api-key-env GLM_API_KEY --runs 3
+ *   bun eval/src/run.ts --campaign c1 --condition with --model z-ai/glm-5.3-flash --provider openai-compatible \
+ *       --base-url https://openrouter.ai/api/v1 --api-key-env OPENROUTER_API_KEY --provider-order z-ai/fp8,baseten/fp8
  *
  * Options: --tasks <id,id>, --pg-url, --service-url (default http://127.0.0.1:8790),
  * --service-key-env (default INFLEXA_KNOWLEDGE_SERVICE_KEY), --out (default eval/results),
@@ -120,7 +122,7 @@ async function runOne(options: {
             {
                 invocationId: `eval-${analysisId}`,
                 session,
-                signal: AbortSignal.timeout(20 * 60_000),
+                signal: AbortSignal.timeout(Math.max(20 * 60_000, (connection.requestTimeoutMs ?? 0) + 60_000)),
                 emit: async (event: unknown) => {
                     const e = event as { type?: string; name?: string; input?: unknown };
                     if (e.type === "tool-started" && e.name) toolCalls.push({ name: e.name, input: e.input });
@@ -202,6 +204,8 @@ if (import.meta.main) {
         ...(argument("--base-url") ? { baseUrl: argument("--base-url") } : {}),
         ...(argument("--api-key-env") ? { apiKeyEnv: argument("--api-key-env") } : {}),
         ...(argument("--provider-name") ? { name: argument("--provider-name") } : {}),
+        ...(argument("--provider-order") ? { providerOrder: argument("--provider-order")?.split(",") } : {}),
+        ...(argument("--request-timeout-ms") ? { requestTimeoutMs: Number(argument("--request-timeout-ms")) } : {}),
     };
 
     let knowledge: KnowledgeClient | undefined;

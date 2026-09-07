@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every axis: the balanced batch enters as a fixed effect in ~ batch + condition, counts are never adjusted or pre-normalized before the fit, the reference level is set by explicit relevel and the contrast is named, and DESeq2 Wald with apeglm plus BH at alpha 0.05 is backed by an edgeR QL confirmation. QC is specific to this dataset (blind VST, top-500 PCA coloured by condition and batch, distance heatmap, library sizes, 3/3 crosstab) with an explicit no-dropping policy, though the handling of a shallow sample is only implied by reporting library sizes rather than stated as a threshold or action. The filter (>=10 counts in >=6 samples) is minimal and tied to the smallest group, enrichment is correctly omitted with a stated reason, and the report lists methods, versions, design, thresholds, tested/significant counts, NA causes, and the 6-vs-6 and missing-length-offset caveats."
+}

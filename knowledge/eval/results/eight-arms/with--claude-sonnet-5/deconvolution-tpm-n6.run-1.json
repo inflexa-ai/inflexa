@@ -1,0 +1,1113 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "deconvolution-tpm-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T15:50:34.573Z",
+  "elapsedMs": 115745,
+  "outcome": "plan_submitted",
+  "planId": "pln-d706c2b2",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on log2(TPM+1)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A depth difference alone changes the width of that sample's estimates, not automatically its validity"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats"
+        ],
+        "question": "Do the 12 melanoma biopsy samples (6 anti-PD-1 treated, 6 untreated) show any structure, batch-like pattern, or outlier behavior on log2(TPM+1) values, and specifically how does the flagged low-depth sample_01 (~1/4 median depth) behave relative to the others?",
+        "grounding": {
+          "claims": [
+            "R-0008@440d",
+            "R-0071@e4e2"
+          ],
+          "reason": "TPM/FPKM input with a flagged low-depth sample: sample structure QC on log2(TPM+1) with PCA, sample distances, and detected genes; the low-depth sample is kept, inspected, and reported rather than dropped by default, per R-0008.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Transform via log2(TPM+1), do not apply a count-model VST",
+          "Use 500 most variable genes for the PCA/MDS",
+          "Do not delete sample_01 without stating a reason beyond its depth"
+        ],
+        "acceptance_criteria": [
+          "PCA/MDS plot on the top 500 most variable genes, colored by condition (treated/untreated)",
+          "Sample-to-sample distance heatmap covering all 12 samples",
+          "Detected-gene count per sample reported, with sample_01 explicitly annotated and compared to the cohort median",
+          "A stated decision on whether sample_01 is kept (default: keep, inspect, report) with the reasoning documented"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-abundance gene filter on TPM",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "maxSteps": 200,
+        "packages": [
+          "matrixStats"
+        ],
+        "question": "Which of the 12000 genes in the TPM table have sufficient abundance (>=1 TPM in at least 6 of 12 samples, the smaller group size) to support downstream differential expression and signature-based analyses?",
+        "grounding": {
+          "claims": [
+            "R-0072@881a",
+            "R-0073@8b36"
+          ],
+          "reason": "TPM input: keep a gene at or above 1 TPM in at least the smallest group size (6), log2 transform only, no count-based between-sample normalization (size factors/TMM) applied to TPM.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "No TMM, size-factor, or count-based normalization on this TPM table",
+          "log2(TPM+1) is the only transform applied downstream"
+        ],
+        "acceptance_criteria": [
+          "Genes retained if TPM >= 1 in at least 6 samples",
+          "Report the number of genes kept vs the original 12000",
+          "Filtered matrix used consistently by both the DE step and the deconvolution/signature steps downstream"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Multi-method immune/stromal cell-type deconvolution",
+        "agent": "immune-profiling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The EPIC/quanTIseq reference profiles come from blood and tumor immune cells generally, not melanoma specifically — state this match explicitly",
+          "xCell and MCP-counter scores are not proportions and are not comparable across cell types or to the EPIC/quanTIseq fractions directly"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "EPIC",
+          "quantiseqr",
+          "MCPcounter",
+          "xCell",
+          "ConsensusTME"
+        ],
+        "question": "What are the absolute and relative immune/stromal cell-type fractions (T cells, B cells, NK cells, macrophages/monocytes, dendritic cells, endothelial cells, fibroblasts, and other TME populations) in each of the 12 melanoma biopsies, from the linear-scale TPM matrix?",
+        "grounding": {
+          "claims": [
+            "R-0127@1ec9",
+            "R-0126@a2be",
+            "R-0128@9eee",
+            "R-0130@c0da",
+            "R-0131@6d6f",
+            "R-0132@246d"
+          ],
+          "reason": "TPM input with matched-tissue caution: EPIC/quanTIseq for absolute fractions, MCP-counter/xCell/ConsensusTME as complementary estimates via the immunedeconv interface; CIBERSORT/ESTIMATE are the tools of record for LM22 proportions and tumor purity respectively but both are absent here and are not substituted with an equivalent claim.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "deconvolution",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Input must be the linear-scale TPM matrix (not log-transformed) for all deconvolution methods",
+          "State the tumor type passed to ConsensusTME (melanoma/SKCM)",
+          "Report a composition difference between treated and untreated only where at least two methods agree in direction"
+        ],
+        "acceptance_criteria": [
+          "immunedeconv run with EPIC and quanTIseq (absolute fractions, with an EPIC uncharacterized/'other' fraction reported)",
+          "MCP-counter (relative abundance scores) and xCell (64-type enrichment scores) run as complementary estimates",
+          "ConsensusTME run with the melanoma (SKCM) cancer-type gene sets for a matched microenvironment estimate",
+          "One long-format table of cell type x sample x method x score produced",
+          "Reference-tissue match (blood/tumor-derived signature vs melanoma biopsy) stated explicitly as a caveat",
+          "Report explicitly states that CIBERSORT and ESTIMATE are absent from this environment and were not run; no LM22-proportion or tumor-purity claim is made"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "scGate HiTME marker-based gating as descriptive cross-check",
+        "agent": "immune-profiling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "No proportion, fraction, or hard call should be reported from this step — only a qualitative direction consistent or inconsistent with T2S1"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "scGate"
+        ],
+        "question": "Do the HiTME hierarchical marker gating scores for tumor microenvironment populations (T cell subsets, B cells, NK, myeloid, endothelial, fibroblast, mast, etc.) support the same qualitative immune/stromal composition picture as the deconvolution methods, on this bulk TPM matrix?",
+        "grounding": {
+          "claims": [
+            "R-0135@f02d"
+          ],
+          "reason": "scGate's own gating logic is built for single-cell resolution; applied to bulk TPM it is a marker-presence cross-check, not a validated proportion estimate — reported as descriptive_only per the marker-set caution in R-0135.",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "signature_scoring",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Stage the master_table.tsv beside each *_scGate_Model.tsv file and pass its path explicitly (the loader does not resolve it against the model's own folder)",
+          "State the scGate model version (v0.17, HiTME panel) and the number of signature genes present in the filtered matrix"
+        ],
+        "acceptance_criteria": [
+          "scGate HiTME models (staged at v0.17, with master_table.tsv signatures resolved explicitly) applied as marker-based scores against log2(TPM+1) values per sample",
+          "Explicitly reported as descriptive only: scGate is designed for single-cell gating, not bulk deconvolution, and produces no proportion or hard cell-count claim here",
+          "Cross-check against the T2S1 deconvolution direction (treated vs untreated) reported qualitatively, not as an independent statistical test"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Test cell-type composition scores for a treatment difference",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [],
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Which of the estimated immune/stromal cell-type fractions (from T2S1) differ significantly between the 6 anti-PD-1 treated and 6 untreated melanoma biopsies?",
+        "grounding": {
+          "claims": [
+            "R-0134@0f16",
+            "R-0132@246d"
+          ],
+          "reason": "A per-sample cell-type score compared between two groups: limma or a t-test on the score matrix (replicates as the unit), BH-adjusted across the cell types tested per method; the estimate is reported as an outcome of interest, not folded into the DE design.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Set the untreated group as the explicit reference level",
+          "Do not cut or dichotomize a continuous cell-type score before testing"
+        ],
+        "acceptance_criteria": [
+          "Per method (EPIC, quanTIseq, MCP-counter, xCell, ConsensusTME), a two-group t-test or limma model run on each cell-type score across the 12 samples",
+          "BH adjustment applied across all cell types tested within each method",
+          "Reference level and contrast explicitly stated (untreated as reference, treated as numerator)",
+          "A composition claim for a given cell type is only reported where at least two methods agree in the direction of the difference (per T2S1 consensus rule)"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "limma-trend differential expression: treated vs untreated",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A composition change (T2S1/T2S3) can make a cell-type marker gene appear differentially expressed without a cell-intrinsic transcriptional change — report the two findings side by side, do not conflate them"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Which genes are differentially expressed between anti-PD-1 treated and untreated melanoma biopsies (log2 fold change and BH-adjusted p-value), and to what extent could a composition shift (from T2S1/T2S3) explain a marker gene's apparent differential expression?",
+        "grounding": {
+          "claims": [
+            "R-0004@a06d",
+            "R-0093@4fa4",
+            "R-0036@9786",
+            "R-0043@4f55",
+            "R-0044@1777"
+          ],
+          "reason": "TPM input forbids DESeq2/edgeR/voom count models; limma lmFit with trend=TRUE and robust=TRUE eBayes on log2(TPM+1) is the correct model, with BH adjustment through topTable and an explicit reference level/contrast.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-limma-trend-logvalues@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Never use DESeq2, edgeR, or voom on this TPM table",
+          "Reference level = untreated; contrast named condition_treated_vs_untreated"
+        ],
+        "acceptance_criteria": [
+          "limma lmFit on log2(TPM+1) filtered matrix (from T1S2), eBayes with trend=TRUE and robust=TRUE",
+          "Explicit reference level (untreated) and named contrast (treated - untreated)",
+          "Results selected by BH-adjusted p-value (padj < 0.05), never by unadjusted p-value or fold-change alone",
+          "Number of genes tested and number of DE genes reported",
+          "A brief cross-reference: does a top DE gene mark a cell type found to differ in composition (T2S3)?"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Integrated composition and differential expression report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This is a single-batch, n=6-per-group study: any composition or DE finding is a signal in this cohort, not a validated biomarker, absent an external cohort"
+        ],
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the consolidated answer to whether immune and stromal cell composition differs between anti-PD-1 treated and untreated melanoma biopsies, with the supporting deconvolution, signature cross-check, and differential expression evidence integrated?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0041@059a"
+          ],
+          "reason": "Reproducibility record (sessionInfo, seed, package/collection versions) and full method/design/threshold reporting required in every report.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S3",
+          "T2S3",
+          "T2S2"
+        ],
+        "constraints": [],
+        "acceptance_criteria": [
+          "States dataset specifics: 12 melanoma biopsies (6 treated, 6 untreated), TPM-only delivery, sample_01 low-depth flag and its resolution",
+          "States tool versions used (immunedeconv, EPIC, quantiseqr, MCPcounter, xCell, ConsensusTME, scGate v0.17, limma) and gene set/reference versions",
+          "States explicitly that CIBERSORT and ESTIMATE were not run (absent from environment) and that EPIC/quanTIseq/xCell/ConsensusTME are the substitutes, with the caveat on reference-tissue match to melanoma",
+          "Reports composition differences only where at least two deconvolution methods agree in direction, with the scGate cross-check noted as descriptive support or dissent",
+          "Reports the limma DE results (treated vs untreated) alongside the composition findings and flags any DE gene whose signal likely reflects a composition shift",
+          "Includes a full reproducibility record: session info, package versions, seed, and reference/gene-set collection versions"
+        ]
+      }
+    ],
+    "title": "Melanoma anti-PD-1 immune/stromal composition from TPM",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The core delivered only a gene-level TPM table (12000 genes x 12 samples: 6 anti-PD-1 treated, 6 untreated melanoma biopsies), no raw counts. This forces limma-trend on log2(TPM+1) rather than a count model for any expression testing, and it means the composition question — the primary research question — is answered from a linear-scale TPM matrix that matches the reference profiles used by TPM-native deconvolution tools (EPIC, quanTIseq). The plan: (1) QC the sample structure on log2(TPM+1), explicitly inspecting the flagged low-depth sample (sample_01, ~1/4 median depth) rather than dropping it silently; (2) filter to genes at or above 1 TPM in at least 6 samples (the smaller group size); (3) run cell-type deconvolution through immunedeconv (EPIC and quanTIseq for absolute fractions, MCP-counter for relative abundance scores, xCell for 64-type enrichment scores, ConsensusTME for a cancer-type-matched microenvironment estimate) so that no single algorithm's idiosyncrasies drive a composition claim — a claim is only made where methods agree in direction; (4) cross-check the immune/stromal call with scGate's HiTME hierarchical marker gating as a descriptive, non-quantitative sanity check, since scGate was built for single-cell gating and its bulk application here is exploratory only; (5) test each cell-type estimate for a treated-vs-control difference with limma or a t-test on the score matrix (BH-adjusted across cell types), which is the correct unit of replication (one score per sample, not per gene); (6) run the standard limma-trend differential expression contrast (treated vs untreated, explicit reference level) so that a composition-driven gene (e.g. a T-cell marker) is not mistaken for a cell-intrinsic transcriptional change, and report the two side by side; (7) integrate into one report stating tool versions, the reference-tissue match caveat for EPIC/quanTIseq (blood/tumor-derived references applied to melanoma), CIBERSORT/ESTIMATE absence and their open-source substitutes, and the low-depth sample's effect on its own estimates. ESTIMATE and CIBERSORT are not available in this environment; EPIC/quanTIseq and xCell/ConsensusTME are named explicitly as the substitutes, and the report will not claim an LM22-proportion or a tumor-purity result that only those absent tools can produce."
+  },
+  "usage": {
+    "inputTokens": 2108872,
+    "outputTokens": 11160,
+    "cacheCreationInputTokens": 321347,
+    "cacheReadInputTokens": 1787345,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "deconvolution"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immunedeconv CIBERSORT xCell quanTIseq signature matrix"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "EPIC",
+          "quantiseqr",
+          "xCell",
+          "ConsensusTME",
+          "MCPcounter"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "scGate"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb",
+        "limit": 30
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "checkpoint gene panel exhaustion cytolytic signature immune"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "signature_scoring"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "scGate",
+          "UCell",
+          "Seurat"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "variancePartition",
+          "matrixStats",
+          "limma"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "deconvolution",
+          "signature_scoring"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC on log2(TPM+1): PCA/MDS, sample distance heatmap, detected genes per sample",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low abundance filter on TPM",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "immunedeconv multi-method: EPIC, quanTIseq, MCP-counter, xCell, ConsensusTME",
+            "package": "immunedeconv",
+            "parameters": [
+              {
+                "name": "input_scale",
+                "value": "tpm_linear"
+              },
+              {
+                "name": "consensus",
+                "value": "two_or_more_methods_agree"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "scGate HiTME hierarchical gating scores as a bulk marker-based cross-check (descriptive)",
+            "package": "scGate",
+            "parameters": []
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma trend on log2(TPM+1), robust eBayes",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH adjustment via limma topTable",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Composition + DE integrated report",
+            "package": "",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "deconvolution",
+          "signature_scoring"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC on log2(TPM+1): PCA/MDS, sample distance heatmap, detected genes per sample",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low abundance filter on TPM",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "immunedeconv multi-method: EPIC, quanTIseq, MCP-counter, xCell, ConsensusTME",
+            "package": "immunedeconv",
+            "parameters": [
+              {
+                "name": "input_scale",
+                "value": "tpm_linear"
+              },
+              {
+                "name": "consensus",
+                "value": "two_or_more_methods_agree"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "scGate HiTME hierarchical gating scores as a bulk marker-based cross-check (descriptive)",
+            "package": "scGate",
+            "parameters": [
+              {
+                "name": "preprocessing_scope",
+                "value": "descriptive_only_no_classifier"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma linear model on log2(TPM+1) with trend and robust eBayes (no duplicateCorrelation, unpaired design)",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH adjustment via limma topTable",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Composition + DE integrated report",
+            "package": "",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "deconvolution",
+          "signature_scoring"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC on log2(TPM+1): PCA/MDS, sample distance heatmap, detected genes per sample",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low abundance filter on TPM",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "immunedeconv multi-method: EPIC, quanTIseq, MCP-counter, xCell, ConsensusTME",
+            "package": "immunedeconv",
+            "parameters": [
+              {
+                "name": "input_scale",
+                "value": "tpm_linear"
+              },
+              {
+                "name": "consensus",
+                "value": "two_or_more_methods_agree"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "scGate HiTME hierarchical gating scores as a bulk marker-based cross-check (descriptive)",
+            "package": "scGate",
+            "parameters": [
+              {
+                "name": "preprocessing_scope",
+                "value": "descriptive_only_no_classifier"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma lmFit on log2(TPM+1) values, eBayes with trend=TRUE robust=TRUE",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH adjustment via limma topTable",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Composition + DE integrated report",
+            "package": "",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Melanoma anti-PD-1 immune/stromal composition from TPM",
+          "analytical_narrative": "The core delivered only a gene-level TPM table (12000 genes x 12 samples: 6 anti-PD-1 treated, 6 untreated melanoma biopsies), no raw counts. This forces limma-trend on log2(TPM+1) rather than a count model for any expression testing, and it means the composition question — the primary research question — is answered from a linear-scale TPM matrix that matches the reference profiles used by TPM-native deconvolution tools (EPIC, quanTIseq). The plan: (1) QC the sample structure on log2(TPM+1), explicitly inspecting the flagged low-depth sample (sample_01, ~1/4 median depth) rather than dropping it silently; (2) filter to genes at or above 1 TPM in at least 6 samples (the smaller group size); (3) run cell-type deconvolution through immunedeconv (EPIC and quanTIseq for absolute fractions, MCP-counter for relative abundance scores, xCell for 64-type enrichment scores, ConsensusTME for a cancer-type-matched microenvironment estimate) so that no single algorithm's idiosyncrasies drive a composition claim — a claim is only made where methods agree in direction; (4) cross-check the immune/stromal call with scGate's HiTME hierarchical marker gating as a descriptive, non-quantitative sanity check, since scGate was built for single-cell gating and its bulk application here is exploratory only; (5) test each cell-type estimate for a treated-vs-control difference with limma or a t-test on the score matrix (BH-adjusted across cell types), which is the correct unit of replication (one score per sample, not per gene); (6) run the standard limma-trend differential expression contrast (treated vs untreated, explicit reference level) so that a composition-driven gene (e.g. a T-cell marker) is not mistaken for a cell-intrinsic transcriptional change, and report the two side by side; (7) integrate into one report stating tool versions, the reference-tissue match caveat for EPIC/quanTIseq (blood/tumor-derived references applied to melanoma), CIBERSORT/ESTIMATE absence and their open-source substitutes, and the low-depth sample's effect on its own estimates. ESTIMATE and CIBERSORT are not available in this environment; EPIC/quanTIseq and xCell/ConsensusTME are named explicitly as the substitutes, and the report will not claim an LM22-proportion or a tumor-purity result that only those absent tools can produce.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on log2(TPM+1)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 12 melanoma biopsy samples (6 anti-PD-1 treated, 6 untreated) show any structure, batch-like pattern, or outlier behavior on log2(TPM+1) values, and specifically how does the flagged low-depth sample_01 (~1/4 median depth) behave relative to the others?",
+              "acceptance_criteria": [
+                "PCA/MDS plot on the top 500 most variable genes, colored by condition (treated/untreated)",
+                "Sample-to-sample distance heatmap covering all 12 samples",
+                "Detected-gene count per sample reported, with sample_01 explicitly annotated and compared to the cohort median",
+                "A stated decision on whether sample_01 is kept (default: keep, inspect, report) with the reasoning documented"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0008@440d",
+                  "R-0071@e4e2"
+                ],
+                "template": "tpl-qc-log-abundance@1.0.0",
+                "reason": "TPM/FPKM input with a flagged low-depth sample: sample structure QC on log2(TPM+1) with PCA, sample distances, and detected genes; the low-depth sample is kept, inspected, and reported rather than dropped by default, per R-0008."
+              },
+              "constraints": [
+                "Transform via log2(TPM+1), do not apply a count-model VST",
+                "Use 500 most variable genes for the PCA/MDS",
+                "Do not delete sample_01 without stating a reason beyond its depth"
+              ],
+              "caveats": [
+                "A depth difference alone changes the width of that sample's estimates, not automatically its validity"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-abundance gene filter on TPM",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "Which of the 12000 genes in the TPM table have sufficient abundance (>=1 TPM in at least 6 of 12 samples, the smaller group size) to support downstream differential expression and signature-based analyses?",
+              "acceptance_criteria": [
+                "Genes retained if TPM >= 1 in at least 6 samples",
+                "Report the number of genes kept vs the original 12000",
+                "Filtered matrix used consistently by both the DE step and the deconvolution/signature steps downstream"
+              ],
+              "packages": [
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0072@881a",
+                  "R-0073@8b36"
+                ],
+                "reason": "TPM input: keep a gene at or above 1 TPM in at least the smallest group size (6), log2 transform only, no count-based between-sample normalization (size factors/TMM) applied to TPM."
+              },
+              "constraints": [
+                "No TMM, size-factor, or count-based normalization on this TPM table",
+                "log2(TPM+1) is the only transform applied downstream"
+              ],
+              "caveats": []
+            },
+            {
+              "id": "T2S1",
+              "name": "Multi-method immune/stromal cell-type deconvolution",
+              "track": "T2",
+              "step_type": "deconvolution",
+              "question": "What are the absolute and relative immune/stromal cell-type fractions (T cells, B cells, NK cells, macrophages/monocytes, dendritic cells, endothelial cells, fibroblasts, and other TME populations) in each of the 12 melanoma biopsies, from the linear-scale TPM matrix?",
+              "acceptance_criteria": [
+                "immunedeconv run with EPIC and quanTIseq (absolute fractions, with an EPIC uncharacterized/'other' fraction reported)",
+                "MCP-counter (relative abundance scores) and xCell (64-type enrichment scores) run as complementary estimates",
+                "ConsensusTME run with the melanoma (SKCM) cancer-type gene sets for a matched microenvironment estimate",
+                "One long-format table of cell type x sample x method x score produced",
+                "Reference-tissue match (blood/tumor-derived signature vs melanoma biopsy) stated explicitly as a caveat",
+                "Report explicitly states that CIBERSORT and ESTIMATE are absent from this environment and were not run; no LM22-proportion or tumor-purity claim is made"
+              ],
+              "packages": [
+                "immunedeconv",
+                "EPIC",
+                "quantiseqr",
+                "MCPcounter",
+                "xCell",
+                "ConsensusTME"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "immune-profiling-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0127@1ec9",
+                  "R-0126@a2be",
+                  "R-0128@9eee",
+                  "R-0130@c0da",
+                  "R-0131@6d6f",
+                  "R-0132@246d"
+                ],
+                "reason": "TPM input with matched-tissue caution: EPIC/quanTIseq for absolute fractions, MCP-counter/xCell/ConsensusTME as complementary estimates via the immunedeconv interface; CIBERSORT/ESTIMATE are the tools of record for LM22 proportions and tumor purity respectively but both are absent here and are not substituted with an equivalent claim."
+              },
+              "constraints": [
+                "Input must be the linear-scale TPM matrix (not log-transformed) for all deconvolution methods",
+                "State the tumor type passed to ConsensusTME (melanoma/SKCM)",
+                "Report a composition difference between treated and untreated only where at least two methods agree in direction"
+              ],
+              "caveats": [
+                "The EPIC/quanTIseq reference profiles come from blood and tumor immune cells generally, not melanoma specifically — state this match explicitly",
+                "xCell and MCP-counter scores are not proportions and are not comparable across cell types or to the EPIC/quanTIseq fractions directly"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "scGate HiTME marker-based gating as descriptive cross-check",
+              "track": "T2",
+              "step_type": "signature_scoring",
+              "question": "Do the HiTME hierarchical marker gating scores for tumor microenvironment populations (T cell subsets, B cells, NK, myeloid, endothelial, fibroblast, mast, etc.) support the same qualitative immune/stromal composition picture as the deconvolution methods, on this bulk TPM matrix?",
+              "acceptance_criteria": [
+                "scGate HiTME models (staged at v0.17, with master_table.tsv signatures resolved explicitly) applied as marker-based scores against log2(TPM+1) values per sample",
+                "Explicitly reported as descriptive only: scGate is designed for single-cell gating, not bulk deconvolution, and produces no proportion or hard cell-count claim here",
+                "Cross-check against the T2S1 deconvolution direction (treated vs untreated) reported qualitatively, not as an independent statistical test"
+              ],
+              "packages": [
+                "scGate"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0135@f02d"
+                ],
+                "outcome": "descriptive_only",
+                "reason": "scGate's own gating logic is built for single-cell resolution; applied to bulk TPM it is a marker-presence cross-check, not a validated proportion estimate — reported as descriptive_only per the marker-set caution in R-0135."
+              },
+              "constraints": [
+                "Stage the master_table.tsv beside each *_scGate_Model.tsv file and pass its path explicitly (the loader does not resolve it against the model's own folder)",
+                "State the scGate model version (v0.17, HiTME panel) and the number of signature genes present in the filtered matrix"
+              ],
+              "caveats": [
+                "No proportion, fraction, or hard call should be reported from this step — only a qualitative direction consistent or inconsistent with T2S1"
+              ]
+            },
+            {
+              "id": "T2S3",
+              "name": "Test cell-type composition scores for a treatment difference",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Which of the estimated immune/stromal cell-type fractions (from T2S1) differ significantly between the 6 anti-PD-1 treated and 6 untreated melanoma biopsies?",
+              "acceptance_criteria": [
+                "Per method (EPIC, quanTIseq, MCP-counter, xCell, ConsensusTME), a two-group t-test or limma model run on each cell-type score across the 12 samples",
+                "BH adjustment applied across all cell types tested within each method",
+                "Reference level and contrast explicitly stated (untreated as reference, treated as numerator)",
+                "A composition claim for a given cell type is only reported where at least two methods agree in the direction of the difference (per T2S1 consensus rule)"
+              ],
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0134@0f16",
+                  "R-0132@246d"
+                ],
+                "reason": "A per-sample cell-type score compared between two groups: limma or a t-test on the score matrix (replicates as the unit), BH-adjusted across the cell types tested per method; the estimate is reported as an outcome of interest, not folded into the DE design."
+              },
+              "constraints": [
+                "Set the untreated group as the explicit reference level",
+                "Do not cut or dichotomize a continuous cell-type score before testing"
+              ],
+              "caveats": []
+            },
+            {
+              "id": "T1S3",
+              "name": "limma-trend differential expression: treated vs untreated",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between anti-PD-1 treated and untreated melanoma biopsies (log2 fold change and BH-adjusted p-value), and to what extent could a composition shift (from T2S1/T2S3) explain a marker gene's apparent differential expression?",
+              "acceptance_criteria": [
+                "limma lmFit on log2(TPM+1) filtered matrix (from T1S2), eBayes with trend=TRUE and robust=TRUE",
+                "Explicit reference level (untreated) and named contrast (treated - untreated)",
+                "Results selected by BH-adjusted p-value (padj < 0.05), never by unadjusted p-value or fold-change alone",
+                "Number of genes tested and number of DE genes reported",
+                "A brief cross-reference: does a top DE gene mark a cell type found to differ in composition (T2S3)?"
+              ],
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0004@a06d",
+                  "R-0093@4fa4",
+                  "R-0036@9786",
+                  "R-0043@4f55",
+                  "R-0044@1777"
+                ],
+                "template": "tpl-limma-trend-logvalues@1.0.0",
+                "reason": "TPM input forbids DESeq2/edgeR/voom count models; limma lmFit with trend=TRUE and robust=TRUE eBayes on log2(TPM+1) is the correct model, with BH adjustment through topTable and an explicit reference level/contrast."
+              },
+              "constraints": [
+                "Never use DESeq2, edgeR, or voom on this TPM table",
+                "Reference level = untreated; contrast named condition_treated_vs_untreated"
+              ],
+              "caveats": [
+                "A composition change (T2S1/T2S3) can make a cell-type marker gene appear differentially expressed without a cell-intrinsic transcriptional change — report the two findings side by side, do not conflate them"
+              ]
+            },
+            {
+              "id": "T1S4",
+              "name": "Integrated composition and differential expression report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the consolidated answer to whether immune and stromal cell composition differs between anti-PD-1 treated and untreated melanoma biopsies, with the supporting deconvolution, signature cross-check, and differential expression evidence integrated?",
+              "acceptance_criteria": [
+                "States dataset specifics: 12 melanoma biopsies (6 treated, 6 untreated), TPM-only delivery, sample_01 low-depth flag and its resolution",
+                "States tool versions used (immunedeconv, EPIC, quantiseqr, MCPcounter, xCell, ConsensusTME, scGate v0.17, limma) and gene set/reference versions",
+                "States explicitly that CIBERSORT and ESTIMATE were not run (absent from environment) and that EPIC/quanTIseq/xCell/ConsensusTME are the substitutes, with the caveat on reference-tissue match to melanoma",
+                "Reports composition differences only where at least two deconvolution methods agree in direction, with the scGate cross-check noted as descriptive support or dissent",
+                "Reports the limma DE results (treated vs untreated) alongside the composition findings and flags any DE gene whose signal likely reflects a composition shift",
+                "Includes a full reproducibility record: session info, package versions, seed, and reference/gene-set collection versions"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S3",
+                "T2S3",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0041@059a"
+                ],
+                "reason": "Reproducibility record (sessionInfo, seed, package/collection versions) and full method/design/threshold reporting required in every report."
+              },
+              "constraints": [],
+              "caveats": [
+                "This is a single-batch, n=6-per-group study: any composition or DE finding is a signal in this cohort, not a validated biomarker, absent an external cohort"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

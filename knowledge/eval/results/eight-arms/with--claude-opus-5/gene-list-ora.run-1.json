@@ -1,0 +1,705 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "gene-list-ora",
+  "run": 1,
+  "startedAt": "2026-09-06T14:48:00.266Z",
+  "elapsedMs": 111602,
+  "outcome": "plan_submitted",
+  "planId": "pln-dbad8d62",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on the delivered counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A library size 4x below the median widens that sample's contribution uncertainty but is not by itself grounds for removal — DESeq2 size factors down-weight it inside the model",
+          "With n=6 per group, a single outlying sample can dominate PC1; read the PCA together with the distance heatmap rather than alone",
+          "The delivered DE table was computed upstream on all 12 samples; if the QC would argue for dropping a sample, that is a finding to report, not a change this step can apply"
+        ],
+        "context": "Inputs: /eval-eight-arms-with-gene-list-ora-1/data/inputs/counts/counts.csv (raw integer counts from Salmon, first column gene symbol, 12 sample columns) and /eval-eight-arms-with-gene-list-ora-1/data/inputs/metadata/metadata.csv (12 rows, condition column: treated = AD lesional skin, control). Single batch, unpaired. The data profile flags sample_01 as low depth.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 12 skin samples (6 treated / 6 control) in counts.csv separate by condition, and does sample_01 — whose library size is about 4x below the median — sit with its group or apart from it?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Raw counts delivered alongside the results table: blind vst, PCA on top 500 genes and sample distance heatmap per R-0033@40bf; the flagged low-depth sample_01 is kept, inspected and reported per R-0008@440d.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the blind variance-stabilizing transformation (blind to the design) for the QC transform",
+          "Use the top 500 most variable genes for the PCA",
+          "Low-depth policy: keep sample_01, inspect it, report its library size and detected genes; do not silently delete it",
+          "Do not pre-normalize or scale the counts outside the DESeq2 size-factor machinery",
+          "Report only; make no claim about differential expression from this step"
+        ],
+        "description": "Blind variance-stabilizing transform of the 12,000 x 12 Salmon gene-level count matrix, PCA on the 500 most variable genes coloured by condition, Euclidean sample-distance heatmap, and a per-sample table of library size and detected genes. Produces the QC figures and a written verdict on sample_01. Does not refit differential expression — the DE table is delivered.",
+        "acceptance_criteria": [
+          "A PCA plot of the 12 samples on blind-VST values of the 500 most variable genes, coloured by condition, with sample_01 labelled",
+          "A sample-to-sample Euclidean distance heatmap over all 12 samples",
+          "A table of library size and number of detected genes per sample, with sample_01's values stated next to the cohort median",
+          "A written statement of whether sample_01 clusters with its group and whether it is retained; retention is the default and any removal must carry an explicit stated reason",
+          "The step does not re-run differential expression and does not modify de_results.csv"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GO BP over-representation of the significant genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A GO term list from a nested ontology looks like many findings when it is one; the rrvgo reduction is what makes the count honest",
+          "Counts-based significance is biased toward long and highly expressed genes, so an over-representation result partly reflects detection power; the tested-genes universe removes part of this and step T2S2 addresses the rest",
+          "The 12,000-gene table is smaller than a full human transcriptome, so the universe is already a filtered set — state its size and do not compare it to a genome-wide background",
+          "An over-representation result is a hypothesis for follow-up, not a proven mechanism, and it depends on the method used"
+        ],
+        "context": "Input: /eval-eight-arms-with-gene-list-ora-1/data/inputs/results/de_results.csv — a DESeq2 results table of the treated vs control contrast over 12,000 genes with columns gene (symbol), base_mean, log2_fold_change, log2_fold_change SE, and p-value / adjusted p-value fields. Human skin, atopic dermatitis lesional vs control. Reference data needed: the Gene Ontology annotation for human, either through the human organism annotation package with the GO database, or the human GO Biological Process gene-set collection present in the reference store; both are available in this environment.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "GO.db",
+          "rrvgo",
+          "GOSemSim",
+          "enrichplot",
+          "ggplot2"
+        ],
+        "question": "Which GO Biological Process terms are over-represented among the genes significant at FDR 0.05 in the treated (AD lesional) versus control contrast of de_results.csv, tested separately for the up-regulated and the down-regulated genes?",
+        "grounding": {
+          "claims": [
+            "R-0095@492a",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0109@fe3e",
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0054@801e",
+            "R-0110@41cb",
+            "R-0048@500d"
+          ],
+          "reason": "Discrete significant-gene list from a delivered human DESeq2 table: enrichGO on GO BP with the tested genes as universe and rrvgo term reduction per R-0095@492a; direction handled as two lists per R-0109@fe3e; contrast, tie rule and pinned collection stated per R-0110@41cb; the under-50-genes caveat of R-0103@93aa is carried as an acceptance criterion.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-ora-go@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Ontology: Biological Process (BP), as the question asks for biological processes",
+          "Universe = tested genes from de_results.csv, never the genome",
+          "Gene-set size window: minimum 15, maximum 500 members after intersecting each set with the tested genes",
+          "Selection on adjusted p-value only — never on the unadjusted p-value and never on fold change alone",
+          "Direction handling: test up-regulated and down-regulated genes as two separate lists and report the pooled list beside them, stating the reason in the output",
+          "Map symbols to Entrez with the human organism annotation package before testing; keep one identifier space for the list and the universe alike and never mix spaces",
+          "Collapse redundant nested GO terms with rrvgo before reporting; do not present a block of parent/child terms as independent findings",
+          "Pin and record the GO annotation release used",
+          "Set and record a random seed",
+          "Do not fit a new differential expression model — the delivered results table is the input"
+        ],
+        "description": "Hypergeometric GO BP over-representation with clusterProfiler enrichGO on the significant genes of the delivered DESeq2 table, with the universe set to the tested genes of that same table, followed by rrvgo semantic-similarity reduction of the significant terms to representatives. This is the primary answer to the research question.",
+        "acceptance_criteria": [
+          "The contrast is stated explicitly in the output: treated (AD lesional) as numerator, control as denominator, so a positive log2 fold change means higher in lesional skin; if the delivered table's column names or metadata contradict this, state the discrepancy rather than assuming",
+          "Significant genes selected on the adjusted p-value at FDR < 0.05; the counts of significant, up-regulated and down-regulated genes are reported",
+          "The universe is the set of genes in de_results.csv with a non-NA adjusted p-value (the tested genes), and its size is reported; the whole genome or the whole annotation is never used as the universe",
+          "enrichGO run on ontology BP with a gene-set size window of 15 to 500 members among the tested genes, Benjamini-Hochberg adjustment, and the resulting term table written out in full",
+          "Three result tables produced: up-regulated list, down-regulated list, and pooled list, with the pooling choice explicitly justified in the text",
+          "Gene symbols mapped to Entrez IDs with the human organism annotation package; the share of significant genes and of universe genes that failed to map, and the number dropped for many-to-many mapping, are reported as numbers",
+          "Significant GO BP terms reduced to representative terms by rrvgo semantic similarity, with the similarity threshold stated; representatives reported in the main table and the full unreduced term list kept as a supplement",
+          "For each reported representative term: term ID, term name, gene ratio, background ratio, raw and adjusted p-value, and the member significant genes",
+          "If any of the three lists holds fewer than ~50 significant genes, that list's size is stated and its over-representation result is explicitly labelled underpowered rather than reported as a finding",
+          "The GO annotation source and its release/version are recorded in the output"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Length-bias correction and preranked secondary check",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment methods disagree by construction — a term found by one and not the other is a caveat about power and method, not evidence against the biology",
+          "Salmon effective lengths are not in the delivered inputs, so any length vector used is an annotation-level approximation of them; say so",
+          "fgsea answers a different question from an over-representation test (coordinated shift across the whole list versus concentration within a cut list); do not present the two as one result"
+        ],
+        "context": "Same input results table as T2S1. Reference data needed: human gene lengths for the goseq probability weighting function (an annotation resource giving a per-gene length for human gene symbols) and the human GO Biological Process gene-set collection for the fgsea run — the reference store holds a human GO BP symbol collection. The Salmon effective lengths are not among the delivered files.",
+        "maxSteps": 200,
+        "packages": [
+          "goseq",
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "GO.db",
+          "ggplot2"
+        ],
+        "question": "Do the GO BP terms from T2S1 survive a gene-length-bias correction, and does a preranked test on the full list of tested genes point to the same processes in the treated versus control contrast?",
+        "grounding": {
+          "claims": [
+            "R-0096@6ebc",
+            "R-0107@976c",
+            "R-0045@f652",
+            "R-0099@0a77",
+            "R-0108@409f",
+            "R-0054@801e"
+          ],
+          "reason": "Counts-derived list carries gene-length bias, so goseq with a PWF refits the same GO BP question per R-0096@6ebc; the preranked fgsea run on the full tested list per R-0045@f652/R-0107@976c is kept secondary because the question names a discrete list; the disputed ranking choice of R-0108@409f is resolved in favour of the DESeq2 Wald statistic per R-0099@0a77.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-ora-go@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "The preranked test takes the full list of tested genes, never a thresholded list",
+          "Ranking metric: DESeq2 Wald statistic — the disputed ranking choice is resolved here in favour of the Wald statistic because it is signed and scaled by its standard error; state this choice in the output",
+          "Same universe, same size window (15-500) and same identifier space as T2S1",
+          "Gene-length source must be human and its release recorded; report the share of tested genes for which no length was found",
+          "This step never overrides T2S1 as the answer; label it a robustness check throughout"
+        ],
+        "description": "Two robustness analyses on the same delivered contrast: goseq GO BP over-representation with a probability weighting function on gene length, and an fgsea preranked test over every tested gene ranked by the DESeq2 Wald statistic. Both are explicitly secondary — the T2S1 over-representation result remains the answer to the research question.",
+        "acceptance_criteria": [
+          "goseq run on the same significant-gene vector and the same tested-gene universe as T2S1, with a probability weighting function fitted on gene length; the fitted PWF plot is produced and the length source and its release are named",
+          "If no per-gene length resource for human is available in the environment, the step says so explicitly, skips the goseq correction, and reports the length bias as uncorrected — it must not substitute an invented or wrong-organism length vector",
+          "fgsea run on the full ranked list of every tested gene in de_results.csv — no significance or fold-change cut before ranking — against the human GO BP collection with a 15-500 size window and BH adjustment",
+          "The ranking metric is the DESeq2 Wald statistic (the stat column); the choice is stated in the output together with the tie-breaking rule applied to equal values, and the seed for the permutation is recorded",
+          "If a Wald statistic column is absent from the delivered table, the fallback metric is stated explicitly and its limitation named; the unshrunken log2 fold change alone is not used as the ranking metric",
+          "Leading-edge genes reported per significant gene set from fgsea",
+          "An overlap table comparing the representative terms from T2S1, the goseq terms, and the fgsea sets, naming both the agreement and the disagreement",
+          "The output states in plain terms that these are secondary checks and that the over-representation test of T2S1 is the primary answer"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Consolidated enrichment report",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group is a small cohort; a GO term supported by a handful of genes is fragile and should be labelled as such",
+          "The delivered DE table was produced upstream and its exact parameter settings are not part of the inputs — describe what is knowable from the table and do not assert settings that cannot be verified from it"
+        ],
+        "context": "Consumes the outputs of T1S1, T2S1 and T2S2. Audience needs the terms, the honesty about what the terms rest on, and enough method detail to reproduce the numbers.",
+        "maxSteps": 200,
+        "packages": [
+          "rmarkdown",
+          "knitr",
+          "ggplot2",
+          "sessioninfo"
+        ],
+        "question": "What are the over-represented GO biological processes in AD lesional versus control skin, how confident can we be in them, and what exactly was run to get them?",
+        "grounding": {
+          "claims": [
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report carries the collection, version, ranking metric, universe and size window per R-0051@01ca, the method-dependence caveat per R-0055@107a, the leading-edge genes per R-0105@c4a8, and the full reproducibility record per R-0086@becf.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S1",
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "Report the database, its version, the ranking metric, the universe and the size window for every enrichment run",
+          "Include sessionInfo, seed, package versions, collection version and annotation release with the results, not in a separate note",
+          "State the method-dependence caveat explicitly",
+          "Do not introduce any new statistical test in this step"
+        ],
+        "description": "A single report joining the QC verdict on the 12-sample cohort, the representative GO BP terms with their member genes, the agreement and disagreement across enrichGO / goseq / fgsea, and the full reproducibility record.",
+        "acceptance_criteria": [
+          "A ranked table of representative GO BP terms for the up-regulated and the down-regulated significant genes, each with adjusted p-value, gene ratio and the member significant genes",
+          "The record states: the contrast (treated / AD lesional vs control) and sign convention, the FDR cutoff and the number of significant genes in each direction, the universe definition and size, the gene-set size window, the GO collection name and release, the identifier-mapping package and the unmapped share, the ranking metric and tie rule for the secondary preranked run, the seed, package versions and full sessionInfo",
+          "Leading-edge genes listed per significant set from the preranked secondary run",
+          "An explicit statement that enrichment results are method-dependent, with the observed overlap and disagreement between the three runs given as the evidence for that statement",
+          "The low-depth status of sample_01 and its QC verdict carried into the report as a caveat on the delivered contrast",
+          "Terms are presented as hypotheses for follow-up, not as established mechanisms of atopic dermatitis"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control: GO BP over-representation of DE genes",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question is narrow: which GO biological processes are over-represented among the genes called significant in the treated (AD lesional) versus control contrast. A DESeq2 results table for exactly that contrast is already delivered (/data/inputs/results/de_results.csv, 12,000 genes x 8 columns), so no new differential expression model is fitted — the plan takes the delivered table as its input and, per the rule for enrichment on a delivered results table, states the contrast, the reference level, the sign convention, the tie rule and the pinned collection.\n\nBecause the raw Salmon gene-level count matrix (counts.csv, 12,000 genes x 12 samples plus the gene-symbol column) and the sample table (metadata.csv, 12 rows: 6 treated, 6 control, unpaired, single batch) are also delivered, T1S1 first runs a sample-structure check on them: blind VST, PCA on the 500 most variable genes, a sample-distance heatmap and per-sample library sizes and detected-gene counts. This exists specifically because the profile flags sample_01 with a library size about 4x below the median. That sample is kept, inspected and reported — it is not dropped by default, and the QC step decides nothing about the DE table, which was computed upstream with all 12 samples. Its job is to tell the reader whether the delivered contrast rests on a sound sample structure, and whether sample_01 sits with its group.\n\nT2S1 is the answer to the question: a hypergeometric GO Biological Process over-representation test with clusterProfiler enrichGO, with the universe set to the genes actually tested in de_results.csv (a non-NA adjusted p-value), never the whole genome. Significant genes are selected on the adjusted p-value at FDR 0.05, and the up-regulated and down-regulated sets are tested as two separate lists, with a pooled list reported beside them — an over-representation test on a pooled list mixes opposing directions into one term. Symbols are mapped to Entrez with org.Hs.eg.db and the unmapped share is reported. GO terms nest, so the significant terms are reduced to representatives with rrvgo semantic similarity and the full table is kept as a supplement. If fewer than about 50 genes pass the cutoff in a list, the step reports the list size and states that the hypergeometric test on it is underpowered rather than presenting terms as findings.\n\nT2S2 is the robustness layer, kept separate so the primary answer stays clean. Counts-based DE lists are biased toward long and highly expressed genes; goseq refits the same GO BP question with a probability weighting function on gene length. The effective lengths from Salmon are not in the delivered files, so the step must obtain lengths from an available annotation resource, and if none is present it reports the bias uncorrected rather than substituting a wrong length vector. It also runs an fgsea preranked test on the full ranked list of every tested gene, ranked by the DESeq2 Wald statistic (the disputed ranking choice is resolved here in favour of the Wald statistic, which is signed and scaled by its standard error), explicitly as a stated secondary check and not as the answer.\n\nT1S3 consolidates: the representative GO terms with their member genes and statistics, the overlap and the disagreement between enrichGO, goseq and fgsea, and the full reproducibility record — collection name and release, universe definition, size window, cutoffs, unmapped share, seed, package versions and sessionInfo."
+  },
+  "usage": {
+    "inputTokens": 341578,
+    "outputTokens": 8801,
+    "cacheCreationInputTokens": 166531,
+    "cacheReadInputTokens": 174999,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "enrichment_input": "gene_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "rrvgo",
+          "org.Hs.eg.db",
+          "GO.db",
+          "DOSE",
+          "goseq",
+          "enrichplot",
+          "DESeq2",
+          "GOSemSim"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "enrichment_input": "gene_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: blind VST, PCA on top 500 variable genes, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "GO BP over-representation with clusterProfiler enrichGO, universe = tested genes, up and down lists separately plus pooled, rrvgo semantic reduction",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "go_ontology",
+                "value": "BP"
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "id_mapping",
+                "value": "to_entrez_with_orgdb"
+              },
+              {
+                "name": "direction_handling",
+                "value": "two_lists_or_stated_pooling"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              },
+              {
+                "name": "go_term_reduction",
+                "value": "rrvgo_semantic_similarity"
+              },
+              {
+                "name": "ora_min_significant_genes",
+                "value": 50
+              },
+              {
+                "name": "report_unmapped_share",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "goseq gene-length-bias-corrected GO BP over-representation as robustness check; fgsea preranked on DESeq2 Wald stat as stated secondary check",
+            "package": "goseq",
+            "parameters": [
+              {
+                "name": "ora_bias_correction",
+                "value": "goseq_pwf"
+              },
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "rank_metric_choice",
+                "value": "stated_in_plan"
+              },
+              {
+                "name": "gsea_input",
+                "value": "full_ranked_list"
+              },
+              {
+                "name": "primary_answer",
+                "value": "over_representation_test"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Consolidated report with collection version, universe, size window, cutoffs, unmapped share, sessionInfo and seed",
+            "package": "rmarkdown",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info_seed_versions_collection_release"
+              },
+              {
+                "name": "enrichment_caveat",
+                "value": "method_dependence"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control: GO BP over-representation of DE genes",
+          "analytical_narrative": "The research question is narrow: which GO biological processes are over-represented among the genes called significant in the treated (AD lesional) versus control contrast. A DESeq2 results table for exactly that contrast is already delivered (/data/inputs/results/de_results.csv, 12,000 genes x 8 columns), so no new differential expression model is fitted — the plan takes the delivered table as its input and, per the rule for enrichment on a delivered results table, states the contrast, the reference level, the sign convention, the tie rule and the pinned collection.\n\nBecause the raw Salmon gene-level count matrix (counts.csv, 12,000 genes x 12 samples plus the gene-symbol column) and the sample table (metadata.csv, 12 rows: 6 treated, 6 control, unpaired, single batch) are also delivered, T1S1 first runs a sample-structure check on them: blind VST, PCA on the 500 most variable genes, a sample-distance heatmap and per-sample library sizes and detected-gene counts. This exists specifically because the profile flags sample_01 with a library size about 4x below the median. That sample is kept, inspected and reported — it is not dropped by default, and the QC step decides nothing about the DE table, which was computed upstream with all 12 samples. Its job is to tell the reader whether the delivered contrast rests on a sound sample structure, and whether sample_01 sits with its group.\n\nT2S1 is the answer to the question: a hypergeometric GO Biological Process over-representation test with clusterProfiler enrichGO, with the universe set to the genes actually tested in de_results.csv (a non-NA adjusted p-value), never the whole genome. Significant genes are selected on the adjusted p-value at FDR 0.05, and the up-regulated and down-regulated sets are tested as two separate lists, with a pooled list reported beside them — an over-representation test on a pooled list mixes opposing directions into one term. Symbols are mapped to Entrez with org.Hs.eg.db and the unmapped share is reported. GO terms nest, so the significant terms are reduced to representatives with rrvgo semantic similarity and the full table is kept as a supplement. If fewer than about 50 genes pass the cutoff in a list, the step reports the list size and states that the hypergeometric test on it is underpowered rather than presenting terms as findings.\n\nT2S2 is the robustness layer, kept separate so the primary answer stays clean. Counts-based DE lists are biased toward long and highly expressed genes; goseq refits the same GO BP question with a probability weighting function on gene length. The effective lengths from Salmon are not in the delivered files, so the step must obtain lengths from an available annotation resource, and if none is present it reports the bias uncorrected rather than substituting a wrong length vector. It also runs an fgsea preranked test on the full ranked list of every tested gene, ranked by the DESeq2 Wald statistic (the disputed ranking choice is resolved here in favour of the Wald statistic, which is signed and scaled by its standard error), explicitly as a stated secondary check and not as the answer.\n\nT1S3 consolidates: the representative GO terms with their member genes and statistics, the overlap and the disagreement between enrichGO, goseq and fgsea, and the full reproducibility record — collection name and release, universe definition, size window, cutoffs, unmapped share, seed, package versions and sessionInfo.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on the delivered counts",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 skin samples (6 treated / 6 control) in counts.csv separate by condition, and does sample_01 — whose library size is about 4x below the median — sit with its group or apart from it?",
+              "description": "Blind variance-stabilizing transform of the 12,000 x 12 Salmon gene-level count matrix, PCA on the 500 most variable genes coloured by condition, Euclidean sample-distance heatmap, and a per-sample table of library size and detected genes. Produces the QC figures and a written verdict on sample_01. Does not refit differential expression — the DE table is delivered.",
+              "context": "Inputs: /eval-eight-arms-with-gene-list-ora-1/data/inputs/counts/counts.csv (raw integer counts from Salmon, first column gene symbol, 12 sample columns) and /eval-eight-arms-with-gene-list-ora-1/data/inputs/metadata/metadata.csv (12 rows, condition column: treated = AD lesional skin, control). Single batch, unpaired. The data profile flags sample_01 as low depth.",
+              "acceptance_criteria": [
+                "A PCA plot of the 12 samples on blind-VST values of the 500 most variable genes, coloured by condition, with sample_01 labelled",
+                "A sample-to-sample Euclidean distance heatmap over all 12 samples",
+                "A table of library size and number of detected genes per sample, with sample_01's values stated next to the cohort median",
+                "A written statement of whether sample_01 clusters with its group and whether it is retained; retention is the default and any removal must carry an explicit stated reason",
+                "The step does not re-run differential expression and does not modify de_results.csv"
+              ],
+              "constraints": [
+                "Use the blind variance-stabilizing transformation (blind to the design) for the QC transform",
+                "Use the top 500 most variable genes for the PCA",
+                "Low-depth policy: keep sample_01, inspect it, report its library size and detected genes; do not silently delete it",
+                "Do not pre-normalize or scale the counts outside the DESeq2 size-factor machinery",
+                "Report only; make no claim about differential expression from this step"
+              ],
+              "caveats": [
+                "A library size 4x below the median widens that sample's contribution uncertainty but is not by itself grounds for removal — DESeq2 size factors down-weight it inside the model",
+                "With n=6 per group, a single outlying sample can dominate PC1; read the PCA together with the distance heatmap rather than alone",
+                "The delivered DE table was computed upstream on all 12 samples; if the QC would argue for dropping a sample, that is a finding to report, not a change this step can apply"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Raw counts delivered alongside the results table: blind vst, PCA on top 500 genes and sample distance heatmap per R-0033@40bf; the flagged low-depth sample_01 is kept, inspected and reported per R-0008@440d."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "GO BP over-representation of the significant genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which GO Biological Process terms are over-represented among the genes significant at FDR 0.05 in the treated (AD lesional) versus control contrast of de_results.csv, tested separately for the up-regulated and the down-regulated genes?",
+              "description": "Hypergeometric GO BP over-representation with clusterProfiler enrichGO on the significant genes of the delivered DESeq2 table, with the universe set to the tested genes of that same table, followed by rrvgo semantic-similarity reduction of the significant terms to representatives. This is the primary answer to the research question.",
+              "context": "Input: /eval-eight-arms-with-gene-list-ora-1/data/inputs/results/de_results.csv — a DESeq2 results table of the treated vs control contrast over 12,000 genes with columns gene (symbol), base_mean, log2_fold_change, log2_fold_change SE, and p-value / adjusted p-value fields. Human skin, atopic dermatitis lesional vs control. Reference data needed: the Gene Ontology annotation for human, either through the human organism annotation package with the GO database, or the human GO Biological Process gene-set collection present in the reference store; both are available in this environment.",
+              "acceptance_criteria": [
+                "The contrast is stated explicitly in the output: treated (AD lesional) as numerator, control as denominator, so a positive log2 fold change means higher in lesional skin; if the delivered table's column names or metadata contradict this, state the discrepancy rather than assuming",
+                "Significant genes selected on the adjusted p-value at FDR < 0.05; the counts of significant, up-regulated and down-regulated genes are reported",
+                "The universe is the set of genes in de_results.csv with a non-NA adjusted p-value (the tested genes), and its size is reported; the whole genome or the whole annotation is never used as the universe",
+                "enrichGO run on ontology BP with a gene-set size window of 15 to 500 members among the tested genes, Benjamini-Hochberg adjustment, and the resulting term table written out in full",
+                "Three result tables produced: up-regulated list, down-regulated list, and pooled list, with the pooling choice explicitly justified in the text",
+                "Gene symbols mapped to Entrez IDs with the human organism annotation package; the share of significant genes and of universe genes that failed to map, and the number dropped for many-to-many mapping, are reported as numbers",
+                "Significant GO BP terms reduced to representative terms by rrvgo semantic similarity, with the similarity threshold stated; representatives reported in the main table and the full unreduced term list kept as a supplement",
+                "For each reported representative term: term ID, term name, gene ratio, background ratio, raw and adjusted p-value, and the member significant genes",
+                "If any of the three lists holds fewer than ~50 significant genes, that list's size is stated and its over-representation result is explicitly labelled underpowered rather than reported as a finding",
+                "The GO annotation source and its release/version are recorded in the output"
+              ],
+              "constraints": [
+                "Ontology: Biological Process (BP), as the question asks for biological processes",
+                "Universe = tested genes from de_results.csv, never the genome",
+                "Gene-set size window: minimum 15, maximum 500 members after intersecting each set with the tested genes",
+                "Selection on adjusted p-value only — never on the unadjusted p-value and never on fold change alone",
+                "Direction handling: test up-regulated and down-regulated genes as two separate lists and report the pooled list beside them, stating the reason in the output",
+                "Map symbols to Entrez with the human organism annotation package before testing; keep one identifier space for the list and the universe alike and never mix spaces",
+                "Collapse redundant nested GO terms with rrvgo before reporting; do not present a block of parent/child terms as independent findings",
+                "Pin and record the GO annotation release used",
+                "Set and record a random seed",
+                "Do not fit a new differential expression model — the delivered results table is the input"
+              ],
+              "caveats": [
+                "A GO term list from a nested ontology looks like many findings when it is one; the rrvgo reduction is what makes the count honest",
+                "Counts-based significance is biased toward long and highly expressed genes, so an over-representation result partly reflects detection power; the tested-genes universe removes part of this and step T2S2 addresses the rest",
+                "The 12,000-gene table is smaller than a full human transcriptome, so the universe is already a filtered set — state its size and do not compare it to a genome-wide background",
+                "An over-representation result is a hypothesis for follow-up, not a proven mechanism, and it depends on the method used"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "GO.db",
+                "rrvgo",
+                "GOSemSim",
+                "enrichplot",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0095@492a",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0109@fe3e",
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0054@801e",
+                  "R-0110@41cb",
+                  "R-0048@500d"
+                ],
+                "template": "tpl-ora-go@1.0.0",
+                "reason": "Discrete significant-gene list from a delivered human DESeq2 table: enrichGO on GO BP with the tested genes as universe and rrvgo term reduction per R-0095@492a; direction handled as two lists per R-0109@fe3e; contrast, tie rule and pinned collection stated per R-0110@41cb; the under-50-genes caveat of R-0103@93aa is carried as an acceptance criterion."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Length-bias correction and preranked secondary check",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Do the GO BP terms from T2S1 survive a gene-length-bias correction, and does a preranked test on the full list of tested genes point to the same processes in the treated versus control contrast?",
+              "description": "Two robustness analyses on the same delivered contrast: goseq GO BP over-representation with a probability weighting function on gene length, and an fgsea preranked test over every tested gene ranked by the DESeq2 Wald statistic. Both are explicitly secondary — the T2S1 over-representation result remains the answer to the research question.",
+              "context": "Same input results table as T2S1. Reference data needed: human gene lengths for the goseq probability weighting function (an annotation resource giving a per-gene length for human gene symbols) and the human GO Biological Process gene-set collection for the fgsea run — the reference store holds a human GO BP symbol collection. The Salmon effective lengths are not among the delivered files.",
+              "acceptance_criteria": [
+                "goseq run on the same significant-gene vector and the same tested-gene universe as T2S1, with a probability weighting function fitted on gene length; the fitted PWF plot is produced and the length source and its release are named",
+                "If no per-gene length resource for human is available in the environment, the step says so explicitly, skips the goseq correction, and reports the length bias as uncorrected — it must not substitute an invented or wrong-organism length vector",
+                "fgsea run on the full ranked list of every tested gene in de_results.csv — no significance or fold-change cut before ranking — against the human GO BP collection with a 15-500 size window and BH adjustment",
+                "The ranking metric is the DESeq2 Wald statistic (the stat column); the choice is stated in the output together with the tie-breaking rule applied to equal values, and the seed for the permutation is recorded",
+                "If a Wald statistic column is absent from the delivered table, the fallback metric is stated explicitly and its limitation named; the unshrunken log2 fold change alone is not used as the ranking metric",
+                "Leading-edge genes reported per significant gene set from fgsea",
+                "An overlap table comparing the representative terms from T2S1, the goseq terms, and the fgsea sets, naming both the agreement and the disagreement",
+                "The output states in plain terms that these are secondary checks and that the over-representation test of T2S1 is the primary answer"
+              ],
+              "constraints": [
+                "The preranked test takes the full list of tested genes, never a thresholded list",
+                "Ranking metric: DESeq2 Wald statistic — the disputed ranking choice is resolved here in favour of the Wald statistic because it is signed and scaled by its standard error; state this choice in the output",
+                "Same universe, same size window (15-500) and same identifier space as T2S1",
+                "Gene-length source must be human and its release recorded; report the share of tested genes for which no length was found",
+                "This step never overrides T2S1 as the answer; label it a robustness check throughout"
+              ],
+              "caveats": [
+                "Enrichment methods disagree by construction — a term found by one and not the other is a caveat about power and method, not evidence against the biology",
+                "Salmon effective lengths are not in the delivered inputs, so any length vector used is an annotation-level approximation of them; say so",
+                "fgsea answers a different question from an over-representation test (coordinated shift across the whole list versus concentration within a cut list); do not present the two as one result"
+              ],
+              "packages": [
+                "goseq",
+                "fgsea",
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "GO.db",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0096@6ebc",
+                  "R-0107@976c",
+                  "R-0045@f652",
+                  "R-0099@0a77",
+                  "R-0108@409f",
+                  "R-0054@801e"
+                ],
+                "template": "tpl-ora-go@1.0.0",
+                "reason": "Counts-derived list carries gene-length bias, so goseq with a PWF refits the same GO BP question per R-0096@6ebc; the preranked fgsea run on the full tested list per R-0045@f652/R-0107@976c is kept secondary because the question names a discrete list; the disputed ranking choice of R-0108@409f is resolved in favour of the DESeq2 Wald statistic per R-0099@0a77."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Consolidated enrichment report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What are the over-represented GO biological processes in AD lesional versus control skin, how confident can we be in them, and what exactly was run to get them?",
+              "description": "A single report joining the QC verdict on the 12-sample cohort, the representative GO BP terms with their member genes, the agreement and disagreement across enrichGO / goseq / fgsea, and the full reproducibility record.",
+              "context": "Consumes the outputs of T1S1, T2S1 and T2S2. Audience needs the terms, the honesty about what the terms rest on, and enough method detail to reproduce the numbers.",
+              "acceptance_criteria": [
+                "A ranked table of representative GO BP terms for the up-regulated and the down-regulated significant genes, each with adjusted p-value, gene ratio and the member significant genes",
+                "The record states: the contrast (treated / AD lesional vs control) and sign convention, the FDR cutoff and the number of significant genes in each direction, the universe definition and size, the gene-set size window, the GO collection name and release, the identifier-mapping package and the unmapped share, the ranking metric and tie rule for the secondary preranked run, the seed, package versions and full sessionInfo",
+                "Leading-edge genes listed per significant set from the preranked secondary run",
+                "An explicit statement that enrichment results are method-dependent, with the observed overlap and disagreement between the three runs given as the evidence for that statement",
+                "The low-depth status of sample_01 and its QC verdict carried into the report as a caveat on the delivered contrast",
+                "Terms are presented as hypotheses for follow-up, not as established mechanisms of atopic dermatitis"
+              ],
+              "constraints": [
+                "Report the database, its version, the ranking metric, the universe and the size window for every enrichment run",
+                "Include sessionInfo, seed, package versions, collection version and annotation release with the results, not in a separate note",
+                "State the method-dependence caveat explicitly",
+                "Do not introduce any new statistical test in this step"
+              ],
+              "caveats": [
+                "n=6 per group is a small cohort; a GO term supported by a handful of genes is fragile and should be labelled as such",
+                "The delivered DE table was produced upstream and its exact parameter settings are not part of the inputs — describe what is knowable from the table and do not assert settings that cannot be verified from it"
+              ],
+              "packages": [
+                "rmarkdown",
+                "knitr",
+                "ggplot2",
+                "sessioninfo"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report carries the collection, version, ranking metric, universe and size window per R-0051@01ca, the method-dependence caveat per R-0055@107a, the leading-edge genes per R-0105@c4a8, and the full reproducibility record per R-0086@becf."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

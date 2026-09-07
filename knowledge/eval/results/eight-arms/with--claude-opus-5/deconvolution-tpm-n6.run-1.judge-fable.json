@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan treats the question as deconvolution on linear TPM (EPIC, quanTIseq with uncharacterized fraction, MCP-counter as a between-sample score only), explicitly bars log input to the deconvolvers and count-model normalization, and tests per cell type at the sample level with an explicit control reference and BH within each method. QC is thorough and specific to sample_01's depth, with a keep-and-sensitivity policy, and signature-gene overlap is reported per method. The TPM>=1-in->=6 filter is justified by group size and correctly not applied to the deconvolution matrix. The only gaps are no stated alpha for the BH threshold and a small risk that the filtered log matrix drops marker genes for UCell, though overlap is reported; enrichment is correctly omitted and the report covers versions, reference match, caveats, and a stacked bar."
+}

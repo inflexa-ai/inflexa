@@ -1,0 +1,615 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "tpm-input-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T15:28:38.769Z",
+  "elapsedMs": 95879,
+  "outcome": "plan_submitted",
+  "planId": "pln-926eef99",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on log2(TPM+1)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 12 samples an outlier call from PCA is qualitative; state it as a flag",
+          "Only 12,000 genes were delivered, so this is a pre-filtered subset of the transcriptome, not a full gene-level quantification",
+          "Single batch is asserted by the profile but no processing-date or lane variable was delivered, so an unmeasured technical grouping cannot be excluded"
+        ],
+        "context": "The delivered data is a gene-level TPM table from Salmon; no raw counts and no quantification directories exist. QC must therefore run on log abundance values, never on a variance-stabilizing transform of a count model.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats",
+          "ggplot2",
+          "pheatmap",
+          "data.table"
+        ],
+        "question": "Do the 6 lesional and 6 control skin samples separate on global expression, and is any of the 12 samples an outlier or a suspected mislabel before the model is fitted?",
+        "grounding": {
+          "claims": [
+            "R-0071@e4e2"
+          ],
+          "reason": "TPM input: sample structure QC on log2(TPM+1) with PCA/MDS on the top 500 variable genes and sample distances, per R-0071.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Transform with log2(TPM+1); do not apply vst, rlog, TMM, or any count-model normalization — the values are already within-sample scaled",
+          "Use the 500 most variable genes for the MDS/PCA as the stated default",
+          "Do not drop any sample in this step; QC reports, it does not filter",
+          "Report the number of genes with all-zero or near-zero TPM across all 12 samples"
+        ],
+        "description": "Load /eval-eight-arms-with-tpm-input-n6-1/data/inputs/abundance/tpm.csv (12,000 genes x 12 samples, first column gene symbol) and /eval-eight-arms-with-tpm-input-n6-1/data/inputs/metadata/metadata.csv (12 rows, condition column). Verify the sample columns of the TPM table match the metadata rows exactly and in a defined order; stop with a clear message if they do not. Transform to log2(TPM+1). Produce: PCA and limma MDS on the 500 most variable genes coloured by condition; a sample-to-sample correlation/distance heatmap; per-sample counts of detected genes (TPM > 0 and TPM >= 1); per-sample TPM column sums as a sanity check that each column sums near 1e6. Write the log2 matrix and the aligned metadata to disk for the next step.",
+        "acceptance_criteria": [
+          "TPM column names and metadata sample identifiers are confirmed to match one-to-one; the check result is stated in the output",
+          "PCA/MDS plot on the top 500 most variable genes, coloured by lesional vs control, is written to disk",
+          "Sample-distance (or correlation) heatmap over all 12 samples is written to disk",
+          "Per-sample detected-gene counts and TPM column sums are reported in a table",
+          "Any sample that does not group with its condition is named explicitly, with the statement that it is a flag and not grounds for removal without further evidence",
+          "log2(TPM+1) matrix and aligned sample table are saved for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma-trend differential expression, lesional vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "TPM input loses the count-level mean-variance information, so the analysis is less powerful and less well calibrated than the same contrast on raw counts; if counts or Salmon quant directories can be recovered from the core, a DESeq2/edgeR re-run would be preferable and should be recommended in the output",
+          "tximport with length-scaled TPM and length offsets is the sanctioned import route for Salmon output, but it needs the transcript-level quantification directories, which were not delivered — this is a genuine loss, not a choice",
+          "n=6 per group is adequate for large effects such as the psoriasis lesional signature but underpowered for modest ones; a non-significant gene is not evidence of no difference",
+          "Only 12,000 genes were delivered; genes absent from the table cannot be called either way"
+        ],
+        "context": "limma-trend on log-scale abundance is the required route here because the input is TPM and no counts exist. The count-based models (DESeq2, edgeR, voom) are forbidden for this input: their negative-binomial mean-variance assumption does not hold for length- and depth-normalized abundances. robust=TRUE guards the prior variance against hypervariable genes, which matters at n=6 per group.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats",
+          "ggplot2",
+          "pheatmap",
+          "data.table"
+        ],
+        "question": "Which genes are differentially expressed in psoriasis lesional skin relative to control skin, at BH-adjusted p < 0.05?",
+        "grounding": {
+          "claims": [
+            "R-0072@881a",
+            "R-0073@8b36",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0093@4fa4",
+            "R-0004@a06d",
+            "R-0037@e6d8",
+            "R-0043@4f55",
+            "R-0044@1777"
+          ],
+          "reason": "TPM input with no counts forbids count models (R-0004); limma-trend with robust eBayes (R-0093), 1 TPM floor in the smallest group (R-0072), log2 only (R-0073), explicit reference level (R-0036), BH on topTable (R-0044) and threshold tested via treat rather than post-hoc (R-0037). R-0018 (tximport with length offsets) cannot be satisfied because no quant directories were delivered — recorded as a caveat.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-limma-trend-logvalues@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do NOT use DESeq2, edgeR, voom, or any negative-binomial count model — the input is TPM and no raw counts were delivered",
+          "Do NOT apply TMM, size factors, quantile, or any between-sample normalization designed for counts; log2(TPM+1) is the only transform",
+          "Filter: keep a gene with TPM >= 1 in at least 6 samples (the smallest group size); state the floor and the gene count kept",
+          "Set the reference level of the condition factor explicitly to the control level; do not rely on alphabetical ordering",
+          "eBayes with trend = TRUE and robust = TRUE",
+          "Select significant genes by adjusted p-value (BH, alpha 0.05), never by raw p-value and never by fold change alone",
+          "Any fold-change threshold must be tested inside the model with treat(), reported alongside — not applied as a filter on the topTable estimates",
+          "Use the exact condition labels as they appear in metadata.csv; do not rename or recode them"
+        ],
+        "description": "Filter the TPM matrix to genes with TPM >= 1 in at least 6 samples (the smallest group size), then take log2(TPM+1). Build the design as ~ condition with the control level set explicitly as the reference so that a positive log2 fold change means higher expression in lesional skin. Fit with lmFit and moderate with eBayes(trend = TRUE, robust = TRUE). Extract the full results with topTable(coef = lesional_vs_control, number = Inf, adjust.method = 'BH', sort.by = 'P'), and call genes significant at adjusted p < 0.05. In addition, run treat() against a log2 fold-change threshold of 1 and report that gene count separately as the effect-size-controlled set. Write the complete results table (gene symbol, logFC, AveExpr, t, P.Value, adj.P.Val, and the treat result) as CSV, plus a volcano plot, an MA plot, and a heatmap of the top 50 genes by adjusted p-value on the log2 matrix.",
+        "acceptance_criteria": [
+          "Number of genes passing the >=1 TPM in >=6 samples filter is reported, alongside the 12,000 genes delivered",
+          "Design matrix and the explicit reference level (control) are printed, and the contrast is stated as lesional minus control so positive logFC = higher in lesional",
+          "eBayes is called with trend = TRUE and robust = TRUE, and both settings appear in the output log",
+          "Full topTable results for every tested gene are written to CSV with BH-adjusted p-values",
+          "Counts of significant genes at adj.P.Val < 0.05 are reported, split by direction (up in lesional, down in lesional)",
+          "The treat() result against |log2FC| >= 1 is reported as a separate count, not as a post-hoc filter of the Wald-style table",
+          "Volcano plot, MA plot, and a top-50-gene heatmap are written to disk"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Annotate DE genes against expected skin and psoriasis biology",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Concordance with published psoriasis signatures is a plausibility check, not independent validation — these are the same biology, not an independent cohort",
+          "The delivered table holds 12,000 genes, so absence of a marker is a delivery artefact and carries no biological meaning",
+          "A tissue-expression reference may not be provisioned; the step must degrade to the observed-expression check rather than fail"
+        ],
+        "context": "This is a directed sanity check, not a discovery step. Psoriasis lesional versus non-lesional/normal skin is one of the best-characterized bulk transcriptomic contrasts in dermatology, so agreement with the known signature is a strong check that the labels, the direction of the contrast, and the reference level are correct; disagreement points to a swapped contrast or a mislabelled metadata column before any biological claim is made.",
+        "maxSteps": 200,
+        "packages": [
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Do the genes called differentially expressed in lesional skin match what is known of the psoriasis lesional transcriptome, and does the delivered 12,000-gene subset look like skin?",
+        "grounding": {
+          "claims": [
+            "R-0161@cdaf",
+            "R-0160@d858"
+          ],
+          "reason": "Human data: the tissue-expression context confirms sample identity and marks reported genes against expected tissue expression, per R-0161; identifier handling per R-0160.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "annotation",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Do not run GSEA, fgsea, clusterProfiler, or any gene set test in this step — the research question asks which genes differ, and the delivered 12,000-gene table is a pre-filtered subset that would make an enrichment universe indefensible",
+          "Report absence explicitly: a marker gene not in the delivered 12,000 rows must be reported as absent, never as not-differential",
+          "Use the human organism context throughout; any reference resource consulted must be human",
+          "If a human tissue-expression reference (for example an HPA- or GTEx-style tissue expression table) is not present in the environment, say so and base the tissue check on the observed top-expressed genes alone — do not substitute a non-human resource"
+        ],
+        "description": "Take the T1S2 results table. First, confirm tissue identity: check whether the most abundant genes across all 12 samples are keratins and other epidermis-enriched genes as expected for skin, and flag any sample whose top-expressed genes point elsewhere (for example haemoglobin-dominated, indicating blood contamination). Second, annotate the significant genes: report where the canonical psoriasis lesional markers that are present in the delivered table fall in the ranking — the antimicrobial peptides (S100A7/S100A8/S100A9, DEFB4A, LCN2), IL-17-axis response genes (IL36G, CXCL1, CXCL8, CCL20), keratinocyte proliferation/differentiation markers (KRT6A, KRT16, KRT17, SERPINB3/4), and interferon-response genes. Report for each whether it was present in the delivered 12,000 genes at all, whether it passed the abundance filter, and its logFC and adjusted p-value. Report how many of the top 50 DE genes are consistent in direction with the published lesional phenotype and how many are not. Do NOT run a gene set enrichment or over-representation test.",
+        "acceptance_criteria": [
+          "A table listing each queried marker gene with: present in the delivered table (yes/no), passed the abundance filter (yes/no), logFC, adj.P.Val",
+          "Explicit statement of whether the direction of the canonical psoriasis markers is up in the lesional group; if they are down, the step must flag a possible contrast or label inversion rather than interpreting it biologically",
+          "Top-expressed genes per sample reported, with a stated judgement on whether the profile is consistent with skin",
+          "No enrichment or over-representation statistic is computed or reported"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Results report and reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A report that reads as a clean confirmation of known psoriasis biology is expected here and is not itself evidence of analytical quality"
+        ],
+        "context": "The report is the deliverable that answers the research question. It must not overstate: at n=6 per group on TPM input, large coherent effects are trustworthy and marginal calls are not.",
+        "maxSteps": 200,
+        "packages": [
+          "knitr",
+          "rmarkdown",
+          "data.table"
+        ],
+        "question": "What is the final, reproducible answer to which genes differ between lesional and control skin, and what are the stated limits of that answer?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "Report names method, versions, design, thresholds, n_tested and n_de (R-0041) and carries the full reproducibility record (R-0086).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Do not claim causality or mechanism from a cross-sectional lesional vs control contrast",
+          "Do not present the treat()-thresholded count as the primary result unless it is labelled as the effect-size-controlled subset",
+          "Include the reproducibility record: sessionInfo, package versions, seed"
+        ],
+        "description": "Assemble a single report from T1S1-T1S3: the method (limma-trend on log2(TPM+1)) and why a count model was not used; the package versions; the design formula, the reference level, and the contrast as lesional minus control; the abundance filter and the FDR threshold; the number of genes delivered (12,000), the number tested after filtering, and the number differentially expressed at adj.P.Val < 0.05, split by direction; the number passing the treat threshold; the ranked table of the top differential genes with logFC and adjusted p-value; the QC verdict on the 12 samples; and the marker concordance from T1S3. Attach the full sessionInfo, all package versions, and any random seed used. State the two limits plainly: TPM input without counts, and 12,000 delivered genes rather than the full transcriptome. Recommend requesting the raw counts or Salmon quantification directories from the core for a properly specified count-model re-analysis.",
+        "acceptance_criteria": [
+          "Report names the method, all package versions, the design, the reference level, the exact contrast direction, the abundance filter, and the FDR threshold",
+          "Number of genes delivered, tested, and significant is stated, split by direction",
+          "Top differential genes are presented with logFC and adjusted p-value, and no gene is described as differential on an unadjusted p-value",
+          "sessionInfo and any seed are recorded in the report artefact itself, not in a side note",
+          "The two stated limitations (TPM-only input; 12,000-gene pre-filtered table) appear in the report, together with the recommendation to obtain raw counts or Salmon quant directories",
+          "No mechanistic or causal claim is made from this 12-sample cross-sectional contrast"
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control skin: limma-trend DE on TPM",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a gene-level TPM table from Salmon (12,000 genes x 12 samples; /data/inputs/abundance/tpm.csv) with a 12x2 metadata table giving condition for 6 lesional and 6 control human skin samples, unpaired, single batch. No raw counts and no Salmon quantification directories were delivered, which is the decisive constraint: DESeq2, edgeR and voom all assume integer counts with a negative-binomial mean-variance relationship, and TPM values break that assumption. The plan therefore uses limma on log2(TPM+1) with trend=TRUE and robust=TRUE — the sanctioned route for abundance-scale input — and states explicitly that the length/depth correction already embedded in TPM cannot be replaced by a count offset. Step T1S1 establishes sample structure on the log matrix (PCA/MDS on the 500 most variable genes, sample-distance heatmap, detected-gene counts per sample) so any outlier or unexpected grouping is named before the model, not after. Step T1S2 filters to genes at >=1 TPM in at least 6 samples (the smallest group size), fits ~condition with control as the explicit reference so a positive logFC means higher in lesional, applies eBayes(trend=TRUE, robust=TRUE), and takes BH-adjusted p-values from topTable at FDR 0.05; when a fold-change floor is wanted it is tested inside the model with treat(), never as a post-hoc filter on the estimate. Step T1S3 is a small orientation step: psoriasis lesional skin has a well-known, very large transcriptional signature (keratinocyte hyperproliferation, IL-17/IL-23 axis, antimicrobial peptides), so the DE table is checked against that expectation and against the fact that only 12,000 genes were delivered — a pre-filtered subset of the transcriptome, which biases any gene-set interpretation and is reported as such. T1S4 writes the report with the full reproducibility record. No enrichment step is planned: the research question asks only which genes differ, and a 12,000-gene pre-filtered universe would make an enrichment universe hard to defend."
+  },
+  "usage": {
+    "inputTokens": 203795,
+    "outputTokens": 7602,
+    "cacheCreationInputTokens": 125041,
+    "cacheReadInputTokens": 78718,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "PCA/MDS and sample distances on log2(TPM+1)",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low abundance filter on TPM",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "log2(TPM+1) only, no count-based between-sample normalization",
+            "package": "base",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ condition with control as explicit reference level",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition_lesional_vs_control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma linear model on log-scale expression values (limma-trend)",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg via topTable",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducibility record and DE summary",
+            "package": "sessioninfo",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de, session_info"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control skin: limma-trend DE on TPM",
+          "analytical_narrative": "The input is a gene-level TPM table from Salmon (12,000 genes x 12 samples; /data/inputs/abundance/tpm.csv) with a 12x2 metadata table giving condition for 6 lesional and 6 control human skin samples, unpaired, single batch. No raw counts and no Salmon quantification directories were delivered, which is the decisive constraint: DESeq2, edgeR and voom all assume integer counts with a negative-binomial mean-variance relationship, and TPM values break that assumption. The plan therefore uses limma on log2(TPM+1) with trend=TRUE and robust=TRUE — the sanctioned route for abundance-scale input — and states explicitly that the length/depth correction already embedded in TPM cannot be replaced by a count offset. Step T1S1 establishes sample structure on the log matrix (PCA/MDS on the 500 most variable genes, sample-distance heatmap, detected-gene counts per sample) so any outlier or unexpected grouping is named before the model, not after. Step T1S2 filters to genes at >=1 TPM in at least 6 samples (the smallest group size), fits ~condition with control as the explicit reference so a positive logFC means higher in lesional, applies eBayes(trend=TRUE, robust=TRUE), and takes BH-adjusted p-values from topTable at FDR 0.05; when a fold-change floor is wanted it is tested inside the model with treat(), never as a post-hoc filter on the estimate. Step T1S3 is a small orientation step: psoriasis lesional skin has a well-known, very large transcriptional signature (keratinocyte hyperproliferation, IL-17/IL-23 axis, antimicrobial peptides), so the DE table is checked against that expectation and against the fact that only 12,000 genes were delivered — a pre-filtered subset of the transcriptome, which biases any gene-set interpretation and is reported as such. T1S4 writes the report with the full reproducibility record. No enrichment step is planned: the research question asks only which genes differ, and a 12,000-gene pre-filtered universe would make an enrichment universe hard to defend.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on log2(TPM+1)",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 lesional and 6 control skin samples separate on global expression, and is any of the 12 samples an outlier or a suspected mislabel before the model is fitted?",
+              "description": "Load /eval-eight-arms-with-tpm-input-n6-1/data/inputs/abundance/tpm.csv (12,000 genes x 12 samples, first column gene symbol) and /eval-eight-arms-with-tpm-input-n6-1/data/inputs/metadata/metadata.csv (12 rows, condition column). Verify the sample columns of the TPM table match the metadata rows exactly and in a defined order; stop with a clear message if they do not. Transform to log2(TPM+1). Produce: PCA and limma MDS on the 500 most variable genes coloured by condition; a sample-to-sample correlation/distance heatmap; per-sample counts of detected genes (TPM > 0 and TPM >= 1); per-sample TPM column sums as a sanity check that each column sums near 1e6. Write the log2 matrix and the aligned metadata to disk for the next step.",
+              "context": "The delivered data is a gene-level TPM table from Salmon; no raw counts and no quantification directories exist. QC must therefore run on log abundance values, never on a variance-stabilizing transform of a count model.",
+              "question_note": null,
+              "acceptance_criteria": [
+                "TPM column names and metadata sample identifiers are confirmed to match one-to-one; the check result is stated in the output",
+                "PCA/MDS plot on the top 500 most variable genes, coloured by lesional vs control, is written to disk",
+                "Sample-distance (or correlation) heatmap over all 12 samples is written to disk",
+                "Per-sample detected-gene counts and TPM column sums are reported in a table",
+                "Any sample that does not group with its condition is named explicitly, with the statement that it is a flag and not grounds for removal without further evidence",
+                "log2(TPM+1) matrix and aligned sample table are saved for downstream steps"
+              ],
+              "constraints": [
+                "Transform with log2(TPM+1); do not apply vst, rlog, TMM, or any count-model normalization — the values are already within-sample scaled",
+                "Use the 500 most variable genes for the MDS/PCA as the stated default",
+                "Do not drop any sample in this step; QC reports, it does not filter",
+                "Report the number of genes with all-zero or near-zero TPM across all 12 samples"
+              ],
+              "caveats": [
+                "With 12 samples an outlier call from PCA is qualitative; state it as a flag",
+                "Only 12,000 genes were delivered, so this is a pre-filtered subset of the transcriptome, not a full gene-level quantification",
+                "Single batch is asserted by the profile but no processing-date or lane variable was delivered, so an unmeasured technical grouping cannot be excluded"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats",
+                "ggplot2",
+                "pheatmap",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0071@e4e2"
+                ],
+                "template": "tpl-qc-log-abundance@1.0.0",
+                "reason": "TPM input: sample structure QC on log2(TPM+1) with PCA/MDS on the top 500 variable genes and sample distances, per R-0071."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "limma-trend differential expression, lesional vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed in psoriasis lesional skin relative to control skin, at BH-adjusted p < 0.05?",
+              "description": "Filter the TPM matrix to genes with TPM >= 1 in at least 6 samples (the smallest group size), then take log2(TPM+1). Build the design as ~ condition with the control level set explicitly as the reference so that a positive log2 fold change means higher expression in lesional skin. Fit with lmFit and moderate with eBayes(trend = TRUE, robust = TRUE). Extract the full results with topTable(coef = lesional_vs_control, number = Inf, adjust.method = 'BH', sort.by = 'P'), and call genes significant at adjusted p < 0.05. In addition, run treat() against a log2 fold-change threshold of 1 and report that gene count separately as the effect-size-controlled set. Write the complete results table (gene symbol, logFC, AveExpr, t, P.Value, adj.P.Val, and the treat result) as CSV, plus a volcano plot, an MA plot, and a heatmap of the top 50 genes by adjusted p-value on the log2 matrix.",
+              "context": "limma-trend on log-scale abundance is the required route here because the input is TPM and no counts exist. The count-based models (DESeq2, edgeR, voom) are forbidden for this input: their negative-binomial mean-variance assumption does not hold for length- and depth-normalized abundances. robust=TRUE guards the prior variance against hypervariable genes, which matters at n=6 per group.",
+              "acceptance_criteria": [
+                "Number of genes passing the >=1 TPM in >=6 samples filter is reported, alongside the 12,000 genes delivered",
+                "Design matrix and the explicit reference level (control) are printed, and the contrast is stated as lesional minus control so positive logFC = higher in lesional",
+                "eBayes is called with trend = TRUE and robust = TRUE, and both settings appear in the output log",
+                "Full topTable results for every tested gene are written to CSV with BH-adjusted p-values",
+                "Counts of significant genes at adj.P.Val < 0.05 are reported, split by direction (up in lesional, down in lesional)",
+                "The treat() result against |log2FC| >= 1 is reported as a separate count, not as a post-hoc filter of the Wald-style table",
+                "Volcano plot, MA plot, and a top-50-gene heatmap are written to disk"
+              ],
+              "constraints": [
+                "Do NOT use DESeq2, edgeR, voom, or any negative-binomial count model — the input is TPM and no raw counts were delivered",
+                "Do NOT apply TMM, size factors, quantile, or any between-sample normalization designed for counts; log2(TPM+1) is the only transform",
+                "Filter: keep a gene with TPM >= 1 in at least 6 samples (the smallest group size); state the floor and the gene count kept",
+                "Set the reference level of the condition factor explicitly to the control level; do not rely on alphabetical ordering",
+                "eBayes with trend = TRUE and robust = TRUE",
+                "Select significant genes by adjusted p-value (BH, alpha 0.05), never by raw p-value and never by fold change alone",
+                "Any fold-change threshold must be tested inside the model with treat(), reported alongside — not applied as a filter on the topTable estimates",
+                "Use the exact condition labels as they appear in metadata.csv; do not rename or recode them"
+              ],
+              "caveats": [
+                "TPM input loses the count-level mean-variance information, so the analysis is less powerful and less well calibrated than the same contrast on raw counts; if counts or Salmon quant directories can be recovered from the core, a DESeq2/edgeR re-run would be preferable and should be recommended in the output",
+                "tximport with length-scaled TPM and length offsets is the sanctioned import route for Salmon output, but it needs the transcript-level quantification directories, which were not delivered — this is a genuine loss, not a choice",
+                "n=6 per group is adequate for large effects such as the psoriasis lesional signature but underpowered for modest ones; a non-significant gene is not evidence of no difference",
+                "Only 12,000 genes were delivered; genes absent from the table cannot be called either way"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats",
+                "ggplot2",
+                "pheatmap",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0072@881a",
+                  "R-0073@8b36",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0093@4fa4",
+                  "R-0004@a06d",
+                  "R-0037@e6d8",
+                  "R-0043@4f55",
+                  "R-0044@1777"
+                ],
+                "template": "tpl-limma-trend-logvalues@1.0.0",
+                "reason": "TPM input with no counts forbids count models (R-0004); limma-trend with robust eBayes (R-0093), 1 TPM floor in the smallest group (R-0072), log2 only (R-0073), explicit reference level (R-0036), BH on topTable (R-0044) and threshold tested via treat rather than post-hoc (R-0037). R-0018 (tximport with length offsets) cannot be satisfied because no quant directories were delivered — recorded as a caveat."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Annotate DE genes against expected skin and psoriasis biology",
+              "track": "T1",
+              "step_type": "annotation",
+              "question": "Do the genes called differentially expressed in lesional skin match what is known of the psoriasis lesional transcriptome, and does the delivered 12,000-gene subset look like skin?",
+              "description": "Take the T1S2 results table. First, confirm tissue identity: check whether the most abundant genes across all 12 samples are keratins and other epidermis-enriched genes as expected for skin, and flag any sample whose top-expressed genes point elsewhere (for example haemoglobin-dominated, indicating blood contamination). Second, annotate the significant genes: report where the canonical psoriasis lesional markers that are present in the delivered table fall in the ranking — the antimicrobial peptides (S100A7/S100A8/S100A9, DEFB4A, LCN2), IL-17-axis response genes (IL36G, CXCL1, CXCL8, CCL20), keratinocyte proliferation/differentiation markers (KRT6A, KRT16, KRT17, SERPINB3/4), and interferon-response genes. Report for each whether it was present in the delivered 12,000 genes at all, whether it passed the abundance filter, and its logFC and adjusted p-value. Report how many of the top 50 DE genes are consistent in direction with the published lesional phenotype and how many are not. Do NOT run a gene set enrichment or over-representation test.",
+              "context": "This is a directed sanity check, not a discovery step. Psoriasis lesional versus non-lesional/normal skin is one of the best-characterized bulk transcriptomic contrasts in dermatology, so agreement with the known signature is a strong check that the labels, the direction of the contrast, and the reference level are correct; disagreement points to a swapped contrast or a mislabelled metadata column before any biological claim is made.",
+              "acceptance_criteria": [
+                "A table listing each queried marker gene with: present in the delivered table (yes/no), passed the abundance filter (yes/no), logFC, adj.P.Val",
+                "Explicit statement of whether the direction of the canonical psoriasis markers is up in the lesional group; if they are down, the step must flag a possible contrast or label inversion rather than interpreting it biologically",
+                "Top-expressed genes per sample reported, with a stated judgement on whether the profile is consistent with skin",
+                "No enrichment or over-representation statistic is computed or reported"
+              ],
+              "constraints": [
+                "Do not run GSEA, fgsea, clusterProfiler, or any gene set test in this step — the research question asks which genes differ, and the delivered 12,000-gene table is a pre-filtered subset that would make an enrichment universe indefensible",
+                "Report absence explicitly: a marker gene not in the delivered 12,000 rows must be reported as absent, never as not-differential",
+                "Use the human organism context throughout; any reference resource consulted must be human",
+                "If a human tissue-expression reference (for example an HPA- or GTEx-style tissue expression table) is not present in the environment, say so and base the tissue check on the observed top-expressed genes alone — do not substitute a non-human resource"
+              ],
+              "caveats": [
+                "Concordance with published psoriasis signatures is a plausibility check, not independent validation — these are the same biology, not an independent cohort",
+                "The delivered table holds 12,000 genes, so absence of a marker is a delivery artefact and carries no biological meaning",
+                "A tissue-expression reference may not be provisioned; the step must degrade to the observed-expression check rather than fail"
+              ],
+              "packages": [
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0161@cdaf",
+                  "R-0160@d858"
+                ],
+                "reason": "Human data: the tissue-expression context confirms sample identity and marks reported genes against expected tissue expression, per R-0161; identifier handling per R-0160."
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Results report and reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the final, reproducible answer to which genes differ between lesional and control skin, and what are the stated limits of that answer?",
+              "description": "Assemble a single report from T1S1-T1S3: the method (limma-trend on log2(TPM+1)) and why a count model was not used; the package versions; the design formula, the reference level, and the contrast as lesional minus control; the abundance filter and the FDR threshold; the number of genes delivered (12,000), the number tested after filtering, and the number differentially expressed at adj.P.Val < 0.05, split by direction; the number passing the treat threshold; the ranked table of the top differential genes with logFC and adjusted p-value; the QC verdict on the 12 samples; and the marker concordance from T1S3. Attach the full sessionInfo, all package versions, and any random seed used. State the two limits plainly: TPM input without counts, and 12,000 delivered genes rather than the full transcriptome. Recommend requesting the raw counts or Salmon quantification directories from the core for a properly specified count-model re-analysis.",
+              "context": "The report is the deliverable that answers the research question. It must not overstate: at n=6 per group on TPM input, large coherent effects are trustworthy and marginal calls are not.",
+              "acceptance_criteria": [
+                "Report names the method, all package versions, the design, the reference level, the exact contrast direction, the abundance filter, and the FDR threshold",
+                "Number of genes delivered, tested, and significant is stated, split by direction",
+                "Top differential genes are presented with logFC and adjusted p-value, and no gene is described as differential on an unadjusted p-value",
+                "sessionInfo and any seed are recorded in the report artefact itself, not in a side note",
+                "The two stated limitations (TPM-only input; 12,000-gene pre-filtered table) appear in the report, together with the recommendation to obtain raw counts or Salmon quant directories",
+                "No mechanistic or causal claim is made from this 12-sample cross-sectional contrast"
+              ],
+              "constraints": [
+                "Do not claim causality or mechanism from a cross-sectional lesional vs control contrast",
+                "Do not present the treat()-thresholded count as the primary result unless it is labelled as the effect-size-controlled subset",
+                "Include the reproducibility record: sessionInfo, package versions, seed"
+              ],
+              "caveats": [
+                "A report that reads as a clean confirmation of known psoriasis biology is expected here and is not itself evidence of analytical quality"
+              ],
+              "packages": [
+                "knitr",
+                "rmarkdown",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "Report names method, versions, design, thresholds, n_tested and n_de (R-0041) and carries the full reproducibility record (R-0086)."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

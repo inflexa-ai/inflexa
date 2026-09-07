@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every structural point: ~ sex + age_c + condition with sex as a factor and age mean-centered, control set as explicit reference, contrast named as (condition, treated, control), counts never pre-adjusted, median-of-ratios inside DESeq2 and TMM inside edgeR, minimal filter of 10 counts in 6 samples justified by the smallest group, BH at 0.05 with apeglm on the condition coefficient, and an explicit covariate balance/identifiability check before fitting. Enrichment is correctly omitted with a stated reason, and the report lists design, thresholds, tested/significant counts, NA causes, versions and the power and age-confounding caveats. The one gap is QC: PCA is coloured by condition, sex and age and outliers are named with a stated non-removal policy, but the reference's sex check against XIST and Y-linked genes to validate the recorded sex labels is absent."
+}

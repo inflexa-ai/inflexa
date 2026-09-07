@@ -1,0 +1,227 @@
+{
+  "campaign": "eight-arms",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n6-enrich",
+  "run": 1,
+  "startedAt": "2026-09-06T15:56:44.635Z",
+  "elapsedMs": 29454,
+  "outcome": "plan_submitted",
+  "planId": "pln-8b6ad5d3",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC counts and metadata, flag/handle shallow sample",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "context": "Raw integer gene-level counts from Salmon, 12000 genes x 13 sample columns in counts.csv; metadata.csv has 12 rows (condition column) for the 6 AD-lesional vs 6 control unpaired single-batch design. sample_01's library size is flagged as ~4x below the cohort median in the data profile.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the counts.csv (12000 genes x 13 samples) and metadata.csv (12 samples) column sets reconcile, what are the library sizes across the 6 AD-lesional vs 6 control samples, and how should sample_01's ~4x-below-median library size be handled before differential expression?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports whether all count-matrix sample columns have a matching metadata row (12 vs 13 discrepancy resolved or documented and excess column dropped/explained)",
+          "Reports per-sample library size (total counts) and gene detection rate, with sample_01 quantified relative to the cohort median",
+          "Produces a documented decision (with justification) on sample_01: retain with standard DESeq2 size-factor normalization, or flag as sensitivity-analysis-only if QC metrics (e.g., low gene detection, high dropout) support exclusion",
+          "Outputs a cleaned counts matrix + metadata table used downstream, plus a QC report/plot (library size barplot, PCA or sample correlation)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, AD lesional vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "context": "Unpaired 6 vs 6 single-batch bulk RNA-seq design, ~12000 genes, human skin, atopic dermatitis lesional vs control. sample_01 is a shallow-library outlier handled per T1S1's decision.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes are significantly differentially expressed between AD-lesional and control skin (6 vs 6, unpaired, single batch), using the QC-cleaned count matrix and metadata from T1S1?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Runs DESeq2 (or pyDESeq2) with condition (lesional vs control) as the sole design factor, using raw integer counts and default size-factor normalization unless T1S1 recommended an alternative for sample_01",
+          "Reports a full results table (log2FoldChange, p-value, padj) for all ~12000 genes, plus a sensitivity run excluding sample_01 to check whether its inclusion changes the significant gene set materially",
+          "Defines and reports significant DE genes at padj < 0.05 (and |log2FC| >= 1 as a secondary threshold), with counts of up- and down-regulated genes in lesional vs control",
+          "Produces an MA plot and a volcano plot annotating top genes",
+          "States explicitly whether conclusions are sensitive to sample_01's inclusion/exclusion"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark and WikiPathways enrichment of the AD lesional vs control DE signature",
+        "agent": "enrichment-agent",
+        "track": "2",
+        "status": "pending",
+        "context": "Uses the ranked/DE gene list from T1S2 (human, ~12000 genes) against the MSigDB human Hallmark gene set collection (50 curated sets, h.all.v2026.1.Hs.symbols.gmt) and the human WikiPathways collection (wikipathways_Homo_sapiens.gmt), both staged in the reference store. If the WikiPathways reference is unavailable at run time, report Hallmark-only results and note the gap rather than failing the step.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "pandas"
+        ],
+        "question": "Which MSigDB Hallmark pathways and WikiPathways (human) gene sets are enriched among genes differentially expressed between AD-lesional and control skin?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Runs pre-ranked GSEA (fgsea) on the full DESeq2 gene list ranked by a signed statistic (e.g., sign(log2FC) * -log10(pvalue) or the Wald stat) against the MSigDB human Hallmark gene sets (50 sets) and the human WikiPathways gene sets, reporting NES, p-value, and adjusted p-value (padj/FDR) per pathway",
+          "Also runs an over-representation test (clusterProfiler or fgsea hypergeometric) on the padj<0.05 significant DE gene subset from T1S2 against the same two gene-set collections, for cross-validation of directionality",
+          "Reports the top up- and down-enriched Hallmark pathways and top WikiPathways terms with FDR < 0.25 (GSEA convention) or FDR < 0.05 (ORA), with the member genes driving each leading-edge",
+          "Produces a summary plot (dot plot or barplot of NES vs -log10(FDR)) for the top pathways from each collection",
+          "If gene symbols in the counts matrix do not match GMT gene symbols, harmonizes via the human UniProt ID mapping reference and reports the match rate"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark enrichment",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "Design is 6 lesional vs 6 control skin, unpaired, single batch, raw Salmon gene-level counts for ~12000 genes across 13 samples (12 metadata rows vs 13 count columns needs reconciliation). sample_01's library size is ~4x below median, which threatens both normalization and DE power, so QC/library-size diagnostics and a documented handling decision (down-weighting vs exclusion, tested both ways) come before DESeq2. Track 1 does count QC, DESeq2 differential expression (treated vs control), and volcano/summary visualization. Track 2 takes the DE result (ranked gene list) into hallmark (MSigDB h.all) and WikiPathways human enrichment via fgsea/clusterProfiler, using the human ID mapping reference only if a symbol harmonization step is needed. All steps operate on human (Homo sapiens) skin bulk RNA-seq data specifically for atopic dermatitis lesional vs control."
+  },
+  "usage": {
+    "inputTokens": 138906,
+    "outputTokens": 2631,
+    "cacheCreationInputTokens": 86475,
+    "cacheReadInputTokens": 52395,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "DESeq2",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark enrichment",
+          "analytical_narrative": "Design is 6 lesional vs 6 control skin, unpaired, single batch, raw Salmon gene-level counts for ~12000 genes across 13 samples (12 metadata rows vs 13 count columns needs reconciliation). sample_01's library size is ~4x below median, which threatens both normalization and DE power, so QC/library-size diagnostics and a documented handling decision (down-weighting vs exclusion, tested both ways) come before DESeq2. Track 1 does count QC, DESeq2 differential expression (treated vs control), and volcano/summary visualization. Track 2 takes the DE result (ranked gene list) into hallmark (MSigDB h.all) and WikiPathways human enrichment via fgsea/clusterProfiler, using the human ID mapping reference only if a symbol harmonization step is needed. All steps operate on human (Homo sapiens) skin bulk RNA-seq data specifically for atopic dermatitis lesional vs control.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC counts and metadata, flag/handle shallow sample",
+              "track": "1",
+              "step_type": "qc",
+              "question": "Do the counts.csv (12000 genes x 13 samples) and metadata.csv (12 samples) column sets reconcile, what are the library sizes across the 6 AD-lesional vs 6 control samples, and how should sample_01's ~4x-below-median library size be handled before differential expression?",
+              "acceptance_criteria": [
+                "Reports whether all count-matrix sample columns have a matching metadata row (12 vs 13 discrepancy resolved or documented and excess column dropped/explained)",
+                "Reports per-sample library size (total counts) and gene detection rate, with sample_01 quantified relative to the cohort median",
+                "Produces a documented decision (with justification) on sample_01: retain with standard DESeq2 size-factor normalization, or flag as sensitivity-analysis-only if QC metrics (e.g., low gene detection, high dropout) support exclusion",
+                "Outputs a cleaned counts matrix + metadata table used downstream, plus a QC report/plot (library size barplot, PCA or sample correlation)"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level counts from Salmon, 12000 genes x 13 sample columns in counts.csv; metadata.csv has 12 rows (condition column) for the 6 AD-lesional vs 6 control unpaired single-batch design. sample_01's library size is flagged as ~4x below the cohort median in the data profile."
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, AD lesional vs control",
+              "track": "1",
+              "step_type": "differential_expression",
+              "question": "Which genes are significantly differentially expressed between AD-lesional and control skin (6 vs 6, unpaired, single batch), using the QC-cleaned count matrix and metadata from T1S1?",
+              "acceptance_criteria": [
+                "Runs DESeq2 (or pyDESeq2) with condition (lesional vs control) as the sole design factor, using raw integer counts and default size-factor normalization unless T1S1 recommended an alternative for sample_01",
+                "Reports a full results table (log2FoldChange, p-value, padj) for all ~12000 genes, plus a sensitivity run excluding sample_01 to check whether its inclusion changes the significant gene set materially",
+                "Defines and reports significant DE genes at padj < 0.05 (and |log2FC| >= 1 as a secondary threshold), with counts of up- and down-regulated genes in lesional vs control",
+                "Produces an MA plot and a volcano plot annotating top genes",
+                "States explicitly whether conclusions are sensitive to sample_01's inclusion/exclusion"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Unpaired 6 vs 6 single-batch bulk RNA-seq design, ~12000 genes, human skin, atopic dermatitis lesional vs control. sample_01 is a shallow-library outlier handled per T1S1's decision."
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark and WikiPathways enrichment of the AD lesional vs control DE signature",
+              "track": "2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB Hallmark pathways and WikiPathways (human) gene sets are enriched among genes differentially expressed between AD-lesional and control skin?",
+              "acceptance_criteria": [
+                "Runs pre-ranked GSEA (fgsea) on the full DESeq2 gene list ranked by a signed statistic (e.g., sign(log2FC) * -log10(pvalue) or the Wald stat) against the MSigDB human Hallmark gene sets (50 sets) and the human WikiPathways gene sets, reporting NES, p-value, and adjusted p-value (padj/FDR) per pathway",
+                "Also runs an over-representation test (clusterProfiler or fgsea hypergeometric) on the padj<0.05 significant DE gene subset from T1S2 against the same two gene-set collections, for cross-validation of directionality",
+                "Reports the top up- and down-enriched Hallmark pathways and top WikiPathways terms with FDR < 0.25 (GSEA convention) or FDR < 0.05 (ORA), with the member genes driving each leading-edge",
+                "Produces a summary plot (dot plot or barplot of NES vs -log10(FDR)) for the top pathways from each collection",
+                "If gene symbols in the counts matrix do not match GMT gene symbols, harmonizes via the human UniProt ID mapping reference and reports the match rate"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "context": "Uses the ranked/DE gene list from T1S2 (human, ~12000 genes) against the MSigDB human Hallmark gene set collection (50 curated sets, h.all.v2026.1.Hs.symbols.gmt) and the human WikiPathways collection (wikipathways_Homo_sapiens.gmt), both staged in the reference store. If the WikiPathways reference is unavailable at run time, report Hallmark-only results and note the gap rather than failing the step."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

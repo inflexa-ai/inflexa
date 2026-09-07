@@ -1,0 +1,758 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "classifier-n60",
+  "run": 1,
+  "startedAt": "2026-09-06T15:42:17.495Z",
+  "elapsedMs": 98203,
+  "outcome": "plan_submitted",
+  "planId": "pln-a94de177",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S0",
+        "name": "Reconcile inputs and sample-structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "60 cases vs 60 controls, single batch, unpaired, whole blood, raw Salmon gene-level counts. This is a population-scale cohort (n=60/group), which is the sample-size regime where the knowledge-grounded procedure requires limma-voom rather than a negative-binomial count model for the downstream DE test.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the case and control groups show any gross technical confound (library size, batch-like clustering, sample outliers) before fitting any model, and is every sample column in counts.csv accounted for in metadata.csv?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC (blind VST, PCA, sample distance) required before any test per R-0033@40bf; reconciliation step added because the data profile reports a counts/metadata sample-count mismatch (121 vs 120).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "description": "Load counts.csv (12000 genes x 121 columns, first column gene symbol) and metadata.csv (120 rows, condition). Reconcile the sample identifiers between the two files — the counts file appears to carry one more sample column than metadata has rows, so identify and resolve the mismatch (extra/unmatched sample, duplicate header, or an index column miscounted) before any modeling step consumes both. Then run blind VST (DESeq2), PCA on the top 500 most-variable genes, a sample-distance heatmap, and library-size bar plot, colored by case/control.",
+        "acceptance_criteria": [
+          "Sample identifiers in counts.csv and metadata.csv are reconciled and the resolution is documented (e.g., exact matched set of 120 samples used downstream)",
+          "PCA plot and sample-distance heatmap produced, colored by condition",
+          "Library size per sample reported and any low-depth outliers flagged",
+          "No sample is silently dropped without being reported"
+        ]
+      },
+      {
+        "id": "T1S1",
+        "name": "Differential expression: case vs control (limma-voom)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Population-scale cohort (60 vs 60), single batch. Grounded procedure requires limma-voom fixed-effects over DESeq2/edgeR count models for this sample size, with the Wilcoxon test stated as the control given in the knowledge base's warning that even the linear model can exceed nominal FDR on some data.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "apeglm",
+          "DESeq2"
+        ],
+        "question": "Which genes are differentially expressed between whole-blood cases and controls (case vs control contrast), and how robust is that gene list to a distribution-free control test?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0058@99e1",
+            "R-0057@31cc",
+            "R-0036@9786",
+            "R-0015@65aa",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "limma-voom fixed-effects DE with filterByExpr/TMM per R-0058/R-0057; R-0015 mandates the Wilcoxon control at n>=50/group; apeglm shrinkage reported per R-0009; BH+independent filtering per R-0010/R-0043.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S0"
+        ],
+        "description": "On the reconciled 120-sample count matrix, pre-filter low-count genes with edgeR::filterByExpr (min 10 counts in at least the smaller group's sample count), TMM-normalize with edgeR, then fit limma-voom with a fixed-effects design (~condition), explicit reference level = control, contrast = case vs control. Report the moderated-t statistic, unshrunken and apeglm-shrunken (or equivalent limma eBayes) log2 fold changes, BH-adjusted p-values with independent filtering, at alpha 0.05. Because each group has 60 samples (>=50), also run a Wilcoxon rank-sum test per gene on normalized log-CPM as a robustness control against the false-positive inflation that count models and even linear models can show at this sample size, and report the overlap between the two gene lists. Inspect and report the p-value histogram shape before trusting the adjusted p-values.",
+        "acceptance_criteria": [
+          "Design and reference level (control) and contrast (case vs control) explicitly stated",
+          "Number of genes tested after filtering and number of genes at padj<0.05 reported",
+          "p-value histogram shown",
+          "Wilcoxon control test run and its gene-list overlap with limma-voom reported",
+          "Effect sizes (log2FC) reported beside p-values, not p-value alone"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on the case vs control contrast",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "context": "Human whole-blood cohort, n=120. Reference store confirmed to hold MSigDB Hallmark human (h.all.v2026.1.Hs.symbols.gmt), Reactome pathways (ReactomePathways.gmt, current), and WikiPathways human (wikipathways_Homo_sapiens.gmt, 2026.07.10).",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which biological pathways or hallmark processes are coordinately altered between cases and controls in whole blood?",
+        "grounding": {
+          "claims": [
+            "R-0088@8b80",
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0048@500d",
+            "R-0103@93aa",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "camera + fgsea on the limma fit per R-0088; Hallmark then Reactome/WikiPathways per R-0048/R-0165; ORA skip rule R-0103 applied given uncertain DE gene count.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Using the limma-voom fit from T1S1, run camera (competitive gene set test, inter-gene correlation estimated from data) against the MSigDB Hallmark human gene sets (available in the reference store, 2026.1 release). Then rank all tested genes by the moderated-t statistic and run fgsea preranked against the Reactome human pathway gene sets and the WikiPathways human collection (both in the reference store), applying a 15-500 gene set size window and BH adjustment. If the number of significant DE genes (padj<0.05) is below ~50, state this explicitly and do not run an over-representation (hypergeometric) test — rely only on the ranked methods (camera/fgsea) on the full gene list. Collapse redundant significant sets and report leading-edge genes per significant set. Map gene symbols to Entrez IDs via org.Hs.eg.db where needed and report the unmapped share.",
+        "acceptance_criteria": [
+          "camera run on Hallmark with inter-gene correlation stated",
+          "fgsea preranked run on Reactome and WikiPathways with the ranking metric (moderated t) stated",
+          "Gene set size window (15-500) applied and stated",
+          "Redundant sets collapsed; leading-edge genes reported for significant sets",
+          "If <50 significant DE genes, ORA explicitly skipped in favor of ranked methods only",
+          "Each collection's release/version stated in the output"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Case vs control classifier with nested cross-validation",
+        "agent": "statistical-modeling-agent",
+        "track": "T3",
+        "status": "pending",
+        "context": "n=120 (60/60), unpaired, single batch, whole blood. No external validation cohort is available in the provided files. The research question explicitly asks 'how accurate would it be on a new sample,' which nested CV addresses only as an internal estimate.",
+        "maxSteps": 200,
+        "packages": [
+          "glmnet",
+          "pROC"
+        ],
+        "question": "Can a gene-expression-based classifier distinguish case from control whole-blood samples, and what is an honest internal estimate of its accuracy (ROC-AUC, sensitivity/specificity) on a held-out sample from this cohort?",
+        "grounding": {
+          "claims": [
+            "R-0155@b81f"
+          ],
+          "reason": "Classifier of sample class from expression: penalized logistic regression with nested CV, ROC-AUC + CI, feature filtering inside folds, per R-0155@b81f.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "signature_scoring",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Build a binary classifier of case vs control from the reconciled, filtered, TMM-normalized log-CPM gene expression matrix (the full filtered gene set from T1S1's filterByExpr output, not restricted to the significant DE genes — using the DE-derived list would be a feature selection performed outside cross-validation and would inflate performance). Fit a penalized logistic regression (glmnet, elastic net, alpha and lambda tuned) with a nested cross-validation: outer loop (e.g., 10-fold, repeated) estimates generalization performance; inner loop selects lambda/alpha and performs any further feature filtering/scaling strictly within the training fold only. Report the outer-fold ROC-AUC with a bootstrap or DeLong confidence interval (pROC), a calibration plot, sensitivity/specificity at a clinically reasonable operating point, and the genes with consistently nonzero coefficients across folds (noting instability given the sample size). Run a permutation-label negative control (shuffle case/control labels, repeat the nested CV) to confirm the true AUC exceeds the null distribution. State explicitly that this cross-validated estimate is the best available proxy for accuracy on a new sample from the same population and setting, but is not equivalent to performance on an independent external cohort, which does not exist in this dataset.",
+        "acceptance_criteria": [
+          "Feature filtering/scaling performed strictly inside each training fold of the outer CV, not on the full dataset beforehand",
+          "Nested CV (inner loop for hyperparameter selection, outer loop for performance estimation) implemented and described",
+          "ROC-AUC with confidence interval reported from outer-fold held-out predictions",
+          "Permutation/label-shuffle negative control run and reported alongside the true AUC",
+          "Report states the CV estimate is internal only, with no independent external cohort available for validation",
+          "Selected gene coefficients across folds reported with a stated instability caveat"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Integrated report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T4",
+        "status": "pending",
+        "context": "Final synthesis step drawing on all three analysis tracks (DE, enrichment, classifier) for this 60 case / 60 control whole-blood cohort.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the overall, honestly-caveated answer to whether a gene-expression classifier separates case from control in this cohort, and how accurate is it expected to be on a new sample?",
+        "grounding": {
+          "claims": [
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0089@69f0",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report-formatting rules apply generically; no single rule 'covers' a synthesis step but its constraints are drawn from the report claims.",
+          "status": "ungrounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S1",
+          "T2S1",
+          "T3S1"
+        ],
+        "description": "Synthesize the QC reconciliation, DE results (with Wilcoxon control overlap), pathway enrichment, and classifier performance into one report. State: method versions and session info; design formula, reference level, and contrast; thresholds (alpha 0.05, BH); number of genes tested and number DE; MA/dispersion or mean-difference and voom mean-variance diagnostic plots; gene set database names, versions, ranking metric, universe, and size window for enrichment; the classifier's nested-CV ROC-AUC with CI, permutation-control result, and the explicit statement that this is an internal estimate only (no external cohort available) so real-world accuracy on a genuinely new sample/population may differ, especially given the caution that linear models can still exceed nominal FDR in population cohorts.",
+        "acceptance_criteria": [
+          "All required reproducibility fields present (versions, seed, design, thresholds, n_tested, n_DE)",
+          "Effect sizes reported beside p-values throughout",
+          "Enrichment results reported with database/version/rank metric/universe/size window",
+          "Classifier accuracy reported with CI and permutation-control comparison",
+          "Explicit statement of the limits of internal CV estimates versus external validation"
+        ]
+      }
+    ],
+    "title": "Whole-blood case vs control classifier + DE + pathways",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is 121-sample (60 case/60 control) whole-blood bulk RNA-seq, gene-level Salmon counts (12000 genes x 121 samples, one gene-symbol column plus 120 sample columns matching the 120-row metadata — note the counts file column count exceeds metadata rows by one, which the QC step must reconcile before any modeling). The research question has two parts: (1) can a classifier separate case from control, and (2) how accurate would it be on a new sample. Because each group holds >=50 samples, the knowledge-grounded procedure for this sample size flags that DESeq2/edgeR's negative-binomial models exaggerate false positives in population cohorts and prescribes limma-voom with a fixed-effects linear model instead, with a Wilcoxon rank-sum test as a robustness control. The pipeline is: (T1S0) reconcile/QC the raw count matrix against metadata and inspect sample structure (blind VST, PCA, sample-distance heatmap, library sizes) to catch sample-count mismatches, outliers, or unexpected clustering before any test; (T1S1) filter low-count genes with filterByExpr, TMM-normalize, and fit limma-voom for case vs control DE with apeglm-style effect reporting, BH-adjusted at alpha 0.05, with independent filtering and a Wilcoxon control; (T2S1) pathway enrichment (camera on the limma fit, Hallmark first, then Reactome/WikiPathways as follow-up collections, respecting the size window and the >=50 significant-gene rule for any ORA); (T3S1) the actual classifier — a penalized logistic regression (glmnet) built on the full filtered/normalized gene expression matrix (NOT restricted to the DE gene list, to avoid selection-bias leakage), with feature filtering and scaling performed inside each fold of a nested cross-validation, and performance reported as ROC-AUC with a confidence interval from the outer-loop held-out predictions plus calibration and a permutation-label negative control; (T4S1) an integrated report stating the classifier's expected real-world accuracy honestly, including the caveat that no external validation cohort exists so the CV estimate is the best available accuracy proxy, not a guarantee of generalization to a new clinical population."
+  },
+  "usage": {
+    "inputTokens": 769122,
+    "outputTokens": 8389,
+    "cacheCreationInputTokens": 184133,
+    "cacheReadInputTokens": 584893,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "signature_scoring"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "panglaodb"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "glmnet",
+          "pROC",
+          "UCell",
+          "limma",
+          "edgeR",
+          "apeglm",
+          "DESeq2",
+          "org.Hs.eg.db",
+          "fgsea",
+          "EnhancedVolcano",
+          "tximport"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "tximport"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "signature_scoring"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA and sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM normalization",
+            "package": "edgeR"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom fixed-effects linear model with Wilcoxon rank-sum control",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "outlier_replacement",
+                "value": "default_on"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage (reported alongside limma-voom moderated t as primary stat)",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "camera competitive gene set test on limma fit (Hallmark), then fgsea preranked on moderated t (Reactome, WikiPathways)",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "moderated_t"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "Penalized logistic regression classifier (glmnet) with nested cross-validation and ROC/AUC (pROC)",
+            "package": "glmnet",
+            "parameters": [
+              {
+                "name": "classifier_validation",
+                "value": "nested_cross_validation"
+              },
+              {
+                "name": "preprocessing_scope",
+                "value": "filter_and_scaling_inside_each_training_fold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Integrated report with reproducibility record",
+            "package": "none"
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "signature_scoring"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA and sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM normalization",
+            "package": "edgeR"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom fixed-effects linear model with Wilcoxon rank-sum control",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "outlier_replacement",
+                "value": "default_on"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "camera competitive gene set test on limma fit (Hallmark), then fgsea preranked on moderated t (Reactome, WikiPathways)",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "moderated_t"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "Penalized logistic regression classifier (glmnet) with nested cross-validation and ROC/AUC (pROC)",
+            "package": "glmnet",
+            "parameters": [
+              {
+                "name": "classifier_validation",
+                "value": "nested_cross_validation"
+              },
+              {
+                "name": "preprocessing_scope",
+                "value": "filter_and_scaling_inside_each_training_fold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Integrated report with reproducibility record",
+            "package": "none"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood case vs control classifier + DE + pathways",
+          "analytical_narrative": "The dataset is 121-sample (60 case/60 control) whole-blood bulk RNA-seq, gene-level Salmon counts (12000 genes x 121 samples, one gene-symbol column plus 120 sample columns matching the 120-row metadata — note the counts file column count exceeds metadata rows by one, which the QC step must reconcile before any modeling). The research question has two parts: (1) can a classifier separate case from control, and (2) how accurate would it be on a new sample. Because each group holds >=50 samples, the knowledge-grounded procedure for this sample size flags that DESeq2/edgeR's negative-binomial models exaggerate false positives in population cohorts and prescribes limma-voom with a fixed-effects linear model instead, with a Wilcoxon rank-sum test as a robustness control. The pipeline is: (T1S0) reconcile/QC the raw count matrix against metadata and inspect sample structure (blind VST, PCA, sample-distance heatmap, library sizes) to catch sample-count mismatches, outliers, or unexpected clustering before any test; (T1S1) filter low-count genes with filterByExpr, TMM-normalize, and fit limma-voom for case vs control DE with apeglm-style effect reporting, BH-adjusted at alpha 0.05, with independent filtering and a Wilcoxon control; (T2S1) pathway enrichment (camera on the limma fit, Hallmark first, then Reactome/WikiPathways as follow-up collections, respecting the size window and the >=50 significant-gene rule for any ORA); (T3S1) the actual classifier — a penalized logistic regression (glmnet) built on the full filtered/normalized gene expression matrix (NOT restricted to the DE gene list, to avoid selection-bias leakage), with feature filtering and scaling performed inside each fold of a nested cross-validation, and performance reported as ROC-AUC with a confidence interval from the outer-loop held-out predictions plus calibration and a permutation-label negative control; (T4S1) an integrated report stating the classifier's expected real-world accuracy honestly, including the caveat that no external validation cohort exists so the CV estimate is the best available accuracy proxy, not a guarantee of generalization to a new clinical population.",
+          "steps": [
+            {
+              "id": "T1S0",
+              "name": "Reconcile inputs and sample-structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "agent": "bulk-transcriptomics-agent",
+              "description": "Load counts.csv (12000 genes x 121 columns, first column gene symbol) and metadata.csv (120 rows, condition). Reconcile the sample identifiers between the two files — the counts file appears to carry one more sample column than metadata has rows, so identify and resolve the mismatch (extra/unmatched sample, duplicate header, or an index column miscounted) before any modeling step consumes both. Then run blind VST (DESeq2), PCA on the top 500 most-variable genes, a sample-distance heatmap, and library-size bar plot, colored by case/control.",
+              "context": "60 cases vs 60 controls, single batch, unpaired, whole blood, raw Salmon gene-level counts. This is a population-scale cohort (n=60/group), which is the sample-size regime where the knowledge-grounded procedure requires limma-voom rather than a negative-binomial count model for the downstream DE test.",
+              "question": "Do the case and control groups show any gross technical confound (library size, batch-like clustering, sample outliers) before fitting any model, and is every sample column in counts.csv accounted for in metadata.csv?",
+              "acceptance_criteria": [
+                "Sample identifiers in counts.csv and metadata.csv are reconciled and the resolution is documented (e.g., exact matched set of 120 samples used downstream)",
+                "PCA plot and sample-distance heatmap produced, colored by condition",
+                "Library size per sample reported and any low-depth outliers flagged",
+                "No sample is silently dropped without being reported"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent_notes": "",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC (blind VST, PCA, sample distance) required before any test per R-0033@40bf; reconciliation step added because the data profile reports a counts/metadata sample-count mismatch (121 vs 120)."
+              }
+            },
+            {
+              "id": "T1S1",
+              "name": "Differential expression: case vs control (limma-voom)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "agent": "bulk-transcriptomics-agent",
+              "description": "On the reconciled 120-sample count matrix, pre-filter low-count genes with edgeR::filterByExpr (min 10 counts in at least the smaller group's sample count), TMM-normalize with edgeR, then fit limma-voom with a fixed-effects design (~condition), explicit reference level = control, contrast = case vs control. Report the moderated-t statistic, unshrunken and apeglm-shrunken (or equivalent limma eBayes) log2 fold changes, BH-adjusted p-values with independent filtering, at alpha 0.05. Because each group has 60 samples (>=50), also run a Wilcoxon rank-sum test per gene on normalized log-CPM as a robustness control against the false-positive inflation that count models and even linear models can show at this sample size, and report the overlap between the two gene lists. Inspect and report the p-value histogram shape before trusting the adjusted p-values.",
+              "context": "Population-scale cohort (60 vs 60), single batch. Grounded procedure requires limma-voom fixed-effects over DESeq2/edgeR count models for this sample size, with the Wilcoxon test stated as the control given in the knowledge base's warning that even the linear model can exceed nominal FDR on some data.",
+              "question": "Which genes are differentially expressed between whole-blood cases and controls (case vs control contrast), and how robust is that gene list to a distribution-free control test?",
+              "acceptance_criteria": [
+                "Design and reference level (control) and contrast (case vs control) explicitly stated",
+                "Number of genes tested after filtering and number of genes at padj<0.05 reported",
+                "p-value histogram shown",
+                "Wilcoxon control test run and its gene-list overlap with limma-voom reported",
+                "Effect sizes (log2FC) reported beside p-values, not p-value alone"
+              ],
+              "packages": [
+                "edgeR",
+                "limma",
+                "apeglm",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S0"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0058@99e1",
+                  "R-0057@31cc",
+                  "R-0036@9786",
+                  "R-0015@65aa",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "reason": "limma-voom fixed-effects DE with filterByExpr/TMM per R-0058/R-0057; R-0015 mandates the Wilcoxon control at n>=50/group; apeglm shrinkage reported per R-0009; BH+independent filtering per R-0010/R-0043."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on the case vs control contrast",
+              "track": "T2",
+              "step_type": "enrichment",
+              "agent": "enrichment-agent",
+              "description": "Using the limma-voom fit from T1S1, run camera (competitive gene set test, inter-gene correlation estimated from data) against the MSigDB Hallmark human gene sets (available in the reference store, 2026.1 release). Then rank all tested genes by the moderated-t statistic and run fgsea preranked against the Reactome human pathway gene sets and the WikiPathways human collection (both in the reference store), applying a 15-500 gene set size window and BH adjustment. If the number of significant DE genes (padj<0.05) is below ~50, state this explicitly and do not run an over-representation (hypergeometric) test — rely only on the ranked methods (camera/fgsea) on the full gene list. Collapse redundant significant sets and report leading-edge genes per significant set. Map gene symbols to Entrez IDs via org.Hs.eg.db where needed and report the unmapped share.",
+              "context": "Human whole-blood cohort, n=120. Reference store confirmed to hold MSigDB Hallmark human (h.all.v2026.1.Hs.symbols.gmt), Reactome pathways (ReactomePathways.gmt, current), and WikiPathways human (wikipathways_Homo_sapiens.gmt, 2026.07.10).",
+              "question": "Which biological pathways or hallmark processes are coordinately altered between cases and controls in whole blood?",
+              "acceptance_criteria": [
+                "camera run on Hallmark with inter-gene correlation stated",
+                "fgsea preranked run on Reactome and WikiPathways with the ranking metric (moderated t) stated",
+                "Gene set size window (15-500) applied and stated",
+                "Redundant sets collapsed; leading-edge genes reported for significant sets",
+                "If <50 significant DE genes, ORA explicitly skipped in favor of ranked methods only",
+                "Each collection's release/version stated in the output"
+              ],
+              "packages": [
+                "limma",
+                "fgsea",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0088@8b80",
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0048@500d",
+                  "R-0103@93aa",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "reason": "camera + fgsea on the limma fit per R-0088; Hallmark then Reactome/WikiPathways per R-0048/R-0165; ORA skip rule R-0103 applied given uncertain DE gene count."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Case vs control classifier with nested cross-validation",
+              "track": "T3",
+              "step_type": "signature_scoring",
+              "agent": "statistical-modeling-agent",
+              "description": "Build a binary classifier of case vs control from the reconciled, filtered, TMM-normalized log-CPM gene expression matrix (the full filtered gene set from T1S1's filterByExpr output, not restricted to the significant DE genes — using the DE-derived list would be a feature selection performed outside cross-validation and would inflate performance). Fit a penalized logistic regression (glmnet, elastic net, alpha and lambda tuned) with a nested cross-validation: outer loop (e.g., 10-fold, repeated) estimates generalization performance; inner loop selects lambda/alpha and performs any further feature filtering/scaling strictly within the training fold only. Report the outer-fold ROC-AUC with a bootstrap or DeLong confidence interval (pROC), a calibration plot, sensitivity/specificity at a clinically reasonable operating point, and the genes with consistently nonzero coefficients across folds (noting instability given the sample size). Run a permutation-label negative control (shuffle case/control labels, repeat the nested CV) to confirm the true AUC exceeds the null distribution. State explicitly that this cross-validated estimate is the best available proxy for accuracy on a new sample from the same population and setting, but is not equivalent to performance on an independent external cohort, which does not exist in this dataset.",
+              "context": "n=120 (60/60), unpaired, single batch, whole blood. No external validation cohort is available in the provided files. The research question explicitly asks 'how accurate would it be on a new sample,' which nested CV addresses only as an internal estimate.",
+              "question": "Can a gene-expression-based classifier distinguish case from control whole-blood samples, and what is an honest internal estimate of its accuracy (ROC-AUC, sensitivity/specificity) on a held-out sample from this cohort?",
+              "acceptance_criteria": [
+                "Feature filtering/scaling performed strictly inside each training fold of the outer CV, not on the full dataset beforehand",
+                "Nested CV (inner loop for hyperparameter selection, outer loop for performance estimation) implemented and described",
+                "ROC-AUC with confidence interval reported from outer-fold held-out predictions",
+                "Permutation/label-shuffle negative control run and reported alongside the true AUC",
+                "Report states the CV estimate is internal only, with no independent external cohort available for validation",
+                "Selected gene coefficients across folds reported with a stated instability caveat"
+              ],
+              "packages": [
+                "glmnet",
+                "pROC"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0155@b81f"
+                ],
+                "reason": "Classifier of sample class from expression: penalized logistic regression with nested CV, ROC-AUC + CI, feature filtering inside folds, per R-0155@b81f."
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "Integrated report",
+              "track": "T4",
+              "step_type": "report",
+              "agent": "bulk-transcriptomics-agent",
+              "description": "Synthesize the QC reconciliation, DE results (with Wilcoxon control overlap), pathway enrichment, and classifier performance into one report. State: method versions and session info; design formula, reference level, and contrast; thresholds (alpha 0.05, BH); number of genes tested and number DE; MA/dispersion or mean-difference and voom mean-variance diagnostic plots; gene set database names, versions, ranking metric, universe, and size window for enrichment; the classifier's nested-CV ROC-AUC with CI, permutation-control result, and the explicit statement that this is an internal estimate only (no external cohort available) so real-world accuracy on a genuinely new sample/population may differ, especially given the caution that linear models can still exceed nominal FDR in population cohorts.",
+              "context": "Final synthesis step drawing on all three analysis tracks (DE, enrichment, classifier) for this 60 case / 60 control whole-blood cohort.",
+              "question": "What is the overall, honestly-caveated answer to whether a gene-expression classifier separates case from control in this cohort, and how accurate is it expected to be on a new sample?",
+              "acceptance_criteria": [
+                "All required reproducibility fields present (versions, seed, design, thresholds, n_tested, n_DE)",
+                "Effect sizes reported beside p-values throughout",
+                "Enrichment results reported with database/version/rank metric/universe/size window",
+                "Classifier accuracy reported with CI and permutation-control comparison",
+                "Explicit statement of the limits of internal CV estimates versus external validation"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S1",
+                "T2S1",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0089@69f0",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report-formatting rules apply generically; no single rule 'covers' a synthesis step but its constraints are drawn from the report claims."
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

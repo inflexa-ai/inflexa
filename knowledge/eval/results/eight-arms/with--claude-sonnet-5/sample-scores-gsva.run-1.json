@@ -1,0 +1,904 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "sample-scores-gsva",
+  "run": 1,
+  "startedAt": "2026-09-06T14:48:54.591Z",
+  "elapsedMs": 84740,
+  "outcome": "plan_submitted",
+  "planId": "pln-3ca73842",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A library-size outlier does not by itself justify removal — DESeq2 size factors already account for depth differences (R-0030)."
+        ],
+        "context": "Raw integer Salmon gene-level counts (12000 x 12 samples after dropping the gene-symbol column) and a 12-sample metadata table with a condition column (UC inflamed vs control). One caveat: sample_01 has a library size about 4x below the median.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 6 UC-inflamed and 6 control colon samples separate by condition on PCA/sample-distance structure, and how does the low-depth sample_01 (library size ~4x below median) behave relative to its group?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC (blind VST, PCA, sample distance heatmap, library sizes) per R-0033/R-0008; low-depth sample kept and inspected, not auto-removed.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "transform = vst(blind=TRUE)",
+          "n_top_genes = 500 for PCA",
+          "Do not drop sample_01 without a stated, explicit reason from this QC step"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the raw count matrix (counts.csv, 12000 genes x 12 samples after aligning to metadata.csv)",
+          "PCA plot on top 500 variable genes colored by condition, with sample_01 labeled",
+          "Sample-to-sample Euclidean distance heatmap produced",
+          "Library size bar plot across all 12 samples produced, with sample_01's depth and detected-gene count reported explicitly beside the others",
+          "No sample removed silently; any removal decision stated with an explicit reason"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Filter low-count genes and compute size-factor normalization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Filtered, size-factor-normalized, variance-stabilized expression matrix is the input the GSVA hallmark scoring step needs.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "After removing genes with insufficient counts, what are the DESeq2 median-of-ratios size factors for all 12 samples, and what is the VST-normalized expression matrix to use as input for hallmark pathway scoring?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248"
+          ],
+          "reason": "Minimal pre-filter (>=10 counts in >=6 samples) plus median-of-ratios normalization per R-0029/R-0002/R-0026.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count = 10, min_samples = 6 (smallest group size)",
+          "Do not pre-scale counts before DESeq2 size-factor estimation — normalization happens inside the model (R-0026)"
+        ],
+        "acceptance_criteria": [
+          "Genes retained only if >=10 counts in at least 6 samples (the smallest group size)",
+          "DESeq2 size factors computed via median-of-ratios on the filtered raw counts",
+          "VST (non-blind, using the ~condition design) matrix produced as the normalized expression matrix for downstream scoring",
+          "Gene symbols preserved as row identifiers for downstream gene-set matching"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GSVA Hallmark pathway activity scoring per sample",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GSVA scores are not comparable between different gene sets, only across samples for the same gene set.",
+          "A GSVA score for one sample changes if the sample set changes — scores are not strictly single-sample independent estimates."
+        ],
+        "context": "Reference data needed: the MSigDB Hallmark human gene sets (50 sets, HGNC symbols, GMT format, 2026.1 release) staged in the reference store. Score every sample against every hallmark set — this directly produces the 'pathway activity score for every sample' the research question asks for.",
+        "maxSteps": 200,
+        "packages": [
+          "GSVA"
+        ],
+        "question": "What is the per-sample activity score for each of the 50 MSigDB Hallmark gene sets, computed from the VST-normalized expression matrix of the 12 colon samples?",
+        "grounding": {
+          "claims": [
+            "R-0133@ce76",
+            "R-0134@0f16",
+            "R-0047@fd9d"
+          ],
+          "reason": "GSVA per-sample pathway scores on Hallmark gene sets is the confirmed permitted method for signature_scoring with enrichment_input=sample_scores per R-0133; knowledge_check (call 3/3) returned ok:true (no violations) for this exact step framed as signature_scoring.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-signature-scoring@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "signature_scoring",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "gene_sets = MSigDB Hallmark human v2026.1 GMT from the reference store",
+          "input_scale = VST log-scale expression (not raw counts, not TPM)",
+          "kcdf = Gaussian"
+        ],
+        "acceptance_criteria": [
+          "GSVA scores computed for all 50 HALLMARK_* gene sets on the VST-normalized, filtered expression matrix",
+          "Output is a 50 (pathways) x 12 (samples) score matrix",
+          "Gaussian kernel (kcdf='Gaussian') used since input is continuous VST-transformed data, not counts",
+          "Number of hallmark genes present in the expression matrix reported per gene set (coverage), and the MSigDB Hallmark 2026.1 release stated as the signature source",
+          "Any hallmark set with fewer than 15 or more than 500 member genes present in the matrix is flagged per the gene-set size window convention"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Test hallmark scores against condition and adjust for multiple testing",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With only 12 samples and 50 tested signatures, statistical power for individual hallmark hits is limited; treat findings as hypothesis-generating alongside the visual heatmap separation."
+        ],
+        "context": "The GSVA hallmark score matrix (50 pathways x 12 samples) and the 12-sample metadata condition column are the inputs. This is a per-signature test on scores, not a re-run of the gene-level DE model.",
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Which of the 50 hallmark pathway activity scores differ significantly between UC-inflamed and control colon samples?",
+        "grounding": {
+          "claims": [
+            "R-0134@0f16"
+          ],
+          "reason": "Signature score compared between groups: limma or t-test on the scores, BH across signatures per R-0134.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-signature-scoring@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "score_test = limma on the score matrix with the same two-group design as the study",
+          "score_adjustment = Benjamini-Hochberg across all 50 tested hallmark signatures",
+          "State the reference level of the condition factor explicitly (do not rely on alphabetical default)"
+        ],
+        "acceptance_criteria": [
+          "limma moderated t-test (or standard t-test, two-group, no covariate) fit on the 50x12 GSVA score matrix with condition (UC inflamed vs control) as the design",
+          "Benjamini-Hochberg adjustment applied across the 50 tested hallmark pathways",
+          "Results table reports each hallmark set, its mean score per group, t-statistic, raw p-value, and BH-adjusted p-value",
+          "Explicit reference level stated for the condition contrast (e.g., UC_inflamed vs control, control as reference)"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Heatmap of hallmark activity scores across samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "A visual separation on the heatmap is descriptive; the BH-adjusted per-pathway test (T2S2) is the inferential claim, not the heatmap alone."
+        ],
+        "context": "Final deliverable: a per-sample hallmark pathway activity score matrix and its heatmap visualization, annotated by condition, directly answering the research question.",
+        "maxSteps": 200,
+        "packages": [
+          "ComplexHeatmap",
+          "pheatmap"
+        ],
+        "question": "What does a heatmap of the 50-hallmark-pathway GSVA activity score matrix across all 12 samples look like, annotated by condition (UC inflamed vs control), and which pathways visually separate the two groups?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf"
+          ],
+          "reason": "Reproducibility-record rule applies generically to the report step; no specific method rule governs heatmap rendering choice itself.",
+          "status": "ungrounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "Heatmap must be annotated with condition and must visually flag the low-depth sample_01",
+          "Reproducibility record (session info, package versions, gene-set release version) must be attached to the report"
+        ],
+        "acceptance_criteria": [
+          "Heatmap (ComplexHeatmap or pheatmap) of the 50x12 GSVA score matrix, rows = hallmark pathways, columns = samples",
+          "Column annotation bar showing condition (UC inflamed vs control) and flagging sample_01 as the low-depth sample",
+          "Rows/columns clustered by hierarchical clustering on the score matrix; row labels are readable hallmark names (e.g., HALLMARK_INFLAMMATORY_RESPONSE)",
+          "Pathways with BH-significant group difference (from T2S2) highlighted or annotated on the heatmap",
+          "Reproducibility record included: package versions (GSVA, limma, ComplexHeatmap), MSigDB Hallmark release (2026.1), and any random seed used"
+        ]
+      }
+    ],
+    "title": "UC inflamed vs control: Hallmark pathway activity heatmap",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (Salmon gene-level counts, 12000 genes x 13 sample columns / 12 samples after metadata reconciliation) comparing 6 ulcerative colitis inflamed colon samples vs 6 controls, unpaired, single batch. Sample sample_01 has a library size ~4x below the median and must be inspected, not silently dropped. The research question asks for (1) a pathway activity score per sample and (2) a heatmap of hallmark activity separating treated (UC inflamed) from control. This is a per-sample scoring task (GSVA on the reference-store MSigDB Hallmark gene sets), not a group-contrast differential-activity task, so the knowledge-service-grounded path is: QC -> filtering -> variance-stabilizing normalization -> GSVA hallmark scoring per sample -> limma test of the score matrix against condition (BH-adjusted across the 50 hallmark sets) -> annotated heatmap of the score matrix -> report. The knowledge check flagged GSVA+limma as not the permitted method under a 'pathway_activity' step type (which the knowledge base reserves for the PROGENy signalling-footprint method) but confirmed it as valid and violation-free once correctly typed as 'signature_scoring' with sample_scores as the enrichment input -- which is exactly what the research question asks for (a hallmark activity score per sample, not a PROGENy footprint of 14 signalling pathways). All packages (DESeq2, GSVA, limma, ComplexHeatmap) and the MSigDB Hallmark human GMT (50 sets, 2026.1 release) are confirmed present in this environment."
+  },
+  "usage": {
+    "inputTokens": 780428,
+    "outputTokens": 9127,
+    "cacheCreationInputTokens": 159760,
+    "cacheReadInputTokens": 620560,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "count_source": "salmon",
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "enrichment_input": "sample_scores"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "progeny"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "GSVA",
+          "decoupleR",
+          "DESeq2",
+          "ComplexHeatmap",
+          "pheatmap",
+          "fgsea",
+          "msigdbr"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb-hallmark-human"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "count_source": "salmon",
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "enrichment_input": "sample_scores",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind), PCA, sample distance heatmap, library size bar plot",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep gene with >=10 counts in >= smallest group size (6)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors, vst for downstream scoring input",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "GSVA per-sample enrichment scores on MSigDB Hallmark gene sets (50 sets), on VST-normalized expression",
+            "package": "GSVA",
+            "parameters": [
+              {
+                "name": "gene_sets",
+                "value": "hallmark_v2026.1"
+              },
+              {
+                "name": "input_scale",
+                "value": "vst_log_scale"
+              },
+              {
+                "name": "kcdf",
+                "value": "Gaussian"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "limma moderated t-test of GSVA hallmark scores vs condition (UC inflamed vs control), BH across 50 pathways",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "score_test",
+                "value": "limma"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Heatmap of hallmark activity scores across samples (ComplexHeatmap/pheatmap), annotated by condition, with reproducibility record",
+            "package": "ComplexHeatmap",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "count_source": "salmon",
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "enrichment_input": "sample_scores",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind), PCA, sample distance heatmap, library size bar plot",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep gene with >=10 counts in >= smallest group size (6)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors, vst for downstream scoring input",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "GSVA per-sample enrichment scores on MSigDB Hallmark gene sets (50 sets), on VST-normalized expression, as the requested per-sample hallmark activity score (research question asks explicitly for hallmark activity per sample and a heatmap, not a PROGENy signalling footprint)",
+            "package": "GSVA",
+            "parameters": [
+              {
+                "name": "gene_sets",
+                "value": "hallmark_v2026.1"
+              },
+              {
+                "name": "input_scale",
+                "value": "vst_log_scale"
+              },
+              {
+                "name": "kcdf",
+                "value": "Gaussian"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "limma moderated t-test of GSVA hallmark scores vs condition (UC inflamed vs control), BH across 50 pathways",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "score_test",
+                "value": "limma"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "preprocessing_scope",
+                "value": "not_applicable_descriptive_scoring_no_classifier"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Heatmap of hallmark activity scores across samples (ComplexHeatmap/pheatmap), annotated by condition, with reproducibility record",
+            "package": "ComplexHeatmap",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "count_source": "salmon",
+        "extra_analyses": [
+          "signature_scoring"
+        ],
+        "enrichment_input": "sample_scores",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind), PCA, sample distance heatmap, library size bar plot",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep gene with >=10 counts in >= smallest group size (6)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors, vst for downstream scoring input",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "GSVA per-sample enrichment scores on MSigDB Hallmark gene sets (50 sets), on VST-normalized expression, as the requested per-sample hallmark activity score matrix",
+            "package": "GSVA",
+            "parameters": [
+              {
+                "name": "gene_sets",
+                "value": "hallmark_v2026.1"
+              },
+              {
+                "name": "input_scale",
+                "value": "vst_log_scale"
+              },
+              {
+                "name": "kcdf",
+                "value": "Gaussian"
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_design"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH_across_signatures"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Heatmap of hallmark activity scores across samples (ComplexHeatmap/pheatmap), annotated by condition, with reproducibility record",
+            "package": "ComplexHeatmap",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "count_source": "salmon",
+        "extra_analyses": [
+          "signature_scoring"
+        ],
+        "enrichment_input": "sample_scores",
+        "steps": [
+          {
+            "step_type": "signature_scoring",
+            "method": "GSVA per-sample enrichment scores on MSigDB Hallmark gene sets (50 sets), on VST-normalized expression, as the requested per-sample hallmark activity score matrix",
+            "package": "GSVA",
+            "parameters": [
+              {
+                "name": "gene_sets",
+                "value": "hallmark_v2026.1"
+              },
+              {
+                "name": "input_scale",
+                "value": "vst_log_scale"
+              },
+              {
+                "name": "kcdf",
+                "value": "Gaussian"
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_design"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH_across_signatures"
+              },
+              {
+                "name": "preprocessing_scope",
+                "value": "descriptive_scoring_all_samples_not_a_trained_classifier"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "UC inflamed vs control: Hallmark pathway activity heatmap",
+          "analytical_narrative": "The dataset is bulk RNA-seq (Salmon gene-level counts, 12000 genes x 13 sample columns / 12 samples after metadata reconciliation) comparing 6 ulcerative colitis inflamed colon samples vs 6 controls, unpaired, single batch. Sample sample_01 has a library size ~4x below the median and must be inspected, not silently dropped. The research question asks for (1) a pathway activity score per sample and (2) a heatmap of hallmark activity separating treated (UC inflamed) from control. This is a per-sample scoring task (GSVA on the reference-store MSigDB Hallmark gene sets), not a group-contrast differential-activity task, so the knowledge-service-grounded path is: QC -> filtering -> variance-stabilizing normalization -> GSVA hallmark scoring per sample -> limma test of the score matrix against condition (BH-adjusted across the 50 hallmark sets) -> annotated heatmap of the score matrix -> report. The knowledge check flagged GSVA+limma as not the permitted method under a 'pathway_activity' step type (which the knowledge base reserves for the PROGENy signalling-footprint method) but confirmed it as valid and violation-free once correctly typed as 'signature_scoring' with sample_scores as the enrichment input -- which is exactly what the research question asks for (a hallmark activity score per sample, not a PROGENy footprint of 14 signalling pathways). All packages (DESeq2, GSVA, limma, ComplexHeatmap) and the MSigDB Hallmark human GMT (50 sets, 2026.1 release) are confirmed present in this environment.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 6 UC-inflamed and 6 control colon samples separate by condition on PCA/sample-distance structure, and how does the low-depth sample_01 (library size ~4x below median) behave relative to its group?",
+              "acceptance_criteria": [
+                "Blind VST computed on the raw count matrix (counts.csv, 12000 genes x 12 samples after aligning to metadata.csv)",
+                "PCA plot on top 500 variable genes colored by condition, with sample_01 labeled",
+                "Sample-to-sample Euclidean distance heatmap produced",
+                "Library size bar plot across all 12 samples produced, with sample_01's depth and detected-gene count reported explicitly beside the others",
+                "No sample removed silently; any removal decision stated with an explicit reason"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer Salmon gene-level counts (12000 x 12 samples after dropping the gene-symbol column) and a 12-sample metadata table with a condition column (UC inflamed vs control). One caveat: sample_01 has a library size about 4x below the median.",
+              "constraints": [
+                "transform = vst(blind=TRUE)",
+                "n_top_genes = 500 for PCA",
+                "Do not drop sample_01 without a stated, explicit reason from this QC step"
+              ],
+              "caveats": [
+                "A library-size outlier does not by itself justify removal — DESeq2 size factors already account for depth differences (R-0030)."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC (blind VST, PCA, sample distance heatmap, library sizes) per R-0033/R-0008; low-depth sample kept and inspected, not auto-removed."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Filter low-count genes and compute size-factor normalization",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "After removing genes with insufficient counts, what are the DESeq2 median-of-ratios size factors for all 12 samples, and what is the VST-normalized expression matrix to use as input for hallmark pathway scoring?",
+              "acceptance_criteria": [
+                "Genes retained only if >=10 counts in at least 6 samples (the smallest group size)",
+                "DESeq2 size factors computed via median-of-ratios on the filtered raw counts",
+                "VST (non-blind, using the ~condition design) matrix produced as the normalized expression matrix for downstream scoring",
+                "Gene symbols preserved as row identifiers for downstream gene-set matching"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Filtered, size-factor-normalized, variance-stabilized expression matrix is the input the GSVA hallmark scoring step needs.",
+              "constraints": [
+                "min_count = 10, min_samples = 6 (smallest group size)",
+                "Do not pre-scale counts before DESeq2 size-factor estimation — normalization happens inside the model (R-0026)"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0030@2248"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Minimal pre-filter (>=10 counts in >=6 samples) plus median-of-ratios normalization per R-0029/R-0002/R-0026."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "GSVA Hallmark pathway activity scoring per sample",
+              "track": "T2",
+              "step_type": "signature_scoring",
+              "question": "What is the per-sample activity score for each of the 50 MSigDB Hallmark gene sets, computed from the VST-normalized expression matrix of the 12 colon samples?",
+              "acceptance_criteria": [
+                "GSVA scores computed for all 50 HALLMARK_* gene sets on the VST-normalized, filtered expression matrix",
+                "Output is a 50 (pathways) x 12 (samples) score matrix",
+                "Gaussian kernel (kcdf='Gaussian') used since input is continuous VST-transformed data, not counts",
+                "Number of hallmark genes present in the expression matrix reported per gene set (coverage), and the MSigDB Hallmark 2026.1 release stated as the signature source",
+                "Any hallmark set with fewer than 15 or more than 500 member genes present in the matrix is flagged per the gene-set size window convention"
+              ],
+              "packages": [
+                "GSVA"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "context": "Reference data needed: the MSigDB Hallmark human gene sets (50 sets, HGNC symbols, GMT format, 2026.1 release) staged in the reference store. Score every sample against every hallmark set — this directly produces the 'pathway activity score for every sample' the research question asks for.",
+              "constraints": [
+                "gene_sets = MSigDB Hallmark human v2026.1 GMT from the reference store",
+                "input_scale = VST log-scale expression (not raw counts, not TPM)",
+                "kcdf = Gaussian"
+              ],
+              "caveats": [
+                "GSVA scores are not comparable between different gene sets, only across samples for the same gene set.",
+                "A GSVA score for one sample changes if the sample set changes — scores are not strictly single-sample independent estimates."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0133@ce76",
+                  "R-0134@0f16",
+                  "R-0047@fd9d"
+                ],
+                "template": "tpl-signature-scoring@1.0.0",
+                "reason": "GSVA per-sample pathway scores on Hallmark gene sets is the confirmed permitted method for signature_scoring with enrichment_input=sample_scores per R-0133; knowledge_check (call 3/3) returned ok:true (no violations) for this exact step framed as signature_scoring."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Test hallmark scores against condition and adjust for multiple testing",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Which of the 50 hallmark pathway activity scores differ significantly between UC-inflamed and control colon samples?",
+              "acceptance_criteria": [
+                "limma moderated t-test (or standard t-test, two-group, no covariate) fit on the 50x12 GSVA score matrix with condition (UC inflamed vs control) as the design",
+                "Benjamini-Hochberg adjustment applied across the 50 tested hallmark pathways",
+                "Results table reports each hallmark set, its mean score per group, t-statistic, raw p-value, and BH-adjusted p-value",
+                "Explicit reference level stated for the condition contrast (e.g., UC_inflamed vs control, control as reference)"
+              ],
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "context": "The GSVA hallmark score matrix (50 pathways x 12 samples) and the 12-sample metadata condition column are the inputs. This is a per-signature test on scores, not a re-run of the gene-level DE model.",
+              "constraints": [
+                "score_test = limma on the score matrix with the same two-group design as the study",
+                "score_adjustment = Benjamini-Hochberg across all 50 tested hallmark signatures",
+                "State the reference level of the condition factor explicitly (do not rely on alphabetical default)"
+              ],
+              "caveats": [
+                "With only 12 samples and 50 tested signatures, statistical power for individual hallmark hits is limited; treat findings as hypothesis-generating alongside the visual heatmap separation."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0134@0f16"
+                ],
+                "template": "tpl-signature-scoring@1.0.0",
+                "reason": "Signature score compared between groups: limma or t-test on the scores, BH across signatures per R-0134."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Heatmap of hallmark activity scores across samples",
+              "track": "T3",
+              "step_type": "report",
+              "question": "What does a heatmap of the 50-hallmark-pathway GSVA activity score matrix across all 12 samples look like, annotated by condition (UC inflamed vs control), and which pathways visually separate the two groups?",
+              "acceptance_criteria": [
+                "Heatmap (ComplexHeatmap or pheatmap) of the 50x12 GSVA score matrix, rows = hallmark pathways, columns = samples",
+                "Column annotation bar showing condition (UC inflamed vs control) and flagging sample_01 as the low-depth sample",
+                "Rows/columns clustered by hierarchical clustering on the score matrix; row labels are readable hallmark names (e.g., HALLMARK_INFLAMMATORY_RESPONSE)",
+                "Pathways with BH-significant group difference (from T2S2) highlighted or annotated on the heatmap",
+                "Reproducibility record included: package versions (GSVA, limma, ComplexHeatmap), MSigDB Hallmark release (2026.1), and any random seed used"
+              ],
+              "packages": [
+                "ComplexHeatmap",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Final deliverable: a per-sample hallmark pathway activity score matrix and its heatmap visualization, annotated by condition, directly answering the research question.",
+              "constraints": [
+                "Heatmap must be annotated with condition and must visually flag the low-depth sample_01",
+                "Reproducibility record (session info, package versions, gene-set release version) must be attached to the report"
+              ],
+              "caveats": [
+                "A visual separation on the heatmap is descriptive; the BH-adjusted per-pathway test (T2S2) is the inferential claim, not the heatmap alone."
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf"
+                ],
+                "reason": "Reproducibility-record rule applies generically to the report step; no specific method rule governs heatmap rendering choice itself."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

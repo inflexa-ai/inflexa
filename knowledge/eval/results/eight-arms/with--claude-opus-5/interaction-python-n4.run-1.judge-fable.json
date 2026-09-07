@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan fits the design correctly: a PyDESeq2 fit with ~ genotype + treatment + genotype:treatment, explicit WT/vehicle reference levels, a Wald test on the interaction, and the two within-genotype simple effects, all with a clearly stated warning against substituting a 'significant in KO not WT' comparison. QC, the cell-size-justified filter, in-model median-of-ratios normalization, and the ranked GSEA specification (Wald stat, tested-gene universe, 15-500 window, named collections and releases, seed) are all explicit and appropriate. The main weakness is shrinkage: the plan prescribes ashr for every contrast, but ashr is an R package and PyDESeq2's lfc_shrink offers only apeglm on single coefficients, so the plan both breaks its own Python-only constraint and fails to state the PyDESeq2 limit or a fallback (combined group factor, or asking whether R is permitted) that the reference requires for the summed KO simple-effect contrast. The report step is otherwise complete, naming versions, thresholds, counts per contrast, and the power caveat of an n=4 interaction."
+}

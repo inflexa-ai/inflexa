@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 9,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly diagnoses that six samples cannot support a correlation network and substitutes a named prior network (STRING v12.0, combined_score >= 700) with sample-level module scoring, an honest permutation floor of 0.2, and a well-specified ORA (expressed-gene universe, 15-500 window, versions recorded). It loses on method fit because it still builds a WGCNA network on the six samples and reports eigengene-condition correlations, which the reference explicitly marks as wrong regardless of the 'diagnostic' label. It never runs the gene-level DESeq2/edgeR contrast the reference projects the prior network onto: the design formula and reference level are stated but no contrast is tested, no alpha is named, and no fold-change shrinkage is applied, so the model and FDR/shrinkage criteria are only partly met. QC and reporting are otherwise thorough, with reproducibility and limitations sections stated."
+}

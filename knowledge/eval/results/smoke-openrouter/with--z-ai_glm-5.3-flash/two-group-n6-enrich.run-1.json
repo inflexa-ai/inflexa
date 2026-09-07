@@ -1,0 +1,220 @@
+{
+  "campaign": "smoke-openrouter",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "two-group-n6-enrich",
+  "run": 1,
+  "startedAt": "2026-09-06T14:02:39.972Z",
+  "elapsedMs": 600092,
+  "outcome": "error",
+  "error": "Plan generation timed out — the model may be overloaded.",
+  "usage": {
+    "inputTokens": 101837,
+    "outputTokens": 2573,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 1615
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA, sample distance heatmap, library sizes; keep-inspect-report for low-depth sample_01",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "minimal pre-filter: >=10 counts in >= smallest group size samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors inside the model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "design ~condition, explicit reference level (control), named contrast treated_vs_control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test, Cook's outlier flagging on (report NA genes)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log2 fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg at alpha 0.05 with DESeq2 independent filtering; p-value histogram inspected first",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the Wald statistic against MSigDB Hallmark human",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "gsea_input",
+                "value": "full_ranked_list"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "methods, versions, design, thresholds, n_tested, n_de, MA and dispersion plots, leading edge, collection release, session info",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de, session_info"
+              },
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot, dispersion_plot"
+              },
+              {
+                "name": "leading_edge",
+                "value": "per_significant_set"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

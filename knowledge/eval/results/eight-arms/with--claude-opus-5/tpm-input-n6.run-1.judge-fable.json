@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly on the decisive point: TPM without counts is handled with limma on log2(TPM+1) and eBayes(trend=TRUE), count models and voom are explicitly forbidden, no TMM or size factors are applied, and the raw counts or Salmon quant directories are requested for a proper re-run. QC runs on the log matrix with PCA/MDS, a distance heatmap and per-sample detection counts, with an explicit flag-not-remove policy; the filter (TPM >= 1 in at least the smallest group size of 6) is minimal and justified. The design is ~condition with control as the explicit reference, BH at 0.05 from topTable, and any fold-change floor is tested inside the model via treat() rather than post hoc. Enrichment is correctly omitted with a stated reason, and the report step names method, versions, design, thresholds, tested/significant counts by direction, sessionInfo, and both design limitations. The only minor gap is that library sizes cannot be assessed from TPM and no processing-date variable exists to colour by batch, which the plan acknowledges."
+}

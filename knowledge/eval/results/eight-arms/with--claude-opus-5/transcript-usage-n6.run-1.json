@@ -1,0 +1,70 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "transcript-usage-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T15:44:15.063Z",
+  "elapsedMs": 28112,
+  "outcome": "clarification_needed",
+  "question": "The research question asks which genes switch their dominant isoform between the atopic dermatitis lesional and control skin samples, but the only expression input on record is a gene-level matrix (counts.csv, 12,000 gene symbols x 12 samples, Salmon-derived, gene-summarised). Isoform switching cannot be tested from gene-level counts, because a gene count is the sum over its isoforms and carries no information about which isoform dominates. Can you provide the transcript-level Salmon output for the same 12 samples — the per-sample quant.sf files (or an equivalent transcript x sample abundance/count matrix keyed by transcript ID, not summarised to gene), plus the transcript-to-gene map used for quantification?",
+  "usage": {
+    "inputTokens": 135862,
+    "outputTokens": 1892,
+    "cacheCreationInputTokens": 106112,
+    "cacheReadInputTokens": 29726,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "transcript_level"
+        ],
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DRIMSeq",
+          "DEXSeq",
+          "IsoformSwitchAnalyzeR",
+          "satuRn",
+          "stageR",
+          "tximport",
+          "DTUrtle",
+          "edgeR",
+          "DESeq2",
+          "limma"
+        ]
+      }
+    },
+    {
+      "name": "request_clarification",
+      "input": {
+        "question": "The research question asks which genes switch their dominant isoform between the atopic dermatitis lesional and control skin samples, but the only expression input on record is a gene-level matrix (counts.csv, 12,000 gene symbols x 12 samples, Salmon-derived, gene-summarised). Isoform switching cannot be tested from gene-level counts, because a gene count is the sum over its isoforms and carries no information about which isoform dominates. Can you provide the transcript-level Salmon output for the same 12 samples — the per-sample quant.sf files (or an equivalent transcript x sample abundance/count matrix keyed by transcript ID, not summarised to gene), plus the transcript-to-gene map used for quantification?",
+        "questionContext": "Two blockers, both hard, and I want to name them together so one round of provisioning fixes both.\n\n1. Missing data. The persisted profile lists exactly two inputs: /eval-eight-arms-with-transcript-usage-n6-1/data/inputs/counts/counts.csv (12000 x 13, first column gene symbol, one column per sample) and /eval-eight-arms-with-transcript-usage-n6-1/data/inputs/metadata/metadata.csv (12 x 2, sample and condition). No transcript-level file is in the profile. Differential transcript usage / dominant-isoform switching needs transcript-level quantifications imported without a gene summary. I will not substitute a gene-level differential expression test and present it as an isoform-switch result — that would answer a different question under the original label.\n\n2. Missing tooling, which matters even if the transcript files arrive. I checked the installed package inventory: DRIMSeq, DEXSeq, satuRn, stageR, IsoformSwitchAnalyzeR and tximport are all ABSENT from this sandbox. Those are the established tools for differential transcript usage and for the two-stage gene-then-transcript testing that a switch call requires; tximport is also the standard reader for quant.sf. Present and usable are DESeq2 1.52.0, edgeR 4.10.3 and limma 3.68.5. A DTU analysis could be built on edgeR's diffSpliceDGE or limma's diffSplice using transcripts as the \"exon\" unit, and dominant-isoform identity per group can be computed directly from isoform fractions, so the analysis is feasible without the canonical packages — but it would be a non-standard implementation and I would rather you confirm that is acceptable than have you discover it in the results.\n\nSo please supply, if they exist: (a) the transcript-level Salmon files (quant.sf per sample, or a transcript x sample matrix of counts plus effective lengths) and the tx2gene map; and (b) a decision on whether an edgeR diffSpliceDGE / limma diffSplice DTU implementation plus explicit isoform-fraction switch calling is acceptable, or whether DRIMSeq/DEXSeq/stageR should be provisioned into the environment first.\n\nTwo further points that will shape the plan once the above is settled, so you have them now. The design is 6 lesional vs 6 control, unpaired — modest for DTU, which is less powerful than gene-level DE because the signal is split across isoforms; expect a short and provisional switch list. And sample_01 has a library size roughly 4x below the median: depth hurts isoform-level estimates more than gene-level ones, because transcript quantification is an EM assignment of ambiguous reads and its uncertainty grows sharply as counts thin. I would keep sample_01 (size factors handle depth, and dropping it costs a sixth of one arm) but report its per-transcript detection and isoform-fraction stability separately, and flag any switch call that depends on it. Tell me if you would rather it be excluded outright.\n\nIf no transcript-level quantification exists anywhere for this study, say so and I will plan the honest fallback: gene-level differential expression for the lesional vs control contrast, reported explicitly as NOT an answer to the isoform-switch question."
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

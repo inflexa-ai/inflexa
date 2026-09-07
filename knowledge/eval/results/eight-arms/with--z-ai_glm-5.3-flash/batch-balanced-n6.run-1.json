@@ -1,0 +1,400 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "batch-balanced-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T15:09:17.046Z",
+  "elapsedMs": 67948,
+  "outcome": "plan_submitted",
+  "planId": "pln-f89aef01",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If batch drives the primary axis of variance, the design term still handles the test; report it explicitly"
+        ],
+        "context": "counts.csv: 12,000 genes x 12 samples (first column gene symbol); metadata.csv: condition (treated/control), batch (2 levels, balanced)",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do samples group by condition or by batch, and is any sample an outlier?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC with blind vst, PCA on 500 top-variance genes, distance heatmap per R-0033@40bf",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "description": "DESeq2 blind vst (n_top 500), PCA, Euclidean sample-distance heatmap, library-size summary, colored by condition and batch; assess whether batch or condition dominates variance.",
+        "acceptance_criteria": [
+          "PCA colored by condition and by batch produced",
+          "Sample distance heatmap and library-size table produced",
+          "Statement of whether PC1 separates condition or batch",
+          "Any outlier sample flagged with its group"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald DE: treated vs control, batch as covariate",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 replicates per condition DESeq2 sets p-value to NA for genes with a Cook's-distance outlier; report the count of such genes",
+          "Do not select by unadjusted p-value or by fold change alone"
+        ],
+        "context": "Gene symbols as row ids; no length offsets available — R-0018's tximport/lengthScaledTPM route cannot be executed on a pre-summarized gene-level matrix; deviation noted in report",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes differ between treated and control after accounting for batch?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0006@c407",
+            "R-0036@9786",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0010@91a5",
+            "R-0043@4f55",
+            "R-0018@a472"
+          ],
+          "reason": "DESeq2 Wald + apeglm on balanced-batch design per R-0001/R-0006; R-0018 length-offset import inapplicable to pre-aggregated gene counts",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Pre-filter (>=10 counts in >=6 samples), median-of-ratios size factors, design ~ batch + condition with explicit reference levels, Wald test on condition coefficient, apeglm shrinkage, BH with independent filtering at alpha 0.05.",
+        "acceptance_criteria": [
+          "results table with baseMean, log2FoldChange, lfcSE, shrunken LFC (apeglm), stat, pvalue, padj",
+          "Number of genes with NA p-value from Cook's-distance outlier flagging reported separately (6 per condition is below the 7-replicate replacement threshold)",
+          "p-value histogram shown and its shape described before trusting padj",
+          "padj < 0.05 gene counts (up and down) reported",
+          "Unmapped/multi-mapped symbol issues not applicable; report tested-gene count after filters"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR QL robustness cross-check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Disagreement grows at low counts and low replicates; report both directions"
+        ],
+        "context": "Same counts.csv and metadata; edgeR 4.10.3 is installed",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Do the same genes come out significant under edgeR quasi-likelihood?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0001@9a17",
+            "R-0026@9ab1"
+          ],
+          "reason": "edgeR QL as the second method at 2-11 replicates per group; overlap as robustness per R-0042@54e1",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Independent edgeR run on the same counts and same design (~batch + condition): TMM factors, glmQLFit, glmQLFTest on the condition coefficient, BH FDR. Report per-method significant counts and the intersection as the high-confidence set.",
+        "acceptance_criteria": [
+          "edgeR QL result table with FDR",
+          "Counts of significant genes from each method and size of their intersection reported",
+          "Intersection written as the high-confidence set; single-method genes listed as method-specific",
+          "Union NOT presented as the result"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Report and reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Consumes T1S2 and T1S3 outputs",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the final, reproducible answer to which genes differ between treated and control?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0086@becf",
+            "R-0042@54e1"
+          ],
+          "reason": "Report fields, diagnostics, dual LFC reporting and method overlap per R-0041/R-0085/R-0087/R-0042",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S3"
+        ],
+        "description": "Final report: method/versions/design/thresholds/n_tested/n_DE, MA and dispersion plots, p-value histogram, top-gene table (unshrunken LFC + apeglm-shrunken LFC + lfcSE, ranked by shrunken LFC), DESeq2-vs-edgeR overlap table, sessionInfo and seed.",
+        "acceptance_criteria": [
+          "Report names method, package versions, design formula, contrast direction, thresholds, n_tested, n_DE per method and intersection",
+          "MA plot and dispersion plot included before gene tables",
+          "Gene table carries unshrunken LFC, shrunken LFC, lfcSE; ranking and plots on the shrunken value; p-values from the unshrunken fit",
+          "sessionInfo, seed, and gene-level-counts deviation (no tximport) recorded"
+        ]
+      }
+    ],
+    "title": "Treated vs control kidney DE with batch covariate",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "12 human kidney bulk RNA-seq samples (6 treated vs 6 control) in two processing batches balanced across conditions. Batch is handled as a fixed design term (~ batch + condition), not by pre-correcting counts. Gene-level raw counts (12,000 genes x 12 samples, symbols) are already provided, so no tximport/length-offset import is possible or needed; the plan notes this deviation. Pipeline: blind vst sample-structure QC (PCA, distances, library sizes) -> minimal low-count pre-filter -> DESeq2 median-of-ratios size factors, Wald test on the condition coefficient with apeglm shrinkage and BH at alpha 0.05 -> edgeR quasi-likelihood F-test on the same design as a robustness cross-check (intersection = high-confidence set) -> report with MA and dispersion diagnostics, p-value histogram, both shrunken and unshrunken LFCs, method overlap, and reproducibility record."
+  },
+  "usage": {
+    "inputTokens": 94098,
+    "outputTokens": 2393,
+    "cacheReadInputTokens": 34944,
+    "reasoningTokens": 204
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "known_balanced",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control kidney DE with batch covariate",
+          "analytical_narrative": "12 human kidney bulk RNA-seq samples (6 treated vs 6 control) in two processing batches balanced across conditions. Batch is handled as a fixed design term (~ batch + condition), not by pre-correcting counts. Gene-level raw counts (12,000 genes x 12 samples, symbols) are already provided, so no tximport/length-offset import is possible or needed; the plan notes this deviation. Pipeline: blind vst sample-structure QC (PCA, distances, library sizes) -> minimal low-count pre-filter -> DESeq2 median-of-ratios size factors, Wald test on the condition coefficient with apeglm shrinkage and BH at alpha 0.05 -> edgeR quasi-likelihood F-test on the same design as a robustness cross-check (intersection = high-confidence set) -> report with MA and dispersion diagnostics, p-value histogram, both shrunken and unshrunken LFCs, method overlap, and reproducibility record.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "PCA colored by condition and by batch produced",
+                "Sample distance heatmap and library-size table produced",
+                "Statement of whether PC1 separates condition or batch",
+                "Any outlier sample flagged with its group"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "If batch drives the primary axis of variance, the design term still handles the test; report it explicitly"
+              ],
+              "context": "counts.csv: 12,000 genes x 12 samples (first column gene symbol); metadata.csv: condition (treated/control), batch (2 levels, balanced)",
+              "depends_on": [],
+              "description": "DESeq2 blind vst (n_top 500), PCA, Euclidean sample-distance heatmap, library-size summary, colored by condition and batch; assess whether batch or condition dominates variance.",
+              "grounding": {
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC with blind vst, PCA on 500 top-variance genes, distance heatmap per R-0033@40bf",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded",
+                "template": "tpl-qc-eda@1.0.0"
+              },
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "question": "Do samples group by condition or by batch, and is any sample an outlier?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "qc",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "results table with baseMean, log2FoldChange, lfcSE, shrunken LFC (apeglm), stat, pvalue, padj",
+                "Number of genes with NA p-value from Cook's-distance outlier flagging reported separately (6 per condition is below the 7-replicate replacement threshold)",
+                "p-value histogram shown and its shape described before trusting padj",
+                "padj < 0.05 gene counts (up and down) reported",
+                "Unmapped/multi-mapped symbol issues not applicable; report tested-gene count after filters"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With 6 replicates per condition DESeq2 sets p-value to NA for genes with a Cook's-distance outlier; report the count of such genes",
+                "Do not select by unadjusted p-value or by fold change alone"
+              ],
+              "context": "Gene symbols as row ids; no length offsets available — R-0018's tximport/lengthScaledTPM route cannot be executed on a pre-summarized gene-level matrix; deviation noted in report",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Pre-filter (>=10 counts in >=6 samples), median-of-ratios size factors, design ~ batch + condition with explicit reference levels, Wald test on condition coefficient, apeglm shrinkage, BH with independent filtering at alpha 0.05.",
+              "grounding": {
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0006@c407",
+                  "R-0036@9786",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0010@91a5",
+                  "R-0043@4f55",
+                  "R-0018@a472"
+                ],
+                "reason": "DESeq2 Wald + apeglm on balanced-batch design per R-0001/R-0006; R-0018 length-offset import inapplicable to pre-aggregated gene counts",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded",
+                "template": "tpl-deseq2-two-group@1.0.0"
+              },
+              "id": "T1S2",
+              "name": "DESeq2 Wald DE: treated vs control, batch as covariate",
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "question": "Which genes differ between treated and control after accounting for batch?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "edgeR QL result table with FDR",
+                "Counts of significant genes from each method and size of their intersection reported",
+                "Intersection written as the high-confidence set; single-method genes listed as method-specific",
+                "Union NOT presented as the result"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Disagreement grows at low counts and low replicates; report both directions"
+              ],
+              "context": "Same counts.csv and metadata; edgeR 4.10.3 is installed",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Independent edgeR run on the same counts and same design (~batch + condition): TMM factors, glmQLFit, glmQLFTest on the condition coefficient, BH FDR. Report per-method significant counts and the intersection as the high-confidence set.",
+              "grounding": {
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0001@9a17",
+                  "R-0026@9ab1"
+                ],
+                "reason": "edgeR QL as the second method at 2-11 replicates per group; overlap as robustness per R-0042@54e1",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded"
+              },
+              "id": "T1S3",
+              "name": "edgeR QL robustness cross-check",
+              "packages": [
+                "edgeR"
+              ],
+              "question": "Do the same genes come out significant under edgeR quasi-likelihood?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Report names method, package versions, design formula, contrast direction, thresholds, n_tested, n_DE per method and intersection",
+                "MA plot and dispersion plot included before gene tables",
+                "Gene table carries unshrunken LFC, shrunken LFC, lfcSE; ranking and plots on the shrunken value; p-values from the unshrunken fit",
+                "sessionInfo, seed, and gene-level-counts deviation (no tximport) recorded"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [],
+              "context": "Consumes T1S2 and T1S3 outputs",
+              "depends_on": [
+                "T1S3"
+              ],
+              "description": "Final report: method/versions/design/thresholds/n_tested/n_DE, MA and dispersion plots, p-value histogram, top-gene table (unshrunken LFC + apeglm-shrunken LFC + lfcSE, ranked by shrunken LFC), DESeq2-vs-edgeR overlap table, sessionInfo and seed.",
+              "grounding": {
+                "claims": [
+                  "R-0041@059a",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0086@becf",
+                  "R-0042@54e1"
+                ],
+                "reason": "Report fields, diagnostics, dual LFC reporting and method overlap per R-0041/R-0085/R-0087/R-0042",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded"
+              },
+              "id": "T1S4",
+              "name": "Report and reproducibility record",
+              "packages": [],
+              "question": "What is the final, reproducible answer to which genes differ between treated and control?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "report",
+              "track": "T1"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

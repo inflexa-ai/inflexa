@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every axis: raw Salmon counts into DESeq2 Wald (with edgeR QL as a check), design ~condition with an explicit control reference and treated-over-control contrast, a minimal and justified >=10-in->=3 filter, size factors/TMM inside the model with an explicit ban on pre-scaling, BH at 0.05 set in results() with apeglm shrinkage and no post-hoc fold-change filter. A blind-VST PCA, distance heatmap and library-size check precede the test with a stated flag-don't-remove policy, and the power limitation of 3v3 is stated up front without loosening alpha. Enrichment is correctly and explicitly omitted, and the report specifies methods, versions, design, thresholds, tested/significant counts, sessionInfo and caveats. The only minor reservations are the framing of the DESeq2/edgeR intersection as the headline high-confidence set, which further reduces already low power and is not standard, and a QC policy that stops at flagging without saying how a confirmed mislabeled sample would be handled."
+}

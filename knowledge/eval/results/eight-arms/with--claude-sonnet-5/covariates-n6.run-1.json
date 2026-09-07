@@ -1,0 +1,732 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "covariates-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T15:01:12.655Z",
+  "elapsedMs": 112624,
+  "outcome": "plan_submitted",
+  "planId": "pln-9f6eab48",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and covariate check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Groups are unmatched on age (per data context) — expect age to show some association with condition; this is a design limitation to report, not something this QC step can fix",
+          "12 samples total means PCA components beyond PC1-PC2 carry little information; do not over-interpret them"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 12 adipose samples separate by treated vs control on the top variance axes, or does sex/age dominate instead, before any DE model is fit?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC via blind vst, top-500-gene PCA, and sample distance heatmap per R-0033@40bf; strandedness inference (R-0079) is not applicable because inputs are already gene-level Salmon counts with no read-level access in this environment.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use vst(blind=TRUE) exactly for this diagnostic step, never the design-aware transform",
+          "n_top_genes = 500 for the PCA gene selection"
+        ],
+        "description": "Load counts.csv (12000 genes x 12 samples) and metadata.csv (condition, sex, age), build a DESeqDataSet with design ~ sex + age_c + condition (age_c = age centered), run vst(blind=TRUE), compute PCA on the top 500 most-variable genes, plot a sample-distance heatmap, and tabulate library sizes. Color/label PCA points by condition, sex, and age tertile to visually flag whether age or sex, not treatment, is the dominant axis of variation given the unmatched design.",
+        "acceptance_criteria": [
+          "PCA plot and sample-distance heatmap produced and saved",
+          "Library size per sample reported",
+          "A written note on which factor (condition, sex, age) associates with PC1/PC2",
+          "No sample is silently dropped without being reported"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: treated vs control adjusted for sex and age",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The design is not matched on age between treated and control; adjusting for age as a covariate corrects for a linear age effect but cannot recover power lost to the imbalance, and if age and condition are highly correlated the age and condition coefficients will be difficult to distinguish (collinearity) — check and report the correlation between age and condition across the 12 samples",
+          "With 6 vs 6, DESeq2 flags (does not replace) count outliers per gene; genes with padj=NA from this cause are not the same as those removed by independent filtering — both are reported to avoid mistaking one for the other"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which of the 12000 genes in counts.csv differ significantly between treated (n=6) and control (n=6) adipose samples after adjusting for sex and age?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0023@e919",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with covariates in the design (sex, centered age) per R-0023@e919, explicit reference level per R-0036@9786, apeglm shrinkage per R-0009@f54e, BH+independent filtering per R-0010@91a5; tximport step (R-0018) was skipped since the input is already a gene-level count matrix and no transcript-level quant.sf files are available in this environment — this is stated as a limitation, not a substitution.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Pre-filter: keep gene with >=10 counts in >=6 samples (smallest group size), minimal filter only — do not over-filter",
+          "Do not normalize/scale counts before DESeq(); size factors are computed internally by median-of-ratios",
+          "Set condition reference level explicitly to 'control' before fitting",
+          "Center the continuous age covariate before including it in the design",
+          "Use apeglm for shrinkage since this is a single-coefficient contrast",
+          "Select genes by adjusted p-value (padj < 0.05) with independent filtering on; do not filter by raw p-value or by fold change alone",
+          "Report the Cook's-distance NA-flagging behavior explicitly since n=6 per group is below the 7-replicate threshold where DESeq2 switches to replacement"
+        ],
+        "description": "From counts.csv and metadata.csv, build a DESeqDataSet with design = ~ sex + age_c + condition, where age_c is age mean-centered and condition is a factor with 'control' set as the explicit reference level (do not rely on alphabetical order). Pre-filter genes to those with at least 10 counts in at least 6 samples (the smallest group size). Run DESeq() (median-of-ratios normalization is internal, Wald test), extract results() for the contrast condition_treated_vs_control at alpha=0.05, then apply apeglm shrinkage (lfcShrink, coef for the treated-vs-control term) for the reported/plotted log2 fold change. Report both the unshrunken and shrunken LFC with lfcSE. Report the count of genes flagged NA by the Cook's-distance outlier filter (cell size 6 < 7, so DESeq2 flags rather than replaces) separately from genes removed by independent filtering. Produce an MA plot and a dispersion plot as fit diagnostics.",
+        "acceptance_criteria": [
+          "Design formula explicitly includes sex, centered age, and condition with control as reference level",
+          "Results table reports unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, pvalue, and padj for every tested gene",
+          "Genes passing padj < 0.05 are listed as the DE gene set, with the count of tested genes and count of significant genes stated",
+          "Number of genes flagged NA by outlier detection vs. removed by independent filtering are reported separately",
+          "MA plot and dispersion plot are generated",
+          "p-value histogram of the Wald test is inspected and its shape reported before trusting the BH adjustment"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA on Hallmark, Reactome, and WikiPathways",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GSEA method choice (ranking metric, collection) affects which sets come up significant; treat each set as a hypothesis, not a proven mechanism",
+          "Reactome and WikiPathways gene sets are far more numerous and variable in size than Hallmark; the same size-window filter is applied to keep results comparable across collections"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea"
+        ],
+        "question": "Which coordinated biological pathways/processes (Hallmark, Reactome, WikiPathways) are enriched among genes ranked by the treated-vs-control Wald statistic in adipose tissue?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0165@e456",
+            "R-0099@0a77",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0105@c4a8",
+            "R-0046@a0ac"
+          ],
+          "reason": "fgsea preranked on Wald stat against Hallmark first then Reactome/WikiPathways per R-0048@500d and R-0165@e456; all three collections confirmed present in the reference store for human at time of planning.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Rank by the Wald statistic (stat column), not by unshrunken log2FC alone and not by a signed p-value",
+          "Universe is the set of genes DESeq2 actually tested (post pre-filter), not the whole genome",
+          "Do not merge collections into a single set list; report each collection separately with its own version stated",
+          "If fewer than ~50 genes pass padj<0.05 in T1S2, do not additionally run an over-representation test on that short list — the ranked GSEA on the full list is the primary and sufficient method"
+        ],
+        "description": "Take the full DESeq2 results table from T1S2 (all tested genes, not just significant ones) and rank every gene by its Wald statistic (stat column). Run fgsea::fgsea (or fgseaMultilevel) separately against three human gene set collections confirmed present in this environment: MSigDB Hallmark (50 sets), Reactome pathways, and WikiPathways human pathways — each analyzed and reported as its own pass, not merged into one set list. Apply a gene set size window of 15-500 members (intersected with tested genes) for each collection, use BH adjustment within each collection, and collapse redundant significant sets (fgsea::collapsePathways). Report the leading-edge genes for each significant set. State the collection version/release for each (MSigDB 2026.1 Hallmark; Reactome 'current'; WikiPathways 2026.07.10) and the number of genes that failed to map to each collection's gene symbol space.",
+        "acceptance_criteria": [
+          "Ranking metric is explicitly the DESeq2 Wald statistic (stat), stated in the output",
+          "Full ranked list of tested genes used as input, not a thresholded list",
+          "Three separate enrichment runs reported (Hallmark, Reactome, WikiPathways), each with its own BH-adjusted results and collection version stated",
+          "Gene sets outside the 15-500 member window (after intersecting with tested genes) are excluded, and this is stated",
+          "Leading-edge genes reported for every significant set (padj < 0.05) in each collection",
+          "Redundant overlapping significant sets collapsed with one representative reported"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Final report: DE results, diagnostics, enrichment, reproducibility",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This is a single unpaired cohort of 6 vs 6 with an acknowledged age imbalance; findings are a starting hypothesis set, not a validated biomarker or mechanism, absent an independent cohort"
+        ],
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the consolidated, reproducible answer to which genes differ between treated and control adipose samples, adjusted for sex and age, and what pathways do they implicate?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report step aggregates upstream results per the reporting rules but is not itself a modeled statistical step, so knowledge_recommend marks it ungrounded (no rule 'covers' report assembly directly).",
+          "status": "ungrounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "State all report fields required by the reproducibility rules: method, versions, design, thresholds, n_tested, n_de, session_info"
+        ],
+        "description": "Assemble a single report combining: the DESeq2 design formula and reference levels used, the number of genes tested after filtering, the number of significant DE genes at padj<0.05 (with the gene table: symbol, unshrunken log2FC, apeglm-shrunken log2FC, lfcSE, pvalue, padj), the MA plot, dispersion plot, and p-value histogram from T1S2, the sex/age confounding check from T1S1 (including the age-vs-condition correlation across the 12 samples), and the three enrichment tables (Hallmark, Reactome, WikiPathways) with leading-edge genes from T2S1. Include a full reproducibility record: R/Bioconductor package versions (DESeq2, apeglm, fgsea), sessionInfo, random seed, and the gene set collection versions used.",
+        "acceptance_criteria": [
+          "Report states the design formula, reference levels, and named contrast (condition treated vs control)",
+          "Report states number of genes tested, number significant at padj<0.05, and separately the NA-flagged count from outlier detection",
+          "Report includes MA plot, dispersion plot, and p-value histogram with an interpretation of histogram shape",
+          "Report explicitly discusses the age/sex imbalance and its implication for interpreting the condition effect",
+          "Report includes the three enrichment result tables with collection versions and leading-edge genes",
+          "Report includes sessionInfo, package versions, and any random seed used"
+        ]
+      }
+    ],
+    "title": "Adipose treated vs control DE adjusted for sex and age",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is 12 adipose bulk RNA-seq samples (6 treated, 6 control) quantified with Salmon, with sex and age recorded per sample but the groups not matched on age. Because age and sex could confound the treatment effect if left out, and because the raw integer counts already come from Salmon gene-summarized quantification, the plan runs a single DESeq2 model with a design that includes sex and centered age alongside condition, rather than a naive two-group t-test that would let an age or sex imbalance masquerade as a treatment effect. Steps: (1) confirm sample structure and check whether age/sex or an unmeasured factor dominates the top variance components before trusting the model, (2) minimal count pre-filter, (3) DESeq2 Wald test on the condition coefficient from the covariate-adjusted design with median-of-ratios normalization internal to the model, (4) apeglm shrinkage of the condition log2 fold change, (5) BH-adjusted independent filtering at alpha 0.05 to call significant genes, (6) preranked fgsea against MSigDB Hallmark, Reactome, and WikiPathways gene sets (all confirmed present for human) using the Wald statistic as the ranking metric, and (7) a consolidated report with fit diagnostics, the gene table, and a full reproducibility record. Age is a continuous covariate and is centered before the fit per the design-matrix guidance; sex and condition are factors with an explicit reference level (control). Because n=6 per group is at the low end of the replicate range, DESeq2's per-cell outlier handling (Cook's distance flag to NA rather than replacement, since cell size <7) is kept on and reported explicitly rather than silently applied."
+  },
+  "usage": {
+    "inputTokens": 1598427,
+    "outputTokens": 8129,
+    "cacheCreationInputTokens": 190531,
+    "cacheReadInputTokens": 1407704,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "covariates": [
+          "sex",
+          "age"
+        ],
+        "strandedness": "unknown",
+        "enrichment_input": "ranked_list"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gencode annotation human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene length"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "tximport",
+          "apeglm",
+          "fgsea",
+          "DESeq2",
+          "EnhancedVolcano"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "variancePartition",
+          "org.Hs.eg.db",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtex tissue expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "HPA tissue"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal_expression",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed/gencode-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed/gencode-human/50"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "GenomicFeatures",
+          "rtracklayer",
+          "biomaRt"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnsDb.Hsapiens.v86"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "covariates": [
+          "sex",
+          "age"
+        ],
+        "strandedness": "unknown",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA and sample distances",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep gene with >=10 counts in >= smallest group size (n=6)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors (internal to DESeq2)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "design = ~ sex + age_centered + condition, explicit reference level control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "continuous_covariate",
+                "value": "age_centered"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test on condition treated vs control, adjusted for sex and age",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "contrast",
+                "value": "condition_treated_vs_control"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage of the condition coefficient",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, alpha 0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the Wald statistic, Hallmark then Reactome and WikiPathways",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE + enrichment report with diagnostics, reproducibility record",
+            "package": "DESeq2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Adipose treated vs control DE adjusted for sex and age",
+          "analytical_narrative": "The dataset is 12 adipose bulk RNA-seq samples (6 treated, 6 control) quantified with Salmon, with sex and age recorded per sample but the groups not matched on age. Because age and sex could confound the treatment effect if left out, and because the raw integer counts already come from Salmon gene-summarized quantification, the plan runs a single DESeq2 model with a design that includes sex and centered age alongside condition, rather than a naive two-group t-test that would let an age or sex imbalance masquerade as a treatment effect. Steps: (1) confirm sample structure and check whether age/sex or an unmeasured factor dominates the top variance components before trusting the model, (2) minimal count pre-filter, (3) DESeq2 Wald test on the condition coefficient from the covariate-adjusted design with median-of-ratios normalization internal to the model, (4) apeglm shrinkage of the condition log2 fold change, (5) BH-adjusted independent filtering at alpha 0.05 to call significant genes, (6) preranked fgsea against MSigDB Hallmark, Reactome, and WikiPathways gene sets (all confirmed present for human) using the Wald statistic as the ranking metric, and (7) a consolidated report with fit diagnostics, the gene table, and a full reproducibility record. Age is a continuous covariate and is centered before the fit per the design-matrix guidance; sex and condition are factors with an explicit reference level (control). Because n=6 per group is at the low end of the replicate range, DESeq2's per-cell outlier handling (Cook's distance flag to NA rather than replacement, since cell size <7) is kept on and reported explicitly rather than silently applied.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and covariate check",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 adipose samples separate by treated vs control on the top variance axes, or does sex/age dominate instead, before any DE model is fit?",
+              "description": "Load counts.csv (12000 genes x 12 samples) and metadata.csv (condition, sex, age), build a DESeqDataSet with design ~ sex + age_c + condition (age_c = age centered), run vst(blind=TRUE), compute PCA on the top 500 most-variable genes, plot a sample-distance heatmap, and tabulate library sizes. Color/label PCA points by condition, sex, and age tertile to visually flag whether age or sex, not treatment, is the dominant axis of variation given the unmatched design.",
+              "acceptance_criteria": [
+                "PCA plot and sample-distance heatmap produced and saved",
+                "Library size per sample reported",
+                "A written note on which factor (condition, sex, age) associates with PC1/PC2",
+                "No sample is silently dropped without being reported"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Use vst(blind=TRUE) exactly for this diagnostic step, never the design-aware transform",
+                "n_top_genes = 500 for the PCA gene selection"
+              ],
+              "caveats": [
+                "Groups are unmatched on age (per data context) — expect age to show some association with condition; this is a design limitation to report, not something this QC step can fix",
+                "12 samples total means PCA components beyond PC1-PC2 carry little information; do not over-interpret them"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC via blind vst, top-500-gene PCA, and sample distance heatmap per R-0033@40bf; strandedness inference (R-0079) is not applicable because inputs are already gene-level Salmon counts with no read-level access in this environment."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: treated vs control adjusted for sex and age",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes in counts.csv differ significantly between treated (n=6) and control (n=6) adipose samples after adjusting for sex and age?",
+              "description": "From counts.csv and metadata.csv, build a DESeqDataSet with design = ~ sex + age_c + condition, where age_c is age mean-centered and condition is a factor with 'control' set as the explicit reference level (do not rely on alphabetical order). Pre-filter genes to those with at least 10 counts in at least 6 samples (the smallest group size). Run DESeq() (median-of-ratios normalization is internal, Wald test), extract results() for the contrast condition_treated_vs_control at alpha=0.05, then apply apeglm shrinkage (lfcShrink, coef for the treated-vs-control term) for the reported/plotted log2 fold change. Report both the unshrunken and shrunken LFC with lfcSE. Report the count of genes flagged NA by the Cook's-distance outlier filter (cell size 6 < 7, so DESeq2 flags rather than replaces) separately from genes removed by independent filtering. Produce an MA plot and a dispersion plot as fit diagnostics.",
+              "acceptance_criteria": [
+                "Design formula explicitly includes sex, centered age, and condition with control as reference level",
+                "Results table reports unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, pvalue, and padj for every tested gene",
+                "Genes passing padj < 0.05 are listed as the DE gene set, with the count of tested genes and count of significant genes stated",
+                "Number of genes flagged NA by outlier detection vs. removed by independent filtering are reported separately",
+                "MA plot and dispersion plot are generated",
+                "p-value histogram of the Wald test is inspected and its shape reported before trusting the BH adjustment"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Pre-filter: keep gene with >=10 counts in >=6 samples (smallest group size), minimal filter only — do not over-filter",
+                "Do not normalize/scale counts before DESeq(); size factors are computed internally by median-of-ratios",
+                "Set condition reference level explicitly to 'control' before fitting",
+                "Center the continuous age covariate before including it in the design",
+                "Use apeglm for shrinkage since this is a single-coefficient contrast",
+                "Select genes by adjusted p-value (padj < 0.05) with independent filtering on; do not filter by raw p-value or by fold change alone",
+                "Report the Cook's-distance NA-flagging behavior explicitly since n=6 per group is below the 7-replicate threshold where DESeq2 switches to replacement"
+              ],
+              "caveats": [
+                "The design is not matched on age between treated and control; adjusting for age as a covariate corrects for a linear age effect but cannot recover power lost to the imbalance, and if age and condition are highly correlated the age and condition coefficients will be difficult to distinguish (collinearity) — check and report the correlation between age and condition across the 12 samples",
+                "With 6 vs 6, DESeq2 flags (does not replace) count outliers per gene; genes with padj=NA from this cause are not the same as those removed by independent filtering — both are reported to avoid mistaking one for the other"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0023@e919",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "DESeq2 Wald test with covariates in the design (sex, centered age) per R-0023@e919, explicit reference level per R-0036@9786, apeglm shrinkage per R-0009@f54e, BH+independent filtering per R-0010@91a5; tximport step (R-0018) was skipped since the input is already a gene-level count matrix and no transcript-level quant.sf files are available in this environment — this is stated as a limitation, not a substitution."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA on Hallmark, Reactome, and WikiPathways",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which coordinated biological pathways/processes (Hallmark, Reactome, WikiPathways) are enriched among genes ranked by the treated-vs-control Wald statistic in adipose tissue?",
+              "description": "Take the full DESeq2 results table from T1S2 (all tested genes, not just significant ones) and rank every gene by its Wald statistic (stat column). Run fgsea::fgsea (or fgseaMultilevel) separately against three human gene set collections confirmed present in this environment: MSigDB Hallmark (50 sets), Reactome pathways, and WikiPathways human pathways — each analyzed and reported as its own pass, not merged into one set list. Apply a gene set size window of 15-500 members (intersected with tested genes) for each collection, use BH adjustment within each collection, and collapse redundant significant sets (fgsea::collapsePathways). Report the leading-edge genes for each significant set. State the collection version/release for each (MSigDB 2026.1 Hallmark; Reactome 'current'; WikiPathways 2026.07.10) and the number of genes that failed to map to each collection's gene symbol space.",
+              "acceptance_criteria": [
+                "Ranking metric is explicitly the DESeq2 Wald statistic (stat), stated in the output",
+                "Full ranked list of tested genes used as input, not a thresholded list",
+                "Three separate enrichment runs reported (Hallmark, Reactome, WikiPathways), each with its own BH-adjusted results and collection version stated",
+                "Gene sets outside the 15-500 member window (after intersecting with tested genes) are excluded, and this is stated",
+                "Leading-edge genes reported for every significant set (padj < 0.05) in each collection",
+                "Redundant overlapping significant sets collapsed with one representative reported"
+              ],
+              "packages": [
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "constraints": [
+                "Rank by the Wald statistic (stat column), not by unshrunken log2FC alone and not by a signed p-value",
+                "Universe is the set of genes DESeq2 actually tested (post pre-filter), not the whole genome",
+                "Do not merge collections into a single set list; report each collection separately with its own version stated",
+                "If fewer than ~50 genes pass padj<0.05 in T1S2, do not additionally run an over-representation test on that short list — the ranked GSEA on the full list is the primary and sufficient method"
+              ],
+              "caveats": [
+                "GSEA method choice (ranking metric, collection) affects which sets come up significant; treat each set as a hypothesis, not a proven mechanism",
+                "Reactome and WikiPathways gene sets are far more numerous and variable in size than Hallmark; the same size-window filter is applied to keep results comparable across collections"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0165@e456",
+                  "R-0099@0a77",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0105@c4a8",
+                  "R-0046@a0ac"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "fgsea preranked on Wald stat against Hallmark first then Reactome/WikiPathways per R-0048@500d and R-0165@e456; all three collections confirmed present in the reference store for human at time of planning."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Final report: DE results, diagnostics, enrichment, reproducibility",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the consolidated, reproducible answer to which genes differ between treated and control adipose samples, adjusted for sex and age, and what pathways do they implicate?",
+              "description": "Assemble a single report combining: the DESeq2 design formula and reference levels used, the number of genes tested after filtering, the number of significant DE genes at padj<0.05 (with the gene table: symbol, unshrunken log2FC, apeglm-shrunken log2FC, lfcSE, pvalue, padj), the MA plot, dispersion plot, and p-value histogram from T1S2, the sex/age confounding check from T1S1 (including the age-vs-condition correlation across the 12 samples), and the three enrichment tables (Hallmark, Reactome, WikiPathways) with leading-edge genes from T2S1. Include a full reproducibility record: R/Bioconductor package versions (DESeq2, apeglm, fgsea), sessionInfo, random seed, and the gene set collection versions used.",
+              "acceptance_criteria": [
+                "Report states the design formula, reference levels, and named contrast (condition treated vs control)",
+                "Report states number of genes tested, number significant at padj<0.05, and separately the NA-flagged count from outlier detection",
+                "Report includes MA plot, dispersion plot, and p-value histogram with an interpretation of histogram shape",
+                "Report explicitly discusses the age/sex imbalance and its implication for interpreting the condition effect",
+                "Report includes the three enrichment result tables with collection versions and leading-edge genes",
+                "Report includes sessionInfo, package versions, and any random seed used"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "State all report fields required by the reproducibility rules: method, versions, design, thresholds, n_tested, n_de, session_info"
+              ],
+              "caveats": [
+                "This is a single unpaired cohort of 6 vs 6 with an acknowledged age imbalance; findings are a starting hypothesis set, not a validated biomarker or mechanism, absent an independent cohort"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report step aggregates upstream results per the reporting rules but is not itself a modeled statistical step, so knowledge_recommend marks it ungrounded (no rule 'covers' report assembly directly)."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

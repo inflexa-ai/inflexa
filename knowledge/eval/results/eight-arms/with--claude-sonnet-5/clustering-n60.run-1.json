@@ -1,0 +1,799 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "clustering-n60",
+  "run": 1,
+  "startedAt": "2026-09-06T15:34:29.034Z",
+  "elapsedMs": 122601,
+  "outcome": "plan_submitted",
+  "planId": "pln-3d696b41",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (blind VST, PCA, sample-distance heatmap)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This step is descriptive QC only; do not draw cluster conclusions from PCA position alone."
+        ],
+        "context": "Input: /eval-eight-arms-with-clustering-n60-1/data/inputs/counts/counts.csv (12000 genes x 121 columns incl. gene symbol; 120 samples) and metadata.csv (120 samples, condition column). Single batch, unpaired, 60/60 design.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Before any clustering, does whole-blood sample structure in the 120 samples (case vs control, single batch) show gross outliers, a technical driver of variance, or the case/control split as the dominant axis, when viewed by blind VST + PCA and Euclidean sample-distance heatmap?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances per R-0033@40bf",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500 for PCA",
+          "transform = vst(blind=TRUE)"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 variance-stabilizing transformation is computed blind to condition on the raw count matrix (12000 genes x 120 samples)",
+          "PCA computed on the 500 highest-variance genes, PC1/PC2 plot colored by case/control status and by library size",
+          "Euclidean sample-distance heatmap produced and colored by case/control status",
+          "Any sample flagged as a distance/PCA outlier is listed explicitly with its ID"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count filtering (filterByExpr)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Same 12000 x 120 raw Salmon gene-count matrix used in T1S1.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Which of the 12000 genes in the whole-blood count matrix carry enough signal (filterByExpr, min 10 counts in at least 60 samples) to be retained for variance-based clustering and downstream analysis?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0058@99e1",
+            "R-0002@087b"
+          ],
+          "reason": "filterByExpr low count filter (edgeR) per R-0029@fa6d",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-edger-ql@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count = 10",
+          "min_samples = smallest_group_size (60)",
+          "filter = filterByExpr",
+          "filter_policy = minimal_then_independent"
+        ],
+        "acceptance_criteria": [
+          "edgeR::filterByExpr applied with group = case/control and min.count=10, min samples = smallest group size (60)",
+          "Number of genes retained and removed reported explicitly",
+          "Filtered count matrix persisted for downstream clustering and deconvolution steps"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Consensus clustering of the 120 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "A cluster found here is a hypothesis, not a validated subtype, until checked against an external cohort or an independent variable.",
+          "Do not rely on the delta-area alone; confirm with PAC, since delta-area alone can suggest structure in data without real clusters."
+        ],
+        "context": "Whole-blood cohort, 120 samples (60 case/60 control), single batch, raw Salmon gene counts filtered in T1S2. No known additional covariates beyond condition are present in metadata.csv (120 x 2: sample, condition), so the confounder cross-tab in T3S2 will be limited to condition and library size unless further columns are found in the file at run time.",
+        "maxSteps": 200,
+        "packages": [
+          "ConsensusClusterPlus",
+          "DESeq2"
+        ],
+        "question": "Beyond the known 60 case / 60 control split, do the 120 whole-blood samples fall into a stable number (k) of consensus-clustering subgroups, and how robust is that k, based on the consensus CDF delta-area and the proportion of ambiguous clustering (PAC)?",
+        "grounding": {
+          "claims": [
+            "R-0141@ac9d",
+            "R-0142@c982"
+          ],
+          "reason": "Consensus clustering of samples with ConsensusClusterPlus per R-0141@ac9d, R-0142@c982; knowledge_check confirmed no violation for this method/parameter set",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-consensus-clustering@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "clustering",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "input_transform = vst_then_top_variable_genes_centered",
+          "n_top_genes = 2000",
+          "distance_and_linkage = 1-minus-Pearson correlation distance, average linkage",
+          "resampling_reps = 1000",
+          "item_subsample_share = 0.8",
+          "k_criterion = consensus_cdf_delta_area_and_pac"
+        ],
+        "acceptance_criteria": [
+          "Blind VST applied to the filtered count matrix; top 2000 most-variable genes selected and gene-wise centered",
+          "ConsensusClusterPlus run with hierarchical clustering, 1-minus-Pearson-correlation distance, average linkage, reps=1000, pItem=0.8, pFeature=1, over k=2 to k=8",
+          "Consensus CDF, relative change in area under the CDF, and PAC computed and reported for each candidate k",
+          "Final k selected by the CDF delta-area and confirmed by the PAC, with the choice stated explicitly and not left to visual inspection alone",
+          "Per-sample cluster assignment and item-consensus value reported; per-cluster cluster-consensus value reported",
+          "Report explicitly states that consensus clustering can find apparent structure in unstructured data, so the result is a hypothesis pending confirmation"
+        ]
+      },
+      {
+        "id": "T3S2",
+        "name": "Descriptive PCA/UMAP embedding and cluster-vs-confounder cross-tabulation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "UMAP and PCA plots must not be used to assert a cluster count or an inter-sample distance; that claim rests only on the ConsensusClusterPlus output of T3S1."
+        ],
+        "context": "Uses the cluster assignments and top-variable-gene matrix produced in T3S1, and the 120 x 2 metadata.csv (sample, condition).",
+        "maxSteps": 200,
+        "packages": [
+          "umap-learn",
+          "scikit-learn"
+        ],
+        "question": "Do the consensus clusters found in T3S1 correspond to a visually separable structure in a PCA/UMAP embedding, and do they align with, or are they confounded by, the known case/control label and library size (the only sample-level covariates available)?",
+        "grounding": {
+          "claims": [
+            "R-0145@3579",
+            "R-0142@c982"
+          ],
+          "reason": "UMAP/PCA as picture only per R-0145@3579; confounder cross-tab per R-0142@c982",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "clustering",
+        "depends_on": [
+          "T3S1"
+        ],
+        "constraints": [
+          "embedding_use = picture_only_no_cluster_or_distance_claim"
+        ],
+        "acceptance_criteria": [
+          "PCA plot (PC1 vs PC2) and a UMAP embedding of the samples on the same top-variable-gene matrix used for clustering, colored by the T3S1 cluster assignment and separately by case/control status",
+          "Explicit statement that the embedding is a picture only, not evidence of a cluster or of a distance, per the grounded caution",
+          "Cross-tabulation (contingency table + chi-square or Fisher test as descriptive context only, not as a cluster validity test) of T3S1 cluster assignment against case/control label and against library size (binned)",
+          "Any additional metadata columns present in metadata.csv beyond condition are included in the cross-tab; if none exist, this is stated explicitly"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "MCP-counter immune/stromal composition scoring",
+        "agent": "immune-profiling-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "MCP-counter scores are relative abundance scores, not cell fractions; do not interpret them as proportions.",
+          "Composition estimates are covariates/context here, not a replacement for the clustering result."
+        ],
+        "context": "Whole blood is dominated by circulating immune cells, so any sample subgroup found by expression clustering is a strong candidate to reflect cell-composition differences (e.g., neutrophil-to-lymphocyte ratio) rather than a cell-intrinsic transcriptional subtype. This step tests that alternative explanation directly against the T3S1 cluster assignment.",
+        "maxSteps": 200,
+        "packages": [
+          "MCPcounter"
+        ],
+        "question": "Do the whole-blood immune and stromal population abundance scores (MCP-counter) differ between the consensus clusters found in T3S1, i.e. is any discovered subgroup structure explained by shifts in blood cell composition rather than a distinct disease-intrinsic signature?",
+        "grounding": {
+          "claims": [
+            "R-0125@2548",
+            "R-0129@2909",
+            "R-0132@246d"
+          ],
+          "reason": "MCP-counter abundance scores per R-0125@2548, used here as a covariate check on the cluster result per R-0132@246d",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-immunedeconv@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "deconvolution",
+        "depends_on": [
+          "T1S2",
+          "T3S1"
+        ],
+        "constraints": [
+          "deconvolution_input = linear_tpm_or_cpm_then_log2_for_mcpcounter",
+          "score_comparison = across_samples_within_population"
+        ],
+        "acceptance_criteria": [
+          "Filtered raw counts (from T1S2) converted to log2 CPM (linear-scale CPM computed first, then log2, as MCP-counter's own definition requires log-scale input)",
+          "MCP-counter scores computed for all 8 immune + 2 stromal populations per sample",
+          "Each population's score compared across the T3S1 consensus clusters (not across populations within a sample) using a non-parametric test (Kruskal-Wallis) since population scores are not normally comparable in scale",
+          "Report states the transform of the input and that MCP-counter scores are comparable across samples within one population only, never across populations",
+          "Report explicitly states whether the discovered clusters plausibly reflect composition shifts (e.g., neutrophil/lymphocyte score differences) versus a composition-independent signature"
+        ]
+      },
+      {
+        "id": "T5S1",
+        "name": "Consolidated subgroup-discovery report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T5",
+        "status": "pending",
+        "caveats": [
+          "Do not overstate a cluster found only by consensus clustering on a single cohort as a validated disease subtype; state it as a hypothesis."
+        ],
+        "context": "Synthesizes T1S1, T1S2, T3S1, T3S2, and T4S1 into one decision-ready answer to the research question of subgroup existence, count, and stability.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the final answer to whether the 120 whole-blood samples fall into subgroups beyond case/control, how many subgroups, how stable they are (item/cluster consensus, PAC), and whether they are confounded by case/control status, library size, or blood cell composition?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0152@7a42"
+          ],
+          "reason": "Reproducibility record and clustering report content per R-0086@becf and R-0152@7a42",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T3S1",
+          "T3S2",
+          "T4S1"
+        ],
+        "constraints": [],
+        "acceptance_criteria": [
+          "Report states: input matrix and transform, number of genes kept at filtering and at clustering, distance and linkage, number of resamples and item-subsample share",
+          "Report states the k evidence: consensus CDF plot description, delta-area values across k, and PAC values across k, and the chosen k with justification",
+          "Report lists each sample's cluster assignment with its item consensus, and each cluster's cluster consensus value",
+          "Report cross-tabulates the clusters against case/control label, library size, and MCP-counter composition scores from T4S1",
+          "Report explicitly states the caution that consensus clustering finds structure even in unstructured (null) data, so the cluster(s) found are a hypothesis, not a validated subtype, absent external validation",
+          "Reproducibility record included: package versions (DESeq2, edgeR, ConsensusClusterPlus, MCPcounter), random seed used for resampling, and any reference/collection versions used"
+        ]
+      }
+    ],
+    "title": "Whole-blood case/control cohort: subgroup discovery beyond diagnosis",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The 120-sample whole-blood cohort (60 case, 60 control, single batch, raw Salmon gene counts, 12000 genes) is asked whether it holds sample subgroups beyond the case/control label. The plan follows the grounded bulk-RNA-seq clustering procedure: (1) sample-structure QC with a blind variance-stabilizing transform, PCA and a Euclidean sample-distance heatmap to see the gross structure and flag outliers or a technical driver of variance before any clustering; (2) a minimal filterByExpr low-count filter so genes with no real signal do not dilute variance-based gene selection; (3) consensus clustering of the samples with ConsensusClusterPlus on the top 2000 most-variable genes after the blind VST, using hierarchical clustering with 1-minus-Pearson-correlation distance and average linkage, 1000 resamples at 80% item subsampling, screening k=2..8, with k chosen from the consensus CDF delta-area and confirmed by the proportion of ambiguous clustering (PAC) - not from the embedding alone; (4) a PCA/UMAP visualization step that is explicitly descriptive only (no cluster claims from the embedding itself, per the grounded rule that UMAP/t-SNE give a picture, not a distance or cluster claim); (5) a confounding check that cross-tabulates the chosen clusters against case/control status, library size, and any other metadata columns available, because whole blood is highly sensitive to cell-composition shifts and a 'subgroup' that is actually a proportion of granulocytes/lymphocytes is a different finding than a disease subtype; (6) an MCP-counter immune/stromal deconvolution on the same samples (log2-CPM input) so that a discovered cluster structure can be checked against cell-composition and reported honestly as either a distinct molecular subgroup or a restatement of blood cell composition; (7) a consolidated report stating the input transform, gene count, distance/linkage, resampling parameters, the k evidence (CDF/delta-area/PAC), each sample's cluster with its item consensus, cluster consensus, the confounder cross-tabs, and the explicit caution that consensus clustering finds apparent structure even in unstructured data, so any subgroup found here is a hypothesis pending independent or external validation."
+  },
+  "usage": {
+    "inputTokens": 977990,
+    "outputTokens": 8397,
+    "cacheCreationInputTokens": 217801,
+    "cacheReadInputTokens": 760057,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "clustering",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "extra_analyses": [
+          "clustering"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "clustering",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "extra_analyses": [
+          "clustering"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) PCA and sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr low count filter (edgeR)",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors / vst for clustering input",
+            "package": "DESeq2",
+            "parameters": []
+          },
+          {
+            "step_type": "clustering",
+            "method": "ConsensusClusterPlus consensus clustering (hierarchical, 1-Pearson correlation distance, 1000 resamples, 80% item subsample) on top 2000 variance-stabilized most-variable genes",
+            "package": "ConsensusClusterPlus",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 2000
+              },
+              {
+                "name": "resampling_reps",
+                "value": 1000
+              },
+              {
+                "name": "item_subsample_share",
+                "value": 0.8
+              },
+              {
+                "name": "k_range",
+                "value": "2-8"
+              }
+            ]
+          },
+          {
+            "step_type": "clustering",
+            "method": "PCA and UMAP as descriptive visualization only, no cluster claims from embedding",
+            "package": "scikit-learn/umap-learn",
+            "parameters": []
+          },
+          {
+            "step_type": "report",
+            "method": "Cluster stability report: consensus CDF, delta-area, PAC, item/cluster consensus, cross-tab vs case/control label, library size, and any available technical covariates"
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTEx blood expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "Human Protein Atlas"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "scGate blood immune cell markers panglaodb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune deconvolution signature LM22 xCell"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathway-activity"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathway-activity",
+        "path": "managed"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ConsensusClusterPlus",
+          "DESeq2",
+          "edgeR",
+          "cluster",
+          "factoextra",
+          "immunedeconv",
+          "quanTIseq",
+          "EPIC",
+          "MCPcounter"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "clustering",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "extra_analyses": [
+          "clustering"
+        ],
+        "steps": [
+          {
+            "step_type": "clustering",
+            "method": "Consensus clustering of samples with ConsensusClusterPlus (hierarchical clustering, 1-Pearson correlation distance, average linkage, 1000 resamples, 80% item subsample) on top 2000 most-variable genes after blind VST",
+            "package": "ConsensusClusterPlus",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 2000
+              },
+              {
+                "name": "resampling_reps",
+                "value": 1000
+              },
+              {
+                "name": "item_subsample_share",
+                "value": 0.8
+              },
+              {
+                "name": "k_range",
+                "value": "2-8"
+              },
+              {
+                "name": "k_criterion",
+                "value": "consensus_cdf_delta_area_and_pac"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood case/control cohort: subgroup discovery beyond diagnosis",
+          "analytical_narrative": "The 120-sample whole-blood cohort (60 case, 60 control, single batch, raw Salmon gene counts, 12000 genes) is asked whether it holds sample subgroups beyond the case/control label. The plan follows the grounded bulk-RNA-seq clustering procedure: (1) sample-structure QC with a blind variance-stabilizing transform, PCA and a Euclidean sample-distance heatmap to see the gross structure and flag outliers or a technical driver of variance before any clustering; (2) a minimal filterByExpr low-count filter so genes with no real signal do not dilute variance-based gene selection; (3) consensus clustering of the samples with ConsensusClusterPlus on the top 2000 most-variable genes after the blind VST, using hierarchical clustering with 1-minus-Pearson-correlation distance and average linkage, 1000 resamples at 80% item subsampling, screening k=2..8, with k chosen from the consensus CDF delta-area and confirmed by the proportion of ambiguous clustering (PAC) - not from the embedding alone; (4) a PCA/UMAP visualization step that is explicitly descriptive only (no cluster claims from the embedding itself, per the grounded rule that UMAP/t-SNE give a picture, not a distance or cluster claim); (5) a confounding check that cross-tabulates the chosen clusters against case/control status, library size, and any other metadata columns available, because whole blood is highly sensitive to cell-composition shifts and a 'subgroup' that is actually a proportion of granulocytes/lymphocytes is a different finding than a disease subtype; (6) an MCP-counter immune/stromal deconvolution on the same samples (log2-CPM input) so that a discovered cluster structure can be checked against cell-composition and reported honestly as either a distinct molecular subgroup or a restatement of blood cell composition; (7) a consolidated report stating the input transform, gene count, distance/linkage, resampling parameters, the k evidence (CDF/delta-area/PAC), each sample's cluster with its item consensus, cluster consensus, the confounder cross-tabs, and the explicit caution that consensus clustering finds apparent structure even in unstructured data, so any subgroup found here is a hypothesis pending independent or external validation.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC (blind VST, PCA, sample-distance heatmap)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Before any clustering, does whole-blood sample structure in the 120 samples (case vs control, single batch) show gross outliers, a technical driver of variance, or the case/control split as the dominant axis, when viewed by blind VST + PCA and Euclidean sample-distance heatmap?",
+              "acceptance_criteria": [
+                "DESeq2 variance-stabilizing transformation is computed blind to condition on the raw count matrix (12000 genes x 120 samples)",
+                "PCA computed on the 500 highest-variance genes, PC1/PC2 plot colored by case/control status and by library size",
+                "Euclidean sample-distance heatmap produced and colored by case/control status",
+                "Any sample flagged as a distance/PCA outlier is listed explicitly with its ID"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: /eval-eight-arms-with-clustering-n60-1/data/inputs/counts/counts.csv (12000 genes x 121 columns incl. gene symbol; 120 samples) and metadata.csv (120 samples, condition column). Single batch, unpaired, 60/60 design.",
+              "constraints": [
+                "n_top_genes = 500 for PCA",
+                "transform = vst(blind=TRUE)"
+              ],
+              "caveats": [
+                "This step is descriptive QC only; do not draw cluster conclusions from PCA position alone."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances per R-0033@40bf"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count filtering (filterByExpr)",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "Which of the 12000 genes in the whole-blood count matrix carry enough signal (filterByExpr, min 10 counts in at least 60 samples) to be retained for variance-based clustering and downstream analysis?",
+              "acceptance_criteria": [
+                "edgeR::filterByExpr applied with group = case/control and min.count=10, min samples = smallest group size (60)",
+                "Number of genes retained and removed reported explicitly",
+                "Filtered count matrix persisted for downstream clustering and deconvolution steps"
+              ],
+              "packages": [
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same 12000 x 120 raw Salmon gene-count matrix used in T1S1.",
+              "constraints": [
+                "min_count = 10",
+                "min_samples = smallest_group_size (60)",
+                "filter = filterByExpr",
+                "filter_policy = minimal_then_independent"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0058@99e1",
+                  "R-0002@087b"
+                ],
+                "template": "tpl-edger-ql@1.0.0",
+                "reason": "filterByExpr low count filter (edgeR) per R-0029@fa6d"
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Consensus clustering of the 120 samples",
+              "track": "T3",
+              "step_type": "clustering",
+              "question": "Beyond the known 60 case / 60 control split, do the 120 whole-blood samples fall into a stable number (k) of consensus-clustering subgroups, and how robust is that k, based on the consensus CDF delta-area and the proportion of ambiguous clustering (PAC)?",
+              "acceptance_criteria": [
+                "Blind VST applied to the filtered count matrix; top 2000 most-variable genes selected and gene-wise centered",
+                "ConsensusClusterPlus run with hierarchical clustering, 1-minus-Pearson-correlation distance, average linkage, reps=1000, pItem=0.8, pFeature=1, over k=2 to k=8",
+                "Consensus CDF, relative change in area under the CDF, and PAC computed and reported for each candidate k",
+                "Final k selected by the CDF delta-area and confirmed by the PAC, with the choice stated explicitly and not left to visual inspection alone",
+                "Per-sample cluster assignment and item-consensus value reported; per-cluster cluster-consensus value reported",
+                "Report explicitly states that consensus clustering can find apparent structure in unstructured data, so the result is a hypothesis pending confirmation"
+              ],
+              "packages": [
+                "ConsensusClusterPlus",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Whole-blood cohort, 120 samples (60 case/60 control), single batch, raw Salmon gene counts filtered in T1S2. No known additional covariates beyond condition are present in metadata.csv (120 x 2: sample, condition), so the confounder cross-tab in T3S2 will be limited to condition and library size unless further columns are found in the file at run time.",
+              "constraints": [
+                "input_transform = vst_then_top_variable_genes_centered",
+                "n_top_genes = 2000",
+                "distance_and_linkage = 1-minus-Pearson correlation distance, average linkage",
+                "resampling_reps = 1000",
+                "item_subsample_share = 0.8",
+                "k_criterion = consensus_cdf_delta_area_and_pac"
+              ],
+              "caveats": [
+                "A cluster found here is a hypothesis, not a validated subtype, until checked against an external cohort or an independent variable.",
+                "Do not rely on the delta-area alone; confirm with PAC, since delta-area alone can suggest structure in data without real clusters."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0141@ac9d",
+                  "R-0142@c982"
+                ],
+                "template": "tpl-consensus-clustering@1.0.0",
+                "reason": "Consensus clustering of samples with ConsensusClusterPlus per R-0141@ac9d, R-0142@c982; knowledge_check confirmed no violation for this method/parameter set"
+              }
+            },
+            {
+              "id": "T3S2",
+              "name": "Descriptive PCA/UMAP embedding and cluster-vs-confounder cross-tabulation",
+              "track": "T3",
+              "step_type": "clustering",
+              "question": "Do the consensus clusters found in T3S1 correspond to a visually separable structure in a PCA/UMAP embedding, and do they align with, or are they confounded by, the known case/control label and library size (the only sample-level covariates available)?",
+              "acceptance_criteria": [
+                "PCA plot (PC1 vs PC2) and a UMAP embedding of the samples on the same top-variable-gene matrix used for clustering, colored by the T3S1 cluster assignment and separately by case/control status",
+                "Explicit statement that the embedding is a picture only, not evidence of a cluster or of a distance, per the grounded caution",
+                "Cross-tabulation (contingency table + chi-square or Fisher test as descriptive context only, not as a cluster validity test) of T3S1 cluster assignment against case/control label and against library size (binned)",
+                "Any additional metadata columns present in metadata.csv beyond condition are included in the cross-tab; if none exist, this is stated explicitly"
+              ],
+              "packages": [
+                "umap-learn",
+                "scikit-learn"
+              ],
+              "depends_on": [
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Uses the cluster assignments and top-variable-gene matrix produced in T3S1, and the 120 x 2 metadata.csv (sample, condition).",
+              "constraints": [
+                "embedding_use = picture_only_no_cluster_or_distance_claim"
+              ],
+              "caveats": [
+                "UMAP and PCA plots must not be used to assert a cluster count or an inter-sample distance; that claim rests only on the ConsensusClusterPlus output of T3S1."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0145@3579",
+                  "R-0142@c982"
+                ],
+                "reason": "UMAP/PCA as picture only per R-0145@3579; confounder cross-tab per R-0142@c982"
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "MCP-counter immune/stromal composition scoring",
+              "track": "T4",
+              "step_type": "deconvolution",
+              "question": "Do the whole-blood immune and stromal population abundance scores (MCP-counter) differ between the consensus clusters found in T3S1, i.e. is any discovered subgroup structure explained by shifts in blood cell composition rather than a distinct disease-intrinsic signature?",
+              "acceptance_criteria": [
+                "Filtered raw counts (from T1S2) converted to log2 CPM (linear-scale CPM computed first, then log2, as MCP-counter's own definition requires log-scale input)",
+                "MCP-counter scores computed for all 8 immune + 2 stromal populations per sample",
+                "Each population's score compared across the T3S1 consensus clusters (not across populations within a sample) using a non-parametric test (Kruskal-Wallis) since population scores are not normally comparable in scale",
+                "Report states the transform of the input and that MCP-counter scores are comparable across samples within one population only, never across populations",
+                "Report explicitly states whether the discovered clusters plausibly reflect composition shifts (e.g., neutrophil/lymphocyte score differences) versus a composition-independent signature"
+              ],
+              "packages": [
+                "MCPcounter"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "context": "Whole blood is dominated by circulating immune cells, so any sample subgroup found by expression clustering is a strong candidate to reflect cell-composition differences (e.g., neutrophil-to-lymphocyte ratio) rather than a cell-intrinsic transcriptional subtype. This step tests that alternative explanation directly against the T3S1 cluster assignment.",
+              "constraints": [
+                "deconvolution_input = linear_tpm_or_cpm_then_log2_for_mcpcounter",
+                "score_comparison = across_samples_within_population"
+              ],
+              "caveats": [
+                "MCP-counter scores are relative abundance scores, not cell fractions; do not interpret them as proportions.",
+                "Composition estimates are covariates/context here, not a replacement for the clustering result."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0125@2548",
+                  "R-0129@2909",
+                  "R-0132@246d"
+                ],
+                "template": "tpl-immunedeconv@1.0.0",
+                "reason": "MCP-counter abundance scores per R-0125@2548, used here as a covariate check on the cluster result per R-0132@246d"
+              }
+            },
+            {
+              "id": "T5S1",
+              "name": "Consolidated subgroup-discovery report",
+              "track": "T5",
+              "step_type": "report",
+              "question": "What is the final answer to whether the 120 whole-blood samples fall into subgroups beyond case/control, how many subgroups, how stable they are (item/cluster consensus, PAC), and whether they are confounded by case/control status, library size, or blood cell composition?",
+              "acceptance_criteria": [
+                "Report states: input matrix and transform, number of genes kept at filtering and at clustering, distance and linkage, number of resamples and item-subsample share",
+                "Report states the k evidence: consensus CDF plot description, delta-area values across k, and PAC values across k, and the chosen k with justification",
+                "Report lists each sample's cluster assignment with its item consensus, and each cluster's cluster consensus value",
+                "Report cross-tabulates the clusters against case/control label, library size, and MCP-counter composition scores from T4S1",
+                "Report explicitly states the caution that consensus clustering finds structure even in unstructured (null) data, so the cluster(s) found are a hypothesis, not a validated subtype, absent external validation",
+                "Reproducibility record included: package versions (DESeq2, edgeR, ConsensusClusterPlus, MCPcounter), random seed used for resampling, and any reference/collection versions used"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T3S1",
+                "T3S2",
+                "T4S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Synthesizes T1S1, T1S2, T3S1, T3S2, and T4S1 into one decision-ready answer to the research question of subgroup existence, count, and stability.",
+              "constraints": [],
+              "caveats": [
+                "Do not overstate a cluster found only by consensus clustering on a single cohort as a validated disease subtype; state it as a hypothesis."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0152@7a42"
+                ],
+                "reason": "Reproducibility record and clustering report content per R-0086@becf and R-0152@7a42"
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

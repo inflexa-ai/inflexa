@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the log2(TPM+1) values as non-count data, rejects DESeq2/edgeR/voom and pseudo-count back-conversion explicitly, and fits limma-trend with eBayes(trend=TRUE, robust=TRUE) on the values as delivered with no re-normalization or second log. The value-range check precedes QC, the PCA/distance heatmap and detected-gene counts are done on the log values with an explicit flag-not-drop outlier policy and a sensitivity refit, and the low-expression filter is label-blind with a stated floor and retained-gene count. The design ~condition with an explicit relevel to control, BH at 0.05 via topTable, and a separately labelled TREAT lfc=1 fit are all stated; the report names the transform, versions, sessionInfo, tested/significant counts, power and logFC-compression caveats, and enrichment is correctly omitted. Minor deductions only for the filter floor being left to be chosen at run time rather than specified, and for lacking a stated batch coloring (moot in a single-batch design)."
+}

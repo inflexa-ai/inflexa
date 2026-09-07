@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every point: DESeq2 Wald on raw counts with an edgeR QL cross-check fits the unpaired 6-vs-6 single-batch design, and the QC step keeps sample_01, positions it on the blind-VST PCA and distance heatmap, tabulates its library size against the median, and requires a stated non-depth reason for any drop. The filter (>=10 counts in >=6 samples) is minimal and tied to the smallest group; normalization is median-of-ratios/TMM inside the models with explicit no-prescaling constraints; the design ~condition, chow relevelled as reference, the named contrast and sign convention are all written out; BH at alpha 0.05 passed to results() with apeglm shrinkage on the coefficient and padj-only selection is specified. Enrichment uses fgsea preranked on the full tested list ranked by the stated Wald statistic against the mouse MSigDB hallmark collection (release stated, mouse symbols, no human collection or case-folding), with the universe intersected before the 15-500 window, seed recorded, and unmatched-symbol share reported. The report step names methods, versions, design, thresholds, tested/significant counts, the sample_01 decision with its power consequence, and the no-length-offset caveat."
+}

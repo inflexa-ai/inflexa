@@ -1,0 +1,831 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "two-timepoints-n3",
+  "run": 1,
+  "startedAt": "2026-09-06T14:55:55.541Z",
+  "elapsedMs": 118862,
+  "outcome": "plan_submitted",
+  "planId": "pln-ea861933",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (blind VST, PCA, distances)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Strandedness cannot be verified from a gene-level count matrix alone (RSeQC-style inference needs aligned reads, which are not part of this dataset) — state as an unresolved caveat rather than silently assuming correctness of the Salmon quantification"
+        ],
+        "context": "Input is /data/inputs/counts/counts.csv (12000 genes x 12 samples, raw integer Salmon gene-level counts) and /data/inputs/metadata/metadata.csv (12 samples x condition, time, time_hours). Single batch, 2x2 factorial, n=3 per cell.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 12 samples (2 conditions x 2 time points x 3 replicates) separate by condition and by time on a blind-VST PCA, and is any sample an outlier or driven by a confound, before fitting the interaction model?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0079@6f8a"
+          ],
+          "reason": "Sample structure QC per R-0033@40bf; strandedness caveat per R-0079@6f8a noted as unverifiable from counts alone",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use vst(..., blind=TRUE) for QC only, never for the differential test itself",
+          "Do not filter or drop a sample based on this QC without flagging it explicitly in the report; the interaction test needs full n=3 per cell"
+        ],
+        "acceptance_criteria": [
+          "PCA plot (PC1 vs PC2) colored by condition and by time, computed on vst(dds, blind=TRUE) with the top 500 variable genes",
+          "Sample-to-sample Euclidean distance heatmap on the same VST matrix",
+          "Library size (total counts) bar plot per sample from the raw counts.csv",
+          "Any sample flagged as an outlier (failing to cluster with its condition x time group) is named and reported, not silently dropped",
+          "Strandedness of the Salmon quantification is stated as unknown/unverified in the report since it cannot be inferred post hoc from a gene count matrix alone"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 interaction model: condition x time",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 3 replicates per cell, the interaction term standard error is larger than a main-effect SE at the same n; keep alpha at 0.05 default rather than loosening it to compensate for low power",
+          "This is a cell-line, single-batch design — no batch correction needed, but the QC step should confirm no unmodeled structure mimics a batch"
+        ],
+        "context": "2x2 design (condition x time), 3 replicates per cell, single batch, raw Salmon gene counts already at gene level (12000 genes x 12 samples). No tximport transcript-to-gene offsets available since only a gene-level counts.csv was provided (no quant.sf/abundance.h5 staged) — DESeq2 runs on raw counts via DESeqDataSetFromMatrix, median-of-ratios normalization internal to the model.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Fit DESeq2 with design ~condition*time on the 12000x12 raw count matrix (reference levels: condition=control/untreated as named in metadata.csv, time=t0), pre-filter genes to >=10 counts in at least 3 samples (smallest group size), test the condition:time interaction coefficient (Wald test) as the primary answer to whether the treatment effect differs between t0 and t1, and additionally extract the two simple effects (treatment vs control at t0; treatment vs control at t1) via named contrasts.",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0060@0ff9",
+            "R-0036@9786",
+            "R-0013@2639",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0063@6190",
+            "R-0017@8a47",
+            "R-0162@ed74"
+          ],
+          "reason": "Interaction design with 2x2 factors, n=3/cell: DESeq2 Wald interaction test per R-0013@2639, with power caveats per R-0063@6190 and R-0017@8a47; tximport rule R-0018 not applicable since only gene-level counts were staged (no transcript quant files) — noted as a deviation",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-interaction@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not pre-normalize or scale counts before DESeqDataSetFromMatrix — normalization is internal (median-of-ratios)",
+          "Keep DESeq2 default outlier replacement/NA behavior (Cook's distance flagging is automatic for <7 replicates per cell)",
+          "Test the interaction coefficient with the Wald test (2-level factors both sides), not LRT, since both condition and time are 2-level"
+        ],
+        "acceptance_criteria": [
+          "Reference levels of condition and time factors set explicitly (via relevel or factor level ordering) and reported, not left to alphabetical default",
+          "Design formula ~condition + time + condition:time fit with DESeq()",
+          "Interaction coefficient (condition:time) results table extracted via results(dds, name=<interaction_coef>)",
+          "Simple effect at reference time level and simple effect at other time level extracted as named contrasts (list contrasts or main effect + main+interaction combination)",
+          "Pre-filter keeps genes with >=10 counts in at least 3 samples (smallest cell size)",
+          "MA plot and dispersion plot produced as fit diagnostics",
+          "Count outliers (Cook's distance) flagged and their NA p-values reported separately from independent-filtering NAs",
+          "Report explicitly states that with n=3 per cell the interaction test has low power (difference-of-differences with inflated SE) and that a gene absent from the interaction hit list is not evidence the effect is equal across time points"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "LFC shrinkage (ashr) for interaction and simple effects",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Three contrasts (interaction, simple effect at t0, simple effect at t1) each need shrinkage; ashr is required because these are contrasts of coefficients, not single model coefficients that apeglm demands.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ashr"
+        ],
+        "question": "Shrink the log2 fold changes of the interaction contrast and the two simple-effect contrasts with ashr (contrasts, not single coefficients, so apeglm does not apply), for reporting and ranking.",
+        "grounding": {
+          "claims": [
+            "R-0040@8061",
+            "R-0009@f54e"
+          ],
+          "reason": "Contrast-based shrinkage requires ashr per R-0040@8061",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "shrink_lfc",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use lfcShrink(type='ashr') for each contrast",
+          "Rank genes and draw MA-style plots using the shrunken value, never the unshrunken estimate alone"
+        ],
+        "acceptance_criteria": [
+          "ashr-shrunken log2FoldChange produced for the interaction contrast and each of the two simple-effect contrasts",
+          "Unshrunken log2FoldChange, shrunken log2FoldChange, and lfcSE all retained in each results table",
+          "p-values and adjusted p-values unchanged by shrinkage (taken from the unshrunken Wald test)"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Multiple testing and DE gene tables per contrast",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Given n=3 per cell and the noted power limitation, expect the interaction contrast to yield fewer or zero significant genes at padj<0.05 even if some genes show a true differential timing effect; report this as a power limitation, not as evidence of no interaction"
+        ],
+        "context": "Three parallel contrast tables from T1S2/T1S3 need independent FDR control and diagnostic review before downstream enrichment.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Apply BH-FDR at alpha=0.05 with independent filtering separately within each of the three contrasts (interaction, simple effect at t0, simple effect at t1), and report the significant gene count and p-value histogram for each.",
+        "grounding": {
+          "claims": [
+            "R-0061@bcab",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "Per-contrast BH-FDR per R-0061@bcab, p-value histogram diagnostic per R-0083@12de",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "multiple_testing",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Independent filtering (DESeq2 default) stays on",
+          "Do not filter the pre-model gene set further based on this step's results"
+        ],
+        "acceptance_criteria": [
+          "BH adjustment applied within each contrast separately (not pooled across contrasts)",
+          "alpha=0.05 passed consistently to results() and used as the reporting cutoff",
+          "p-value histogram plotted and inspected for each contrast before trusting the adjusted p-values; irregular shapes (hill or right-skew) flagged",
+          "Significant gene count (padj<0.05) reported per contrast with the contrast name attached to every gene list",
+          "Selection is by adjusted p-value only, never by unadjusted p-value or fold change alone"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "fgsea preranked GSEA per contrast (Hallmark + WikiPathways)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are method-dependent; present as hypotheses for follow-up rather than proven findings",
+          "If a contrast yields very few or no significant genes, run fgsea anyway on the full ranked list (this is precisely the situation the ranked method is designed for) but state the small significant-gene count in the report"
+        ],
+        "context": "Ranked lists come from the three DESeq2 contrasts in T1S2-T1S4. Reference gene sets: MSigDB human hallmark GMT (/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt, 50 HALLMARK_* sets, HGNC symbols) and WikiPathways human GMT (/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, '%'-delimited descriptor field to recover pathway names, HGNC symbols) are both confirmed present in the reference store.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table"
+        ],
+        "question": "For each of the three contrasts (interaction, simple effect at t0, simple effect at t1), rank all tested genes by the DESeq2 Wald statistic and run fgsea preranked GSEA against MSigDB Hallmark (50 human sets) and WikiPathways human pathways, reporting each contrast and each collection separately.",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0104@34a4",
+            "R-0108@409f",
+            "R-0045@f652",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77",
+            "R-0103@93aa"
+          ],
+          "reason": "Preranked fgsea per contrast on the Wald statistic against Hallmark then WikiPathways (both confirmed staged), per R-0098@d01b/R-0165@e456; second collection substituted to WikiPathways since Reactome/WikiPathways are the named follow-up collections and WikiPathways is the smaller staged human GMT",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S4"
+        ],
+        "constraints": [
+          "Rank metric = DESeq2 Wald statistic ('stat' column), stated explicitly as the chosen side of the disputed ranking-metric question",
+          "Do not run over-representation analysis on any contrast with fewer than ~50 significant genes (expected for the interaction contrast given the power caveat) — use the ranked method only",
+          "Gene symbols matched directly against GMT gene symbols; report the unmapped gene share"
+        ],
+        "acceptance_criteria": [
+          "Full ranked list of tested genes (ranked by 'stat' column) used as input for each contrast, no pre-filtering by significance",
+          "Gene set size window 15-500 applied after intersecting with tested genes, for both collections",
+          "fgsea run once per contrast x collection combination (3 contrasts x 2 collections = 6 runs), each reported separately, never pooled",
+          "BH-adjusted enrichment p-values reported per collection per contrast",
+          "Redundant/overlapping significant gene sets collapsed to representative sets, full table kept as supplement",
+          "Leading-edge genes listed for each significant gene set",
+          "MSigDB Hallmark release (2026.1) and WikiPathways release (2026.07.10) stated in the report"
+        ]
+      },
+      {
+        "id": "T1S5",
+        "name": "Consolidated report: interaction, simple effects, enrichment, power caveats",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A single-cell-line, single-batch, n=3/cell design with an interaction question is underpowered by design; the report must not overstate confidence in either a positive or a null interaction finding"
+        ],
+        "context": "Synthesizes T1S1-T1S4 (QC, interaction model, shrinkage, FDR) and T2S1 (enrichment) into the final answer to the stated research question.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "fgsea"
+        ],
+        "question": "Assemble one report answering whether the treatment effect differs between t0 and t1: the interaction contrast result, the two simple effects side by side, fit diagnostics, per-contrast enrichment, and full reproducibility record with an explicit statement of the power limitation at n=3 replicates per cell for the interaction term.",
+        "grounding": {
+          "claims": [
+            "R-0092@bb58",
+            "R-0094@6849",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report step: no single rule matches step_type=report as a method, but claims R-0092/R-0094 (interaction reporting, power statement) directly ground the report content",
+          "status": "ungrounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S4",
+          "T2S1"
+        ],
+        "constraints": [
+          "Present the interaction contrast as the primary answer to 'does the treatment effect differ between time points', with the two simple effects as the supporting decomposition",
+          "Do not loosen the padj threshold to compensate for low power; state the limitation in prose instead"
+        ],
+        "acceptance_criteria": [
+          "Report states design formula, reference levels of condition and time, and the exact name/direction of all three contrasts (interaction; treatment vs control at t0; treatment vs control at t1)",
+          "Report gives, per contrast: number of genes tested after filtering, number of DE genes at padj<0.05, MA plot, dispersion plot, p-value histogram",
+          "Report gives shrunken and unshrunken log2FC with lfcSE for top genes of each contrast",
+          "Report states explicitly, before the gene tables: with 3 replicates per cell, both the simple effects and especially the interaction term have low power; a null interaction result is not evidence that the treatment effect is equal at t0 and t1",
+          "Report gives per-contrast, per-collection (Hallmark, WikiPathways) enrichment tables with leading-edge genes and states the ranking metric, universe, and size window used",
+          "Full reproducibility record included: sessionInfo, package versions (DESeq2, ashr, fgsea), gene set collection versions, no random seed needed beyond fgsea's default (state fgsea call is deterministic or seed used if permutation-based)"
+        ]
+      }
+    ],
+    "title": "Interaction DE: treatment x time in cell-line RNA-seq",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The research question — does the treatment effect differ between t0 and t1 — is an interaction question in a 2x2 design (condition x time) with 3 replicates per cell (12 samples total, single batch). This is answered by DESeq2 with a full factorial design (~condition*time), testing the condition:time interaction coefficient as the primary result, alongside the two simple effects (treatment vs control at t0, and at t1) that decompose the interaction. Data are raw Salmon gene-level counts (12000 genes x 12 samples; the profiled counts.csv is gene-symbol indexed, not tximport transcript-level output, so the model runs directly on the provided integer matrix rather than re-importing from quant.sf, which is not among the staged inputs). With only 3 replicates per cell, statistical power for the interaction term is inherently low (a difference-of-differences with amplified standard error) — the plan surfaces this explicitly rather than loosening thresholds. QC precedes the model (blind VST + PCA + sample-distance heatmap) to confirm the four groups separate and no batch/outlier confounds the 2x2 structure. After DESeq2 fits the interaction model, ashr shrinks the interaction and simple-effect log2FCs (contrasts, not single coefficients, so ashr rather than apeglm), BH-FDR at 0.05 with independent filtering is applied per contrast, and fgsea preranked GSEA (ranking on the Wald statistic) runs separately for the interaction contrast and each simple effect against MSigDB Hallmark (staged, 50 sets) with WikiPathways human (staged) as a second collection. A final report step consolidates the three parallel result tables (interaction + 2 simple effects), the diagnostic plots, the explicit power caveat for n=3/group and for the interaction term specifically, and full reproducibility metadata. No translational/immune/PK-specific steps are added — the research question is a pure differential-expression / interaction question with no compound, biomarker-outcome, safety, or immune-composition angle stated."
+  },
+  "usage": {
+    "inputTokens": 2990883,
+    "outputTokens": 8577,
+    "cacheCreationInputTokens": 218149,
+    "cacheReadInputTokens": 2772422,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 4,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "enrichment_input": "ranked_list",
+        "strandedness": "unknown",
+        "library_type": "unknown"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "tximport",
+          "DESeq2",
+          "ashr",
+          "apeglm",
+          "fgsea",
+          "org.Hs.eg.db",
+          "pheatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb-hallmark-human 2026.1"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "limit": 10
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed/msigdb-hallmark-human/2026.1"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "salmon tx2gene transcript gene mapping GENCODE human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gencode"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "CollecTRI"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "progeny"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR",
+          "decoupler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR"
+        ],
+        "language": "r"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "decoupleR"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "tximport"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "variancePartition"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "Rsubread"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "clusterProfiler"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "RSeQC"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "edgeR"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "apeglm"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "Rfast2"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "ComplexHeatmap"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "HGNC gene identifier mapping symbol entrez"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Interaction DE: treatment x time in cell-line RNA-seq",
+          "analytical_narrative": "The research question — does the treatment effect differ between t0 and t1 — is an interaction question in a 2x2 design (condition x time) with 3 replicates per cell (12 samples total, single batch). This is answered by DESeq2 with a full factorial design (~condition*time), testing the condition:time interaction coefficient as the primary result, alongside the two simple effects (treatment vs control at t0, and at t1) that decompose the interaction. Data are raw Salmon gene-level counts (12000 genes x 12 samples; the profiled counts.csv is gene-symbol indexed, not tximport transcript-level output, so the model runs directly on the provided integer matrix rather than re-importing from quant.sf, which is not among the staged inputs). With only 3 replicates per cell, statistical power for the interaction term is inherently low (a difference-of-differences with amplified standard error) — the plan surfaces this explicitly rather than loosening thresholds. QC precedes the model (blind VST + PCA + sample-distance heatmap) to confirm the four groups separate and no batch/outlier confounds the 2x2 structure. After DESeq2 fits the interaction model, ashr shrinks the interaction and simple-effect log2FCs (contrasts, not single coefficients, so ashr rather than apeglm), BH-FDR at 0.05 with independent filtering is applied per contrast, and fgsea preranked GSEA (ranking on the Wald statistic) runs separately for the interaction contrast and each simple effect against MSigDB Hallmark (staged, 50 sets) with WikiPathways human (staged) as a second collection. A final report step consolidates the three parallel result tables (interaction + 2 simple effects), the diagnostic plots, the explicit power caveat for n=3/group and for the interaction term specifically, and full reproducibility metadata. No translational/immune/PK-specific steps are added — the research question is a pure differential-expression / interaction question with no compound, biomarker-outcome, safety, or immune-composition angle stated.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC (blind VST, PCA, distances)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 12 samples (2 conditions x 2 time points x 3 replicates) separate by condition and by time on a blind-VST PCA, and is any sample an outlier or driven by a confound, before fitting the interaction model?",
+              "acceptance_criteria": [
+                "PCA plot (PC1 vs PC2) colored by condition and by time, computed on vst(dds, blind=TRUE) with the top 500 variable genes",
+                "Sample-to-sample Euclidean distance heatmap on the same VST matrix",
+                "Library size (total counts) bar plot per sample from the raw counts.csv",
+                "Any sample flagged as an outlier (failing to cluster with its condition x time group) is named and reported, not silently dropped",
+                "Strandedness of the Salmon quantification is stated as unknown/unverified in the report since it cannot be inferred post hoc from a gene count matrix alone"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input is /data/inputs/counts/counts.csv (12000 genes x 12 samples, raw integer Salmon gene-level counts) and /data/inputs/metadata/metadata.csv (12 samples x condition, time, time_hours). Single batch, 2x2 factorial, n=3 per cell.",
+              "constraints": [
+                "Use vst(..., blind=TRUE) for QC only, never for the differential test itself",
+                "Do not filter or drop a sample based on this QC without flagging it explicitly in the report; the interaction test needs full n=3 per cell"
+              ],
+              "caveats": [
+                "Strandedness cannot be verified from a gene-level count matrix alone (RSeQC-style inference needs aligned reads, which are not part of this dataset) — state as an unresolved caveat rather than silently assuming correctness of the Salmon quantification"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0079@6f8a"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC per R-0033@40bf; strandedness caveat per R-0079@6f8a noted as unverifiable from counts alone"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 interaction model: condition x time",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Fit DESeq2 with design ~condition*time on the 12000x12 raw count matrix (reference levels: condition=control/untreated as named in metadata.csv, time=t0), pre-filter genes to >=10 counts in at least 3 samples (smallest group size), test the condition:time interaction coefficient (Wald test) as the primary answer to whether the treatment effect differs between t0 and t1, and additionally extract the two simple effects (treatment vs control at t0; treatment vs control at t1) via named contrasts.",
+              "acceptance_criteria": [
+                "Reference levels of condition and time factors set explicitly (via relevel or factor level ordering) and reported, not left to alphabetical default",
+                "Design formula ~condition + time + condition:time fit with DESeq()",
+                "Interaction coefficient (condition:time) results table extracted via results(dds, name=<interaction_coef>)",
+                "Simple effect at reference time level and simple effect at other time level extracted as named contrasts (list contrasts or main effect + main+interaction combination)",
+                "Pre-filter keeps genes with >=10 counts in at least 3 samples (smallest cell size)",
+                "MA plot and dispersion plot produced as fit diagnostics",
+                "Count outliers (Cook's distance) flagged and their NA p-values reported separately from independent-filtering NAs",
+                "Report explicitly states that with n=3 per cell the interaction test has low power (difference-of-differences with inflated SE) and that a gene absent from the interaction hit list is not evidence the effect is equal across time points"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "2x2 design (condition x time), 3 replicates per cell, single batch, raw Salmon gene counts already at gene level (12000 genes x 12 samples). No tximport transcript-to-gene offsets available since only a gene-level counts.csv was provided (no quant.sf/abundance.h5 staged) — DESeq2 runs on raw counts via DESeqDataSetFromMatrix, median-of-ratios normalization internal to the model.",
+              "constraints": [
+                "Do not pre-normalize or scale counts before DESeqDataSetFromMatrix — normalization is internal (median-of-ratios)",
+                "Keep DESeq2 default outlier replacement/NA behavior (Cook's distance flagging is automatic for <7 replicates per cell)",
+                "Test the interaction coefficient with the Wald test (2-level factors both sides), not LRT, since both condition and time are 2-level"
+              ],
+              "caveats": [
+                "With 3 replicates per cell, the interaction term standard error is larger than a main-effect SE at the same n; keep alpha at 0.05 default rather than loosening it to compensate for low power",
+                "This is a cell-line, single-batch design — no batch correction needed, but the QC step should confirm no unmodeled structure mimics a batch"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0060@0ff9",
+                  "R-0036@9786",
+                  "R-0013@2639",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0063@6190",
+                  "R-0017@8a47",
+                  "R-0162@ed74"
+                ],
+                "template": "tpl-deseq2-interaction@1.0.0",
+                "reason": "Interaction design with 2x2 factors, n=3/cell: DESeq2 Wald interaction test per R-0013@2639, with power caveats per R-0063@6190 and R-0017@8a47; tximport rule R-0018 not applicable since only gene-level counts were staged (no transcript quant files) — noted as a deviation"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "LFC shrinkage (ashr) for interaction and simple effects",
+              "track": "T1",
+              "step_type": "shrink_lfc",
+              "question": "Shrink the log2 fold changes of the interaction contrast and the two simple-effect contrasts with ashr (contrasts, not single coefficients, so apeglm does not apply), for reporting and ranking.",
+              "acceptance_criteria": [
+                "ashr-shrunken log2FoldChange produced for the interaction contrast and each of the two simple-effect contrasts",
+                "Unshrunken log2FoldChange, shrunken log2FoldChange, and lfcSE all retained in each results table",
+                "p-values and adjusted p-values unchanged by shrinkage (taken from the unshrunken Wald test)"
+              ],
+              "packages": [
+                "DESeq2",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Three contrasts (interaction, simple effect at t0, simple effect at t1) each need shrinkage; ashr is required because these are contrasts of coefficients, not single model coefficients that apeglm demands.",
+              "constraints": [
+                "Use lfcShrink(type='ashr') for each contrast",
+                "Rank genes and draw MA-style plots using the shrunken value, never the unshrunken estimate alone"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0040@8061",
+                  "R-0009@f54e"
+                ],
+                "reason": "Contrast-based shrinkage requires ashr per R-0040@8061"
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Multiple testing and DE gene tables per contrast",
+              "track": "T1",
+              "step_type": "multiple_testing",
+              "question": "Apply BH-FDR at alpha=0.05 with independent filtering separately within each of the three contrasts (interaction, simple effect at t0, simple effect at t1), and report the significant gene count and p-value histogram for each.",
+              "acceptance_criteria": [
+                "BH adjustment applied within each contrast separately (not pooled across contrasts)",
+                "alpha=0.05 passed consistently to results() and used as the reporting cutoff",
+                "p-value histogram plotted and inspected for each contrast before trusting the adjusted p-values; irregular shapes (hill or right-skew) flagged",
+                "Significant gene count (padj<0.05) reported per contrast with the contrast name attached to every gene list",
+                "Selection is by adjusted p-value only, never by unadjusted p-value or fold change alone"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Three parallel contrast tables from T1S2/T1S3 need independent FDR control and diagnostic review before downstream enrichment.",
+              "constraints": [
+                "Independent filtering (DESeq2 default) stays on",
+                "Do not filter the pre-model gene set further based on this step's results"
+              ],
+              "caveats": [
+                "Given n=3 per cell and the noted power limitation, expect the interaction contrast to yield fewer or zero significant genes at padj<0.05 even if some genes show a true differential timing effect; report this as a power limitation, not as evidence of no interaction"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0061@bcab",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "reason": "Per-contrast BH-FDR per R-0061@bcab, p-value histogram diagnostic per R-0083@12de"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "fgsea preranked GSEA per contrast (Hallmark + WikiPathways)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "For each of the three contrasts (interaction, simple effect at t0, simple effect at t1), rank all tested genes by the DESeq2 Wald statistic and run fgsea preranked GSEA against MSigDB Hallmark (50 human sets) and WikiPathways human pathways, reporting each contrast and each collection separately.",
+              "acceptance_criteria": [
+                "Full ranked list of tested genes (ranked by 'stat' column) used as input for each contrast, no pre-filtering by significance",
+                "Gene set size window 15-500 applied after intersecting with tested genes, for both collections",
+                "fgsea run once per contrast x collection combination (3 contrasts x 2 collections = 6 runs), each reported separately, never pooled",
+                "BH-adjusted enrichment p-values reported per collection per contrast",
+                "Redundant/overlapping significant gene sets collapsed to representative sets, full table kept as supplement",
+                "Leading-edge genes listed for each significant gene set",
+                "MSigDB Hallmark release (2026.1) and WikiPathways release (2026.07.10) stated in the report"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Ranked lists come from the three DESeq2 contrasts in T1S2-T1S4. Reference gene sets: MSigDB human hallmark GMT (/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt, 50 HALLMARK_* sets, HGNC symbols) and WikiPathways human GMT (/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, '%'-delimited descriptor field to recover pathway names, HGNC symbols) are both confirmed present in the reference store.",
+              "constraints": [
+                "Rank metric = DESeq2 Wald statistic ('stat' column), stated explicitly as the chosen side of the disputed ranking-metric question",
+                "Do not run over-representation analysis on any contrast with fewer than ~50 significant genes (expected for the interaction contrast given the power caveat) — use the ranked method only",
+                "Gene symbols matched directly against GMT gene symbols; report the unmapped gene share"
+              ],
+              "caveats": [
+                "Enrichment results are method-dependent; present as hypotheses for follow-up rather than proven findings",
+                "If a contrast yields very few or no significant genes, run fgsea anyway on the full ranked list (this is precisely the situation the ranked method is designed for) but state the small significant-gene count in the report"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0104@34a4",
+                  "R-0108@409f",
+                  "R-0045@f652",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77",
+                  "R-0103@93aa"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "Preranked fgsea per contrast on the Wald statistic against Hallmark then WikiPathways (both confirmed staged), per R-0098@d01b/R-0165@e456; second collection substituted to WikiPathways since Reactome/WikiPathways are the named follow-up collections and WikiPathways is the smaller staged human GMT"
+              }
+            },
+            {
+              "id": "T1S5",
+              "name": "Consolidated report: interaction, simple effects, enrichment, power caveats",
+              "track": "T1",
+              "step_type": "report",
+              "question": "Assemble one report answering whether the treatment effect differs between t0 and t1: the interaction contrast result, the two simple effects side by side, fit diagnostics, per-contrast enrichment, and full reproducibility record with an explicit statement of the power limitation at n=3 replicates per cell for the interaction term.",
+              "acceptance_criteria": [
+                "Report states design formula, reference levels of condition and time, and the exact name/direction of all three contrasts (interaction; treatment vs control at t0; treatment vs control at t1)",
+                "Report gives, per contrast: number of genes tested after filtering, number of DE genes at padj<0.05, MA plot, dispersion plot, p-value histogram",
+                "Report gives shrunken and unshrunken log2FC with lfcSE for top genes of each contrast",
+                "Report states explicitly, before the gene tables: with 3 replicates per cell, both the simple effects and especially the interaction term have low power; a null interaction result is not evidence that the treatment effect is equal at t0 and t1",
+                "Report gives per-contrast, per-collection (Hallmark, WikiPathways) enrichment tables with leading-edge genes and states the ranking metric, universe, and size window used",
+                "Full reproducibility record included: sessionInfo, package versions (DESeq2, ashr, fgsea), gene set collection versions, no random seed needed beyond fgsea's default (state fgsea call is deterministic or seed used if permutation-based)"
+              ],
+              "packages": [
+                "DESeq2",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S4",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Synthesizes T1S1-T1S4 (QC, interaction model, shrinkage, FDR) and T2S1 (enrichment) into the final answer to the stated research question.",
+              "constraints": [
+                "Present the interaction contrast as the primary answer to 'does the treatment effect differ between time points', with the two simple effects as the supporting decomposition",
+                "Do not loosen the padj threshold to compensate for low power; state the limitation in prose instead"
+              ],
+              "caveats": [
+                "A single-cell-line, single-batch, n=3/cell design with an interaction question is underpowered by design; the report must not overstate confidence in either a positive or a null interaction finding"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0092@bb58",
+                  "R-0094@6849",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report step: no single rule matches step_type=report as a method, but claims R-0092/R-0094 (interaction reporting, power statement) directly ground the report content"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

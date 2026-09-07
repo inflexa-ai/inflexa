@@ -1,0 +1,836 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "classifier-n60",
+  "run": 1,
+  "startedAt": "2026-09-06T15:44:43.209Z",
+  "elapsedMs": 130853,
+  "outcome": "plan_submitted",
+  "planId": "pln-21dc1dec",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A condition/technical confound that is invisible in the metadata cannot be ruled out by PCA alone; state this rather than concluding the cohort is clean",
+          "A single batch is asserted by the profile, not verified by the data"
+        ],
+        "context": "Raw integer gene-level counts from Salmon, human whole blood, 60 cases vs 60 controls, single batch, unpaired. No transcript-level files and no length offsets are available, so the gene-level matrix is used as given and that limitation is recorded. This step exists so the later classifier performance can be read against the known sample structure.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "In the 120-sample whole-blood cohort, do cases and controls separate on the main axes of variance, and is any sample an outlier or driven by library depth rather than condition?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Raw counts, 60 vs 60: blind vst, PCA on top 500 variable genes and sample distance heatmap before any model, per R-0033.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the blind variance stabilizing transformation (blind=TRUE); do not use the design in the transformation",
+          "Use exactly the 500 most variable genes for the PCA",
+          "Do not remove any sample at this stage — flag outliers and let the modelling steps decide, stating the decision",
+          "Report library size per sample; do not normalize or scale the counts outside the transformation"
+        ],
+        "description": "Load counts.csv (gene symbol column + 120 sample columns, 12,000 genes) and metadata.csv (120 rows, condition column). Verify sample name concordance between the two files and report any mismatch. Apply the DESeq2 variance stabilizing transformation blind to the design, run PCA on the 500 most variable genes, draw a sample-distance heatmap, and plot library sizes and detected-gene counts per sample. Colour every plot by condition (case/control). Tabulate PC1-PC3 against condition and against library size.",
+        "acceptance_criteria": [
+          "Sample identifiers in counts.csv and metadata.csv are reconciled and any discrepancy is reported explicitly",
+          "PCA plot on the top 500 variable genes after blind VST, coloured by condition, is produced",
+          "Sample-distance heatmap and per-sample library size / detected-gene plots are produced",
+          "A table reports the association of PC1-PC3 with condition and with library size, and names any sample that sits apart from both groups",
+          "The step states whether an unnamed technical axis dominates the variance, since this qualifies all downstream classifier results"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Filter, TMM normalize, build log-CPM feature matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "filterByExpr uses the group factor, so it is mildly label-aware; this is a count-abundance filter and not a supervised selection, but the classifier step must still perform its own selection inside each training fold"
+        ],
+        "context": "60 cases vs 60 controls is a population-scale cohort, so the limma-voom path is used and TMM is the matching normalization. The same filtered/normalised object feeds both the classifier track (T2) and the descriptive differential expression track (T3), so that both operate on an identical feature space.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma"
+        ],
+        "question": "Which of the 12,000 genes carry enough counts to enter the classifier and the differential test, and what is the TMM-normalised log-CPM matrix for the 120 whole-blood samples?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0058@99e1",
+            "R-0002@087b",
+            "R-0057@31cc",
+            "R-0026@9ab1",
+            "R-0036@9786"
+          ],
+          "reason": "Population-scale cohort on the limma-voom path: filterByExpr before TMM (R-0058, R-0057), minimal pre-filter (R-0029, R-0002), explicit reference level (R-0036).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-edger-ql@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "preprocessing",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: use filterByExpr with group = condition, min.count = 10, min samples = smallest group size (60)",
+          "normalize: TMM scaling factors via calcNormFactors; do not pre-scale or transform counts by any other method",
+          "Set the reference level of the condition factor explicitly to control; do not rely on alphabetical ordering",
+          "This filter is applied on all 120 samples and is unsupervised (count-based only) — it must not use the condition labels beyond the group argument of filterByExpr, and this is stated so the classifier step can account for it"
+        ],
+        "description": "Build an edgeR DGEList from counts.csv with condition as the group factor (reference level: control). Apply filterByExpr with group = condition, then compute TMM scaling factors, then produce a log-CPM matrix (prior.count 2 or the stated equivalent). Persist three artifacts for downstream steps: the filtered raw count matrix, the DGEList with TMM factors, and the log-CPM matrix, plus the sample-by-condition table. Report the number of genes before and after filtering and the distribution of the TMM factors.",
+        "acceptance_criteria": [
+          "Number of genes retained by filterByExpr is reported alongside the 12,000 input genes",
+          "TMM scaling factors are computed and their range reported; no sample has an extreme factor left unremarked",
+          "A log-CPM matrix (genes x 120 samples) and the filtered DGEList are written to disk for downstream steps",
+          "The condition factor has control set explicitly as the reference level, and this is stated in the output"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Penalized logistic classifier with nested cross-validation",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With 60 per class the AUC confidence interval will be wide; report the interval, not the point estimate alone",
+          "The selected gene set will be unstable across folds — report the instability rather than presenting one fold's genes as a signature",
+          "The cohort is 50/50 by design; accuracy and PPV do not transfer to a population with different case prevalence, and the report must say so",
+          "Whole blood composition (neutrophil/lymphocyte shifts) can carry the entire signal; a high AUC does not imply a disease-specific transcriptional program"
+        ],
+        "context": "This is the step that answers the research question. n=120 with ~thousands of features after filtering: the discriminative signal, if any, is easy to overfit, and any performance number estimated on samples the model has seen is meaningless. A feature list from a supervised contrast on these same samples is already a feature selection; it therefore cannot be reused as a fixed input here without making the estimate optimistic.",
+        "maxSteps": 200,
+        "packages": [
+          "glmnet",
+          "pROC",
+          "limma",
+          "edgeR",
+          "ggplot2"
+        ],
+        "question": "How accurately does a penalized logistic regression on whole-blood expression classify a case from a control, and what is the honest out-of-sample AUC with its confidence interval?",
+        "grounding": {
+          "claims": [
+            "R-0155@b81f"
+          ],
+          "reason": "The question is a sample classifier from expression: penalized logistic regression with nested CV, in-fold preprocessing, and ROC AUC with a confidence interval, per R-0155.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "classifier_model: penalized logistic regression (glmnet, family=binomial), elastic net with alpha tuned in the inner loop",
+          "classifier_validation: nested cross-validation — inner loop selects lambda/alpha, outer loop measures performance; never report resubstitution or inner-loop performance",
+          "preprocessing_scope: gene filtering, univariate selection and scaling are fit inside each training fold only",
+          "classifier_performance: report ROC AUC with a confidence interval from the outer-fold predictions (pROC::ci.auc, bootstrap)",
+          "Stratify folds by condition so each fold holds both classes in the 50/50 cohort ratio",
+          "Set and report a fixed random seed; the entire nested CV must be reproducible",
+          "Do not use the T3S1 differential expression list as the classifier input feature set"
+        ],
+        "description": "Fit an elastic-net penalized logistic regression (glmnet, family=binomial) predicting condition (case vs control) from the TMM-normalised log-CPM matrix of T1S2. Use nested cross-validation: an outer loop (repeated stratified 5-fold or 10-fold, several repeats, fixed seed) whose held-out predictions are the ONLY source of reported performance, and an inner loop within each outer training set that selects lambda and alpha. Every preprocessing decision that touches the labels or the sample distribution — variance filtering, univariate gene selection, centering and scaling — must be re-fit inside each outer training fold and applied to the held-out fold. Do NOT pass in a differentially expressed gene list computed on all 120 samples; selection happens inside the folds, from the full filtered feature matrix. Report: pooled outer-fold ROC curve, AUC with a bootstrap 95% confidence interval, precision-recall AUC, accuracy/sensitivity/specificity at the 0.5 threshold and at a threshold chosen inside the training folds, a calibration plot with Brier score, the confusion matrix, and the per-fold list of genes with nonzero coefficients together with a selection-frequency table across folds.",
+        "acceptance_criteria": [
+          "Nested CV is implemented with a documented outer scheme and inner lambda/alpha selection; the random seed is recorded",
+          "All feature selection and scaling are demonstrably fit inside each outer training fold — the script shows this and the report states it",
+          "AUC is reported from pooled outer-fold held-out predictions with a bootstrap 95% CI, alongside PR-AUC, sensitivity, specificity and Brier score",
+          "A calibration plot and a confusion matrix at a stated threshold are produced",
+          "Genes with nonzero coefficients are reported per fold, with a table of how often each gene is selected across folds",
+          "If any preprocessing could not be moved inside the folds, the report explicitly labels the performance estimate as optimistic and quantifies which part is affected"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Permutation null, alternative model family, learning curve",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "100 permutations bounds the empirical p-value at roughly 0.01; state that bound rather than reporting p < 0.001",
+          "A tree ensemble beating glmnet on 120 samples may reflect tuning variance rather than a real nonlinearity"
+        ],
+        "context": "An AUC without a null is not interpretable at this feature-to-sample ratio. The permutation must repeat the whole pipeline, including selection, because that is what is being validated — permuting only at the final fit would understate leakage. The learning curve tells the user whether collecting more samples would raise accuracy or whether the ceiling is biological.",
+        "maxSteps": 200,
+        "packages": [
+          "glmnet",
+          "ranger",
+          "pROC",
+          "xgboost"
+        ],
+        "question": "Is the cross-validated AUC from T2S1 above what the same pipeline yields on randomly permuted case/control labels, does a nonlinear model do better, and does performance still improve with more than 120 samples?",
+        "grounding": {
+          "claims": [],
+          "reason": "No knowledge-service rule covers a permutation null or a learning curve for a classifier; planned from standard practice as the control that makes the T2S1 AUC interpretable.",
+          "status": "ungrounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "The permutation must rerun the ENTIRE nested-CV pipeline per shuffle, including in-fold feature selection and scaling",
+          "Use the identical outer fold structure and seed policy as T2S1 so the comparison is like for like",
+          "Report the null distribution as a figure and as summary statistics, not only as a p-value",
+          "Do not tune the alternative model more aggressively than the linear model; comparable inner-loop budgets"
+        ],
+        "description": "Three controls on the T2S1 estimate, all reusing its exact nested-CV machinery. (1) Permutation null: shuffle the condition labels at least 100 times (seed recorded), rerun the full nested-CV pipeline including in-fold selection on each permutation, and report the null AUC distribution plus an empirical p-value for the observed AUC. (2) Alternative model family: run the same outer CV with a tree ensemble (ranger random forest, or xgboost) and compare AUC; report whether the linear model is adequate. (3) Learning curve: rerun the outer CV on stratified training subsets (e.g. 30, 50, 70, 90 of the training samples) and plot AUC against training size to show whether the estimate is sample-size limited.",
+        "acceptance_criteria": [
+          "Permutation null distribution over at least 100 label shuffles, with the full in-fold pipeline rerun each time; empirical p-value for the observed AUC is reported",
+          "Null AUC distribution is centred near 0.5 — if it is not, the report names this as evidence of leakage in the pipeline and the T2S1 estimate is withdrawn as unreliable",
+          "A second model family (ranger or xgboost) is evaluated under the identical outer CV scheme and its AUC compared",
+          "Learning curve of AUC versus training set size is plotted with fold-level variability shown",
+          "All seeds are recorded"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Descriptive limma-voom contrast for classifier interpretation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "In population-scale cohorts (>=50 per group) negative binomial count models exaggerate false positives even on permuted labels; limma-voom is closer to nominal FDR but can still exceed it, hence the Wilcoxon control — state this caution in the report",
+          "At 60 per group, statistically significant genes may have effects too small to be biologically meaningful; read the effect size, not the p-value rank",
+          "No length offsets are available from the provided gene-level matrix, so isoform-usage-driven calls cannot be excluded"
+        ],
+        "context": "This step is interpretive, not the answer to the research question. It runs after and separately from the classifier so that its gene list can never enter feature selection. At 60 per group the test has power to call effects too small to matter, so effect sizes are reported beside p-values.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "edgeR",
+          "ggplot2"
+        ],
+        "question": "Which genes differ between cases and controls in whole blood, and do the genes the classifier selects most often across folds correspond to them?",
+        "grounding": {
+          "claims": [
+            "R-0015@65aa",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55",
+            "R-0089@69f0",
+            "R-0036@9786"
+          ],
+          "reason": "R-0015 flags that at >=50 per group count models exaggerate false positives: limma-voom with a fixed-effects model is used and the Wilcoxon control plus the caution are carried into the report.",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-limma-voom-fixed@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "differential_expression: limma-voom with a fixed-effects linear model; do NOT use DESeq2 or edgeR negative binomial for the primary test at this cohort size",
+          "model_design: design ~condition with control as the explicit reference level; contrast named as condition, case (numerator) vs control (denominator)",
+          "multiple_testing: Benjamini-Hochberg, alpha 0.05, selection by adjusted p-value only — never by unadjusted p-value or fold change alone",
+          "Inspect the p-value histogram before adjustment and report its shape",
+          "Report the Wilcoxon rank-sum test as the control alongside limma-voom",
+          "This gene list must not be fed back into T2S1 as a feature set"
+        ],
+        "description": "Fit limma-voom on the filtered, TMM-normalised DGEList from T1S2 with design ~condition (reference level control), contrast case vs control. Inspect the voom mean-variance trend and the unadjusted p-value histogram before adjustment, apply Benjamini-Hochberg at alpha 0.05, and report the number of genes tested and the number significant. Report log2 fold change, its standard error and confidence interval beside each adjusted p-value, and sort the significant set by effect size. Run a Wilcoxon rank-sum test per gene as the control called for at this cohort size and report the overlap with the limma-voom calls. Produce the mean-difference plot and the voom trend plot. Finally, cross-tabulate the classifier's high-frequency genes from T2S1 against this table.",
+        "acceptance_criteria": [
+          "Results table carries log2FoldChange, standard error / confidence interval, unadjusted and BH-adjusted p-value for every tested gene",
+          "Unadjusted p-value histogram is inspected and its shape reported before the adjustment is trusted",
+          "Number of genes tested and number significant at BH < 0.05 are stated, with the significant set sorted by effect size",
+          "Wilcoxon rank-sum results are reported beside the limma-voom calls, with the overlap quantified",
+          "Voom mean-variance trend and mean-difference plots are produced",
+          "A table maps the genes most frequently selected by the T2S1 classifier onto their differential expression statistics"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Classifier performance report and generalization caveats",
+        "agent": "statistical-modeling-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "Any performance claim is conditional on new samples matching this cohort in tissue, library preparation, case definition and demographic composition — none of which is verifiable from the two input files"
+        ],
+        "context": "The user asked two things: can a classifier be built, and how accurate on a new sample. The second is answered only with its uncertainty and its transportability conditions attached; a bare AUC would be misleading.",
+        "maxSteps": 200,
+        "packages": [
+          "rmarkdown",
+          "knitr",
+          "ggplot2"
+        ],
+        "question": "What accuracy should be expected when this classifier is applied to a new whole-blood sample, and under what conditions does that number hold?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0041@059a",
+            "R-0089@69f0"
+          ],
+          "reason": "Reproducibility record with sessionInfo, seeds and package versions (R-0086), method/design/threshold reporting (R-0041), and effect size beside p-value at population scale (R-0089).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S2",
+          "T3S1",
+          "T1S1"
+        ],
+        "constraints": [
+          "report: reproducibility record must carry sessionInfo, package versions and all random seeds",
+          "Report the effect size beside the p-value for every differential expression claim carried over from T3S1",
+          "Do not present the classifier as validated, deployable, or diagnostic — it is an internally cross-validated estimate on one 120-sample cohort",
+          "Do not report an accuracy figure without its confidence interval"
+        ],
+        "description": "Assemble the deliverable. Lead with the nested-CV AUC and its confidence interval from T2S1 as the expected out-of-sample performance, immediately qualified by the permutation null and learning curve from T2S2. State the sensitivity, specificity and calibration at the operating threshold. State plainly: (a) this is internal cross-validation, not external validation — no independent cohort was available in this analysis; (b) the 50/50 case:control design fixes prevalence, so PPV/NPV in a real screening population will differ and cannot be read off these numbers; (c) the selected gene set varies across folds, so no single fixed signature is being claimed; (d) whole blood cell-composition shifts are a plausible driver of any signal. Include the T3S1 interpretation table, the sample-structure findings from T1S1, the full reproducibility record (sessionInfo, all seeds, package versions), and a short statement of what an external validation cohort would need to look like to confirm the estimate.",
+        "acceptance_criteria": [
+          "Headline number is the outer-fold AUC with its confidence interval, not any resubstitution or inner-loop figure",
+          "Permutation null result and learning curve are reported alongside the headline number",
+          "The report states explicitly that no external validation cohort was used and that the estimate is internal cross-validation",
+          "The prevalence caveat (50/50 design vs real-world prevalence) is stated with its consequence for PPV/NPV",
+          "Fold-to-fold instability of the selected genes is reported; no single fixed gene signature is asserted",
+          "Reproducibility record included: sessionInfo, package versions, every random seed used in T2S1 and T2S2",
+          "If the permutation null was not centred near 0.5, the report leads with that and does not present the AUC as valid"
+        ]
+      }
+    ],
+    "title": "Whole-blood case vs control expression classifier",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question is predictive, not descriptive: can a gene expression classifier separate case from control in this 120-sample whole-blood cohort (counts.csv, 12,000 genes x 121 columns = gene symbol column + 120 samples; metadata.csv, 120 rows with a condition column), and what accuracy should be expected on a new, unseen sample. The honest answer to the second half comes only from a validation scheme in which no sample contributes to its own prediction, so the plan is built around nested cross-validation rather than around a gene list.\n\nT1S1 establishes the sample structure before any model: blind VST, PCA on the 500 most variable genes, sample-distance heatmap, library sizes. This matters here because a classifier will happily learn a technical axis; if cases and controls separate on PC1 together with a depth or outlier structure, the AUC downstream means something different. The design is a single batch of 60 cases vs 60 controls with no stated covariates, so there is no batch term to fit — but the QC step must report whether an unnamed technical axis dominates, and that finding is a caveat on every later number.\n\nT1S2 builds the modelling matrix once, exactly as the count models require: filterByExpr on the group factor, TMM scaling factors, log-CPM. Because 60 per group is a population-scale cohort, the limma-voom path (not DESeq2/edgeR negative binomial) is the grounded choice, and the same filtered, TMM-normalised object serves both the classifier and the descriptive contrast.\n\nT2S1 is the core answer. Penalized logistic regression (glmnet, elastic net) with an inner CV for lambda/alpha and an outer CV for performance — the outer folds are the only source of the reported AUC. Critically, all variance filtering, gene selection and scaling happen inside each training fold, on the full filtered feature matrix, never on a DE list computed from all 120 samples: selecting features on all samples and then cross-validating gives an optimistic, effectively meaningless estimate. The step reports AUC with a bootstrap confidence interval, a calibration check, the confusion matrix at a stated threshold, and the fold-to-fold stability of the selected genes.\n\nT2S2 benchmarks that against a permutation null and a second model family (random forest / gradient boosting via ranger or xgboost), and reports a learning curve. A single AUC number with no null is not interpretable — with 12,000 features and 120 samples, an unvalidated pipeline can produce a high AUC on shuffled labels, and the permutation distribution is the control that shows whether it did here.\n\nT3S1 runs the descriptive limma-voom contrast (condition, cases vs controls, reference level controls) purely to interpret which genes the classifier leans on. It is deliberately downstream of and separate from the modelling step so that its output cannot leak into feature selection. The knowledge service flags that in population-scale cohorts count models exaggerate false positives; limma-voom with a Wilcoxon control is used and that caution is stated.\n\nT4S1 assembles the deliverable: the expected accuracy on a new sample with its uncertainty, the conditions under which that number holds (same tissue, same library prep, same case definition, same case prevalence — a 50/50 design does not give the PPV of a screening population), and an explicit statement that no external cohort exists here, so the estimate is internal cross-validation and not external validation."
+  },
+  "usage": {
+    "inputTokens": 367889,
+    "outputTokens": 10199,
+    "cacheCreationInputTokens": 204163,
+    "cacheReadInputTokens": 163678,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "scikit-learn",
+          "glmnet",
+          "xgboost",
+          "pROC",
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "caret",
+          "shap",
+          "statsmodels"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr low count filter (edgeR)",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              },
+              {
+                "name": "filter",
+                "value": "filterByExpr"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM normalization (edgeR) then log-CPM",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "TMM"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "Penalized logistic classifier with glmnet, nested cross-validation, and a pROC curve",
+            "package": "glmnet",
+            "parameters": [
+              {
+                "name": "classifier_model",
+                "value": "penalized_logistic_regression"
+              },
+              {
+                "name": "classifier_validation",
+                "value": "nested_cross_validation"
+              },
+              {
+                "name": "classifier_performance",
+                "value": "roc_auc_with_confidence_interval"
+              },
+              {
+                "name": "preprocessing_scope",
+                "value": "filter_and_scaling_inside_each_training_fold"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom with a fixed-effects linear model (descriptive companion for classifier interpretation)",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducibility and performance report",
+            "package": "",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood case vs control expression classifier",
+          "analytical_narrative": "The research question is predictive, not descriptive: can a gene expression classifier separate case from control in this 120-sample whole-blood cohort (counts.csv, 12,000 genes x 121 columns = gene symbol column + 120 samples; metadata.csv, 120 rows with a condition column), and what accuracy should be expected on a new, unseen sample. The honest answer to the second half comes only from a validation scheme in which no sample contributes to its own prediction, so the plan is built around nested cross-validation rather than around a gene list.\n\nT1S1 establishes the sample structure before any model: blind VST, PCA on the 500 most variable genes, sample-distance heatmap, library sizes. This matters here because a classifier will happily learn a technical axis; if cases and controls separate on PC1 together with a depth or outlier structure, the AUC downstream means something different. The design is a single batch of 60 cases vs 60 controls with no stated covariates, so there is no batch term to fit — but the QC step must report whether an unnamed technical axis dominates, and that finding is a caveat on every later number.\n\nT1S2 builds the modelling matrix once, exactly as the count models require: filterByExpr on the group factor, TMM scaling factors, log-CPM. Because 60 per group is a population-scale cohort, the limma-voom path (not DESeq2/edgeR negative binomial) is the grounded choice, and the same filtered, TMM-normalised object serves both the classifier and the descriptive contrast.\n\nT2S1 is the core answer. Penalized logistic regression (glmnet, elastic net) with an inner CV for lambda/alpha and an outer CV for performance — the outer folds are the only source of the reported AUC. Critically, all variance filtering, gene selection and scaling happen inside each training fold, on the full filtered feature matrix, never on a DE list computed from all 120 samples: selecting features on all samples and then cross-validating gives an optimistic, effectively meaningless estimate. The step reports AUC with a bootstrap confidence interval, a calibration check, the confusion matrix at a stated threshold, and the fold-to-fold stability of the selected genes.\n\nT2S2 benchmarks that against a permutation null and a second model family (random forest / gradient boosting via ranger or xgboost), and reports a learning curve. A single AUC number with no null is not interpretable — with 12,000 features and 120 samples, an unvalidated pipeline can produce a high AUC on shuffled labels, and the permutation distribution is the control that shows whether it did here.\n\nT3S1 runs the descriptive limma-voom contrast (condition, cases vs controls, reference level controls) purely to interpret which genes the classifier leans on. It is deliberately downstream of and separate from the modelling step so that its output cannot leak into feature selection. The knowledge service flags that in population-scale cohorts count models exaggerate false positives; limma-voom with a Wilcoxon control is used and that caution is stated.\n\nT4S1 assembles the deliverable: the expected accuracy on a new sample with its uncertainty, the conditions under which that number holds (same tissue, same library prep, same case definition, same case prevalence — a 50/50 design does not give the PPV of a screening population), and an explicit statement that no external cohort exists here, so the estimate is internal cross-validation and not external validation.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "In the 120-sample whole-blood cohort, do cases and controls separate on the main axes of variance, and is any sample an outlier or driven by library depth rather than condition?",
+              "description": "Load counts.csv (gene symbol column + 120 sample columns, 12,000 genes) and metadata.csv (120 rows, condition column). Verify sample name concordance between the two files and report any mismatch. Apply the DESeq2 variance stabilizing transformation blind to the design, run PCA on the 500 most variable genes, draw a sample-distance heatmap, and plot library sizes and detected-gene counts per sample. Colour every plot by condition (case/control). Tabulate PC1-PC3 against condition and against library size.",
+              "context": "Raw integer gene-level counts from Salmon, human whole blood, 60 cases vs 60 controls, single batch, unpaired. No transcript-level files and no length offsets are available, so the gene-level matrix is used as given and that limitation is recorded. This step exists so the later classifier performance can be read against the known sample structure.",
+              "acceptance_criteria": [
+                "Sample identifiers in counts.csv and metadata.csv are reconciled and any discrepancy is reported explicitly",
+                "PCA plot on the top 500 variable genes after blind VST, coloured by condition, is produced",
+                "Sample-distance heatmap and per-sample library size / detected-gene plots are produced",
+                "A table reports the association of PC1-PC3 with condition and with library size, and names any sample that sits apart from both groups",
+                "The step states whether an unnamed technical axis dominates the variance, since this qualifies all downstream classifier results"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Use the blind variance stabilizing transformation (blind=TRUE); do not use the design in the transformation",
+                "Use exactly the 500 most variable genes for the PCA",
+                "Do not remove any sample at this stage — flag outliers and let the modelling steps decide, stating the decision",
+                "Report library size per sample; do not normalize or scale the counts outside the transformation"
+              ],
+              "caveats": [
+                "A condition/technical confound that is invisible in the metadata cannot be ruled out by PCA alone; state this rather than concluding the cohort is clean",
+                "A single batch is asserted by the profile, not verified by the data"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Raw counts, 60 vs 60: blind vst, PCA on top 500 variable genes and sample distance heatmap before any model, per R-0033."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Filter, TMM normalize, build log-CPM feature matrix",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Which of the 12,000 genes carry enough counts to enter the classifier and the differential test, and what is the TMM-normalised log-CPM matrix for the 120 whole-blood samples?",
+              "description": "Build an edgeR DGEList from counts.csv with condition as the group factor (reference level: control). Apply filterByExpr with group = condition, then compute TMM scaling factors, then produce a log-CPM matrix (prior.count 2 or the stated equivalent). Persist three artifacts for downstream steps: the filtered raw count matrix, the DGEList with TMM factors, and the log-CPM matrix, plus the sample-by-condition table. Report the number of genes before and after filtering and the distribution of the TMM factors.",
+              "context": "60 cases vs 60 controls is a population-scale cohort, so the limma-voom path is used and TMM is the matching normalization. The same filtered/normalised object feeds both the classifier track (T2) and the descriptive differential expression track (T3), so that both operate on an identical feature space.",
+              "acceptance_criteria": [
+                "Number of genes retained by filterByExpr is reported alongside the 12,000 input genes",
+                "TMM scaling factors are computed and their range reported; no sample has an extreme factor left unremarked",
+                "A log-CPM matrix (genes x 120 samples) and the filtered DGEList are written to disk for downstream steps",
+                "The condition factor has control set explicitly as the reference level, and this is stated in the output"
+              ],
+              "packages": [
+                "edgeR",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "filter_low_counts: use filterByExpr with group = condition, min.count = 10, min samples = smallest group size (60)",
+                "normalize: TMM scaling factors via calcNormFactors; do not pre-scale or transform counts by any other method",
+                "Set the reference level of the condition factor explicitly to control; do not rely on alphabetical ordering",
+                "This filter is applied on all 120 samples and is unsupervised (count-based only) — it must not use the condition labels beyond the group argument of filterByExpr, and this is stated so the classifier step can account for it"
+              ],
+              "caveats": [
+                "filterByExpr uses the group factor, so it is mildly label-aware; this is a count-abundance filter and not a supervised selection, but the classifier step must still perform its own selection inside each training fold"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0058@99e1",
+                  "R-0002@087b",
+                  "R-0057@31cc",
+                  "R-0026@9ab1",
+                  "R-0036@9786"
+                ],
+                "template": "tpl-edger-ql@1.0.0",
+                "reason": "Population-scale cohort on the limma-voom path: filterByExpr before TMM (R-0058, R-0057), minimal pre-filter (R-0029, R-0002), explicit reference level (R-0036)."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Penalized logistic classifier with nested cross-validation",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "How accurately does a penalized logistic regression on whole-blood expression classify a case from a control, and what is the honest out-of-sample AUC with its confidence interval?",
+              "description": "Fit an elastic-net penalized logistic regression (glmnet, family=binomial) predicting condition (case vs control) from the TMM-normalised log-CPM matrix of T1S2. Use nested cross-validation: an outer loop (repeated stratified 5-fold or 10-fold, several repeats, fixed seed) whose held-out predictions are the ONLY source of reported performance, and an inner loop within each outer training set that selects lambda and alpha. Every preprocessing decision that touches the labels or the sample distribution — variance filtering, univariate gene selection, centering and scaling — must be re-fit inside each outer training fold and applied to the held-out fold. Do NOT pass in a differentially expressed gene list computed on all 120 samples; selection happens inside the folds, from the full filtered feature matrix. Report: pooled outer-fold ROC curve, AUC with a bootstrap 95% confidence interval, precision-recall AUC, accuracy/sensitivity/specificity at the 0.5 threshold and at a threshold chosen inside the training folds, a calibration plot with Brier score, the confusion matrix, and the per-fold list of genes with nonzero coefficients together with a selection-frequency table across folds.",
+              "context": "This is the step that answers the research question. n=120 with ~thousands of features after filtering: the discriminative signal, if any, is easy to overfit, and any performance number estimated on samples the model has seen is meaningless. A feature list from a supervised contrast on these same samples is already a feature selection; it therefore cannot be reused as a fixed input here without making the estimate optimistic.",
+              "acceptance_criteria": [
+                "Nested CV is implemented with a documented outer scheme and inner lambda/alpha selection; the random seed is recorded",
+                "All feature selection and scaling are demonstrably fit inside each outer training fold — the script shows this and the report states it",
+                "AUC is reported from pooled outer-fold held-out predictions with a bootstrap 95% CI, alongside PR-AUC, sensitivity, specificity and Brier score",
+                "A calibration plot and a confusion matrix at a stated threshold are produced",
+                "Genes with nonzero coefficients are reported per fold, with a table of how often each gene is selected across folds",
+                "If any preprocessing could not be moved inside the folds, the report explicitly labels the performance estimate as optimistic and quantifies which part is affected"
+              ],
+              "packages": [
+                "glmnet",
+                "pROC",
+                "limma",
+                "edgeR",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "statistical-modeling-agent",
+              "constraints": [
+                "classifier_model: penalized logistic regression (glmnet, family=binomial), elastic net with alpha tuned in the inner loop",
+                "classifier_validation: nested cross-validation — inner loop selects lambda/alpha, outer loop measures performance; never report resubstitution or inner-loop performance",
+                "preprocessing_scope: gene filtering, univariate selection and scaling are fit inside each training fold only",
+                "classifier_performance: report ROC AUC with a confidence interval from the outer-fold predictions (pROC::ci.auc, bootstrap)",
+                "Stratify folds by condition so each fold holds both classes in the 50/50 cohort ratio",
+                "Set and report a fixed random seed; the entire nested CV must be reproducible",
+                "Do not use the T3S1 differential expression list as the classifier input feature set"
+              ],
+              "caveats": [
+                "With 60 per class the AUC confidence interval will be wide; report the interval, not the point estimate alone",
+                "The selected gene set will be unstable across folds — report the instability rather than presenting one fold's genes as a signature",
+                "The cohort is 50/50 by design; accuracy and PPV do not transfer to a population with different case prevalence, and the report must say so",
+                "Whole blood composition (neutrophil/lymphocyte shifts) can carry the entire signal; a high AUC does not imply a disease-specific transcriptional program"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0155@b81f"
+                ],
+                "reason": "The question is a sample classifier from expression: penalized logistic regression with nested CV, in-fold preprocessing, and ROC AUC with a confidence interval, per R-0155."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Permutation null, alternative model family, learning curve",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Is the cross-validated AUC from T2S1 above what the same pipeline yields on randomly permuted case/control labels, does a nonlinear model do better, and does performance still improve with more than 120 samples?",
+              "description": "Three controls on the T2S1 estimate, all reusing its exact nested-CV machinery. (1) Permutation null: shuffle the condition labels at least 100 times (seed recorded), rerun the full nested-CV pipeline including in-fold selection on each permutation, and report the null AUC distribution plus an empirical p-value for the observed AUC. (2) Alternative model family: run the same outer CV with a tree ensemble (ranger random forest, or xgboost) and compare AUC; report whether the linear model is adequate. (3) Learning curve: rerun the outer CV on stratified training subsets (e.g. 30, 50, 70, 90 of the training samples) and plot AUC against training size to show whether the estimate is sample-size limited.",
+              "context": "An AUC without a null is not interpretable at this feature-to-sample ratio. The permutation must repeat the whole pipeline, including selection, because that is what is being validated — permuting only at the final fit would understate leakage. The learning curve tells the user whether collecting more samples would raise accuracy or whether the ceiling is biological.",
+              "acceptance_criteria": [
+                "Permutation null distribution over at least 100 label shuffles, with the full in-fold pipeline rerun each time; empirical p-value for the observed AUC is reported",
+                "Null AUC distribution is centred near 0.5 — if it is not, the report names this as evidence of leakage in the pipeline and the T2S1 estimate is withdrawn as unreliable",
+                "A second model family (ranger or xgboost) is evaluated under the identical outer CV scheme and its AUC compared",
+                "Learning curve of AUC versus training set size is plotted with fold-level variability shown",
+                "All seeds are recorded"
+              ],
+              "packages": [
+                "glmnet",
+                "ranger",
+                "pROC",
+                "xgboost"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "statistical-modeling-agent",
+              "constraints": [
+                "The permutation must rerun the ENTIRE nested-CV pipeline per shuffle, including in-fold feature selection and scaling",
+                "Use the identical outer fold structure and seed policy as T2S1 so the comparison is like for like",
+                "Report the null distribution as a figure and as summary statistics, not only as a p-value",
+                "Do not tune the alternative model more aggressively than the linear model; comparable inner-loop budgets"
+              ],
+              "caveats": [
+                "100 permutations bounds the empirical p-value at roughly 0.01; state that bound rather than reporting p < 0.001",
+                "A tree ensemble beating glmnet on 120 samples may reflect tuning variance rather than a real nonlinearity"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [],
+                "reason": "No knowledge-service rule covers a permutation null or a learning curve for a classifier; planned from standard practice as the control that makes the T2S1 AUC interpretable."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Descriptive limma-voom contrast for classifier interpretation",
+              "track": "T3",
+              "step_type": "analysis",
+              "question": "Which genes differ between cases and controls in whole blood, and do the genes the classifier selects most often across folds correspond to them?",
+              "description": "Fit limma-voom on the filtered, TMM-normalised DGEList from T1S2 with design ~condition (reference level control), contrast case vs control. Inspect the voom mean-variance trend and the unadjusted p-value histogram before adjustment, apply Benjamini-Hochberg at alpha 0.05, and report the number of genes tested and the number significant. Report log2 fold change, its standard error and confidence interval beside each adjusted p-value, and sort the significant set by effect size. Run a Wilcoxon rank-sum test per gene as the control called for at this cohort size and report the overlap with the limma-voom calls. Produce the mean-difference plot and the voom trend plot. Finally, cross-tabulate the classifier's high-frequency genes from T2S1 against this table.",
+              "context": "This step is interpretive, not the answer to the research question. It runs after and separately from the classifier so that its gene list can never enter feature selection. At 60 per group the test has power to call effects too small to matter, so effect sizes are reported beside p-values.",
+              "acceptance_criteria": [
+                "Results table carries log2FoldChange, standard error / confidence interval, unadjusted and BH-adjusted p-value for every tested gene",
+                "Unadjusted p-value histogram is inspected and its shape reported before the adjustment is trusted",
+                "Number of genes tested and number significant at BH < 0.05 are stated, with the significant set sorted by effect size",
+                "Wilcoxon rank-sum results are reported beside the limma-voom calls, with the overlap quantified",
+                "Voom mean-variance trend and mean-difference plots are produced",
+                "A table maps the genes most frequently selected by the T2S1 classifier onto their differential expression statistics"
+              ],
+              "packages": [
+                "limma",
+                "edgeR",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "differential_expression: limma-voom with a fixed-effects linear model; do NOT use DESeq2 or edgeR negative binomial for the primary test at this cohort size",
+                "model_design: design ~condition with control as the explicit reference level; contrast named as condition, case (numerator) vs control (denominator)",
+                "multiple_testing: Benjamini-Hochberg, alpha 0.05, selection by adjusted p-value only — never by unadjusted p-value or fold change alone",
+                "Inspect the p-value histogram before adjustment and report its shape",
+                "Report the Wilcoxon rank-sum test as the control alongside limma-voom",
+                "This gene list must not be fed back into T2S1 as a feature set"
+              ],
+              "caveats": [
+                "In population-scale cohorts (>=50 per group) negative binomial count models exaggerate false positives even on permuted labels; limma-voom is closer to nominal FDR but can still exceed it, hence the Wilcoxon control — state this caution in the report",
+                "At 60 per group, statistically significant genes may have effects too small to be biologically meaningful; read the effect size, not the p-value rank",
+                "No length offsets are available from the provided gene-level matrix, so isoform-usage-driven calls cannot be excluded"
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0015@65aa",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55",
+                  "R-0089@69f0",
+                  "R-0036@9786"
+                ],
+                "template": "tpl-limma-voom-fixed@1.0.0",
+                "reason": "R-0015 flags that at >=50 per group count models exaggerate false positives: limma-voom with a fixed-effects model is used and the Wilcoxon control plus the caution are carried into the report."
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "Classifier performance report and generalization caveats",
+              "track": "T4",
+              "step_type": "report",
+              "question": "What accuracy should be expected when this classifier is applied to a new whole-blood sample, and under what conditions does that number hold?",
+              "description": "Assemble the deliverable. Lead with the nested-CV AUC and its confidence interval from T2S1 as the expected out-of-sample performance, immediately qualified by the permutation null and learning curve from T2S2. State the sensitivity, specificity and calibration at the operating threshold. State plainly: (a) this is internal cross-validation, not external validation — no independent cohort was available in this analysis; (b) the 50/50 case:control design fixes prevalence, so PPV/NPV in a real screening population will differ and cannot be read off these numbers; (c) the selected gene set varies across folds, so no single fixed signature is being claimed; (d) whole blood cell-composition shifts are a plausible driver of any signal. Include the T3S1 interpretation table, the sample-structure findings from T1S1, the full reproducibility record (sessionInfo, all seeds, package versions), and a short statement of what an external validation cohort would need to look like to confirm the estimate.",
+              "context": "The user asked two things: can a classifier be built, and how accurate on a new sample. The second is answered only with its uncertainty and its transportability conditions attached; a bare AUC would be misleading.",
+              "acceptance_criteria": [
+                "Headline number is the outer-fold AUC with its confidence interval, not any resubstitution or inner-loop figure",
+                "Permutation null result and learning curve are reported alongside the headline number",
+                "The report states explicitly that no external validation cohort was used and that the estimate is internal cross-validation",
+                "The prevalence caveat (50/50 design vs real-world prevalence) is stated with its consequence for PPV/NPV",
+                "Fold-to-fold instability of the selected genes is reported; no single fixed gene signature is asserted",
+                "Reproducibility record included: sessionInfo, package versions, every random seed used in T2S1 and T2S2",
+                "If the permutation null was not centred near 0.5, the report leads with that and does not present the AUC as valid"
+              ],
+              "packages": [
+                "rmarkdown",
+                "knitr",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T2S2",
+                "T3S1",
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "constraints": [
+                "report: reproducibility record must carry sessionInfo, package versions and all random seeds",
+                "Report the effect size beside the p-value for every differential expression claim carried over from T3S1",
+                "Do not present the classifier as validated, deployable, or diagnostic — it is an internally cross-validated estimate on one 120-sample cohort",
+                "Do not report an accuracy figure without its confidence interval"
+              ],
+              "caveats": [
+                "Any performance claim is conditional on new samples matching this cohort in tissue, library preparation, case definition and demographic composition — none of which is verifiable from the two input files"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0041@059a",
+                  "R-0089@69f0"
+                ],
+                "reason": "Reproducibility record with sessionInfo, seeds and package versions (R-0086), method/design/threshold reporting (R-0041), and effect size beside p-value at population scale (R-0089)."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

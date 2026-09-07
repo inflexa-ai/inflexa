@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: PyDESeq2 Wald test with apeglm shrinkage on ~condition with control as explicit reference, BH at 0.05 with independent filtering, median-of-ratios inside the model, and a minimal justified filter (10 counts in 6 samples). QC is thorough and specific to this dataset—library sizes, blind VST PCA, distance heatmap, library size vs PC1—with sample_01 retained by default and removal requiring a stated non-depth reason, plus a sensitivity refit. Enrichment uses gseapy prerank on the full list ranked by the Wald statistic, Hallmark with release to be stated, 15–500 window, fixed seed; the version is deferred to run time rather than named up front. The Python quasi-likelihood 'edgeR-style' second test is an unnecessary addition of uncertain fidelity, though the plan is honest about that risk; the report section is complete."
+}

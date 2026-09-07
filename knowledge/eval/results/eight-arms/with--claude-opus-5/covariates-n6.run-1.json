@@ -1,0 +1,670 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "covariates-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T15:06:25.299Z",
+  "elapsedMs": 111520,
+  "outcome": "plan_submitted",
+  "planId": "pln-24b75638",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and confounding assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=12 a PCA is descriptive; the absence of condition separation on PC1 does not mean there is no treatment effect, and its presence does not establish one",
+          "VIF near or above ~5 for the condition term signals that the treatment effect cannot be cleanly separated from age in this cohort — report the number, do not silently proceed as if it were 1"
+        ],
+        "context": "Human adipose bulk RNA-seq, 6 treated vs 6 control, unpaired, single batch, raw integer gene-level counts from Salmon summarized to gene symbols. The user states the arms are not age-matched, so age is a candidate confounder of the treatment contrast rather than a routine covariate.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap",
+          "car"
+        ],
+        "question": "Do the 12 adipose samples separate by treated vs control, is any sample an outlier, and how strongly are sex and age confounded with the condition assignment?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Raw counts before a model: rule R-0033 prescribes blind VST, PCA on the top 500 variable genes and a sample-distance heatmap; the covariate-confounding tabulation is added because the user states the arms are not age-matched.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the variance-stabilizing transform with blind=TRUE for QC; do not use the design for the QC transform",
+          "Use the top 500 most variable genes for the PCA",
+          "Do not drop, impute, or batch-correct any sample in this step — QC observes, it does not modify the data passed downstream",
+          "Do not run any differential test here"
+        ],
+        "description": "Load /eval-eight-arms-with-covariates-n6-1/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw Salmon counts) and /eval-eight-arms-with-covariates-n6-1/data/inputs/metadata/metadata.csv (12 rows: sample, condition, sex, age). Verify the sample identifiers in the count columns match the metadata rows exactly and in a defined order before anything else. Build a DESeqDataSet, apply the variance-stabilizing transform blind to the design, and produce: PCA on the 500 most variable genes coloured by condition, by sex, and shaded by age; a Euclidean sample-distance heatmap; per-sample library sizes and detected-gene counts. Then quantify the confounding the research question flags: mean/median age per arm with the difference and a Wilcoxon test, the age range overlap between arms, a sex x condition contingency table, Spearman correlation of age and point-biserial correlation of sex with each of PC1-PC4, and the variance inflation factors of the design matrix ~ sex + age + condition. Report whether any arm is single-sex and whether the age distributions overlap.",
+        "acceptance_criteria": [
+          "Count column names and metadata sample identifiers are confirmed to match one-to-one, with any mismatch reported and the run halted rather than silently reordered",
+          "PCA (blind VST, top 500 variable genes), sample-distance heatmap, and library-size plot are produced and saved",
+          "A confounding table is reported: age mean/median and range per arm with the between-arm difference and test, sex x condition counts, PC1-PC4 correlations with age and sex, and VIFs for ~ sex + age + condition",
+          "The step states explicitly whether age or sex is severely confounded with condition (non-overlapping age ranges or a single-sex arm) and whether the adjusted design remains identifiable",
+          "Any sample that sits apart from both arms is named, with its library size and detected-gene count, but is not removed at this stage"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test, treated vs control adjusted for sex and age",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 vs 6 and two covariate terms, the residual degrees of freedom are 8; the analysis detects only large, consistent effects and a null result is not evidence of absence",
+          "Because the arms are not age-matched, the condition coefficient is an age-adjusted effect that relies on the model's linearity in age; extrapolation beyond the overlapping age range is not supported by the data",
+          "Salmon length offsets are not available from this CSV input, so gene-level counts are used without a length offset and differential isoform usage cannot be separated from differential gene expression"
+        ],
+        "context": "The counts are gene-level sums of Salmon transcript estimates delivered as a CSV matrix; the per-gene average transcript-length offsets that tximport would carry are not available in this input, so the model runs on the count matrix with size-factor normalization only. State this in the output — a gene whose apparent change is driven by isoform switching cannot be distinguished here.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes differ in expression between treated and control adipose samples once sex and age are held in the model (contrast: condition, treated over control)?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0023@e919",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "Raw counts, fixed-effects two-group design at 6 replicates per group with named covariates: R-0001 selects the DESeq2 Wald test, R-0023 puts sex and centered age in the design as fixed effects, R-0009 shrinks with apeglm, and R-0010/R-0043 set BH at alpha 0.05 with independent filtering. R-0018 (tximport length offsets) cannot be met because only a gene-level CSV was delivered; this is stated in the step.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Covariates enter the design as fixed effects; never regress sex or age out of the counts and test residuals, and never feed adjusted counts to the negative-binomial model",
+          "Do not pre-normalize, log-transform or scale the counts before DESeq2 — median-of-ratios size factors are applied inside the model",
+          "Set the reference level of the condition factor explicitly with relevel; name the contrast as (factor, numerator, denominator)",
+          "Pass alpha = 0.05 to results() so the independent filter is optimized for the reporting cutoff, and use BH adjustment",
+          "Leave DESeq2's count-outlier behaviour at its default (flag and set p to NA at 6 replicates); do not disable Cook's filtering",
+          "Select significant genes by padj only — never by unadjusted p-value and never by fold change alone",
+          "Use apeglm shrinkage on the condition coefficient for reporting and ranking; keep the unshrunken estimate and its standard error in the table"
+        ],
+        "description": "Fit the primary differential expression model on the raw Salmon counts. Pre-filter minimally: keep a gene with at least 10 counts in at least 6 samples (the smallest group size), and report how many of the 12,000 genes survive. Normalize inside the model with median-of-ratios size factors — do not pre-scale, log, or otherwise transform the counts before the fit. Set the condition factor reference level explicitly to the control level as spelled in metadata.csv; do not rely on alphabetical ordering. Code sex as a factor and mean-center age into age_c. Design: ~ sex + age_c + condition. Run the DESeq2 Wald test and extract the contrast (condition, treated, control) with alpha = 0.05 and independent filtering on, so a positive log2 fold change means higher in treated. Also extract the sex and age_c coefficients and report how many genes respond to each, as evidence of how much signal the covariates carry. Shrink the condition log2 fold changes with apeglm (coef-based, on the condition coefficient) and keep both the unshrunken and shrunken estimates plus lfcSE in the output table. Report the p-value histogram of the condition contrast before adjustment, and count the NA p-values separately by cause: Cook's-distance outlier flags (expected with 6 per group, where DESeq2 flags rather than replaces) versus independent-filter removals. Write a full results table (all tested genes) and a significant-gene table (padj < 0.05).",
+        "acceptance_criteria": [
+          "Design formula ~ sex + age_c + condition is fitted on raw counts, with age mean-centered and the control level set as the explicit reference, and both are printed in the output",
+          "Pre-filter is at least 10 counts in at least 6 samples, with the number of genes before and after reported",
+          "A results table for the contrast (condition, treated, control) is written containing baseMean, unshrunken log2FoldChange, lfcSE, stat, pvalue, padj, and the apeglm-shrunken log2FoldChange",
+          "Number of genes with padj < 0.05 is reported, together with the p-value histogram and its shape assessed as flat/anti-conservative/irregular",
+          "NA p-values are counted and split by cause: Cook's outlier flag versus independent filtering",
+          "Number of genes significant for the sex and age_c coefficients is reported alongside, as a measure of covariate signal"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR second method and age-sensitivity refit",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Agreement between DESeq2 and edgeR is not external validation — both use the same counts and the same design, so shared systematic bias is invisible to this comparison",
+          "A large gene list from the age-dropped model is not the better answer; when the arms differ in age, part of that signal is age, not treatment"
+        ],
+        "context": "At 3-11 replicates per group DESeq2 and edgeR agree on most genes but each calls some the other misses, with disagreement growing at low counts — the intersection is the defensible set. The age-drop refit is a sensitivity analysis, not an alternative primary result: the age-adjusted model from T1S2 remains the answer to the research question.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2",
+          "limma"
+        ],
+        "question": "Which treated-vs-control genes are called by both DESeq2 and edgeR quasi-likelihood, and how much does the gene list change when the unmatched age covariate is dropped from the design?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0001@9a17",
+            "R-0026@9ab1"
+          ],
+          "reason": "R-0042 prescribes running both DESeq2 and edgeR QL on the same counts and design and treating the intersection as the high-confidence set; R-0001 names edgeR QL as the alternative method at this replicate count. The age-drop sensitivity refit is added for the user's stated age imbalance and is not itself covered by a rule.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the identical filtered gene set and sample order as T1S2 so the two methods are comparable",
+          "Report the intersection as the high-confidence set; do not present the union of DESeq2 and edgeR as the result",
+          "The age-adjusted model of T1S2 stays the primary result — the age-dropped refit is reported as a sensitivity analysis and must not be substituted for it",
+          "Adjust with BH at alpha 0.05 in both methods so the cutoffs are comparable"
+        ],
+        "description": "Two robustness analyses on the same filtered count matrix and the same samples as T1S2. First, fit an edgeR quasi-likelihood F-test: TMM normalization factors, design model.matrix(~ sex + age_c + condition) with the identical control reference level, estimateDisp, glmQLFit, glmQLFTest on the condition coefficient, BH adjustment at 0.05. Report the number of edgeR-significant genes, the number of DESeq2-significant genes from T1S2, and the size of their intersection; write the intersection as the high-confidence set and the method-unique genes as a secondary table naming the calling method. Do not report the union as the result. Second, refit the DESeq2 model without the age term (~ sex + condition) and compare against the T1S2 primary result: the number of significant genes in each, the overlap, the Spearman correlation of the condition Wald statistics across all tested genes, and the genes whose significance status flips. That comparison is the direct measure of how much the age imbalance moves the answer; large disagreement means the reported effects are age-sensitive and must be labelled as such.",
+        "acceptance_criteria": [
+          "edgeR QL F-test is run with TMM normalization on the same filtered genes, same samples and the same ~ sex + age_c + condition design, with the same reference level",
+          "A table reports n significant for DESeq2, n significant for edgeR, and the size of the intersection; the intersection is written as the high-confidence set and method-unique genes as a secondary table",
+          "The age-dropped refit (~ sex + condition) is compared to the primary model: n significant each, overlap, Spearman correlation of condition Wald statistics, and a list of genes that change significance status",
+          "The step states in one sentence whether the primary gene list is robust to the age term or is age-sensitive"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Diagnostics and reproducible DE report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A gene that is significant in the age-adjusted model but whose expression tracks age within arms deserves explicit flagging rather than a mechanistic story",
+          "With 12,000 genes and 12 samples, the top of the list by shrunken effect size is still subject to selection effects; effect sizes reported here are optimistic for the discovery cohort"
+        ],
+        "context": "This is the deliverable that answers the research question. Its job is to make the treatment effect readable and its limits unmissable, given a small cohort whose arms are not age-matched.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano"
+        ],
+        "question": "What is the reportable answer to 'which genes differ between treated and control adipose samples', with its diagnostics, thresholds, and stated limits?",
+        "grounding": {
+          "claims": [
+            "R-0087@c53d",
+            "R-0085@c24d",
+            "R-0041@059a",
+            "R-0086@becf",
+            "R-0042@54e1"
+          ],
+          "reason": "R-0087 requires the MA and dispersion plots as fit diagnostics, R-0085 requires both shrunken and unshrunken log2FC with lfcSE and ranking on the shrunken value, R-0041 fixes the reported fields, and R-0086 the reproducibility record.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Rank genes and draw plots on the shrunken log2 fold change; keep the p-values from the unshrunken fit since shrinkage does not change the test",
+          "Report the number of DE genes at padj < 0.05 and state the cutoff explicitly",
+          "Do not add gene-set or pathway enrichment — the research question asks which genes differ and enrichment was not requested",
+          "State the power limitation and the age-confounding caveat in the report body, not only in a footnote",
+          "Do not describe any gene as treatment-responsive on the basis of fold change alone when its padj is not significant"
+        ],
+        "description": "Assemble the final report from T1S1-T1S3. Place the fit diagnostics before the gene tables: the MA plot of the condition contrast with significant genes marked, the DESeq2 dispersion plot with per-gene estimates, fitted trend and shrunken values, and the p-value histogram from T1S2 with its shape stated. Then the gene table, ranked by the apeglm-shrunken log2 fold change and carrying baseMean, unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, pvalue and padj, with the shrinkage estimator named in the header. Add a volcano plot and a heatmap of VST values for the top genes, annotated by condition, sex and age so a reader can see whether an apparent treatment gene tracks the covariates instead. State in the report header: the design formula ~ sex + age_c + condition, the contrast (condition, treated vs control) with control as reference, the pre-filter rule, alpha = 0.05 with BH and independent filtering, the number of genes tested after filtering, the number significant, the number of NA p-values by cause, the DESeq2/edgeR intersection size, and the result of the age-sensitivity refit. Close with the confounding summary from T1S1 and an explicit power statement: 6 vs 6 with two covariate terms leaves 8 residual degrees of freedom, so only large consistent effects are detectable and a null is weak evidence of no effect. Attach sessionInfo, all package versions, and any random seed used.",
+        "acceptance_criteria": [
+          "MA plot, dispersion plot and p-value histogram appear before the gene tables, each with a one-line statement of what it shows",
+          "The gene table is ranked by the shrunken log2 fold change and contains baseMean, unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, pvalue and padj, with apeglm named as the shrinkage estimator",
+          "The report header states the design formula, the named contrast with its reference level, the filter rule, alpha, the adjustment method, n genes tested, n significant, and NA counts by cause",
+          "Heatmap of top genes is annotated by condition, sex and age",
+          "The confounding summary from T1S1, the DESeq2/edgeR intersection size, and the age-sensitivity refit outcome are all reported",
+          "sessionInfo, package versions and any seed are attached with the results"
+        ]
+      }
+    ],
+    "title": "Adipose treated vs control DE, sex- and age-adjusted",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a gene-level raw count matrix from Salmon (12,000 gene symbols x 12 samples, counts.csv) with a sample table (metadata.csv: sample, condition, sex, age) for 6 treated vs 6 control human adipose samples, unpaired, single batch. The research question is which genes differ between treated and control, with the explicit complication that subjects differ in sex and that the two groups are NOT matched on age — so age is a confounder of the treatment contrast, not a nuisance that can be ignored.\n\nThe plan therefore has three parts. T1S1 establishes sample structure before any test: blind VST, PCA on the 500 most variable genes, sample-distance heatmap, library sizes, and — the step that matters most here — a quantitative check of how sex and age track the condition labels and the leading PCs (age difference between arms, sex x condition table, PC-covariate correlation, variance inflation of the design). If age is severely confounded with condition (e.g. near-complete separation), the treatment coefficient is not identifiable apart from age, and the step must say so before the model is fit rather than after.\n\nT1S2 fits the model that answers the question: DESeq2 negative-binomial GLM on the raw counts with design ~ sex + age_c + condition, where age is mean-centered and sex is a factor, so the condition coefficient is the treatment effect adjusted for sex and age. Covariates go in the design as fixed effects — the counts are never pre-corrected or residualized, which would understate the standard errors. Pre-filter is minimal (>=10 counts in >=6 samples, the smallest group size); normalization is median-of-ratios size factors inside the model; Wald test on the condition coefficient with control as the explicit reference level; apeglm shrinkage for reporting and ranking; BH with independent filtering at alpha 0.05. With 6 per group DESeq2 flags Cook's-distance count outliers and returns NA p-values rather than replacing counts, and those NAs are reported separately from the independent-filter NAs.\n\nT1S3 is a robustness check that the knowledge base treats as the standard second opinion at this replicate count: edgeR quasi-likelihood F-test with TMM normalization on the identical filtered matrix and identical design, plus a sensitivity refit without the age term. Two things get reported: the DESeq2/edgeR intersection as the high-confidence set, and how far the gene list moves when age is dropped — the direct empirical measure of how much the age imbalance is driving the answer.\n\nT1S4 assembles the report: MA plot, dispersion plot, p-value histogram, gene table carrying both unshrunken and shrunken log2FC with lfcSE, counts of tested and significant genes, the design formula and contrast written out, and sessionInfo. No enrichment step is planned — the question asks which genes differ, and gene-set analysis was not requested.\n\nPower is the honest limit: 6 vs 6 with two covariates leaves 8 residual degrees of freedom, so the study detects only large, consistent effects, and a null result is weak evidence of no effect. This must be stated, not buried."
+  },
+  "usage": {
+    "inputTokens": 219353,
+    "outputTokens": 9020,
+    "cacheCreationInputTokens": 140640,
+    "cacheReadInputTokens": 78677,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "covariates": [
+          "sex",
+          "age"
+        ],
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "covariates": [
+          "sex",
+          "age"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: blind VST, PCA on top 500 variable genes, sample distance heatmap, library sizes, covariate-vs-PC association",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Minimal pre-filter then independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors (DESeq2 normalization)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ sex + age_centered + condition with explicit reference level control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "covariate_handling",
+                "value": "design_terms"
+              },
+              {
+                "name": "continuous_covariate",
+                "value": "center_before_the_fit"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "edgeR quasi-likelihood F-test as second method for robustness overlap",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "design",
+                "value": "~sex+age_centered+condition"
+              },
+              {
+                "name": "normalization",
+                "value": "TMM"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Report with MA plot, dispersion plot, shrunken and unshrunken LFC, method overlap, sessionInfo",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              },
+              {
+                "name": "robustness",
+                "value": "overlap_of_two_methods"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Adipose treated vs control DE, sex- and age-adjusted",
+          "analytical_narrative": "The input is a gene-level raw count matrix from Salmon (12,000 gene symbols x 12 samples, counts.csv) with a sample table (metadata.csv: sample, condition, sex, age) for 6 treated vs 6 control human adipose samples, unpaired, single batch. The research question is which genes differ between treated and control, with the explicit complication that subjects differ in sex and that the two groups are NOT matched on age — so age is a confounder of the treatment contrast, not a nuisance that can be ignored.\n\nThe plan therefore has three parts. T1S1 establishes sample structure before any test: blind VST, PCA on the 500 most variable genes, sample-distance heatmap, library sizes, and — the step that matters most here — a quantitative check of how sex and age track the condition labels and the leading PCs (age difference between arms, sex x condition table, PC-covariate correlation, variance inflation of the design). If age is severely confounded with condition (e.g. near-complete separation), the treatment coefficient is not identifiable apart from age, and the step must say so before the model is fit rather than after.\n\nT1S2 fits the model that answers the question: DESeq2 negative-binomial GLM on the raw counts with design ~ sex + age_c + condition, where age is mean-centered and sex is a factor, so the condition coefficient is the treatment effect adjusted for sex and age. Covariates go in the design as fixed effects — the counts are never pre-corrected or residualized, which would understate the standard errors. Pre-filter is minimal (>=10 counts in >=6 samples, the smallest group size); normalization is median-of-ratios size factors inside the model; Wald test on the condition coefficient with control as the explicit reference level; apeglm shrinkage for reporting and ranking; BH with independent filtering at alpha 0.05. With 6 per group DESeq2 flags Cook's-distance count outliers and returns NA p-values rather than replacing counts, and those NAs are reported separately from the independent-filter NAs.\n\nT1S3 is a robustness check that the knowledge base treats as the standard second opinion at this replicate count: edgeR quasi-likelihood F-test with TMM normalization on the identical filtered matrix and identical design, plus a sensitivity refit without the age term. Two things get reported: the DESeq2/edgeR intersection as the high-confidence set, and how far the gene list moves when age is dropped — the direct empirical measure of how much the age imbalance is driving the answer.\n\nT1S4 assembles the report: MA plot, dispersion plot, p-value histogram, gene table carrying both unshrunken and shrunken log2FC with lfcSE, counts of tested and significant genes, the design formula and contrast written out, and sessionInfo. No enrichment step is planned — the question asks which genes differ, and gene-set analysis was not requested.\n\nPower is the honest limit: 6 vs 6 with two covariates leaves 8 residual degrees of freedom, so the study detects only large, consistent effects, and a null result is weak evidence of no effect. This must be stated, not buried.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and confounding assessment",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 adipose samples separate by treated vs control, is any sample an outlier, and how strongly are sex and age confounded with the condition assignment?",
+              "description": "Load /eval-eight-arms-with-covariates-n6-1/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw Salmon counts) and /eval-eight-arms-with-covariates-n6-1/data/inputs/metadata/metadata.csv (12 rows: sample, condition, sex, age). Verify the sample identifiers in the count columns match the metadata rows exactly and in a defined order before anything else. Build a DESeqDataSet, apply the variance-stabilizing transform blind to the design, and produce: PCA on the 500 most variable genes coloured by condition, by sex, and shaded by age; a Euclidean sample-distance heatmap; per-sample library sizes and detected-gene counts. Then quantify the confounding the research question flags: mean/median age per arm with the difference and a Wilcoxon test, the age range overlap between arms, a sex x condition contingency table, Spearman correlation of age and point-biserial correlation of sex with each of PC1-PC4, and the variance inflation factors of the design matrix ~ sex + age + condition. Report whether any arm is single-sex and whether the age distributions overlap.",
+              "context": "Human adipose bulk RNA-seq, 6 treated vs 6 control, unpaired, single batch, raw integer gene-level counts from Salmon summarized to gene symbols. The user states the arms are not age-matched, so age is a candidate confounder of the treatment contrast rather than a routine covariate.",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap",
+                "car"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "acceptance_criteria": [
+                "Count column names and metadata sample identifiers are confirmed to match one-to-one, with any mismatch reported and the run halted rather than silently reordered",
+                "PCA (blind VST, top 500 variable genes), sample-distance heatmap, and library-size plot are produced and saved",
+                "A confounding table is reported: age mean/median and range per arm with the between-arm difference and test, sex x condition counts, PC1-PC4 correlations with age and sex, and VIFs for ~ sex + age + condition",
+                "The step states explicitly whether age or sex is severely confounded with condition (non-overlapping age ranges or a single-sex arm) and whether the adjusted design remains identifiable",
+                "Any sample that sits apart from both arms is named, with its library size and detected-gene count, but is not removed at this stage"
+              ],
+              "constraints": [
+                "Use the variance-stabilizing transform with blind=TRUE for QC; do not use the design for the QC transform",
+                "Use the top 500 most variable genes for the PCA",
+                "Do not drop, impute, or batch-correct any sample in this step — QC observes, it does not modify the data passed downstream",
+                "Do not run any differential test here"
+              ],
+              "caveats": [
+                "With n=12 a PCA is descriptive; the absence of condition separation on PC1 does not mean there is no treatment effect, and its presence does not establish one",
+                "VIF near or above ~5 for the condition term signals that the treatment effect cannot be cleanly separated from age in this cohort — report the number, do not silently proceed as if it were 1"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Raw counts before a model: rule R-0033 prescribes blind VST, PCA on the top 500 variable genes and a sample-distance heatmap; the covariate-confounding tabulation is added because the user states the arms are not age-matched."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test, treated vs control adjusted for sex and age",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes differ in expression between treated and control adipose samples once sex and age are held in the model (contrast: condition, treated over control)?",
+              "description": "Fit the primary differential expression model on the raw Salmon counts. Pre-filter minimally: keep a gene with at least 10 counts in at least 6 samples (the smallest group size), and report how many of the 12,000 genes survive. Normalize inside the model with median-of-ratios size factors — do not pre-scale, log, or otherwise transform the counts before the fit. Set the condition factor reference level explicitly to the control level as spelled in metadata.csv; do not rely on alphabetical ordering. Code sex as a factor and mean-center age into age_c. Design: ~ sex + age_c + condition. Run the DESeq2 Wald test and extract the contrast (condition, treated, control) with alpha = 0.05 and independent filtering on, so a positive log2 fold change means higher in treated. Also extract the sex and age_c coefficients and report how many genes respond to each, as evidence of how much signal the covariates carry. Shrink the condition log2 fold changes with apeglm (coef-based, on the condition coefficient) and keep both the unshrunken and shrunken estimates plus lfcSE in the output table. Report the p-value histogram of the condition contrast before adjustment, and count the NA p-values separately by cause: Cook's-distance outlier flags (expected with 6 per group, where DESeq2 flags rather than replaces) versus independent-filter removals. Write a full results table (all tested genes) and a significant-gene table (padj < 0.05).",
+              "context": "The counts are gene-level sums of Salmon transcript estimates delivered as a CSV matrix; the per-gene average transcript-length offsets that tximport would carry are not available in this input, so the model runs on the count matrix with size-factor normalization only. State this in the output — a gene whose apparent change is driven by isoform switching cannot be distinguished here.",
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "acceptance_criteria": [
+                "Design formula ~ sex + age_c + condition is fitted on raw counts, with age mean-centered and the control level set as the explicit reference, and both are printed in the output",
+                "Pre-filter is at least 10 counts in at least 6 samples, with the number of genes before and after reported",
+                "A results table for the contrast (condition, treated, control) is written containing baseMean, unshrunken log2FoldChange, lfcSE, stat, pvalue, padj, and the apeglm-shrunken log2FoldChange",
+                "Number of genes with padj < 0.05 is reported, together with the p-value histogram and its shape assessed as flat/anti-conservative/irregular",
+                "NA p-values are counted and split by cause: Cook's outlier flag versus independent filtering",
+                "Number of genes significant for the sex and age_c coefficients is reported alongside, as a measure of covariate signal"
+              ],
+              "constraints": [
+                "Covariates enter the design as fixed effects; never regress sex or age out of the counts and test residuals, and never feed adjusted counts to the negative-binomial model",
+                "Do not pre-normalize, log-transform or scale the counts before DESeq2 — median-of-ratios size factors are applied inside the model",
+                "Set the reference level of the condition factor explicitly with relevel; name the contrast as (factor, numerator, denominator)",
+                "Pass alpha = 0.05 to results() so the independent filter is optimized for the reporting cutoff, and use BH adjustment",
+                "Leave DESeq2's count-outlier behaviour at its default (flag and set p to NA at 6 replicates); do not disable Cook's filtering",
+                "Select significant genes by padj only — never by unadjusted p-value and never by fold change alone",
+                "Use apeglm shrinkage on the condition coefficient for reporting and ranking; keep the unshrunken estimate and its standard error in the table"
+              ],
+              "caveats": [
+                "With 6 vs 6 and two covariate terms, the residual degrees of freedom are 8; the analysis detects only large, consistent effects and a null result is not evidence of absence",
+                "Because the arms are not age-matched, the condition coefficient is an age-adjusted effect that relies on the model's linearity in age; extrapolation beyond the overlapping age range is not supported by the data",
+                "Salmon length offsets are not available from this CSV input, so gene-level counts are used without a length offset and differential isoform usage cannot be separated from differential gene expression"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0023@e919",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Raw counts, fixed-effects two-group design at 6 replicates per group with named covariates: R-0001 selects the DESeq2 Wald test, R-0023 puts sex and centered age in the design as fixed effects, R-0009 shrinks with apeglm, and R-0010/R-0043 set BH at alpha 0.05 with independent filtering. R-0018 (tximport length offsets) cannot be met because only a gene-level CSV was delivered; this is stated in the step."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "edgeR second method and age-sensitivity refit",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which treated-vs-control genes are called by both DESeq2 and edgeR quasi-likelihood, and how much does the gene list change when the unmatched age covariate is dropped from the design?",
+              "description": "Two robustness analyses on the same filtered count matrix and the same samples as T1S2. First, fit an edgeR quasi-likelihood F-test: TMM normalization factors, design model.matrix(~ sex + age_c + condition) with the identical control reference level, estimateDisp, glmQLFit, glmQLFTest on the condition coefficient, BH adjustment at 0.05. Report the number of edgeR-significant genes, the number of DESeq2-significant genes from T1S2, and the size of their intersection; write the intersection as the high-confidence set and the method-unique genes as a secondary table naming the calling method. Do not report the union as the result. Second, refit the DESeq2 model without the age term (~ sex + condition) and compare against the T1S2 primary result: the number of significant genes in each, the overlap, the Spearman correlation of the condition Wald statistics across all tested genes, and the genes whose significance status flips. That comparison is the direct measure of how much the age imbalance moves the answer; large disagreement means the reported effects are age-sensitive and must be labelled as such.",
+              "context": "At 3-11 replicates per group DESeq2 and edgeR agree on most genes but each calls some the other misses, with disagreement growing at low counts — the intersection is the defensible set. The age-drop refit is a sensitivity analysis, not an alternative primary result: the age-adjusted model from T1S2 remains the answer to the research question.",
+              "packages": [
+                "edgeR",
+                "DESeq2",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "acceptance_criteria": [
+                "edgeR QL F-test is run with TMM normalization on the same filtered genes, same samples and the same ~ sex + age_c + condition design, with the same reference level",
+                "A table reports n significant for DESeq2, n significant for edgeR, and the size of the intersection; the intersection is written as the high-confidence set and method-unique genes as a secondary table",
+                "The age-dropped refit (~ sex + condition) is compared to the primary model: n significant each, overlap, Spearman correlation of condition Wald statistics, and a list of genes that change significance status",
+                "The step states in one sentence whether the primary gene list is robust to the age term or is age-sensitive"
+              ],
+              "constraints": [
+                "Use the identical filtered gene set and sample order as T1S2 so the two methods are comparable",
+                "Report the intersection as the high-confidence set; do not present the union of DESeq2 and edgeR as the result",
+                "The age-adjusted model of T1S2 stays the primary result — the age-dropped refit is reported as a sensitivity analysis and must not be substituted for it",
+                "Adjust with BH at alpha 0.05 in both methods so the cutoffs are comparable"
+              ],
+              "caveats": [
+                "Agreement between DESeq2 and edgeR is not external validation — both use the same counts and the same design, so shared systematic bias is invisible to this comparison",
+                "A large gene list from the age-dropped model is not the better answer; when the arms differ in age, part of that signal is age, not treatment"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0001@9a17",
+                  "R-0026@9ab1"
+                ],
+                "reason": "R-0042 prescribes running both DESeq2 and edgeR QL on the same counts and design and treating the intersection as the high-confidence set; R-0001 names edgeR QL as the alternative method at this replicate count. The age-drop sensitivity refit is added for the user's stated age imbalance and is not itself covered by a rule."
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Diagnostics and reproducible DE report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the reportable answer to 'which genes differ between treated and control adipose samples', with its diagnostics, thresholds, and stated limits?",
+              "description": "Assemble the final report from T1S1-T1S3. Place the fit diagnostics before the gene tables: the MA plot of the condition contrast with significant genes marked, the DESeq2 dispersion plot with per-gene estimates, fitted trend and shrunken values, and the p-value histogram from T1S2 with its shape stated. Then the gene table, ranked by the apeglm-shrunken log2 fold change and carrying baseMean, unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, pvalue and padj, with the shrinkage estimator named in the header. Add a volcano plot and a heatmap of VST values for the top genes, annotated by condition, sex and age so a reader can see whether an apparent treatment gene tracks the covariates instead. State in the report header: the design formula ~ sex + age_c + condition, the contrast (condition, treated vs control) with control as reference, the pre-filter rule, alpha = 0.05 with BH and independent filtering, the number of genes tested after filtering, the number significant, the number of NA p-values by cause, the DESeq2/edgeR intersection size, and the result of the age-sensitivity refit. Close with the confounding summary from T1S1 and an explicit power statement: 6 vs 6 with two covariate terms leaves 8 residual degrees of freedom, so only large consistent effects are detectable and a null is weak evidence of no effect. Attach sessionInfo, all package versions, and any random seed used.",
+              "context": "This is the deliverable that answers the research question. Its job is to make the treatment effect readable and its limits unmissable, given a small cohort whose arms are not age-matched.",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "acceptance_criteria": [
+                "MA plot, dispersion plot and p-value histogram appear before the gene tables, each with a one-line statement of what it shows",
+                "The gene table is ranked by the shrunken log2 fold change and contains baseMean, unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, pvalue and padj, with apeglm named as the shrinkage estimator",
+                "The report header states the design formula, the named contrast with its reference level, the filter rule, alpha, the adjustment method, n genes tested, n significant, and NA counts by cause",
+                "Heatmap of top genes is annotated by condition, sex and age",
+                "The confounding summary from T1S1, the DESeq2/edgeR intersection size, and the age-sensitivity refit outcome are all reported",
+                "sessionInfo, package versions and any seed are attached with the results"
+              ],
+              "constraints": [
+                "Rank genes and draw plots on the shrunken log2 fold change; keep the p-values from the unshrunken fit since shrinkage does not change the test",
+                "Report the number of DE genes at padj < 0.05 and state the cutoff explicitly",
+                "Do not add gene-set or pathway enrichment — the research question asks which genes differ and enrichment was not requested",
+                "State the power limitation and the age-confounding caveat in the report body, not only in a footnote",
+                "Do not describe any gene as treatment-responsive on the basis of fold change alone when its padj is not significant"
+              ],
+              "caveats": [
+                "A gene that is significant in the age-adjusted model but whose expression tracks age within arms deserves explicit flagging rather than a mechanistic story",
+                "With 12,000 genes and 12 samples, the top of the list by shrunken effect size is still subject to selection effects; effect sizes reported here are optimistic for the discovery cohort"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0087@c53d",
+                  "R-0085@c24d",
+                  "R-0041@059a",
+                  "R-0086@becf",
+                  "R-0042@54e1"
+                ],
+                "reason": "R-0087 requires the MA and dispersion plots as fit diagnostics, R-0085 requires both shrunken and unshrunken log2FC with lfcSE and ranking on the shrunken value, R-0041 fixes the reported fields, and R-0086 the reproducibility record."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

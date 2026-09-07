@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: GSVA on a DESeq2 VST matrix over the 50 human Hallmark sets, limma on the score matrix under ~condition with control set as reference, BH across the tested sets, and a row-scaled heatmap annotated by condition and library size, with sample_01 kept, inspected on PCA/distance heatmap, and reported rather than dropped. Filtering (>=10 in >=6, smallest group) and median-of-ratios normalization are explicit and justified, and no gene-level DE or ranked GSEA is wrongly substituted. The main gap is that the MSigDB Hallmark version is deferred to the output rather than named in the plan, and the size window is stated but the collection source is only 'resolve from the environment'. Reporting (sessionInfo, seed, sets tested, caveats on 6v6 power, overlapping sets, cohort-relative scores) is thorough without overclaiming."
+}

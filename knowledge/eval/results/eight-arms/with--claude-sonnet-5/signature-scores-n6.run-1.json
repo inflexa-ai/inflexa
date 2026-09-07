@@ -1,0 +1,692 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "signature-scores-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T15:54:59.887Z",
+  "elapsedMs": 67480,
+  "outcome": "plan_submitted",
+  "planId": "pln-90720a4f",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and low-depth sample inspection",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Sample sample_01 has a library size ~4x below the median — this is a QC finding to report, not an automatic exclusion criterion"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 12 ileum samples (6 Crohn-disease inflamed vs 6 control) separate by condition on PCA/sample-distance, and how does the low-depth sample_01 (library size ~4x below median) behave relative to its group?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC on raw counts with explicit low-depth-sample handling per R-0033/R-0008",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "low_depth_policy = keep_inspect_report: do not drop sample_01 by default; only remove with a stated PCA/heatmap-based reason",
+          "n_top_genes = 500 for PCA",
+          "transform = vst_blind"
+        ],
+        "description": "Load counts.csv (12000 genes x 13 columns incl. gene symbol; 12 samples) and metadata.csv, build a DESeqDataSet, apply blind VST, compute PCA on the top 500 most variable genes, a Euclidean sample-distance heatmap, and report library size and detected-gene count per sample with sample_01 flagged explicitly.",
+        "acceptance_criteria": [
+          "PCA plot and sample-distance heatmap produced, colored by condition (inflamed vs control)",
+          "Library size and number of detected genes reported per sample, with sample_01 explicitly compared to the group median",
+          "A stated decision (keep or exclude sample_01) with explicit justification tied to the QC plots, not depth alone"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: Crohn inflamed vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 3-6 replicates/cell, DESeq2 flags count outliers via Cook's distance and sets padj to NA — report these separately from independent-filtering NAs",
+          "The low-depth sample_01 is down-weighted via its size factor, not removed by default"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between Crohn-disease inflamed ileum (n=6) and control ileum (n=6)?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248",
+            "R-0036@9786",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with apeglm shrinkage, explicit reference level, minimal pre-filter, BH+independent filtering per grounded procedure",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count=10, min_samples=6 (smallest group size)",
+          "reference_level explicitly set to control",
+          "contrast named factor/numerator/denominator: condition, inflamed, control",
+          "count_outlier_policy = flag_and_report_na",
+          "alpha=0.05 with independent filtering on"
+        ],
+        "description": "Filter genes to >=10 counts in >=6 samples (smallest group size). Set condition factor with explicit reference level = control. Run DESeq2 with median-of-ratios normalization and a Wald test on design ~condition, contrast condition inflamed vs control. Shrink log2FC with apeglm. Report BH-adjusted p-values (independent filtering on, alpha=0.05), MA plot, dispersion plot, and p-value histogram diagnostic.",
+        "acceptance_criteria": [
+          "Genes filtered to >=10 counts in >=6 samples before testing",
+          "Reference level explicitly set to control; contrast reported as condition_inflamed_vs_control",
+          "Results table has both unshrunken and apeglm-shrunken log2FoldChange with lfcSE, BH-adjusted p-values",
+          "MA plot, dispersion plot, and p-value histogram reported",
+          "Number of genes tested and number significant at padj<0.05 stated"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GSVA hallmark per-sample pathway scores + limma differential test",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GSVA scores are computed relative to the sample set in the matrix; a score changes if the sample set changes, unlike UCell",
+          "State the number of hallmark genes present in the 12000-gene matrix per set"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "GSVA",
+          "limma"
+        ],
+        "question": "What is the GSVA activity score of each of the 50 MSigDB Hallmark gene sets in every one of the 12 ileum samples, and which hallmark signatures differ significantly between Crohn-disease inflamed and control?",
+        "grounding": {
+          "claims": [
+            "R-0102@c84c",
+            "R-0134@0f16",
+            "R-0047@fd9d",
+            "R-0048@500d"
+          ],
+          "reason": "GSVA per-sample pathway scores with limma testing on the Hallmark collection is the grounded method for a per-sample score matrix (sample_scores enrichment_input)",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "gene_set_collection = msigdb_hallmark_human (50 sets, /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt)",
+          "min_size=15, max_size=500 after intersection with tested genes",
+          "pathway_scores = gsva_then_limma",
+          "kernel = Gaussian for log-scale/VST input"
+        ],
+        "description": "Using the blind-VST-transformed (or Gaussian-kernel-appropriate log) expression matrix from T1S1, run GSVA with the Gaussian kernel against the 50 human MSigDB Hallmark gene sets from the reference store (h.all.v2026.1.Hs.symbols.gmt), applying a gene-set size window of 15-500 genes among the tested genes. This produces a 50 (hallmark) x 12 (sample) score matrix — the direct answer to 'a score for every hallmark signature in every sample'. Test each hallmark score between inflamed and control with limma using the same design as the gene-level model (~condition), BH-adjust across the 50 signatures, and report the full score matrix plus the ranked table of differential hallmarks.",
+        "acceptance_criteria": [
+          "A 50 x 12 GSVA score matrix (hallmark sets x samples) produced and saved as a supplementary table",
+          "limma test run on the score matrix with design ~condition, BH-adjusted p-values across all 50 hallmarks",
+          "Ranked table of hallmark signatures by adjusted p-value / effect size between inflamed and control",
+          "Gene set collection name and version (MSigDB Hallmark 2026.1) stated in output",
+          "Behavior of sample_01 (low depth) on the score matrix is flagged/discussed if it appears as an outlier"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "UCell rank-based hallmark signature scores per sample",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "UCell and GSVA can disagree on which hallmarks reach significance; report the method used for every score and treat disagreement as informative, not as a contradiction to resolve away"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "UCell"
+        ],
+        "question": "As a depth-robust complement to GSVA, what is the UCell rank-based score for each of the 50 Hallmark signatures in each of the 12 samples, and does this corroborate which signatures differ between inflamed and control?",
+        "grounding": {
+          "claims": [
+            "R-0133@ce76",
+            "R-0134@0f16",
+            "R-0135@f02d"
+          ],
+          "reason": "UCell rank-based per-sample signature scoring is the grounded depth-robust alternative to GSVA for the same Hallmark collection",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "signature_scoring",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "score_method = rank_based_per_sample",
+          "input_scale = log_normalized_expression",
+          "score_test = t-test (two-group, no covariate) with BH across signatures",
+          "signature_provenance stated: MSigDB Hallmark 2026.1, genes present per set"
+        ],
+        "description": "Compute UCell scores (Mann-Whitney U-statistic on within-sample gene ranks) for the 50 MSigDB Hallmark gene sets on the same log-normalized expression matrix, for all 12 samples. UCell scores are rank-based within each sample and thus are not distorted by the ~4x lower library size of sample_01, providing a robustness check on the GSVA result for that sample specifically. Test each signature's score between inflamed and control with a t-test (two-group, no covariate), BH-adjust across the 50 signatures, and report agreement/disagreement with the GSVA-based calls from T2S1.",
+        "acceptance_criteria": [
+          "A 50 x 12 UCell score matrix produced",
+          "t-test per signature between inflamed and control, BH-adjusted across 50 signatures",
+          "Explicit comparison of UCell vs GSVA hallmark calls (overlap and disagreement) reported",
+          "Signature source (MSigDB Hallmark 2026.1) and number of genes per set present in the matrix stated"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Integrated report: DE, hallmark scores, and low-depth sample handling",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Enrichment methods (GSVA vs UCell) can disagree; report both, do not present one as definitive"
+        ],
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the final, reproducible summary of differential expression, per-sample hallmark signature scores (GSVA and UCell), and the disposition of the low-depth sample_01?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0086@becf"
+          ],
+          "reason": "No single rule covers the integrative report step; assembled from the report-stage claims of the constituent DE/enrichment steps",
+          "status": "ungrounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1",
+          "T3S1"
+        ],
+        "constraints": [
+          "reproducibility_record includes session_info, seed, package_versions, collection_version",
+          "report_fields include method, versions, design, thresholds, n_tested, n_de"
+        ],
+        "description": "Integrate the DESeq2 DE results (T1S2), the GSVA hallmark score matrix and limma test (T2S1), and the UCell hallmark score matrix and t-test (T3S1) into one report. State package versions, design formula, contrast, thresholds, number of genes tested/DE, the Hallmark collection version, the GSVA/UCell rank and test methods, and the final treatment of sample_01 with its justification. Include the MA plot, dispersion plot, p-value histogram, and the ranked hallmark signature tables from both scoring methods side by side.",
+        "acceptance_criteria": [
+          "Report states DESeq2/apeglm/GSVA/UCell versions, seed, design ~condition, reference level control, contrast inflamed vs control",
+          "Report states number of genes tested and DE at padj<0.05",
+          "Report gives the full 50-hallmark x 12-sample score tables (GSVA and UCell) and the significant hallmarks from each method with BH-adjusted p-values",
+          "Report explicitly states the final decision on sample_01 and its rationale",
+          "Session info / reproducibility record included"
+        ]
+      }
+    ],
+    "title": "Crohn's ileum: DE + hallmark signature scoring per sample",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The dataset is 12 ileum samples (6 Crohn-disease inflamed vs 6 control), raw gene-level Salmon counts (12000 genes x 12 samples), unpaired, single batch. Sample sample_01 has a library size ~4x below the median. Per the retrieved procedure, this flag is kept and inspected rather than silently dropped: it is carried through QC and only removed with a stated reason if it proves to be a genuine outlier on PCA/sample-distance grounds, not for depth alone (R-0008/R-0030). The research question asks for a per-sample score for every hallmark signature and which signatures differ between inflamed and control — this is the sample_scores enrichment case, for which GSVA + limma-on-scores is the grounded method (R-0102/R-0133), using the 50 MSigDB Hallmark human gene sets staged in the reference store. UCell rank-based per-sample scores are added as a complementary, depth-robust scoring method (rank-based scores do not depend on sample sequencing depth, useful given the shallow sample), each signature tested with limma/t-test on the score matrix with BH correction across the 50 signatures. A standard DESeq2 Wald + apeglm differential expression analysis anchors the gene-level result and supplies the ranked statistic that motivates and cross-validates the pathway-level signal. Track T1 does DE, T2 does GSVA/hallmark enrichment, T3 does UCell scoring, and a final report step integrates all three with explicit treatment of the low-depth sample."
+  },
+  "usage": {
+    "inputTokens": 248604,
+    "outputTokens": 6753,
+    "cacheCreationInputTokens": 169656,
+    "cacheReadInputTokens": 78912,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "sample_scores",
+        "extra_analyses": [
+          "signature_scoring"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "sample_scores",
+        "extra_analyses": [
+          "signature_scoring"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind), PCA, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Minimal pre-filter: >=10 counts in >=6 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2",
+            "parameters": []
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~condition, explicit reference level = control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition_inflamed_vs_control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage",
+            "package": "apeglm",
+            "parameters": []
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "GSVA hallmark per-sample scores + limma on scores vs condition",
+            "package": "GSVA",
+            "parameters": [
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "UCell rank-based per-sample hallmark signature scores",
+            "package": "UCell",
+            "parameters": [
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_design"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH_across_signatures"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Combined DE + GSVA hallmark score report",
+            "package": "none",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Crohn's ileum: DE + hallmark signature scoring per sample",
+          "analytical_narrative": "The dataset is 12 ileum samples (6 Crohn-disease inflamed vs 6 control), raw gene-level Salmon counts (12000 genes x 12 samples), unpaired, single batch. Sample sample_01 has a library size ~4x below the median. Per the retrieved procedure, this flag is kept and inspected rather than silently dropped: it is carried through QC and only removed with a stated reason if it proves to be a genuine outlier on PCA/sample-distance grounds, not for depth alone (R-0008/R-0030). The research question asks for a per-sample score for every hallmark signature and which signatures differ between inflamed and control — this is the sample_scores enrichment case, for which GSVA + limma-on-scores is the grounded method (R-0102/R-0133), using the 50 MSigDB Hallmark human gene sets staged in the reference store. UCell rank-based per-sample scores are added as a complementary, depth-robust scoring method (rank-based scores do not depend on sample sequencing depth, useful given the shallow sample), each signature tested with limma/t-test on the score matrix with BH correction across the 50 signatures. A standard DESeq2 Wald + apeglm differential expression analysis anchors the gene-level result and supplies the ranked statistic that motivates and cross-validates the pathway-level signal. Track T1 does DE, T2 does GSVA/hallmark enrichment, T3 does UCell scoring, and a final report step integrates all three with explicit treatment of the low-depth sample.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and low-depth sample inspection",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 12 ileum samples (6 Crohn-disease inflamed vs 6 control) separate by condition on PCA/sample-distance, and how does the low-depth sample_01 (library size ~4x below median) behave relative to its group?",
+              "description": "Load counts.csv (12000 genes x 13 columns incl. gene symbol; 12 samples) and metadata.csv, build a DESeqDataSet, apply blind VST, compute PCA on the top 500 most variable genes, a Euclidean sample-distance heatmap, and report library size and detected-gene count per sample with sample_01 flagged explicitly.",
+              "acceptance_criteria": [
+                "PCA plot and sample-distance heatmap produced, colored by condition (inflamed vs control)",
+                "Library size and number of detected genes reported per sample, with sample_01 explicitly compared to the group median",
+                "A stated decision (keep or exclude sample_01) with explicit justification tied to the QC plots, not depth alone"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "low_depth_policy = keep_inspect_report: do not drop sample_01 by default; only remove with a stated PCA/heatmap-based reason",
+                "n_top_genes = 500 for PCA",
+                "transform = vst_blind"
+              ],
+              "caveats": [
+                "Sample sample_01 has a library size ~4x below the median — this is a QC finding to report, not an automatic exclusion criterion"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "reason": "Sample structure QC on raw counts with explicit low-depth-sample handling per R-0033/R-0008"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: Crohn inflamed vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are differentially expressed between Crohn-disease inflamed ileum (n=6) and control ileum (n=6)?",
+              "description": "Filter genes to >=10 counts in >=6 samples (smallest group size). Set condition factor with explicit reference level = control. Run DESeq2 with median-of-ratios normalization and a Wald test on design ~condition, contrast condition inflamed vs control. Shrink log2FC with apeglm. Report BH-adjusted p-values (independent filtering on, alpha=0.05), MA plot, dispersion plot, and p-value histogram diagnostic.",
+              "acceptance_criteria": [
+                "Genes filtered to >=10 counts in >=6 samples before testing",
+                "Reference level explicitly set to control; contrast reported as condition_inflamed_vs_control",
+                "Results table has both unshrunken and apeglm-shrunken log2FoldChange with lfcSE, BH-adjusted p-values",
+                "MA plot, dispersion plot, and p-value histogram reported",
+                "Number of genes tested and number significant at padj<0.05 stated"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "min_count=10, min_samples=6 (smallest group size)",
+                "reference_level explicitly set to control",
+                "contrast named factor/numerator/denominator: condition, inflamed, control",
+                "count_outlier_policy = flag_and_report_na",
+                "alpha=0.05 with independent filtering on"
+              ],
+              "caveats": [
+                "With 3-6 replicates/cell, DESeq2 flags count outliers via Cook's distance and sets padj to NA — report these separately from independent-filtering NAs",
+                "The low-depth sample_01 is down-weighted via its size factor, not removed by default"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0030@2248",
+                  "R-0036@9786",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "reason": "DESeq2 Wald test with apeglm shrinkage, explicit reference level, minimal pre-filter, BH+independent filtering per grounded procedure"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "GSVA hallmark per-sample pathway scores + limma differential test",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "What is the GSVA activity score of each of the 50 MSigDB Hallmark gene sets in every one of the 12 ileum samples, and which hallmark signatures differ significantly between Crohn-disease inflamed and control?",
+              "description": "Using the blind-VST-transformed (or Gaussian-kernel-appropriate log) expression matrix from T1S1, run GSVA with the Gaussian kernel against the 50 human MSigDB Hallmark gene sets from the reference store (h.all.v2026.1.Hs.symbols.gmt), applying a gene-set size window of 15-500 genes among the tested genes. This produces a 50 (hallmark) x 12 (sample) score matrix — the direct answer to 'a score for every hallmark signature in every sample'. Test each hallmark score between inflamed and control with limma using the same design as the gene-level model (~condition), BH-adjust across the 50 signatures, and report the full score matrix plus the ranked table of differential hallmarks.",
+              "acceptance_criteria": [
+                "A 50 x 12 GSVA score matrix (hallmark sets x samples) produced and saved as a supplementary table",
+                "limma test run on the score matrix with design ~condition, BH-adjusted p-values across all 50 hallmarks",
+                "Ranked table of hallmark signatures by adjusted p-value / effect size between inflamed and control",
+                "Gene set collection name and version (MSigDB Hallmark 2026.1) stated in output",
+                "Behavior of sample_01 (low depth) on the score matrix is flagged/discussed if it appears as an outlier"
+              ],
+              "packages": [
+                "GSVA",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "constraints": [
+                "gene_set_collection = msigdb_hallmark_human (50 sets, /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt)",
+                "min_size=15, max_size=500 after intersection with tested genes",
+                "pathway_scores = gsva_then_limma",
+                "kernel = Gaussian for log-scale/VST input"
+              ],
+              "caveats": [
+                "GSVA scores are computed relative to the sample set in the matrix; a score changes if the sample set changes, unlike UCell",
+                "State the number of hallmark genes present in the 12000-gene matrix per set"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0102@c84c",
+                  "R-0134@0f16",
+                  "R-0047@fd9d",
+                  "R-0048@500d"
+                ],
+                "reason": "GSVA per-sample pathway scores with limma testing on the Hallmark collection is the grounded method for a per-sample score matrix (sample_scores enrichment_input)"
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "UCell rank-based hallmark signature scores per sample",
+              "track": "T3",
+              "step_type": "signature_scoring",
+              "question": "As a depth-robust complement to GSVA, what is the UCell rank-based score for each of the 50 Hallmark signatures in each of the 12 samples, and does this corroborate which signatures differ between inflamed and control?",
+              "description": "Compute UCell scores (Mann-Whitney U-statistic on within-sample gene ranks) for the 50 MSigDB Hallmark gene sets on the same log-normalized expression matrix, for all 12 samples. UCell scores are rank-based within each sample and thus are not distorted by the ~4x lower library size of sample_01, providing a robustness check on the GSVA result for that sample specifically. Test each signature's score between inflamed and control with a t-test (two-group, no covariate), BH-adjust across the 50 signatures, and report agreement/disagreement with the GSVA-based calls from T2S1.",
+              "acceptance_criteria": [
+                "A 50 x 12 UCell score matrix produced",
+                "t-test per signature between inflamed and control, BH-adjusted across 50 signatures",
+                "Explicit comparison of UCell vs GSVA hallmark calls (overlap and disagreement) reported",
+                "Signature source (MSigDB Hallmark 2026.1) and number of genes per set present in the matrix stated"
+              ],
+              "packages": [
+                "UCell"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "score_method = rank_based_per_sample",
+                "input_scale = log_normalized_expression",
+                "score_test = t-test (two-group, no covariate) with BH across signatures",
+                "signature_provenance stated: MSigDB Hallmark 2026.1, genes present per set"
+              ],
+              "caveats": [
+                "UCell and GSVA can disagree on which hallmarks reach significance; report the method used for every score and treat disagreement as informative, not as a contradiction to resolve away"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0133@ce76",
+                  "R-0134@0f16",
+                  "R-0135@f02d"
+                ],
+                "reason": "UCell rank-based per-sample signature scoring is the grounded depth-robust alternative to GSVA for the same Hallmark collection"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Integrated report: DE, hallmark scores, and low-depth sample handling",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the final, reproducible summary of differential expression, per-sample hallmark signature scores (GSVA and UCell), and the disposition of the low-depth sample_01?",
+              "description": "Integrate the DESeq2 DE results (T1S2), the GSVA hallmark score matrix and limma test (T2S1), and the UCell hallmark score matrix and t-test (T3S1) into one report. State package versions, design formula, contrast, thresholds, number of genes tested/DE, the Hallmark collection version, the GSVA/UCell rank and test methods, and the final treatment of sample_01 with its justification. Include the MA plot, dispersion plot, p-value histogram, and the ranked hallmark signature tables from both scoring methods side by side.",
+              "acceptance_criteria": [
+                "Report states DESeq2/apeglm/GSVA/UCell versions, seed, design ~condition, reference level control, contrast inflamed vs control",
+                "Report states number of genes tested and DE at padj<0.05",
+                "Report gives the full 50-hallmark x 12-sample score tables (GSVA and UCell) and the significant hallmarks from each method with BH-adjusted p-values",
+                "Report explicitly states the final decision on sample_01 and its rationale",
+                "Session info / reproducibility record included"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "reproducibility_record includes session_info, seed, package_versions, collection_version",
+                "report_fields include method, versions, design, thresholds, n_tested, n_de"
+              ],
+              "caveats": [
+                "Enrichment methods (GSVA vs UCell) can disagree; report both, do not present one as definitive"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0086@becf"
+                ],
+                "reason": "No single rule covers the integrative report step; assembled from the report-stage claims of the constituent DE/enrichment steps"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

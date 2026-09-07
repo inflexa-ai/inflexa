@@ -1,0 +1,691 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "gene-list-ora",
+  "run": 1,
+  "startedAt": "2026-09-06T14:47:19.711Z",
+  "elapsedMs": 94871,
+  "outcome": "plan_submitted",
+  "planId": "pln-6b147d0d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on existing counts/metadata",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not delete sample_01 silently; the count model already down-weights a low-depth sample via its size factor — removal must be a stated judgment with a reason, not an automatic step."
+        ],
+        "context": "Counts file (12000 genes x 13 columns incl. gene symbol, 12 samples) and metadata.csv (12 samples x condition) are in data/inputs. Design is 6 treated (AD lesional) vs 6 control, unpaired, single batch. sample_01 has a library size ~4x below the median — this is a QC/reporting matter, not a default-drop.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Does the AD lesional vs control sample structure (PCA, sample-distance heatmap on blind-VST counts) show the expected group separation, and how does the low-depth sample_01 (library size ~4x below median) behave relative to its group?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "R-0033/R-0008: blind-vst sample structure QC is mandatory on raw counts, and the flagged low-depth sample must be kept, inspected, and reported rather than dropped by default.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use vst(blind=TRUE), PCA on top 500 most-variable genes, Euclidean sample-distance heatmap"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the 12000 x 12 count matrix from counts.csv",
+          "PCA plot and sample-distance heatmap produced, colored by condition (lesional/control)",
+          "sample_01's library size, detected gene count, and its position on PCA/heatmap are explicitly reported alongside the other 11 samples",
+          "A stated decision (keep or exclude sample_01) with justification, not a silent default"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Map gene symbols to Entrez IDs for the DE results table",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A symbol is not stable across annotation releases and can map many-to-one or one-to-many with Entrez; never mix identifier spaces between the list and the universe."
+        ],
+        "context": "de_results.csv (12000 x 8) is a DESeq2 results table of the treated vs control contrast, keyed by gene symbol. clusterProfiler's enrichGO needs Entrez IDs (or can take symbols directly with OrgDb, but ID mapping and its unmapped share must be reported per the grounded procedure).",
+        "maxSteps": 200,
+        "packages": [
+          "org.Hs.eg.db",
+          "AnnotationDbi",
+          "clusterProfiler"
+        ],
+        "question": "What is the Entrez gene ID mapping for the gene symbols in de_results.csv (DESeq2 treated vs control contrast), and what share of the 12000 tested genes fails to map or maps ambiguously?",
+        "grounding": {
+          "claims": [
+            "R-0101@06c8",
+            "R-0160@d858"
+          ],
+          "reason": "R-0101/R-0160: map symbols to Entrez with the organism annotation package, report the unmapped and many-to-one share, keep one identifier space per column.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "annotation",
+        "depends_on": [],
+        "constraints": [
+          "Use org.Hs.eg.db (present, v3.23.1) as the primary mapper; state its version in the output"
+        ],
+        "acceptance_criteria": [
+          "Every gene symbol in de_results.csv is looked up against org.Hs.eg.db (or the UniProt human ID-mapping table in the reference store as a cross-check)",
+          "Output table carries gene symbol, Entrez ID, and the original DESeq2 statistics (log2FoldChange, stat, pvalue, padj)",
+          "The share of symbols that did not map and the share that mapped to more than one Entrez ID are both reported explicitly, with a stated rule for handling the one-to-many cases (e.g., drop, or keep first with note)"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GO biological process over-representation of significant DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If fewer than ~50 genes pass padj<0.05, a hypergeometric ORA on that short list has little power and is threshold-sensitive; run the ranked GSEA on the full list as the more defensible primary answer and state the significant-list size in the report.",
+          "GO terms nest heavily; without the rrvgo reduction, one true signal will appear as many overlapping 'significant' terms.",
+          "Gene length and expression-level detection bias can enrich for long/highly expressed genes in the significant list; the tested-gene universe only partially corrects this."
+        ],
+        "context": "Primary research question: GO BP over-representation among significant treated-vs-control genes. Input is the delivered DESeq2 results table (de_results.csv) and the Entrez-mapped gene table from T1S2. Universe must be the tested genes (12000), never the whole genome. GO.db/org.Hs.eg.db (v3.23.1/v3.23.1) supply the GO BP gene sets natively through clusterProfiler; MSigDB C5 GO-BP GMT and WikiPathways human GMT are present in the reference store as optional secondary/cross-check collections if a second pathway-database view is wanted.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "rrvgo",
+          "GO.db",
+          "fgsea"
+        ],
+        "question": "Which GO biological process terms are over-represented among the genes significant (padj<0.05) in the AD lesional vs control DESeq2 contrast, using all 12000 tested genes as the statistical universe?",
+        "grounding": {
+          "claims": [
+            "R-0095@492a",
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0103@93aa",
+            "R-0109@fe3e",
+            "R-0054@801e"
+          ],
+          "reason": "R-0095: GO BP ORA with enrichGO (universe=tested genes, rrvgo redundancy reduction) is the tool of record for a discrete significant gene list; R-0103 flags the <50-gene power issue and directs to the ranked full-list method as a fallback; R-0109 requires stating the up/down direction-handling choice.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-ora-go@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "universe = tested_genes (all 12000 genes in de_results.csv, mapped to Entrez)",
+          "ontology = BP only (the research question asks specifically about biological processes)",
+          "min_size=15, max_size=500",
+          "BH multiple-testing correction",
+          "State whether up/down genes were pooled or tested as two separate lists"
+        ],
+        "acceptance_criteria": [
+          "Significant gene list defined at padj < 0.05 from de_results.csv (state the resulting list size explicitly)",
+          "If the significant list has fewer than ~50 genes, run fgsea preranked GSEA (GO BP gene sets, ranked by the DESeq2 Wald 'stat' column) as the primary/fallback analysis instead of, or alongside, the ORA, and state this explicitly",
+          "clusterProfiler::enrichGO run with ont='BP', universe = all 12000 tested gene Entrez IDs (from T1S2), pAdjustMethod='BH'",
+          "Gene set size window restricted to 15-500 genes among the tested genes",
+          "Redundant/overlapping significant GO BP terms collapsed by semantic similarity with rrvgo; a representative-term table and the full term table are both reported",
+          "Direction handling stated: up- and down-regulated genes tested separately or pooled, with the reason given",
+          "GO.db/org.Hs.eg.db version and analysis date recorded as the GO release"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Report: GO BP enrichment results and caveats",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [],
+        "context": "Final synthesis step for the GO BP over-representation analysis, consolidating QC, annotation, and enrichment outputs into a decision-ready summary.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What are the final representative over-represented GO biological process terms for the AD lesional vs control contrast, and what are the reproducibility and interpretive caveats?",
+        "grounding": {
+          "claims": [
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0086@becf"
+          ],
+          "reason": "R-0051/R-0055/R-0086: the report must state the database version, universe, ranking/cutoff, method-dependence caveat, and a full reproducibility record.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S1",
+          "T1S1"
+        ],
+        "constraints": [
+          "Report the gene set database and its version, the universe, the size window, and the multiple-testing method per rule R-0051"
+        ],
+        "acceptance_criteria": [
+          "Reports the GO BP database/version (GO.db/org.Hs.eg.db version), the universe size, the significant-list size and cutoff, the gene-set size window, and the multiple-testing method",
+          "Lists the rrvgo-representative GO BP terms with their gene counts, odds ratios/fold enrichment, and adjusted p-values, plus the full term table as a supplement",
+          "States that enrichment results are method-dependent (ORA vs ranked GSEA can disagree) and reports the overlap/agreement between the two if both were run",
+          "Records session info, package versions, and any random seed used (e.g., in rrvgo or fgsea permutations) as the reproducibility record",
+          "Explicitly notes the sample_01 low-depth QC decision from T1S1 and its potential effect on the underlying DE results feeding this enrichment"
+        ]
+      }
+    ],
+    "title": "GO BP over-representation: AD lesional vs control DE genes",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "The research question asks which GO biological processes are over-represented among genes that came out significant in the treated (AD lesional) vs control comparison. A DESeq2 results table (12000 genes) already exists from a 6 vs 6 unpaired design; no new differential expression model needs to be fit. Per the grounded procedure: (1) confirm sample structure via vst-blind PCA/heatmap on the existing counts, explicitly inspecting sample_01 (library size ~4x below median) rather than dropping it silently; (2) determine the significant gene list from the delivered DESeq2 results at padj<0.05, check its size against the ~50-gene floor for a hypergeometric test to have any power, and if the list is short, run a preranked GSEA on the full ranked list (by the DESeq2 Wald 'stat' column) as the primary or a fallback additional finding; (3) map gene symbols to Entrez IDs with org.Hs.eg.db, reporting the unmapped share; (4) run clusterProfiler enrichGO (ontology=BP) over-representation with the universe set to all 12000 tested genes, gene-set size window 15-500, then reduce redundant GO terms with rrvgo semantic similarity; (5) report the representative BP terms, full table, database/version, universe, size window, and the enrichment-method-dependence caveat. WikiPathways human and MSigDB GO-BP (C5) collections are available in the reference store as secondary/cross-check collections if desired, but the primary answer uses clusterProfiler's internal GO.db (via org.Hs.eg.db), which is installed and current, matching the grounded procedure's tool of record."
+  },
+  "usage": {
+    "inputTokens": 1534761,
+    "outputTokens": 7458,
+    "cacheCreationInputTokens": 196769,
+    "cacheReadInputTokens": 1337812,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "gene_list",
+        "count_source": "salmon"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO biological process gene sets human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "rrvgo",
+          "DOSE",
+          "enrichplot",
+          "GO.db"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "gene_list",
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA and sample distance heatmap using existing counts/metadata",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "Use delivered DESeq2 Wald test results table (treated vs control); no new model fitted",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "note",
+                "value": "results table already provided; not refit"
+              }
+            ]
+          },
+          {
+            "step_type": "annotation",
+            "method": "Map gene symbols to Entrez IDs with org.Hs.eg.db",
+            "package": "org.Hs.eg.db",
+            "parameters": [
+              {
+                "name": "id_mapping",
+                "value": "to_entrez_with_orgdb"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "clusterProfiler enrichGO (ontology=BP) over-representation on significant genes (padj<0.05), universe = all tested genes, then rrvgo semantic-similarity term reduction",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "go_ontology",
+                "value": "BP"
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "padj_cutoff",
+                "value": 0.05
+              },
+              {
+                "name": "ora_min_significant_genes",
+                "value": 50
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Summarize significant BP terms, rrvgo-reduced representative terms, universe, database version, caveats",
+            "package": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO obo ontology term database"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifiers human ncbi"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot idmapping human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/uniprot-idmapping-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/uniprot-idmapping-human/current"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "NCBI gene info human GENCODE"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "gene_list",
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "annotation",
+            "method": "Gene identifier annotation with the organism package and the reference store tables",
+            "package": "org.Hs.eg.db",
+            "parameters": [
+              {
+                "name": "id_mapping",
+                "value": "to_entrez_with_orgdb"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "GO over-representation with clusterProfiler enrichGO and rrvgo term reduction",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "go_ontology",
+                "value": "BP"
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "ora_min_significant_genes",
+                "value": 50
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Report enrichment results with database version, universe, size window, method-dependence caveat",
+            "package": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "GO BP over-representation: AD lesional vs control DE genes",
+          "analytical_narrative": "The research question asks which GO biological processes are over-represented among genes that came out significant in the treated (AD lesional) vs control comparison. A DESeq2 results table (12000 genes) already exists from a 6 vs 6 unpaired design; no new differential expression model needs to be fit. Per the grounded procedure: (1) confirm sample structure via vst-blind PCA/heatmap on the existing counts, explicitly inspecting sample_01 (library size ~4x below median) rather than dropping it silently; (2) determine the significant gene list from the delivered DESeq2 results at padj<0.05, check its size against the ~50-gene floor for a hypergeometric test to have any power, and if the list is short, run a preranked GSEA on the full ranked list (by the DESeq2 Wald 'stat' column) as the primary or a fallback additional finding; (3) map gene symbols to Entrez IDs with org.Hs.eg.db, reporting the unmapped share; (4) run clusterProfiler enrichGO (ontology=BP) over-representation with the universe set to all 12000 tested genes, gene-set size window 15-500, then reduce redundant GO terms with rrvgo semantic similarity; (5) report the representative BP terms, full table, database/version, universe, size window, and the enrichment-method-dependence caveat. WikiPathways human and MSigDB GO-BP (C5) collections are available in the reference store as secondary/cross-check collections if desired, but the primary answer uses clusterProfiler's internal GO.db (via org.Hs.eg.db), which is installed and current, matching the grounded procedure's tool of record.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on existing counts/metadata",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Does the AD lesional vs control sample structure (PCA, sample-distance heatmap on blind-VST counts) show the expected group separation, and how does the low-depth sample_01 (library size ~4x below median) behave relative to its group?",
+              "acceptance_criteria": [
+                "Blind VST computed on the 12000 x 12 count matrix from counts.csv",
+                "PCA plot and sample-distance heatmap produced, colored by condition (lesional/control)",
+                "sample_01's library size, detected gene count, and its position on PCA/heatmap are explicitly reported alongside the other 11 samples",
+                "A stated decision (keep or exclude sample_01) with justification, not a silent default"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Counts file (12000 genes x 13 columns incl. gene symbol, 12 samples) and metadata.csv (12 samples x condition) are in data/inputs. Design is 6 treated (AD lesional) vs 6 control, unpaired, single batch. sample_01 has a library size ~4x below the median — this is a QC/reporting matter, not a default-drop.",
+              "caveats": [
+                "Do not delete sample_01 silently; the count model already down-weights a low-depth sample via its size factor — removal must be a stated judgment with a reason, not an automatic step."
+              ],
+              "constraints": [
+                "Use vst(blind=TRUE), PCA on top 500 most-variable genes, Euclidean sample-distance heatmap"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "R-0033/R-0008: blind-vst sample structure QC is mandatory on raw counts, and the flagged low-depth sample must be kept, inspected, and reported rather than dropped by default."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Map gene symbols to Entrez IDs for the DE results table",
+              "track": "T1",
+              "step_type": "annotation",
+              "question": "What is the Entrez gene ID mapping for the gene symbols in de_results.csv (DESeq2 treated vs control contrast), and what share of the 12000 tested genes fails to map or maps ambiguously?",
+              "acceptance_criteria": [
+                "Every gene symbol in de_results.csv is looked up against org.Hs.eg.db (or the UniProt human ID-mapping table in the reference store as a cross-check)",
+                "Output table carries gene symbol, Entrez ID, and the original DESeq2 statistics (log2FoldChange, stat, pvalue, padj)",
+                "The share of symbols that did not map and the share that mapped to more than one Entrez ID are both reported explicitly, with a stated rule for handling the one-to-many cases (e.g., drop, or keep first with note)"
+              ],
+              "packages": [
+                "org.Hs.eg.db",
+                "AnnotationDbi",
+                "clusterProfiler"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "de_results.csv (12000 x 8) is a DESeq2 results table of the treated vs control contrast, keyed by gene symbol. clusterProfiler's enrichGO needs Entrez IDs (or can take symbols directly with OrgDb, but ID mapping and its unmapped share must be reported per the grounded procedure).",
+              "caveats": [
+                "A symbol is not stable across annotation releases and can map many-to-one or one-to-many with Entrez; never mix identifier spaces between the list and the universe."
+              ],
+              "constraints": [
+                "Use org.Hs.eg.db (present, v3.23.1) as the primary mapper; state its version in the output"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0101@06c8",
+                  "R-0160@d858"
+                ],
+                "reason": "R-0101/R-0160: map symbols to Entrez with the organism annotation package, report the unmapped and many-to-one share, keep one identifier space per column."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "GO biological process over-representation of significant DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which GO biological process terms are over-represented among the genes significant (padj<0.05) in the AD lesional vs control DESeq2 contrast, using all 12000 tested genes as the statistical universe?",
+              "acceptance_criteria": [
+                "Significant gene list defined at padj < 0.05 from de_results.csv (state the resulting list size explicitly)",
+                "If the significant list has fewer than ~50 genes, run fgsea preranked GSEA (GO BP gene sets, ranked by the DESeq2 Wald 'stat' column) as the primary/fallback analysis instead of, or alongside, the ORA, and state this explicitly",
+                "clusterProfiler::enrichGO run with ont='BP', universe = all 12000 tested gene Entrez IDs (from T1S2), pAdjustMethod='BH'",
+                "Gene set size window restricted to 15-500 genes among the tested genes",
+                "Redundant/overlapping significant GO BP terms collapsed by semantic similarity with rrvgo; a representative-term table and the full term table are both reported",
+                "Direction handling stated: up- and down-regulated genes tested separately or pooled, with the reason given",
+                "GO.db/org.Hs.eg.db version and analysis date recorded as the GO release"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "rrvgo",
+                "GO.db",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "context": "Primary research question: GO BP over-representation among significant treated-vs-control genes. Input is the delivered DESeq2 results table (de_results.csv) and the Entrez-mapped gene table from T1S2. Universe must be the tested genes (12000), never the whole genome. GO.db/org.Hs.eg.db (v3.23.1/v3.23.1) supply the GO BP gene sets natively through clusterProfiler; MSigDB C5 GO-BP GMT and WikiPathways human GMT are present in the reference store as optional secondary/cross-check collections if a second pathway-database view is wanted.",
+              "caveats": [
+                "If fewer than ~50 genes pass padj<0.05, a hypergeometric ORA on that short list has little power and is threshold-sensitive; run the ranked GSEA on the full list as the more defensible primary answer and state the significant-list size in the report.",
+                "GO terms nest heavily; without the rrvgo reduction, one true signal will appear as many overlapping 'significant' terms.",
+                "Gene length and expression-level detection bias can enrich for long/highly expressed genes in the significant list; the tested-gene universe only partially corrects this."
+              ],
+              "constraints": [
+                "universe = tested_genes (all 12000 genes in de_results.csv, mapped to Entrez)",
+                "ontology = BP only (the research question asks specifically about biological processes)",
+                "min_size=15, max_size=500",
+                "BH multiple-testing correction",
+                "State whether up/down genes were pooled or tested as two separate lists"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0095@492a",
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0103@93aa",
+                  "R-0109@fe3e",
+                  "R-0054@801e"
+                ],
+                "template": "tpl-ora-go@1.0.0",
+                "reason": "R-0095: GO BP ORA with enrichGO (universe=tested genes, rrvgo redundancy reduction) is the tool of record for a discrete significant gene list; R-0103 flags the <50-gene power issue and directs to the ranked full-list method as a fallback; R-0109 requires stating the up/down direction-handling choice."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Report: GO BP enrichment results and caveats",
+              "track": "T2",
+              "step_type": "report",
+              "question": "What are the final representative over-represented GO biological process terms for the AD lesional vs control contrast, and what are the reproducibility and interpretive caveats?",
+              "acceptance_criteria": [
+                "Reports the GO BP database/version (GO.db/org.Hs.eg.db version), the universe size, the significant-list size and cutoff, the gene-set size window, and the multiple-testing method",
+                "Lists the rrvgo-representative GO BP terms with their gene counts, odds ratios/fold enrichment, and adjusted p-values, plus the full term table as a supplement",
+                "States that enrichment results are method-dependent (ORA vs ranked GSEA can disagree) and reports the overlap/agreement between the two if both were run",
+                "Records session info, package versions, and any random seed used (e.g., in rrvgo or fgsea permutations) as the reproducibility record",
+                "Explicitly notes the sample_01 low-depth QC decision from T1S1 and its potential effect on the underlying DE results feeding this enrichment"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T2S1",
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "enrichment-agent",
+              "context": "Final synthesis step for the GO BP over-representation analysis, consolidating QC, annotation, and enrichment outputs into a decision-ready summary.",
+              "caveats": [],
+              "constraints": [
+                "Report the gene set database and its version, the universe, the size window, and the multiple-testing method per rule R-0051"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0086@becf"
+                ],
+                "reason": "R-0051/R-0055/R-0086: the report must state the database version, universe, ranking/cutoff, method-dependence caveat, and a full reproducibility record."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

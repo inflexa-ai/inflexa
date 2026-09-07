@@ -1,0 +1,1118 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "strandedness-unknown-n3",
+  "run": 1,
+  "startedAt": "2026-09-06T14:56:47.473Z",
+  "elapsedMs": 228198,
+  "outcome": "plan_submitted",
+  "planId": "pln-b38a560b",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Count-table audit, strandedness diagnostics, sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "RSeQC infer_experiment is the method of record for strandedness and cannot run here: no aligned reads were provided. Any statement about strandedness from the count matrix alone is circumstantial.",
+          "A wrong strand setting applied uniformly to all six samples largely cancels in a within-gene between-group contrast; it inflates or deflates absolute counts but not the treated/control ratio. Say this rather than implying the DE result is unusable.",
+          "With 6 samples a PCA is unstable; read it as a picture, not as evidence of clusters."
+        ],
+        "context": "Human liver bulk RNA-seq, raw gene-level integer counts from STAR/featureCounts. The library strandedness was never recorded, so the strand setting used at counting is unknown, and the user explicitly doubts the counts. No FASTQ or BAM is present in the inputs. Reference data needed: a human normal-tissue median-expression reference with a liver column (GTEx v8 is present in the store). If that reference is absent at run time, still run (a) and (c) and report the tissue check as not performed.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "pheatmap",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Do the 6 liver samples (3 treated, 3 control) separate by condition, does any sample depart from its group, and does the count table show evidence of a wrong or inconsistent strand setting at counting?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0079@6f8a",
+            "R-0161@cdaf"
+          ],
+          "reason": "R-0033 sets the blind-vst/PCA/distance QC; R-0079 requires strandedness inference before trusting the counts but its tool of record needs alignments that were not supplied, so the step reports count-level proxies and the limit instead; R-0161 supplies the GTEx liver tissue-identity check.",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the blind variance-stabilizing transform (blind=TRUE) for QC only; the DE model uses raw counts",
+          "PCA on the 500 most variable genes",
+          "Do not drop any sample at this stage — flag, do not remove; with n=3 per group removing one sample leaves a group of 2",
+          "Do not assert a strandedness call. Report diagnostics and their limits",
+          "Never rescale or transform the counts that T1S2 will consume"
+        ],
+        "description": "Load /eval-eight-arms-with-strandedness-unknown-n3-1/data/inputs/counts/counts.csv (12,000 gene symbols x 6 sample columns) and metadata.csv (6 rows, sample + condition). Build a DESeqDataSet with design ~ condition. (a) Count-table audit: total assigned counts per sample, number of genes with non-zero counts, fraction of total counts in the top 10/100/1000 genes, and the distribution of counts per sample as a boxplot. (b) Strandedness proxy: RSeQC infer_experiment is the tool of record but requires aligned reads, and only a summarised count matrix was supplied — state this explicitly and do NOT claim a strandedness call. Instead compare each sample's profile against GTEx v8 human liver median TPM (a normal liver reference in the reference store): rank-correlate each sample's normalized expression against the liver column and against a few unrelated tissue columns, and report whether the samples look like liver. Report whether the detection rate and library sizes are uniform across the 6 samples or split them into subsets — a uniform strand error biases all samples alike and largely cancels in the treated-vs-control contrast, a sample-specific one does not. (c) Structure QC: blind variance-stabilizing transform, PCA on the 500 most variable genes coloured by condition, and a Euclidean sample-distance heatmap.",
+        "acceptance_criteria": [
+          "Per-sample library size, detected-gene count, and top-gene count fraction are tabulated for all 6 samples",
+          "The report states in plain words that strandedness cannot be determined from a count matrix, that RSeQC infer_experiment needs the alignments, and what would be required to settle it",
+          "The tissue-identity comparison against the liver reference is reported per sample, or its absence is stated",
+          "PCA on the top 500 variable genes and the sample-distance heatmap are produced, coloured by condition (treated, control)",
+          "The step states whether the six samples look homogeneous in depth/detection or split into subsets, and what that implies for a shared vs sample-specific strand error"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test with apeglm shrinkage, edgeR QL as second method",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 3 replicates per group the test has low power: both count models recover only a minority of true differences, mostly those with large fold changes. A gene absent from the significant list is not shown to be unchanged.",
+          "STAR/featureCounts applies no bias model, so a sample-specific GC-content or gene-length effect can remain in the counts and between-sample normalization does not remove it. cqn and EDASeq are absent from this environment; if the diagnostic shows a trend, state it and recommend cqn or a bias-aware requantification with Salmon rather than proceeding as if corrected.",
+          "The strandedness caveat from T1S1 carries into every fold change reported here and must be restated, not dropped."
+        ],
+        "context": "3 treated vs 3 control human liver samples, unpaired, single batch, no covariates. Counts are gene-level integers from STAR/featureCounts keyed by gene symbol. RNASeqPower and PROPER are not installed, so the power statement is computed in closed form.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "ggplot2",
+          "data.table",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which genes differ in expression between the 3 treated and the 3 control liver samples, at BH-adjusted p < 0.05, and which of them are called by both DESeq2 and edgeR?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0147@aebe",
+            "R-0026@9ab1",
+            "R-0162@ed74",
+            "R-0036@9786",
+            "R-0064@92ec",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0017@8a47",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "3v3 unpaired fixed-effects counts from STAR/featureCounts: DESeq2 Wald with apeglm shrinkage per R-0001 and R-0009, minimal pre-filter per R-0002/R-0029, in-model median-of-ratios per R-0026 with the R-0147 GC/length diagnostic since cqn is absent, explicit reference level per R-0036, BH with independent filtering per R-0010/R-0043, and the low-power statement per R-0017/R-0162.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Import raw integer counts directly into DESeq2; no length correction, no tximport, no pre-normalization",
+          "Pre-filter: >= 10 counts in >= 3 samples. Do not filter harder — independent filtering does the rest",
+          "Set the reference level of condition explicitly to control with relevel(); do not rely on alphabetical order",
+          "alpha = 0.05, BH adjustment, independent filtering on. Do not loosen alpha to compensate for the small design",
+          "Rank genes and draw plots on the apeglm-shrunken log2 fold change; keep the unshrunken value and its standard error in the table",
+          "Select significant genes by padj only — never by unadjusted p-value and never by fold change alone",
+          "Report the DESeq2/edgeR intersection as the high-confidence set; report the method-specific calls separately. Do not present the union as the result",
+          "Save the complete per-gene results table including the Wald stat column for the downstream enrichment step"
+        ],
+        "description": "Import the raw integer counts as they are — no length correction, no tximport, no pre-scaling. Pre-filter minimally: keep genes with at least 10 counts in at least 3 samples (the smallest group size). Set the condition factor's reference level explicitly to control. Fit DESeq2 with design ~ condition; median-of-ratios size factors are estimated inside the model. Run the Wald test for the contrast (condition, treated, control) with alpha = 0.05, independent filtering on, BH adjustment. Inspect the histogram of unadjusted p-values before trusting the adjusted values and report its shape. Keep DESeq2's Cook's-distance outlier flagging on (with 3 replicates per cell it sets p and padj to NA rather than replacing counts) and report the number of NA p-values from outlier flagging separately from those the independent filter removed. Apply apeglm shrinkage to the coefficient for reporting and ranking, keeping the unshrunken log2FoldChange and lfcSE in the table. Draw the GC-content and gene-length bias diagnostic: for each sample against the median sample, plot the log count ratio against gene GC content and against gene length; report any trend. cqn and EDASeq are not installed, so a trend is reported as a limitation, not corrected. Separately fit edgeR with TMM normalization and the quasi-likelihood F-test on the same filtered counts and design, and compute the overlap of the two significant sets. Before the model, state the expected power in closed form from n=3 per group, the observed depth, and a plausible biological coefficient of variation, naming the fold change detectable at 80% power. Write out the full results table for every tested gene (needed by T2S1).",
+        "acceptance_criteria": [
+          "A results table for every tested gene with baseMean, unshrunken log2FoldChange, lfcSE, apeglm-shrunken log2FoldChange, stat (Wald), pvalue, padj",
+          "The reference level (control) and the contrast (condition, treated over control) are stated, and the sign convention is spelled out",
+          "The number of genes tested after filtering and the number with padj < 0.05 are reported",
+          "The p-value histogram is shown and its shape described before the adjusted values are used",
+          "Counts of NA p-values are broken out by cause: Cook's-distance outlier flag vs independent filtering",
+          "The GC-content and gene-length bias diagnostic is produced and any trend stated",
+          "edgeR quasi-likelihood results on the same design, with the size of each significant set and the size of the intersection",
+          "An expected-power statement appears before the gene tables, naming the fold change detectable at 80% power with n=3 per group"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA on the Wald statistic (Hallmark, Reactome, WikiPathways)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results depend strongly on the method: a ranked test and an over-representation test on the same data give different lists. Present a significant set as a hypothesis for follow-up, not as an established finding.",
+          "Gene length and expression level bias which genes reach significance in count data, which propagates into enrichment; the tested-genes universe removes only the detection part of that bias.",
+          "The underlying contrast comes from a 3-vs-3 design with low power, so an absent pathway is not evidence against it."
+        ],
+        "context": "Human liver, treated vs control. Reference data needed: MSigDB human hallmark gene sets, Reactome pathway gene sets with a species index, and the human WikiPathways collection — all three are present in the reference store as symbol-keyed GMTs. If a collection is absent at run time, report which passes ran and which did not; the Hallmark pass alone still answers the question.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which gene sets are coordinately shifted between treated and control liver samples, on the full ranked list of tested genes?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "Ranked fgsea on the full tested list per R-0107/R-0045 with Hallmark first then Reactome and WikiPathways per R-0048/R-0098/R-0165; the disputed ranking metric of R-0108 is settled in favour of the Wald statistic per R-0099 because it scales the effect by its uncertainty and does not tie at the top.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the FULL ranked list of tested genes; do not cut at padj or at a fold change before the test",
+          "Ranking metric is the DESeq2 Wald statistic (stat). State this choice explicitly — the ranking metric is a disputed choice and the alternatives are the signed -log10 p and the shrunken log2FC. Do not rank by unshrunken log2 fold change alone, and do not use a signed p-value that saturates into ties",
+          "Gene-set size window 15 to 500, applied after intersecting each set with the tested genes",
+          "Universe is the tested genes, never the whole genome or the whole annotation",
+          "Test each collection separately and report each separately; do not merge collections into one set list",
+          "Set and record the random seed for the fgsea permutations"
+        ],
+        "description": "Take the complete per-gene results table from T1S2 and rank every tested gene by the DESeq2 Wald statistic (the stat column) — the full list, not a thresholded subset. Run fgsea with a gene-set size window of 15 to 500 genes applied after intersecting each set with the tested genes, and BH adjustment. Run three separate passes, never merged into one set list: MSigDB human Hallmark first (the reference store holds a hallmark collection), then Reactome human pathways, then WikiPathways human. Filter the Reactome collection to Homo sapiens using its pathway index before testing. Collapse redundant significant sets into groups and report one representative per group, keeping the full table as a supplement. Report the leading-edge genes of each significant set with their gene-level statistic, and mark leading-edge overlap between reported sets. The count matrix is keyed by gene symbol and all three collections are symbol-based (HGNC), so no Entrez mapping is required for the test itself; if a mapping is done for annotation, use org.Hs.eg.db and report the unmapped share. Do not run an over-representation test unless at least 50 genes reach padj < 0.05 — with 3 vs 3 this is unlikely, and a hypergeometric test of a short list has no power.",
+        "acceptance_criteria": [
+          "A ranked list containing every gene tested in T1S2, ranked by the Wald statistic, with the ranking metric named in the output",
+          "Separate fgsea result tables for Hallmark, Reactome (human-filtered), and WikiPathways human, each reporting NES, p-value, BH-adjusted p-value, and set size",
+          "The release/version of each gene-set collection is stated beside its results",
+          "Leading-edge genes listed per significant set, with their gene-level statistic",
+          "Redundant significant sets collapsed, with a representative named per group and the full table retained",
+          "The number of genes passing padj < 0.05 in T1S2 is stated, with the reason an over-representation test was or was not run"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Consolidated report with power, diagnostics, and count-provenance caveats",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Every conclusion in this report rests on a count table whose strand setting at counting is unrecorded. If the QC in T1S1 showed sample-to-sample heterogeneity consistent with an inconsistent strand setting, the fold changes are not trustworthy and the report must say so rather than qualify it softly.",
+          "Enrichment findings are method-dependent hypotheses, not established biology.",
+          "3 vs 3 is an underpowered design; frame the gene list as the large-effect subset that this design can see."
+        ],
+        "context": "Final synthesis over T1S1 (QC and count audit), T1S2 (differential expression), and T2S1 (enrichment) for the 3 treated vs 3 control human liver comparison. Reference data needed: human normal-tissue median expression with a liver column, and a human gene annotation package for identifier mapping. If the tissue reference is absent, report the annotation without it.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "org.Hs.eg.db",
+          "ggplot2",
+          "data.table",
+          "knitr"
+        ],
+        "question": "What is the defensible answer to 'which genes differ between treated and control liver samples', and how far does the unrecorded strandedness limit that answer?",
+        "grounding": {
+          "claims": [
+            "R-0094@6849",
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf",
+            "R-0161@cdaf",
+            "R-0160@d858"
+          ],
+          "reason": "Report content follows R-0094 (power first), R-0087 (MA and dispersion plots), R-0085 (both LFC columns with the SE), R-0042 (DESeq2/edgeR overlap), R-0105 (leading edge), R-0051/R-0055 (enrichment reporting and method dependence), R-0086/R-0041 (reproducibility record), with R-0161/R-0160 for the GTEx liver context and identifier mapping.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "State the design, the contrast direction, the thresholds, the number of genes tested, and the number of DE genes explicitly",
+          "Do not present the union of DESeq2 and edgeR calls as the result",
+          "Do not rank or headline genes by the unshrunken log2 fold change",
+          "Keep one identifier space per column; carry the symbol as a label and report one-to-many mapping counts",
+          "Carry the strandedness and GC-bias caveats into the conclusions rather than confining them to a methods footnote"
+        ],
+        "description": "Assemble the final report. Open with the expected-power statement for n=3 per group, before any gene table. Then the count-provenance section: what T1S1 could and could not determine about strandedness, the tissue-identity check against the liver reference, and an explicit statement that RSeQC infer_experiment on the alignments is what would settle it. Then the fit diagnostics: the MA plot with significant genes marked and the dispersion-estimate plot (per-gene estimates, fitted trend, shrunken values), with a sentence on what each shows. Then the gene tables, ranked by shrunken log2 fold change, carrying unshrunken log2FoldChange, shrunken log2FoldChange, and lfcSE side by side, with the DESeq2/edgeR intersection marked as the high-confidence set. Annotate the top genes with the GTEx v8 liver median TPM as tissue context and flag any reported gene the reference does not express in liver; map symbols to Entrez with org.Hs.eg.db for the annotation and report the unmapped and one-to-many share. Then the enrichment section: database and release, ranking metric, universe, size window, tool version, multiple-testing method, and the leading-edge genes per representative set. Close with the reproducibility record: sessionInfo, all package versions, the random seeds, the gene-set collection versions, and the annotation release.",
+        "acceptance_criteria": [
+          "The power statement for 3 vs 3 appears before the gene tables and states that a gene absent from the list is not shown to be unchanged",
+          "A count-provenance section states what is and is not known about the library strandedness and names what would resolve it",
+          "MA plot and dispersion plot are both present with an explanation of what each shows",
+          "Gene table carries unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, and lfcSE, ranked by the shrunken value",
+          "The DESeq2 vs edgeR counts and their intersection size are reported, with the intersection labelled the high-confidence set",
+          "Top reported genes carry GTEx liver expression context, with any gene not expressed in liver flagged; the unmapped identifier share is stated",
+          "Enrichment reporting includes collection name and release, ranking metric, universe, size window, tool version, and multiple-testing method",
+          "A reproducibility record with sessionInfo, package versions, seeds, and collection versions is stored with the results"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control DE with strandedness audit",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single gene-level count matrix (12,000 genes x 6 samples, CSV, gene symbols in the first column) from STAR/featureCounts on human liver, with metadata giving 3 treated and 3 control samples, unpaired, one batch. The research question is which genes differ between treated and control, and the user's stated doubt is that the strandedness of the library was never recorded, so the strand setting used at counting is unknown and the counts may be wrong.\n\nThat doubt is handled first, and honestly. The tool of record for strandedness (RSeQC infer_experiment) needs aligned reads, and no BAM/FASTQ exists in the inputs — only the summarised count matrix. So T1S1 runs the strandedness question as far as a count table permits: total assigned counts per sample, the detected-gene rate, the fraction of counts carried by the top genes, and a comparison of the per-sample expression profile against GTEx v8 liver median TPM. A count table produced with the wrong strand setting on a stranded library loses roughly half its reads and shows a depressed detection rate and a distorted liver profile; an unstranded setting applied to a stranded library inflates counts on antisense-overlapping loci. These are diagnostics, not a determination — the step reports what it can see and states plainly that the strandedness cannot be settled without the alignments. Critically, a strand error that is uniform across all six samples biases every sample the same way and therefore largely cancels in a within-gene, between-group contrast; a strand error that differs between samples does not, and would show as a split in the QC. T1S1 must say which of these the data looks like, because the credibility of the whole DE result depends on it.\n\nT1S1 also does the standard structure QC on the same object: blind VST, PCA on the 500 most variable genes, and a sample-distance heatmap, coloured by condition, to see whether the samples separate by treatment at all and whether any of the six departs from its group.\n\nT1S2 is the differential expression itself: raw integer counts into DESeq2 with no length correction and no tximport (they are already gene-level counts), a minimal pre-filter of at least 10 counts in at least 3 samples (the smallest group size), median-of-ratios size factors estimated inside the model, design ~ condition with control set explicitly as the reference level, and the contrast named as condition, treated over control so a positive log2 fold change means higher in treated. The Wald test runs at alpha 0.05 with BH adjustment and independent filtering on, the p-value histogram is inspected before the adjustment is trusted, and apeglm shrinkage gives the fold changes used for ranking and plots while the unshrunken estimates stay in the table. Because STAR/featureCounts applies no bias model, the step also draws the GC-content and gene-length bias diagnostic (log count ratio of each sample against the median sample) — cqn and EDASeq are not installed, so if a trend appears the step reports it as a limitation rather than silently correcting. edgeR quasi-likelihood runs on the same counts and design as the second method; the intersection is the high-confidence set.\n\nWith 3 vs 3 there is very little power. Both count models recover only a minority of true differences at this replicate number, mostly large fold changes. The plan states the expected power before the model rather than after, keeps alpha at its default, and never loosens the threshold to manufacture a longer list. A gene absent from the significant list is not shown to be unchanged.\n\nT2S1 takes the full ranked list of tested genes — every gene, not a thresholded subset — ranked by the DESeq2 Wald statistic (the disputed choice is settled here in favour of the Wald statistic, because it scales the effect by its uncertainty and does not saturate into ties), and runs fgsea against MSigDB Hallmark first, then Reactome and WikiPathways human as separate passes, each with its release stated and never merged. With 3 vs 3, the ranked test is the only defensible enrichment: an over-representation test on what will likely be a short significant list has no power.\n\nT1S3 consolidates everything into a report with the power statement before the gene tables, the MA and dispersion plots, both fold-change columns with the standard error, the DESeq2/edgeR overlap, the leading-edge genes of each significant set, the GTEx liver tissue context for the top genes, and the full reproducibility record."
+  },
+  "usage": {
+    "inputTokens": 572122,
+    "outputTokens": 20560,
+    "cacheCreationInputTokens": 190140,
+    "cacheReadInputTokens": 381910,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "strandedness": "unknown",
+        "library_type": "unknown",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtex"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "strandedness": "unknown",
+        "library_type": "unknown",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes, plus strandedness-proxy diagnostics on the count table (antisense-overlap gene detection rate, assigned-count fraction against GTEx liver reference)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "strandedness_inference",
+                "value": "rseqc_infer_experiment_not_possible_no_bam_proxy_from_counts"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with at least 10 counts in at least 3 samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors (DESeq2), with GC/length bias diagnostic",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "gc_length_bias_diagnostic",
+                "value": "log_count_ratio_against_gc_and_length"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ condition, reference level control, contrast condition treated vs control; expected power stated from closed form",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "import",
+                "value": "raw_integer_counts_no_length_correction"
+              },
+              {
+                "name": "import_tool",
+                "value": "none"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "power_plan",
+                "value": "expected_power_from_replicates_depth_and_dispersion"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test, with edgeR quasi-likelihood F-test as the second method for the overlap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              },
+              {
+                "name": "power_caution",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, p-value histogram inspected",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the DESeq2 Wald statistic, MSigDB Hallmark first, then Reactome and WikiPathways",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              }
+            ]
+          },
+          {
+            "step_type": "annotation",
+            "method": "Tissue-identity check of the samples against GTEx v8 liver median TPM and symbol mapping with org.Hs.eg.db",
+            "package": "org.Hs.eg.db",
+            "parameters": [
+              {
+                "name": "id_mapping",
+                "value": "symbols_to_entrez_with_orgdb"
+              },
+              {
+                "name": "report_unmapped_share",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Consolidated report: power statement, MA and dispersion plots, shrunken and unshrunken LFC, DESeq2/edgeR overlap, leading edge genes, reproducibility record",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de, session_info"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              },
+              {
+                "name": "robustness",
+                "value": "overlap_of_two_methods"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "strandedness": "unknown",
+        "library_type": "unknown",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "annotation",
+            "method": "Gene identifier annotation with the organism package and the reference store tables, plus tissue-context check of the reported genes against GTEx v8 liver median TPM",
+            "package": "org.Hs.eg.db",
+            "parameters": [
+              {
+                "name": "id_mapping",
+                "value": "symbols_to_entrez_with_orgdb"
+              },
+              {
+                "name": "report_unmapped_share",
+                "value": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control DE with strandedness audit",
+          "analytical_narrative": "The input is a single gene-level count matrix (12,000 genes x 6 samples, CSV, gene symbols in the first column) from STAR/featureCounts on human liver, with metadata giving 3 treated and 3 control samples, unpaired, one batch. The research question is which genes differ between treated and control, and the user's stated doubt is that the strandedness of the library was never recorded, so the strand setting used at counting is unknown and the counts may be wrong.\n\nThat doubt is handled first, and honestly. The tool of record for strandedness (RSeQC infer_experiment) needs aligned reads, and no BAM/FASTQ exists in the inputs — only the summarised count matrix. So T1S1 runs the strandedness question as far as a count table permits: total assigned counts per sample, the detected-gene rate, the fraction of counts carried by the top genes, and a comparison of the per-sample expression profile against GTEx v8 liver median TPM. A count table produced with the wrong strand setting on a stranded library loses roughly half its reads and shows a depressed detection rate and a distorted liver profile; an unstranded setting applied to a stranded library inflates counts on antisense-overlapping loci. These are diagnostics, not a determination — the step reports what it can see and states plainly that the strandedness cannot be settled without the alignments. Critically, a strand error that is uniform across all six samples biases every sample the same way and therefore largely cancels in a within-gene, between-group contrast; a strand error that differs between samples does not, and would show as a split in the QC. T1S1 must say which of these the data looks like, because the credibility of the whole DE result depends on it.\n\nT1S1 also does the standard structure QC on the same object: blind VST, PCA on the 500 most variable genes, and a sample-distance heatmap, coloured by condition, to see whether the samples separate by treatment at all and whether any of the six departs from its group.\n\nT1S2 is the differential expression itself: raw integer counts into DESeq2 with no length correction and no tximport (they are already gene-level counts), a minimal pre-filter of at least 10 counts in at least 3 samples (the smallest group size), median-of-ratios size factors estimated inside the model, design ~ condition with control set explicitly as the reference level, and the contrast named as condition, treated over control so a positive log2 fold change means higher in treated. The Wald test runs at alpha 0.05 with BH adjustment and independent filtering on, the p-value histogram is inspected before the adjustment is trusted, and apeglm shrinkage gives the fold changes used for ranking and plots while the unshrunken estimates stay in the table. Because STAR/featureCounts applies no bias model, the step also draws the GC-content and gene-length bias diagnostic (log count ratio of each sample against the median sample) — cqn and EDASeq are not installed, so if a trend appears the step reports it as a limitation rather than silently correcting. edgeR quasi-likelihood runs on the same counts and design as the second method; the intersection is the high-confidence set.\n\nWith 3 vs 3 there is very little power. Both count models recover only a minority of true differences at this replicate number, mostly large fold changes. The plan states the expected power before the model rather than after, keeps alpha at its default, and never loosens the threshold to manufacture a longer list. A gene absent from the significant list is not shown to be unchanged.\n\nT2S1 takes the full ranked list of tested genes — every gene, not a thresholded subset — ranked by the DESeq2 Wald statistic (the disputed choice is settled here in favour of the Wald statistic, because it scales the effect by its uncertainty and does not saturate into ties), and runs fgsea against MSigDB Hallmark first, then Reactome and WikiPathways human as separate passes, each with its release stated and never merged. With 3 vs 3, the ranked test is the only defensible enrichment: an over-representation test on what will likely be a short significant list has no power.\n\nT1S3 consolidates everything into a report with the power statement before the gene tables, the MA and dispersion plots, both fold-change columns with the standard error, the DESeq2/edgeR overlap, the leading-edge genes of each significant set, the GTEx liver tissue context for the top genes, and the full reproducibility record.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Count-table audit, strandedness diagnostics, sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 liver samples (3 treated, 3 control) separate by condition, does any sample depart from its group, and does the count table show evidence of a wrong or inconsistent strand setting at counting?",
+              "description": "Load /eval-eight-arms-with-strandedness-unknown-n3-1/data/inputs/counts/counts.csv (12,000 gene symbols x 6 sample columns) and metadata.csv (6 rows, sample + condition). Build a DESeqDataSet with design ~ condition. (a) Count-table audit: total assigned counts per sample, number of genes with non-zero counts, fraction of total counts in the top 10/100/1000 genes, and the distribution of counts per sample as a boxplot. (b) Strandedness proxy: RSeQC infer_experiment is the tool of record but requires aligned reads, and only a summarised count matrix was supplied — state this explicitly and do NOT claim a strandedness call. Instead compare each sample's profile against GTEx v8 human liver median TPM (a normal liver reference in the reference store): rank-correlate each sample's normalized expression against the liver column and against a few unrelated tissue columns, and report whether the samples look like liver. Report whether the detection rate and library sizes are uniform across the 6 samples or split them into subsets — a uniform strand error biases all samples alike and largely cancels in the treated-vs-control contrast, a sample-specific one does not. (c) Structure QC: blind variance-stabilizing transform, PCA on the 500 most variable genes coloured by condition, and a Euclidean sample-distance heatmap.",
+              "context": "Human liver bulk RNA-seq, raw gene-level integer counts from STAR/featureCounts. The library strandedness was never recorded, so the strand setting used at counting is unknown, and the user explicitly doubts the counts. No FASTQ or BAM is present in the inputs. Reference data needed: a human normal-tissue median-expression reference with a liver column (GTEx v8 is present in the store). If that reference is absent at run time, still run (a) and (c) and report the tissue check as not performed.",
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "pheatmap",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "acceptance_criteria": [
+                "Per-sample library size, detected-gene count, and top-gene count fraction are tabulated for all 6 samples",
+                "The report states in plain words that strandedness cannot be determined from a count matrix, that RSeQC infer_experiment needs the alignments, and what would be required to settle it",
+                "The tissue-identity comparison against the liver reference is reported per sample, or its absence is stated",
+                "PCA on the top 500 variable genes and the sample-distance heatmap are produced, coloured by condition (treated, control)",
+                "The step states whether the six samples look homogeneous in depth/detection or split into subsets, and what that implies for a shared vs sample-specific strand error"
+              ],
+              "constraints": [
+                "Use the blind variance-stabilizing transform (blind=TRUE) for QC only; the DE model uses raw counts",
+                "PCA on the 500 most variable genes",
+                "Do not drop any sample at this stage — flag, do not remove; with n=3 per group removing one sample leaves a group of 2",
+                "Do not assert a strandedness call. Report diagnostics and their limits",
+                "Never rescale or transform the counts that T1S2 will consume"
+              ],
+              "caveats": [
+                "RSeQC infer_experiment is the method of record for strandedness and cannot run here: no aligned reads were provided. Any statement about strandedness from the count matrix alone is circumstantial.",
+                "A wrong strand setting applied uniformly to all six samples largely cancels in a within-gene between-group contrast; it inflates or deflates absolute counts but not the treated/control ratio. Say this rather than implying the DE result is unusable.",
+                "With 6 samples a PCA is unstable; read it as a picture, not as evidence of clusters."
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0079@6f8a",
+                  "R-0161@cdaf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "R-0033 sets the blind-vst/PCA/distance QC; R-0079 requires strandedness inference before trusting the counts but its tool of record needs alignments that were not supplied, so the step reports count-level proxies and the limit instead; R-0161 supplies the GTEx liver tissue-identity check."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test with apeglm shrinkage, edgeR QL as second method",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes differ in expression between the 3 treated and the 3 control liver samples, at BH-adjusted p < 0.05, and which of them are called by both DESeq2 and edgeR?",
+              "description": "Import the raw integer counts as they are — no length correction, no tximport, no pre-scaling. Pre-filter minimally: keep genes with at least 10 counts in at least 3 samples (the smallest group size). Set the condition factor's reference level explicitly to control. Fit DESeq2 with design ~ condition; median-of-ratios size factors are estimated inside the model. Run the Wald test for the contrast (condition, treated, control) with alpha = 0.05, independent filtering on, BH adjustment. Inspect the histogram of unadjusted p-values before trusting the adjusted values and report its shape. Keep DESeq2's Cook's-distance outlier flagging on (with 3 replicates per cell it sets p and padj to NA rather than replacing counts) and report the number of NA p-values from outlier flagging separately from those the independent filter removed. Apply apeglm shrinkage to the coefficient for reporting and ranking, keeping the unshrunken log2FoldChange and lfcSE in the table. Draw the GC-content and gene-length bias diagnostic: for each sample against the median sample, plot the log count ratio against gene GC content and against gene length; report any trend. cqn and EDASeq are not installed, so a trend is reported as a limitation, not corrected. Separately fit edgeR with TMM normalization and the quasi-likelihood F-test on the same filtered counts and design, and compute the overlap of the two significant sets. Before the model, state the expected power in closed form from n=3 per group, the observed depth, and a plausible biological coefficient of variation, naming the fold change detectable at 80% power. Write out the full results table for every tested gene (needed by T2S1).",
+              "context": "3 treated vs 3 control human liver samples, unpaired, single batch, no covariates. Counts are gene-level integers from STAR/featureCounts keyed by gene symbol. RNASeqPower and PROPER are not installed, so the power statement is computed in closed form.",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "edgeR",
+                "ggplot2",
+                "data.table",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "acceptance_criteria": [
+                "A results table for every tested gene with baseMean, unshrunken log2FoldChange, lfcSE, apeglm-shrunken log2FoldChange, stat (Wald), pvalue, padj",
+                "The reference level (control) and the contrast (condition, treated over control) are stated, and the sign convention is spelled out",
+                "The number of genes tested after filtering and the number with padj < 0.05 are reported",
+                "The p-value histogram is shown and its shape described before the adjusted values are used",
+                "Counts of NA p-values are broken out by cause: Cook's-distance outlier flag vs independent filtering",
+                "The GC-content and gene-length bias diagnostic is produced and any trend stated",
+                "edgeR quasi-likelihood results on the same design, with the size of each significant set and the size of the intersection",
+                "An expected-power statement appears before the gene tables, naming the fold change detectable at 80% power with n=3 per group"
+              ],
+              "constraints": [
+                "Import raw integer counts directly into DESeq2; no length correction, no tximport, no pre-normalization",
+                "Pre-filter: >= 10 counts in >= 3 samples. Do not filter harder — independent filtering does the rest",
+                "Set the reference level of condition explicitly to control with relevel(); do not rely on alphabetical order",
+                "alpha = 0.05, BH adjustment, independent filtering on. Do not loosen alpha to compensate for the small design",
+                "Rank genes and draw plots on the apeglm-shrunken log2 fold change; keep the unshrunken value and its standard error in the table",
+                "Select significant genes by padj only — never by unadjusted p-value and never by fold change alone",
+                "Report the DESeq2/edgeR intersection as the high-confidence set; report the method-specific calls separately. Do not present the union as the result",
+                "Save the complete per-gene results table including the Wald stat column for the downstream enrichment step"
+              ],
+              "caveats": [
+                "With 3 replicates per group the test has low power: both count models recover only a minority of true differences, mostly those with large fold changes. A gene absent from the significant list is not shown to be unchanged.",
+                "STAR/featureCounts applies no bias model, so a sample-specific GC-content or gene-length effect can remain in the counts and between-sample normalization does not remove it. cqn and EDASeq are absent from this environment; if the diagnostic shows a trend, state it and recommend cqn or a bias-aware requantification with Salmon rather than proceeding as if corrected.",
+                "The strandedness caveat from T1S1 carries into every fold change reported here and must be restated, not dropped."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0147@aebe",
+                  "R-0026@9ab1",
+                  "R-0162@ed74",
+                  "R-0036@9786",
+                  "R-0064@92ec",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0017@8a47",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "3v3 unpaired fixed-effects counts from STAR/featureCounts: DESeq2 Wald with apeglm shrinkage per R-0001 and R-0009, minimal pre-filter per R-0002/R-0029, in-model median-of-ratios per R-0026 with the R-0147 GC/length diagnostic since cqn is absent, explicit reference level per R-0036, BH with independent filtering per R-0010/R-0043, and the low-power statement per R-0017/R-0162."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA on the Wald statistic (Hallmark, Reactome, WikiPathways)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which gene sets are coordinately shifted between treated and control liver samples, on the full ranked list of tested genes?",
+              "description": "Take the complete per-gene results table from T1S2 and rank every tested gene by the DESeq2 Wald statistic (the stat column) — the full list, not a thresholded subset. Run fgsea with a gene-set size window of 15 to 500 genes applied after intersecting each set with the tested genes, and BH adjustment. Run three separate passes, never merged into one set list: MSigDB human Hallmark first (the reference store holds a hallmark collection), then Reactome human pathways, then WikiPathways human. Filter the Reactome collection to Homo sapiens using its pathway index before testing. Collapse redundant significant sets into groups and report one representative per group, keeping the full table as a supplement. Report the leading-edge genes of each significant set with their gene-level statistic, and mark leading-edge overlap between reported sets. The count matrix is keyed by gene symbol and all three collections are symbol-based (HGNC), so no Entrez mapping is required for the test itself; if a mapping is done for annotation, use org.Hs.eg.db and report the unmapped share. Do not run an over-representation test unless at least 50 genes reach padj < 0.05 — with 3 vs 3 this is unlikely, and a hypergeometric test of a short list has no power.",
+              "context": "Human liver, treated vs control. Reference data needed: MSigDB human hallmark gene sets, Reactome pathway gene sets with a species index, and the human WikiPathways collection — all three are present in the reference store as symbol-keyed GMTs. If a collection is absent at run time, report which passes ran and which did not; the Hallmark pass alone still answers the question.",
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "acceptance_criteria": [
+                "A ranked list containing every gene tested in T1S2, ranked by the Wald statistic, with the ranking metric named in the output",
+                "Separate fgsea result tables for Hallmark, Reactome (human-filtered), and WikiPathways human, each reporting NES, p-value, BH-adjusted p-value, and set size",
+                "The release/version of each gene-set collection is stated beside its results",
+                "Leading-edge genes listed per significant set, with their gene-level statistic",
+                "Redundant significant sets collapsed, with a representative named per group and the full table retained",
+                "The number of genes passing padj < 0.05 in T1S2 is stated, with the reason an over-representation test was or was not run"
+              ],
+              "constraints": [
+                "Use the FULL ranked list of tested genes; do not cut at padj or at a fold change before the test",
+                "Ranking metric is the DESeq2 Wald statistic (stat). State this choice explicitly — the ranking metric is a disputed choice and the alternatives are the signed -log10 p and the shrunken log2FC. Do not rank by unshrunken log2 fold change alone, and do not use a signed p-value that saturates into ties",
+                "Gene-set size window 15 to 500, applied after intersecting each set with the tested genes",
+                "Universe is the tested genes, never the whole genome or the whole annotation",
+                "Test each collection separately and report each separately; do not merge collections into one set list",
+                "Set and record the random seed for the fgsea permutations"
+              ],
+              "caveats": [
+                "Enrichment results depend strongly on the method: a ranked test and an over-representation test on the same data give different lists. Present a significant set as a hypothesis for follow-up, not as an established finding.",
+                "Gene length and expression level bias which genes reach significance in count data, which propagates into enrichment; the tested-genes universe removes only the detection part of that bias.",
+                "The underlying contrast comes from a 3-vs-3 design with low power, so an absent pathway is not evidence against it."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "Ranked fgsea on the full tested list per R-0107/R-0045 with Hallmark first then Reactome and WikiPathways per R-0048/R-0098/R-0165; the disputed ranking metric of R-0108 is settled in favour of the Wald statistic per R-0099 because it scales the effect by its uncertainty and does not tie at the top."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Consolidated report with power, diagnostics, and count-provenance caveats",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the defensible answer to 'which genes differ between treated and control liver samples', and how far does the unrecorded strandedness limit that answer?",
+              "description": "Assemble the final report. Open with the expected-power statement for n=3 per group, before any gene table. Then the count-provenance section: what T1S1 could and could not determine about strandedness, the tissue-identity check against the liver reference, and an explicit statement that RSeQC infer_experiment on the alignments is what would settle it. Then the fit diagnostics: the MA plot with significant genes marked and the dispersion-estimate plot (per-gene estimates, fitted trend, shrunken values), with a sentence on what each shows. Then the gene tables, ranked by shrunken log2 fold change, carrying unshrunken log2FoldChange, shrunken log2FoldChange, and lfcSE side by side, with the DESeq2/edgeR intersection marked as the high-confidence set. Annotate the top genes with the GTEx v8 liver median TPM as tissue context and flag any reported gene the reference does not express in liver; map symbols to Entrez with org.Hs.eg.db for the annotation and report the unmapped and one-to-many share. Then the enrichment section: database and release, ranking metric, universe, size window, tool version, multiple-testing method, and the leading-edge genes per representative set. Close with the reproducibility record: sessionInfo, all package versions, the random seeds, the gene-set collection versions, and the annotation release.",
+              "context": "Final synthesis over T1S1 (QC and count audit), T1S2 (differential expression), and T2S1 (enrichment) for the 3 treated vs 3 control human liver comparison. Reference data needed: human normal-tissue median expression with a liver column, and a human gene annotation package for identifier mapping. If the tissue reference is absent, report the annotation without it.",
+              "packages": [
+                "DESeq2",
+                "org.Hs.eg.db",
+                "ggplot2",
+                "data.table",
+                "knitr"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "acceptance_criteria": [
+                "The power statement for 3 vs 3 appears before the gene tables and states that a gene absent from the list is not shown to be unchanged",
+                "A count-provenance section states what is and is not known about the library strandedness and names what would resolve it",
+                "MA plot and dispersion plot are both present with an explanation of what each shows",
+                "Gene table carries unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, and lfcSE, ranked by the shrunken value",
+                "The DESeq2 vs edgeR counts and their intersection size are reported, with the intersection labelled the high-confidence set",
+                "Top reported genes carry GTEx liver expression context, with any gene not expressed in liver flagged; the unmapped identifier share is stated",
+                "Enrichment reporting includes collection name and release, ranking metric, universe, size window, tool version, and multiple-testing method",
+                "A reproducibility record with sessionInfo, package versions, seeds, and collection versions is stored with the results"
+              ],
+              "constraints": [
+                "State the design, the contrast direction, the thresholds, the number of genes tested, and the number of DE genes explicitly",
+                "Do not present the union of DESeq2 and edgeR calls as the result",
+                "Do not rank or headline genes by the unshrunken log2 fold change",
+                "Keep one identifier space per column; carry the symbol as a label and report one-to-many mapping counts",
+                "Carry the strandedness and GC-bias caveats into the conclusions rather than confining them to a methods footnote"
+              ],
+              "caveats": [
+                "Every conclusion in this report rests on a count table whose strand setting at counting is unrecorded. If the QC in T1S1 showed sample-to-sample heterogeneity consistent with an inconsistent strand setting, the fold changes are not trustworthy and the report must say so rather than qualify it softly.",
+                "Enrichment findings are method-dependent hypotheses, not established biology.",
+                "3 vs 3 is an underpowered design; frame the gene list as the large-effect subset that this design can see."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0094@6849",
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf",
+                  "R-0161@cdaf",
+                  "R-0160@d858"
+                ],
+                "reason": "Report content follows R-0094 (power first), R-0087 (MA and dispersion plots), R-0085 (both LFC columns with the SE), R-0042 (DESeq2/edgeR overlap), R-0105 (leading edge), R-0051/R-0055 (enrichment reporting and method dependence), R-0086/R-0041 (reproducibility record), with R-0161/R-0160 for the GTEx liver context and identifier mapping."
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control DE with strandedness audit",
+          "analytical_narrative": "The input is a single gene-level count matrix (12,000 genes x 6 samples, CSV, gene symbols in the first column) from STAR/featureCounts on human liver, with metadata giving 3 treated and 3 control samples, unpaired, one batch. The research question is which genes differ between treated and control, and the user's stated doubt is that the strandedness of the library was never recorded, so the strand setting used at counting is unknown and the counts may be wrong.\n\nThat doubt is handled first, and honestly. The tool of record for strandedness (RSeQC infer_experiment) needs aligned reads, and no BAM/FASTQ exists in the inputs — only the summarised count matrix. So T1S1 runs the strandedness question as far as a count table permits: total assigned counts per sample, the detected-gene rate, the fraction of counts carried by the top genes, and a comparison of the per-sample expression profile against GTEx v8 liver median TPM. A count table produced with the wrong strand setting on a stranded library loses roughly half its reads and shows a depressed detection rate and a distorted liver profile; an unstranded setting applied to a stranded library inflates counts on antisense-overlapping loci. These are diagnostics, not a determination — the step reports what it can see and states plainly that the strandedness cannot be settled without the alignments. Critically, a strand error that is uniform across all six samples biases every sample the same way and therefore largely cancels in a within-gene, between-group contrast; a strand error that differs between samples does not, and would show as a split in the QC. T1S1 must say which of these the data looks like, because the credibility of the whole DE result depends on it.\n\nT1S1 also does the standard structure QC on the same object: blind VST, PCA on the 500 most variable genes, and a sample-distance heatmap, coloured by condition, to see whether the samples separate by treatment at all and whether any of the six departs from its group.\n\nT1S2 is the differential expression itself: raw integer counts into DESeq2 with no length correction and no tximport (they are already gene-level counts), a minimal pre-filter of at least 10 counts in at least 3 samples (the smallest group size), median-of-ratios size factors estimated inside the model, design ~ condition with control set explicitly as the reference level, and the contrast named as condition, treated over control so a positive log2 fold change means higher in treated. The Wald test runs at alpha 0.05 with BH adjustment and independent filtering on, the p-value histogram is inspected before the adjustment is trusted, and apeglm shrinkage gives the fold changes used for ranking and plots while the unshrunken estimates stay in the table. Because STAR/featureCounts applies no bias model, the step also draws the GC-content and gene-length bias diagnostic (log count ratio of each sample against the median sample) — cqn and EDASeq are not installed, so if a trend appears the step reports it as a limitation rather than silently correcting. edgeR quasi-likelihood runs on the same counts and design as the second method; the intersection is the high-confidence set.\n\nWith 3 vs 3 there is very little power. Both count models recover only a minority of true differences at this replicate number, mostly large fold changes. The plan states the expected power before the model rather than after, keeps alpha at its default, and never loosens the threshold to manufacture a longer list. A gene absent from the significant list is not shown to be unchanged.\n\nT2S1 takes the full ranked list of tested genes — every gene, not a thresholded subset — ranked by the DESeq2 Wald statistic (the disputed choice is settled here in favour of the Wald statistic, because it scales the effect by its uncertainty and does not saturate into ties), and runs fgsea against MSigDB Hallmark first, then Reactome and WikiPathways human as separate passes, each with its release stated and never merged. With 3 vs 3, the ranked test is the only defensible enrichment: an over-representation test on what will likely be a short significant list has no power.\n\nT1S3 consolidates everything into a report with the power statement before the gene tables, the MA and dispersion plots, both fold-change columns with the standard error, the DESeq2/edgeR overlap, the leading-edge genes of each significant set, the GTEx liver tissue context for the top genes, and the full reproducibility record.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Count-table audit, strandedness diagnostics, sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 liver samples (3 treated, 3 control) separate by condition, does any sample depart from its group, and does the count table show evidence of a wrong or inconsistent strand setting at counting?",
+              "description": "Load /eval-eight-arms-with-strandedness-unknown-n3-1/data/inputs/counts/counts.csv (12,000 gene symbols x 6 sample columns) and metadata.csv (6 rows, sample + condition). Build a DESeqDataSet with design ~ condition. (a) Count-table audit: total assigned counts per sample, number of genes with non-zero counts, fraction of total counts in the top 10/100/1000 genes, and the distribution of counts per sample as a boxplot. (b) Strandedness proxy: RSeQC infer_experiment is the tool of record but requires aligned reads, and only a summarised count matrix was supplied — state this explicitly and do NOT claim a strandedness call. Instead compare each sample's profile against GTEx v8 human liver median TPM (a normal liver reference in the reference store): rank-correlate each sample's normalized expression against the liver column and against a few unrelated tissue columns, and report whether the samples look like liver. Report whether the detection rate and library sizes are uniform across the 6 samples or split them into subsets — a uniform strand error biases all samples alike and largely cancels in the treated-vs-control contrast, a sample-specific one does not. (c) Structure QC: blind variance-stabilizing transform, PCA on the 500 most variable genes coloured by condition, and a Euclidean sample-distance heatmap.",
+              "context": "Human liver bulk RNA-seq, raw gene-level integer counts from STAR/featureCounts. The library strandedness was never recorded, so the strand setting used at counting is unknown, and the user explicitly doubts the counts. No FASTQ or BAM is present in the inputs. Reference data needed: a human normal-tissue median-expression reference with a liver column (GTEx v8 is present in the store). If that reference is absent at run time, still run (a) and (c) and report the tissue check as not performed.",
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "pheatmap",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "acceptance_criteria": [
+                "Per-sample library size, detected-gene count, and top-gene count fraction are tabulated for all 6 samples",
+                "The report states in plain words that strandedness cannot be determined from a count matrix, that RSeQC infer_experiment needs the alignments, and what would be required to settle it",
+                "The tissue-identity comparison against the liver reference is reported per sample, or its absence is stated",
+                "PCA on the top 500 variable genes and the sample-distance heatmap are produced, coloured by condition (treated, control)",
+                "The step states whether the six samples look homogeneous in depth/detection or split into subsets, and what that implies for a shared vs sample-specific strand error"
+              ],
+              "constraints": [
+                "Use the blind variance-stabilizing transform (blind=TRUE) for QC only; the DE model uses raw counts",
+                "PCA on the 500 most variable genes",
+                "Do not drop any sample at this stage — flag, do not remove; with n=3 per group removing one sample leaves a group of 2",
+                "Do not assert a strandedness call. Report diagnostics and their limits",
+                "Never rescale or transform the counts that T1S2 will consume"
+              ],
+              "caveats": [
+                "RSeQC infer_experiment is the method of record for strandedness and cannot run here: no aligned reads were provided. Any statement about strandedness from the count matrix alone is circumstantial.",
+                "A wrong strand setting applied uniformly to all six samples largely cancels in a within-gene between-group contrast; it inflates or deflates absolute counts but not the treated/control ratio. Say this rather than implying the DE result is unusable.",
+                "With 6 samples a PCA is unstable; read it as a picture, not as evidence of clusters."
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0079@6f8a",
+                  "R-0161@cdaf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "R-0033 sets the blind-vst/PCA/distance QC; R-0079 requires strandedness inference before trusting the counts but its tool of record needs alignments that were not supplied, so the step reports count-level proxies and the limit instead; R-0161 supplies the GTEx liver tissue-identity check."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test with apeglm shrinkage, edgeR QL as second method",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes differ in expression between the 3 treated and the 3 control liver samples, at BH-adjusted p < 0.05, and which of them are called by both DESeq2 and edgeR?",
+              "description": "Import the raw integer counts as they are — no length correction, no tximport, no pre-scaling. Pre-filter minimally: keep genes with at least 10 counts in at least 3 samples (the smallest group size). Set the condition factor's reference level explicitly to control. Fit DESeq2 with design ~ condition; median-of-ratios size factors are estimated inside the model. Run the Wald test for the contrast (condition, treated, control) with alpha = 0.05, independent filtering on, BH adjustment. Inspect the histogram of unadjusted p-values before trusting the adjusted values and report its shape. Keep DESeq2's Cook's-distance outlier flagging on (with 3 replicates per cell it sets p and padj to NA rather than replacing counts) and report the number of NA p-values from outlier flagging separately from those the independent filter removed. Apply apeglm shrinkage to the coefficient for reporting and ranking, keeping the unshrunken log2FoldChange and lfcSE in the table. Draw the GC-content and gene-length bias diagnostic: for each sample against the median sample, plot the log count ratio against gene GC content and against gene length; report any trend. cqn and EDASeq are not installed, so a trend is reported as a limitation, not corrected. Separately fit edgeR with TMM normalization and the quasi-likelihood F-test on the same filtered counts and design, and compute the overlap of the two significant sets. Before the model, state the expected power in closed form from n=3 per group, the observed depth, and a plausible biological coefficient of variation, naming the fold change detectable at 80% power. Write out the full results table for every tested gene (needed by T2S1).",
+              "context": "3 treated vs 3 control human liver samples, unpaired, single batch, no covariates. Counts are gene-level integers from STAR/featureCounts keyed by gene symbol. RNASeqPower and PROPER are not installed, so the power statement is computed in closed form.",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "edgeR",
+                "ggplot2",
+                "data.table",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "acceptance_criteria": [
+                "A results table for every tested gene with baseMean, unshrunken log2FoldChange, lfcSE, apeglm-shrunken log2FoldChange, stat (Wald), pvalue, padj",
+                "The reference level (control) and the contrast (condition, treated over control) are stated, and the sign convention is spelled out",
+                "The number of genes tested after filtering and the number with padj < 0.05 are reported",
+                "The p-value histogram is shown and its shape described before the adjusted values are used",
+                "Counts of NA p-values are broken out by cause: Cook's-distance outlier flag vs independent filtering",
+                "The GC-content and gene-length bias diagnostic is produced and any trend stated",
+                "edgeR quasi-likelihood results on the same design, with the size of each significant set and the size of the intersection",
+                "An expected-power statement appears before the gene tables, naming the fold change detectable at 80% power with n=3 per group"
+              ],
+              "constraints": [
+                "Import raw integer counts directly into DESeq2; no length correction, no tximport, no pre-normalization",
+                "Pre-filter: >= 10 counts in >= 3 samples. Do not filter harder — independent filtering does the rest",
+                "Set the reference level of condition explicitly to control with relevel(); do not rely on alphabetical order",
+                "alpha = 0.05, BH adjustment, independent filtering on. Do not loosen alpha to compensate for the small design",
+                "Rank genes and draw plots on the apeglm-shrunken log2 fold change; keep the unshrunken value and its standard error in the table",
+                "Select significant genes by padj only — never by unadjusted p-value and never by fold change alone",
+                "Report the DESeq2/edgeR intersection as the high-confidence set; report the method-specific calls separately. Do not present the union as the result",
+                "Save the complete per-gene results table including the Wald stat column for the downstream enrichment step"
+              ],
+              "caveats": [
+                "With 3 replicates per group the test has low power: both count models recover only a minority of true differences, mostly those with large fold changes. A gene absent from the significant list is not shown to be unchanged.",
+                "STAR/featureCounts applies no bias model, so a sample-specific GC-content or gene-length effect can remain in the counts and between-sample normalization does not remove it. cqn and EDASeq are absent from this environment; if the diagnostic shows a trend, state it and recommend cqn or a bias-aware requantification with Salmon rather than proceeding as if corrected.",
+                "The strandedness caveat from T1S1 carries into every fold change reported here and must be restated, not dropped."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0147@aebe",
+                  "R-0026@9ab1",
+                  "R-0162@ed74",
+                  "R-0036@9786",
+                  "R-0064@92ec",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0017@8a47",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "3v3 unpaired fixed-effects counts from STAR/featureCounts: DESeq2 Wald with apeglm shrinkage per R-0001 and R-0009, minimal pre-filter per R-0002/R-0029, in-model median-of-ratios per R-0026 with the R-0147 GC/length diagnostic since cqn is absent, explicit reference level per R-0036, BH with independent filtering per R-0010/R-0043, and the low-power statement per R-0017/R-0162."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA on the Wald statistic (Hallmark, Reactome, WikiPathways)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which gene sets are coordinately shifted between treated and control liver samples, on the full ranked list of tested genes?",
+              "description": "Take the complete per-gene results table from T1S2 and rank every tested gene by the DESeq2 Wald statistic (the stat column) — the full list, not a thresholded subset. Run fgsea with a gene-set size window of 15 to 500 genes applied after intersecting each set with the tested genes, and BH adjustment. Run three separate passes, never merged into one set list: MSigDB human Hallmark first (the reference store holds a hallmark collection), then Reactome human pathways, then WikiPathways human. Filter the Reactome collection to Homo sapiens using its pathway index before testing. Collapse redundant significant sets into groups and report one representative per group, keeping the full table as a supplement. Report the leading-edge genes of each significant set with their gene-level statistic, and mark leading-edge overlap between reported sets. The count matrix is keyed by gene symbol and all three collections are symbol-based (HGNC), so no Entrez mapping is required for the test itself; if a mapping is done for annotation, use org.Hs.eg.db and report the unmapped share. Do not run an over-representation test unless at least 50 genes reach padj < 0.05 — with 3 vs 3 this is unlikely, and a hypergeometric test of a short list has no power.",
+              "context": "Human liver, treated vs control. Reference data needed: MSigDB human hallmark gene sets, Reactome pathway gene sets with a species index, and the human WikiPathways collection — all three are present in the reference store as symbol-keyed GMTs. If a collection is absent at run time, report which passes ran and which did not; the Hallmark pass alone still answers the question.",
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "acceptance_criteria": [
+                "A ranked list containing every gene tested in T1S2, ranked by the Wald statistic, with the ranking metric named in the output",
+                "Separate fgsea result tables for Hallmark, Reactome (human-filtered), and WikiPathways human, each reporting NES, p-value, BH-adjusted p-value, and set size",
+                "The release/version of each gene-set collection is stated beside its results",
+                "Leading-edge genes listed per significant set, with their gene-level statistic",
+                "Redundant significant sets collapsed, with a representative named per group and the full table retained",
+                "The number of genes passing padj < 0.05 in T1S2 is stated, with the reason an over-representation test was or was not run"
+              ],
+              "constraints": [
+                "Use the FULL ranked list of tested genes; do not cut at padj or at a fold change before the test",
+                "Ranking metric is the DESeq2 Wald statistic (stat). State this choice explicitly — the ranking metric is a disputed choice and the alternatives are the signed -log10 p and the shrunken log2FC. Do not rank by unshrunken log2 fold change alone, and do not use a signed p-value that saturates into ties",
+                "Gene-set size window 15 to 500, applied after intersecting each set with the tested genes",
+                "Universe is the tested genes, never the whole genome or the whole annotation",
+                "Test each collection separately and report each separately; do not merge collections into one set list",
+                "Set and record the random seed for the fgsea permutations"
+              ],
+              "caveats": [
+                "Enrichment results depend strongly on the method: a ranked test and an over-representation test on the same data give different lists. Present a significant set as a hypothesis for follow-up, not as an established finding.",
+                "Gene length and expression level bias which genes reach significance in count data, which propagates into enrichment; the tested-genes universe removes only the detection part of that bias.",
+                "The underlying contrast comes from a 3-vs-3 design with low power, so an absent pathway is not evidence against it."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "Ranked fgsea on the full tested list per R-0107/R-0045 with Hallmark first then Reactome and WikiPathways per R-0048/R-0098/R-0165; the disputed ranking metric of R-0108 is settled in favour of the Wald statistic per R-0099 because it scales the effect by its uncertainty and does not tie at the top."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Consolidated report with power, diagnostics, and count-provenance caveats",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the defensible answer to 'which genes differ between treated and control liver samples', and how far does the unrecorded strandedness limit that answer?",
+              "description": "Assemble the final report. Open with the expected-power statement for n=3 per group, before any gene table. Then the count-provenance section: what T1S1 could and could not determine about strandedness, the tissue-identity check against the liver reference, and an explicit statement that RSeQC infer_experiment on the alignments is what would settle it. Then the fit diagnostics: the MA plot with significant genes marked and the dispersion-estimate plot (per-gene estimates, fitted trend, shrunken values), with a sentence on what each shows. Then the gene tables, ranked by shrunken log2 fold change, carrying unshrunken log2FoldChange, shrunken log2FoldChange, and lfcSE side by side, with the DESeq2/edgeR intersection marked as the high-confidence set. Annotate the top genes with the GTEx v8 liver median TPM as tissue context and flag any reported gene the reference does not express in liver; map symbols to Entrez with org.Hs.eg.db for the annotation and report the unmapped and one-to-many share. Then the enrichment section: database and release, ranking metric, universe, size window, tool version, multiple-testing method, and the leading-edge genes per representative set. Close with the reproducibility record: sessionInfo, all package versions, the random seeds, the gene-set collection versions, and the annotation release.",
+              "context": "Final synthesis over T1S1 (QC and count audit), T1S2 (differential expression), and T2S1 (enrichment) for the 3 treated vs 3 control human liver comparison. Reference data needed: human normal-tissue median expression with a liver column, and a human gene annotation package for identifier mapping. If the tissue reference is absent, report the annotation without it.",
+              "packages": [
+                "DESeq2",
+                "org.Hs.eg.db",
+                "ggplot2",
+                "data.table",
+                "knitr"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "acceptance_criteria": [
+                "The power statement for 3 vs 3 appears before the gene tables and states that a gene absent from the list is not shown to be unchanged",
+                "A count-provenance section states what is and is not known about the library strandedness and names what would resolve it",
+                "MA plot and dispersion plot are both present with an explanation of what each shows",
+                "Gene table carries unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, and lfcSE, ranked by the shrunken value",
+                "The DESeq2 vs edgeR counts and their intersection size are reported, with the intersection labelled the high-confidence set",
+                "Top reported genes carry GTEx liver expression context, with any gene not expressed in liver flagged; the unmapped identifier share is stated",
+                "Enrichment reporting includes collection name and release, ranking metric, universe, size window, tool version, and multiple-testing method",
+                "A reproducibility record with sessionInfo, package versions, seeds, and collection versions is stored with the results"
+              ],
+              "constraints": [
+                "State the design, the contrast direction, the thresholds, the number of genes tested, and the number of DE genes explicitly",
+                "Do not present the union of DESeq2 and edgeR calls as the result",
+                "Do not rank or headline genes by the unshrunken log2 fold change",
+                "Keep one identifier space per column; carry the symbol as a label and report one-to-many mapping counts",
+                "Carry the strandedness and GC-bias caveats into the conclusions rather than confining them to a methods footnote"
+              ],
+              "caveats": [
+                "Every conclusion in this report rests on a count table whose strand setting at counting is unrecorded. If the QC in T1S1 showed sample-to-sample heterogeneity consistent with an inconsistent strand setting, the fold changes are not trustworthy and the report must say so rather than qualify it softly.",
+                "Enrichment findings are method-dependent hypotheses, not established biology.",
+                "3 vs 3 is an underpowered design; frame the gene list as the large-effect subset that this design can see."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0094@6849",
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf",
+                  "R-0161@cdaf",
+                  "R-0160@d858"
+                ],
+                "reason": "Report content follows R-0094 (power first), R-0087 (MA and dispersion plots), R-0085 (both LFC columns with the SE), R-0042 (DESeq2/edgeR overlap), R-0105 (leading edge), R-0051/R-0055 (enrichment reporting and method dependence), R-0086/R-0041 (reproducibility record), with R-0161/R-0160 for the GTEx liver context and identifier mapping."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

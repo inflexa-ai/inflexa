@@ -1,0 +1,915 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "coexpression-too-few-n3",
+  "run": 1,
+  "startedAt": "2026-09-06T15:32:36.088Z",
+  "elapsedMs": 112936,
+  "outcome": "plan_submitted",
+  "planId": "pln-d33ca2dd",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 6 samples total, a single mislabeled or outlier sample has an outsized effect on every downstream step; flag rather than silently drop it."
+        ],
+        "context": "Input: counts.csv (12000 genes x 6 samples, raw integer Salmon gene-level counts) and metadata.csv (condition column, 3 treated / 3 control, unpaired, single batch).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 3 treated and 3 control liver samples separate by condition on a blind variance-stabilized PCA, and are library sizes and sample-sample distances consistent within each group?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500",
+          "transform = vst(blind=TRUE)"
+        ],
+        "acceptance_criteria": [
+          "vst(blind=TRUE) computed on the raw count matrix",
+          "PCA on top 500 most-variable genes, colored by condition, saved as a figure",
+          "Sample-distance heatmap (Euclidean distance on vst values) saved as a figure",
+          "Library size per sample reported in a table",
+          "Any sample that does not cluster with its labeled group is flagged and named"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Three replicates per group gives low power; both DESeq2 and edgeR-style models recover only a minority of true DE genes, mostly large-effect ones — do not tighten or loosen the alpha threshold to compensate.",
+          "Do not rank or plot on the unshrunken log2FC; use the apeglm-shrunken value for ranking/plots and keep the unshrunken value with its SE in the table for reference."
+        ],
+        "context": "Raw Salmon gene-level counts, 12000 genes x 6 samples; condition is the only design factor (3 treated, 3 control), no batch, unpaired.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which of the 12,000 genes are differentially expressed between treated (n=3) and control (n=3) liver samples, with control as the reference level?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0017@8a47",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55",
+            "R-0162@ed74"
+          ],
+          "reason": "DESeq2 Wald test with apeglm shrinkage per R-0001/R-0009/R-0029; power caution per R-0017/R-0162 (3 replicates/group)",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count = 10, min_samples = 3 (pre-filter, minimal, independent filtering does the rest)",
+          "normalization = DESeq2 internal median-of-ratios size factors, no external scaling",
+          "reference_level = explicit ('control')",
+          "test = Wald, alpha = 0.05, BH adjustment, independent filtering on",
+          "lfc_shrink = apeglm on the treated_vs_control coefficient"
+        ],
+        "acceptance_criteria": [
+          "Pre-filter keeps genes with >=10 counts in >=3 samples (the smallest group size)",
+          "DESeq2 design ~condition with condition releveled so 'control' is the reference; contrast named explicitly as condition_treated_vs_control",
+          "Wald test run; apeglm shrinkage applied to the treated-vs-control coefficient for reporting/ranking",
+          "Results table reports unshrunken log2FC, shrunken log2FC, lfcSE, p-value, BH-adjusted p-value (independent filtering on) for every tested gene",
+          "MA plot and dispersion plot produced as fit diagnostics",
+          "p-value histogram inspected and its shape reported before trusting the BH adjustment",
+          "Report states the expected power at n=3 per group (closed-form estimate from typical liver-tissue dispersion, since RNASeqPower/PROPER are not available) and the fold-change range detectable at ~80% power",
+          "Genes with NA p-values from Cook's-distance outlier flagging (relevant since <7 replicates/cell) are counted and reported separately from independent-filtering NAs",
+          "Significant gene count at padj<0.05 stated, with explicit caution that this is a low-power 3-vs-3 design and a non-significant gene is not evidence of no effect"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment: Hallmark, Reactome, WikiPathways",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results depend on the method and the ranking metric chosen; present sets as hypotheses for follow-up, not proven findings.",
+          "GO/pathway collections are hierarchical/overlapping — collapse redundant hits before reporting a set count."
+        ],
+        "context": "Ranked list of ~12000 tested genes (human, liver, drug treatment) with the DESeq2 Wald statistic from T1S2. Gene sets: MSigDB Hallmark human 2026.1 (h.all.v2026.1.Hs.symbols.gmt), Reactome pathways current (ReactomePathways.gmt filtered to Homo sapiens via ReactomePathways.txt), WikiPathways human 2026.07.10 (wikipathways_Homo_sapiens.gmt) — all confirmed present in the reference store.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea"
+        ],
+        "question": "Which pathways or biological processes are enriched among genes ranked by the treated-vs-control Wald statistic in liver?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "fgsea preranked on Wald statistic against Hallmark then Reactome/WikiPathways per R-0098/R-0165, using reference-store GMTs confirmed present",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "rank_metric = stat (DESeq2 Wald statistic)",
+          "min_size = 15, max_size = 500",
+          "universe = tested genes only (post pre-filter)",
+          "id_mapping via org.Hs.eg.db where an Entrez mapping is needed"
+        ],
+        "acceptance_criteria": [
+          "Full ranked list of all tested genes (Wald statistic, not shrunken LFC or unshrunken LFC alone) used as fgsea input",
+          "Gene symbols mapped to the identifier space of each gene-set collection; unmapped share reported",
+          "fgsea run first against MSigDB Hallmark human (50 sets), then Reactome (human-filtered from the multi-species GMT via ReactomePathways.txt), then WikiPathways human, each with min_size=15, max_size=500 and reported as separate passes with each collection's release/version stated",
+          "BH-adjusted p-values reported per collection; redundant/overlapping significant sets collapsed with one representative reported plus full table as supplement",
+          "Leading-edge genes listed for every significant set in each collection",
+          "If fewer than ~50 genes are significant at padj<0.05 from T1S2, no over-representation test is run — ranked GSEA on the full list is the only method used, and the significant-gene count is stated"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Network module structure from STRING PPI prior (co-expression substitute)",
+        "agent": "network-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "This is a hypothesis-generating substitute for co-expression analysis, not a co-expression network — it reflects known protein-association structure, not this dataset's covariance, precisely because the dataset does not have enough samples to estimate covariance reliably.",
+          "STRING is a general functional-association network (curated + predicted evidence channels), not liver-specific; a module can group genes that are not co-regulated in liver specifically.",
+          "The 12000-gene x ~13.7M-edge STRING file may need to be restricted (e.g. to genes present in counts.csv, or to a further-filtered high-confidence subgraph) to keep community detection computationally tractable."
+        ],
+        "context": "STRING v12.0 human protein-protein association network (9606.protein.links.v12.0.txt.gz, ~13.7M directed rows / ~6.9M edges, gzipped, space-delimited despite .txt name) and its identifier mapping (9606.protein.info.v12.0.txt.gz) are present in the reference store. The DESeq2 Wald statistic per gene from T1S2 provides the treatment-association signal to project onto network modules. This design (6 samples) is flagged by the analysis's own knowledge rules as too few for a correlation-based WGCNA network; a prior-network module analysis is used instead per that rule's stated fallback.",
+        "maxSteps": 200,
+        "packages": [
+          "igraph",
+          "networkx",
+          "pandas"
+        ],
+        "question": "Given only 6 liver samples (3 treated, 3 control) — too few for a stable correlation-based co-expression network — which functional gene modules, built from a prior protein-association network rather than from sample correlations, contain genes whose individual expression tracks the treatment?",
+        "grounding": {
+          "claims": [
+            "R-0140@3faf",
+            "R-0123@5521"
+          ],
+          "reason": "R-0140 flags outcome too_few_samples_prior_network_or_stop for a <=7-sample/group, <15-total cohort and forbids the WGCNA co-expression step (confirmed by knowledge_check: WGCNA is a violation in this situation); this step follows the flag's stated alternative of placing genes on the STRING prior network (R-0123) instead of stopping, since the underlying differential-expression and enrichment analyses remain fully answerable and the co-expression question is reframed accordingly rather than abandoned",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 12
+        },
+        "step_type": "coexpression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "combined_score cutoff = 700 (STRING high-confidence convention)",
+          "network_type = undirected, deduplicated (STRING lists each edge twice)",
+          "module_detection = graph community detection (Louvain/Leiden), not correlation-based clustering",
+          "no WGCNA / no sample-correlation-derived module step is run on this cohort"
+        ],
+        "acceptance_criteria": [
+          "Explicitly states that WGCNA / any correlation-derived co-expression network is not built on this cohort, citing the sample count (6 total, 3 per group) as below the ~15-20 needed for stable gene-gene correlation estimates",
+          "STRING v12.0 human protein links filtered to combined_score >= 700 (high-confidence convention), joined to gene symbols via the STRING protein-info file, restricted to the tested genes from T1S2 (the ~12000-gene universe, or a documented subset if the graph is too large to build in full)",
+          "Community/module detection (e.g. Louvain or Leiden via igraph/networkx) run on the resulting high-confidence STRING subgraph to define modules",
+          "For each detected module, the module's genes are tested for enrichment of treatment association: e.g. mean |Wald statistic| or a Kolmogorov-Smirnov/permutation test of the module's Wald-statistic distribution against the genome background, using the T1S2 DESeq2 statistics",
+          "Modules ranked by their treatment-association enrichment, with member gene lists, module size, and the enrichment statistic and its p-value reported",
+          "Report states this is a fixed prior-network structure (not a data-derived co-expression network) and that a module's 'treatment tracking' means its member genes concentrate at the extremes of the treated-vs-control ranking, not that the module's activity was estimated from sample-level correlations",
+          "STRING version (12.0), confidence cutoff (700), and number of DE/tested genes present in the network stated explicitly"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Integrated report: DE, pathways, and network modules",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Consolidates outputs of the DESeq2 differential expression (T1S2), fgsea pathway enrichment across three collections (T2S1), and the STRING-prior network module analysis (T3S1) for the 3 treated vs 3 control human liver drug-treatment comparison.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the consolidated, reproducible summary of differential expression, pathway enrichment, and treatment-associated network modules for the treated-vs-control liver comparison?",
+        "grounding": {
+          "claims": [
+            "R-0094@6849",
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report step assembled from the report-stage claims returned for this situation (power statement, effect columns, enrichment reporting fields, reproducibility record)",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1",
+          "T3S1"
+        ],
+        "constraints": [],
+        "acceptance_criteria": [
+          "States method, package versions, design formula and contrast, thresholds (padj<0.05), number of genes tested after filtering, and number of DE genes",
+          "States the expected power at n=3/group and that DE-negative genes are not proof of no effect",
+          "MA plot and dispersion plot included from T1S2",
+          "Effect columns reported: log2FoldChange (unshrunken), shrunken log2FoldChange (apeglm), lfcSE",
+          "Enrichment section states gene-set database and version, ranking metric, universe, and size window for each of Hallmark/Reactome/WikiPathways, with leading-edge genes for significant sets",
+          "Network-module section explicitly states the sample-count rationale for using a STRING prior network instead of WGCNA, the STRING version and confidence cutoff, and lists the top treatment-associated modules with member genes",
+          "Full reproducibility record: session info, package versions, gene-set collection versions/releases, and any random seed used in module detection"
+        ]
+      }
+    ],
+    "title": "Liver drug-treatment DE, enrichment, and network module analysis",
+    "created_at": "2026-09-06T00:00:00Z",
+    "analytical_narrative": "Salmon gene-level counts for 12,000 genes across 6 human liver samples (3 treated vs 3 control, unpaired, single batch) are processed with DESeq2: sample-structure QC first, then a minimal count pre-filter, DESeq2 median-of-ratios normalization inside the model, a Wald test with an explicit reference level (control) and apeglm log2FC shrinkage, and BH-FDR selection with independent filtering. Because 3 vs 3 gives low power, the design step states the expected power at this replicate count before any gene table is produced, and the report states that an absent gene is not evidence of no effect. Differentially expressed genes and the full ranked gene list feed a preranked fgsea run against MSigDB Hallmark (staged locally), followed by Reactome and WikiPathways human collections (also staged), to identify treatment-associated pathways. For the co-expression question, the knowledge service's own rule (R-0140) flags that 6 samples total is below the ~15-20 needed for a stable correlation-based WGCNA network, and the knowledge check confirms WGCNA is forbidden in this situation — so instead of fitting spurious sample-correlation modules, the plan places the tested/DE genes onto the STRING v12.0 human high-confidence protein-association network (score>=700) as a fixed prior structure, detects connected communities on that network, and asks which resulting network module is enriched for genes that individually respond to treatment (from the DESeq2 Wald statistic) — a defensible substitute for 'co-expression modules that track treatment' given the sample size, with the small-cohort caveat stated explicitly throughout."
+  },
+  "usage": {
+    "inputTokens": 3201411,
+    "outputTokens": 9451,
+    "cacheCreationInputTokens": 228436,
+    "cacheReadInputTokens": 2972651,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "fgsea",
+          "WGCNA",
+          "org.Hs.eg.db",
+          "ashr",
+          "tximport"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "tximport"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "STRINGdb",
+          "igraph"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph"
+        ],
+        "language": "r"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "igraph"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "networkx"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string-ppi-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wgcna"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene info entrez human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gencode"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "liver expression tissue"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTEx"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "protein atlas"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ashr",
+          "clusterProfiler",
+          "biomaRt"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "tximeta"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "tximport"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "variancePartition"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "decoupleR"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA and sample-distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with >=10 counts in >= smallest group size (3)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors (DESeq2 internal)",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "~condition, explicit reference level = control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition_treated_vs_control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on Wald statistic vs MSigDB Hallmark then Reactome and WikiPathways",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "WGCNA signed network flagged too-few-samples: use STRING PPI as prior network structure for DE genes instead of correlation-derived modules",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "n_samples",
+                "value": 6
+              },
+              {
+                "name": "fallback",
+                "value": "string_ppi_prior_network"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducibility record with session info, power caveat, enrichment method caveat",
+            "package": "DESeq2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treatment DE, enrichment, and network module analysis",
+          "analytical_narrative": "Salmon gene-level counts for 12,000 genes across 6 human liver samples (3 treated vs 3 control, unpaired, single batch) are processed with DESeq2: sample-structure QC first, then a minimal count pre-filter, DESeq2 median-of-ratios normalization inside the model, a Wald test with an explicit reference level (control) and apeglm log2FC shrinkage, and BH-FDR selection with independent filtering. Because 3 vs 3 gives low power, the design step states the expected power at this replicate count before any gene table is produced, and the report states that an absent gene is not evidence of no effect. Differentially expressed genes and the full ranked gene list feed a preranked fgsea run against MSigDB Hallmark (staged locally), followed by Reactome and WikiPathways human collections (also staged), to identify treatment-associated pathways. For the co-expression question, the knowledge service's own rule (R-0140) flags that 6 samples total is below the ~15-20 needed for a stable correlation-based WGCNA network, and the knowledge check confirms WGCNA is forbidden in this situation — so instead of fitting spurious sample-correlation modules, the plan places the tested/DE genes onto the STRING v12.0 human high-confidence protein-association network (score>=700) as a fixed prior structure, detects connected communities on that network, and asks which resulting network module is enriched for genes that individually respond to treatment (from the DESeq2 Wald statistic) — a defensible substitute for 'co-expression modules that track treatment' given the sample size, with the small-cohort caveat stated explicitly throughout.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 3 treated and 3 control liver samples separate by condition on a blind variance-stabilized PCA, and are library sizes and sample-sample distances consistent within each group?",
+              "acceptance_criteria": [
+                "vst(blind=TRUE) computed on the raw count matrix",
+                "PCA on top 500 most-variable genes, colored by condition, saved as a figure",
+                "Sample-distance heatmap (Euclidean distance on vst values) saved as a figure",
+                "Library size per sample reported in a table",
+                "Any sample that does not cluster with its labeled group is flagged and named"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: counts.csv (12000 genes x 6 samples, raw integer Salmon gene-level counts) and metadata.csv (condition column, 3 treated / 3 control, unpaired, single batch).",
+              "constraints": [
+                "n_top_genes = 500",
+                "transform = vst(blind=TRUE)"
+              ],
+              "caveats": [
+                "With only 6 samples total, a single mislabeled or outlier sample has an outsized effect on every downstream step; flag rather than silently drop it."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12,000 genes are differentially expressed between treated (n=3) and control (n=3) liver samples, with control as the reference level?",
+              "acceptance_criteria": [
+                "Pre-filter keeps genes with >=10 counts in >=3 samples (the smallest group size)",
+                "DESeq2 design ~condition with condition releveled so 'control' is the reference; contrast named explicitly as condition_treated_vs_control",
+                "Wald test run; apeglm shrinkage applied to the treated-vs-control coefficient for reporting/ranking",
+                "Results table reports unshrunken log2FC, shrunken log2FC, lfcSE, p-value, BH-adjusted p-value (independent filtering on) for every tested gene",
+                "MA plot and dispersion plot produced as fit diagnostics",
+                "p-value histogram inspected and its shape reported before trusting the BH adjustment",
+                "Report states the expected power at n=3 per group (closed-form estimate from typical liver-tissue dispersion, since RNASeqPower/PROPER are not available) and the fold-change range detectable at ~80% power",
+                "Genes with NA p-values from Cook's-distance outlier flagging (relevant since <7 replicates/cell) are counted and reported separately from independent-filtering NAs",
+                "Significant gene count at padj<0.05 stated, with explicit caution that this is a low-power 3-vs-3 design and a non-significant gene is not evidence of no effect"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw Salmon gene-level counts, 12000 genes x 6 samples; condition is the only design factor (3 treated, 3 control), no batch, unpaired.",
+              "constraints": [
+                "min_count = 10, min_samples = 3 (pre-filter, minimal, independent filtering does the rest)",
+                "normalization = DESeq2 internal median-of-ratios size factors, no external scaling",
+                "reference_level = explicit ('control')",
+                "test = Wald, alpha = 0.05, BH adjustment, independent filtering on",
+                "lfc_shrink = apeglm on the treated_vs_control coefficient"
+              ],
+              "caveats": [
+                "Three replicates per group gives low power; both DESeq2 and edgeR-style models recover only a minority of true DE genes, mostly large-effect ones — do not tighten or loosen the alpha threshold to compensate.",
+                "Do not rank or plot on the unshrunken log2FC; use the apeglm-shrunken value for ranking/plots and keep the unshrunken value with its SE in the table for reference."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0017@8a47",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55",
+                  "R-0162@ed74"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "DESeq2 Wald test with apeglm shrinkage per R-0001/R-0009/R-0029; power caution per R-0017/R-0162 (3 replicates/group)"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment: Hallmark, Reactome, WikiPathways",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which pathways or biological processes are enriched among genes ranked by the treated-vs-control Wald statistic in liver?",
+              "acceptance_criteria": [
+                "Full ranked list of all tested genes (Wald statistic, not shrunken LFC or unshrunken LFC alone) used as fgsea input",
+                "Gene symbols mapped to the identifier space of each gene-set collection; unmapped share reported",
+                "fgsea run first against MSigDB Hallmark human (50 sets), then Reactome (human-filtered from the multi-species GMT via ReactomePathways.txt), then WikiPathways human, each with min_size=15, max_size=500 and reported as separate passes with each collection's release/version stated",
+                "BH-adjusted p-values reported per collection; redundant/overlapping significant sets collapsed with one representative reported plus full table as supplement",
+                "Leading-edge genes listed for every significant set in each collection",
+                "If fewer than ~50 genes are significant at padj<0.05 from T1S2, no over-representation test is run — ranked GSEA on the full list is the only method used, and the significant-gene count is stated"
+              ],
+              "packages": [
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Ranked list of ~12000 tested genes (human, liver, drug treatment) with the DESeq2 Wald statistic from T1S2. Gene sets: MSigDB Hallmark human 2026.1 (h.all.v2026.1.Hs.symbols.gmt), Reactome pathways current (ReactomePathways.gmt filtered to Homo sapiens via ReactomePathways.txt), WikiPathways human 2026.07.10 (wikipathways_Homo_sapiens.gmt) — all confirmed present in the reference store.",
+              "constraints": [
+                "rank_metric = stat (DESeq2 Wald statistic)",
+                "min_size = 15, max_size = 500",
+                "universe = tested genes only (post pre-filter)",
+                "id_mapping via org.Hs.eg.db where an Entrez mapping is needed"
+              ],
+              "caveats": [
+                "Enrichment results depend on the method and the ranking metric chosen; present sets as hypotheses for follow-up, not proven findings.",
+                "GO/pathway collections are hierarchical/overlapping — collapse redundant hits before reporting a set count."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "fgsea preranked on Wald statistic against Hallmark then Reactome/WikiPathways per R-0098/R-0165, using reference-store GMTs confirmed present"
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Network module structure from STRING PPI prior (co-expression substitute)",
+              "track": "T3",
+              "step_type": "coexpression",
+              "question": "Given only 6 liver samples (3 treated, 3 control) — too few for a stable correlation-based co-expression network — which functional gene modules, built from a prior protein-association network rather than from sample correlations, contain genes whose individual expression tracks the treatment?",
+              "acceptance_criteria": [
+                "Explicitly states that WGCNA / any correlation-derived co-expression network is not built on this cohort, citing the sample count (6 total, 3 per group) as below the ~15-20 needed for stable gene-gene correlation estimates",
+                "STRING v12.0 human protein links filtered to combined_score >= 700 (high-confidence convention), joined to gene symbols via the STRING protein-info file, restricted to the tested genes from T1S2 (the ~12000-gene universe, or a documented subset if the graph is too large to build in full)",
+                "Community/module detection (e.g. Louvain or Leiden via igraph/networkx) run on the resulting high-confidence STRING subgraph to define modules",
+                "For each detected module, the module's genes are tested for enrichment of treatment association: e.g. mean |Wald statistic| or a Kolmogorov-Smirnov/permutation test of the module's Wald-statistic distribution against the genome background, using the T1S2 DESeq2 statistics",
+                "Modules ranked by their treatment-association enrichment, with member gene lists, module size, and the enrichment statistic and its p-value reported",
+                "Report states this is a fixed prior-network structure (not a data-derived co-expression network) and that a module's 'treatment tracking' means its member genes concentrate at the extremes of the treated-vs-control ranking, not that the module's activity was estimated from sample-level correlations",
+                "STRING version (12.0), confidence cutoff (700), and number of DE/tested genes present in the network stated explicitly"
+              ],
+              "packages": [
+                "igraph",
+                "networkx",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 12
+              },
+              "agent": "network-agent",
+              "context": "STRING v12.0 human protein-protein association network (9606.protein.links.v12.0.txt.gz, ~13.7M directed rows / ~6.9M edges, gzipped, space-delimited despite .txt name) and its identifier mapping (9606.protein.info.v12.0.txt.gz) are present in the reference store. The DESeq2 Wald statistic per gene from T1S2 provides the treatment-association signal to project onto network modules. This design (6 samples) is flagged by the analysis's own knowledge rules as too few for a correlation-based WGCNA network; a prior-network module analysis is used instead per that rule's stated fallback.",
+              "constraints": [
+                "combined_score cutoff = 700 (STRING high-confidence convention)",
+                "network_type = undirected, deduplicated (STRING lists each edge twice)",
+                "module_detection = graph community detection (Louvain/Leiden), not correlation-based clustering",
+                "no WGCNA / no sample-correlation-derived module step is run on this cohort"
+              ],
+              "caveats": [
+                "This is a hypothesis-generating substitute for co-expression analysis, not a co-expression network — it reflects known protein-association structure, not this dataset's covariance, precisely because the dataset does not have enough samples to estimate covariance reliably.",
+                "STRING is a general functional-association network (curated + predicted evidence channels), not liver-specific; a module can group genes that are not co-regulated in liver specifically.",
+                "The 12000-gene x ~13.7M-edge STRING file may need to be restricted (e.g. to genes present in counts.csv, or to a further-filtered high-confidence subgraph) to keep community detection computationally tractable."
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0140@3faf",
+                  "R-0123@5521"
+                ],
+                "reason": "R-0140 flags outcome too_few_samples_prior_network_or_stop for a <=7-sample/group, <15-total cohort and forbids the WGCNA co-expression step (confirmed by knowledge_check: WGCNA is a violation in this situation); this step follows the flag's stated alternative of placing genes on the STRING prior network (R-0123) instead of stopping, since the underlying differential-expression and enrichment analyses remain fully answerable and the co-expression question is reframed accordingly rather than abandoned"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Integrated report: DE, pathways, and network modules",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the consolidated, reproducible summary of differential expression, pathway enrichment, and treatment-associated network modules for the treated-vs-control liver comparison?",
+              "acceptance_criteria": [
+                "States method, package versions, design formula and contrast, thresholds (padj<0.05), number of genes tested after filtering, and number of DE genes",
+                "States the expected power at n=3/group and that DE-negative genes are not proof of no effect",
+                "MA plot and dispersion plot included from T1S2",
+                "Effect columns reported: log2FoldChange (unshrunken), shrunken log2FoldChange (apeglm), lfcSE",
+                "Enrichment section states gene-set database and version, ranking metric, universe, and size window for each of Hallmark/Reactome/WikiPathways, with leading-edge genes for significant sets",
+                "Network-module section explicitly states the sample-count rationale for using a STRING prior network instead of WGCNA, the STRING version and confidence cutoff, and lists the top treatment-associated modules with member genes",
+                "Full reproducibility record: session info, package versions, gene-set collection versions/releases, and any random seed used in module detection"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Consolidates outputs of the DESeq2 differential expression (T1S2), fgsea pathway enrichment across three collections (T2S1), and the STRING-prior network module analysis (T3S1) for the 3 treated vs 3 control human liver drug-treatment comparison.",
+              "constraints": [],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0094@6849",
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report step assembled from the report-stage claims returned for this situation (power statement, effect columns, enrichment reporting fields, reproducibility record)"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

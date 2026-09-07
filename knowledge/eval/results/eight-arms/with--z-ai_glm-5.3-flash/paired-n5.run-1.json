@@ -1,0 +1,768 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "paired-n5",
+  "run": 1,
+  "startedAt": "2026-09-06T15:07:38.071Z",
+  "elapsedMs": 98967,
+  "outcome": "plan_submitted",
+  "planId": "pln-a90874ec",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If a sample fails to cluster with its subject-pair structure, flag it before the model."
+        ],
+        "context": "counts: /eval-eight-arms-with-paired-n5-1/data/inputs/counts/counts.csv (12000 genes x 10 samples); metadata: /eval-eight-arms-with-paired-n5-1/data/inputs/metadata/metadata.csv with columns subject, condition.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "Do the 5 subject pairs structure the samples, and is any sample an outlier before the paired test?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: blind vst, PCA, distances per R-0033@40bf",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)"
+        ],
+        "description": "Blind vst on raw counts; PCA on the 500 highest-variance genes colored by condition and subject; Euclidean sample-distance heatmap; library-size summary. Confirms pairing structure and flags outliers before testing.",
+        "acceptance_criteria": [
+          "PCA colored by condition and by subject",
+          "sample distance heatmap and library-size table produced",
+          "paired structure of samples confirmed against metadata (10 samples, 5 subjects x 2 conditions)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Paired differential expression (DESeq2 + edgeR cross-check)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 5 replicates per condition cell, DESeq2 flags count outliers by Cook's distance and sets those p-values to NA; report the count of such genes separately.",
+          "If the GC/length bias diagnostic shows a systematic trend, state it; cqn/EDASeq are absent from the pool and cannot correct it."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "ggplot2"
+        ],
+        "question": "Which genes respond to treatment within each subject (condition treated vs control, controlling for subject)?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0147@aebe",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0064@92ec",
+            "R-0011@233b",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "Paired design: DESeq2 ~ subject + condition with apeglm shrinkage per R-0011@233b",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-blocked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "design ~ subject + condition, subject before condition (R-0011@233b)",
+          "raw integer counts imported as-is, no length correction, no tximport (R-0064@92ec)",
+          "median-of-ratios size factors, counts not scaled or transformed before the model (R-0026@9ab1)",
+          "minimal pre-filter: >=10 counts in >=5 samples (R-0029@fa6d, R-0002@087b)",
+          "explicit reference level = control; contrast = condition treated vs control (R-0036@9786)",
+          "Wald test, count_outlier_policy = flag_and_report_na (R-0001@9a17, R-0039@e17a)",
+          "lfcShrink type apeglm on the condition coefficient (R-0009@f54e)",
+          "BH alpha 0.05 with independent filtering; pass alpha=0.05 to results(); p-value histogram inspected before adjustment (R-0010@91a5, R-0083@12de)",
+          "robustness: run edgeR quasi-likelihood F-test with the same design and report the DESeq2/edgeR intersection as the high-confidence set (R-0042@54e1)"
+        ],
+        "description": "Pre-filter genes (>=10 counts in >= smallest group size = 5 samples), median-of-ratios size factors, GC-content/gene-length bias diagnostic, DESeq2 Wald test on ~ subject + condition with explicit reference level (control), contrast treated vs control, apeglm-shrunken LFC, BH alpha 0.05 with independent filtering, p-value histogram, Cook's-distance NA reporting, plus an edgeR quasi-likelihood F-test on the same design for a robustness overlap.",
+        "acceptance_criteria": [
+          "contrast named explicitly (condition: treated vs control, control as reference level)",
+          "full results table with unshrunken log2FC, shrunken log2FC, lfcSE, pvalue, padj",
+          "GC/length bias diagnostic plotted and its trend stated",
+          "edgeR QL robustness overlap reported (intersection = high-confidence set)",
+          "MA plot and dispersion plot produced"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway over-representation of DE genes (WikiPathways human)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Counts are gene symbols; WikiPathways human GMT is HGNC symbols — map on symbols and report the unmapped share. If the DE gene set is too small (e.g. fewer than ~10 DE genes), report the ORA as uninformative rather than forcing it.",
+          "Gene length/expression bias: the tested-genes universe removes the detection part of the bias; state the residual bias in the report."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "GSEABase"
+        ],
+        "question": "Which WikiPathways human pathways are over-represented among the genes that respond to treatment?",
+        "grounding": {
+          "claims": [
+            "R-0046@4695",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0101@5743"
+          ],
+          "reason": "OR representation analysis with explicit tested-genes universe per R-0046@4695; ranked GSEA rejected by knowledge_check in this situation",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "universe = the genes tested by DESeq2, never the whole genome (R-0046@4695)",
+          "size window 15-500 members among tested genes (R-0047@fd9d)",
+          "never mix identifier spaces between list and universe (R-0101@5743)"
+        ],
+        "description": "Map result-table gene symbols to the HGNC-symbol space of the WikiPathways human GMT (/mnt/refs/managed/wikipathways-human); run ORA of the DE gene set (padj < 0.05) with the tested genes as universe; report pathway hits, collapse redundant overlapping sets.",
+        "acceptance_criteria": [
+          "gene identifier space of the GMT matched to the results table (gene symbols); unmapped share reported",
+          "universe = all tested genes, stated in the report",
+          "set size window 15-500 applied after intersection with the universe; window stated",
+          "redundant significant sets collapsed into groups with one representative each (R-0052@620a)",
+          "full ORA table kept as supplement"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Report and reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What are the treatment-responsive genes and pathways, reported with full method and reproducibility detail?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "Report fields and diagnostics per R-0041@059a, R-0085@c24d, R-0087@c53d",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "effect_columns = unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE (R-0085@c24d)",
+          "rank_genes_by = shrunken log2FoldChange; keep unshrunken p-values (R-0085@c24d)",
+          "fit_diagnostics = MA plot and dispersion plot (R-0087@c53d)",
+          "reproducibility record = sessionInfo, seed, package versions, gene-set collection version (R-0086@becf)"
+        ],
+        "description": "Consolidated report: methods, versions, design, thresholds, n tested/n DE per method, MA and dispersion fit diagnostics, p-value histogram, gene table ranked by shrunken LFC, ORA results, reproducibility record.",
+        "acceptance_criteria": [
+          "report states method, package versions, design formula, contrast, thresholds, n_tested, n_DE (per method), NA-outlier count",
+          "gene table carries unshrunken log2FC, shrunken log2FC (apeglm), lfcSE; ranking on shrunken value; p-values from unshrunken fit",
+          "MA plot and dispersion plot placed before the gene tables",
+          "sessionInfo, seed, and gene-set collection version (WikiPathways 2026.07.10) recorded",
+          "top up- and down-regulated genes listed"
+        ]
+      }
+    ],
+    "title": "Paired treatment vs control DE + pathways",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "5 subjects each contribute a control and a treated blood sample (10 samples, 12000 genes, STAR/featureCounts raw counts). To answer 'which genes respond to treatment within each subject', the subject must be a blocking term in the design: ~ subject + condition, tested with the DESeq2 Wald test on raw integer counts (no length correction, no tximport, no pre-normalization), with apeglm shrinkage for the reported fold change, BH at alpha 0.05 with independent filtering, and a robustness cross-check with edgeR quasi-likelihood. Significant genes feed an over-representation analysis against the WikiPathways human gene sets (the human pathway resource available here), with the tested genes as the universe. A GC/length bias diagnostic is included because cqn/EDASeq are absent. Small-cohort caveats: n=5 per group, Cook's-distance outlier genes will be NA and are reported separately; no co-expression or network inference is planned (under R-0140@0f16, <15 samples)."
+  },
+  "usage": {
+    "inputTokens": 217306,
+    "outputTokens": 4538,
+    "cacheReadInputTokens": 155520,
+    "reasoningTokens": 232
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 5,
+        "n_per_group_max": 5,
+        "paired": true,
+        "blocking_factor": "subject",
+        "enrichment_input": "ranked_list",
+        "preferred_language": "R",
+        "batch": "none"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 5,
+        "n_per_group_max": 5,
+        "paired": true,
+        "blocking_factor": "subject",
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "minimal pre-filter >=10 counts in >= smallest group size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ subject + condition, explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test, contrast condition treated vs control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm lfcShrink",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH at alpha 0.05 with independent filtering, p-value histogram",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked on Wald statistic, WikiPathways human GMT, size window 15-500",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "wald_statistic"
+              },
+              {
+                "name": "min_set_size",
+                "value": 15
+              },
+              {
+                "name": "max_set_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record + MA and dispersion plots + gene table",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange, shrunken_log2FoldChange, lfcSE"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 5,
+        "n_per_group_max": 5,
+        "paired": true,
+        "blocking_factor": "subject",
+        "batch": "none",
+        "enrichment_input": "gene_list",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "minimal pre-filter >=10 counts in >= smallest group size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ subject + condition, explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test, contrast condition treated vs control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm lfcShrink",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH at alpha 0.05 with independent filtering, p-value histogram",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "over-representation analysis with explicit universe = tested genes",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "gene_sets",
+                "value": "wikipathways_human"
+              },
+              {
+                "name": "min_set_size",
+                "value": 15
+              },
+              {
+                "name": "max_set_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record + MA and dispersion plots + gene table",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange, shrunken_log2FoldChange, lfcSE"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Paired treatment vs control DE + pathways",
+          "analytical_narrative": "5 subjects each contribute a control and a treated blood sample (10 samples, 12000 genes, STAR/featureCounts raw counts). To answer 'which genes respond to treatment within each subject', the subject must be a blocking term in the design: ~ subject + condition, tested with the DESeq2 Wald test on raw integer counts (no length correction, no tximport, no pre-normalization), with apeglm shrinkage for the reported fold change, BH at alpha 0.05 with independent filtering, and a robustness cross-check with edgeR quasi-likelihood. Significant genes feed an over-representation analysis against the WikiPathways human gene sets (the human pathway resource available here), with the tested genes as the universe. A GC/length bias diagnostic is included because cqn/EDASeq are absent. Small-cohort caveats: n=5 per group, Cook's-distance outlier genes will be NA and are reported separately; no co-expression or network inference is planned (under R-0140@0f16, <15 samples).",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "PCA colored by condition and by subject",
+                "sample distance heatmap and library-size table produced",
+                "paired structure of samples confirmed against metadata (10 samples, 5 subjects x 2 conditions)"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "counts: /eval-eight-arms-with-paired-n5-1/data/inputs/counts/counts.csv (12000 genes x 10 samples); metadata: /eval-eight-arms-with-paired-n5-1/data/inputs/metadata/metadata.csv with columns subject, condition.",
+              "caveats": [
+                "If a sample fails to cluster with its subject-pair structure, flag it before the model."
+              ],
+              "constraints": [
+                "n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+                "transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)"
+              ],
+              "depends_on": [],
+              "description": "Blind vst on raw counts; PCA on the 500 highest-variance genes colored by condition and subject; Euclidean sample-distance heatmap; library-size summary. Confirms pairing structure and flags outliers before testing.",
+              "grounding": {
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC: blind vst, PCA, distances per R-0033@40bf",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded",
+                "template": "tpl-qc-eda@1.0.0"
+              },
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "packages": [
+                "DESeq2",
+                "ggplot2"
+              ],
+              "question": "Do the 5 subject pairs structure the samples, and is any sample an outlier before the paired test?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "qc",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "contrast named explicitly (condition: treated vs control, control as reference level)",
+                "full results table with unshrunken log2FC, shrunken log2FC, lfcSE, pvalue, padj",
+                "GC/length bias diagnostic plotted and its trend stated",
+                "edgeR QL robustness overlap reported (intersection = high-confidence set)",
+                "MA plot and dispersion plot produced"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With 5 replicates per condition cell, DESeq2 flags count outliers by Cook's distance and sets those p-values to NA; report the count of such genes separately.",
+                "If the GC/length bias diagnostic shows a systematic trend, state it; cqn/EDASeq are absent from the pool and cannot correct it."
+              ],
+              "constraints": [
+                "design ~ subject + condition, subject before condition (R-0011@233b)",
+                "raw integer counts imported as-is, no length correction, no tximport (R-0064@92ec)",
+                "median-of-ratios size factors, counts not scaled or transformed before the model (R-0026@9ab1)",
+                "minimal pre-filter: >=10 counts in >=5 samples (R-0029@fa6d, R-0002@087b)",
+                "explicit reference level = control; contrast = condition treated vs control (R-0036@9786)",
+                "Wald test, count_outlier_policy = flag_and_report_na (R-0001@9a17, R-0039@e17a)",
+                "lfcShrink type apeglm on the condition coefficient (R-0009@f54e)",
+                "BH alpha 0.05 with independent filtering; pass alpha=0.05 to results(); p-value histogram inspected before adjustment (R-0010@91a5, R-0083@12de)",
+                "robustness: run edgeR quasi-likelihood F-test with the same design and report the DESeq2/edgeR intersection as the high-confidence set (R-0042@54e1)"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Pre-filter genes (>=10 counts in >= smallest group size = 5 samples), median-of-ratios size factors, GC-content/gene-length bias diagnostic, DESeq2 Wald test on ~ subject + condition with explicit reference level (control), contrast treated vs control, apeglm-shrunken LFC, BH alpha 0.05 with independent filtering, p-value histogram, Cook's-distance NA reporting, plus an edgeR quasi-likelihood F-test on the same design for a robustness overlap.",
+              "grounding": {
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0147@aebe",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0064@92ec",
+                  "R-0011@233b",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "reason": "Paired design: DESeq2 ~ subject + condition with apeglm shrinkage per R-0011@233b",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded",
+                "template": "tpl-deseq2-blocked@1.0.0"
+              },
+              "id": "T1S2",
+              "name": "Paired differential expression (DESeq2 + edgeR cross-check)",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "edgeR",
+                "ggplot2"
+              ],
+              "question": "Which genes respond to treatment within each subject (condition treated vs control, controlling for subject)?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "gene identifier space of the GMT matched to the results table (gene symbols); unmapped share reported",
+                "universe = all tested genes, stated in the report",
+                "set size window 15-500 applied after intersection with the universe; window stated",
+                "redundant significant sets collapsed into groups with one representative each (R-0052@620a)",
+                "full ORA table kept as supplement"
+              ],
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Counts are gene symbols; WikiPathways human GMT is HGNC symbols — map on symbols and report the unmapped share. If the DE gene set is too small (e.g. fewer than ~10 DE genes), report the ORA as uninformative rather than forcing it.",
+                "Gene length/expression bias: the tested-genes universe removes the detection part of the bias; state the residual bias in the report."
+              ],
+              "constraints": [
+                "universe = the genes tested by DESeq2, never the whole genome (R-0046@4695)",
+                "size window 15-500 members among tested genes (R-0047@fd9d)",
+                "never mix identifier spaces between list and universe (R-0101@5743)"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Map result-table gene symbols to the HGNC-symbol space of the WikiPathways human GMT (/mnt/refs/managed/wikipathways-human); run ORA of the DE gene set (padj < 0.05) with the tested genes as universe; report pathway hits, collapse redundant overlapping sets.",
+              "grounding": {
+                "claims": [
+                  "R-0046@4695",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0101@5743"
+                ],
+                "reason": "OR representation analysis with explicit tested-genes universe per R-0046@4695; ranked GSEA rejected by knowledge_check in this situation",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded"
+              },
+              "id": "T2S1",
+              "name": "Pathway over-representation of DE genes (WikiPathways human)",
+              "packages": [
+                "clusterProfiler",
+                "GSEABase"
+              ],
+              "question": "Which WikiPathways human pathways are over-represented among the genes that respond to treatment?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2"
+            },
+            {
+              "acceptance_criteria": [
+                "report states method, package versions, design formula, contrast, thresholds, n_tested, n_DE (per method), NA-outlier count",
+                "gene table carries unshrunken log2FC, shrunken log2FC (apeglm), lfcSE; ranking on shrunken value; p-values from unshrunken fit",
+                "MA plot and dispersion plot placed before the gene tables",
+                "sessionInfo, seed, and gene-set collection version (WikiPathways 2026.07.10) recorded",
+                "top up- and down-regulated genes listed"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "effect_columns = unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE (R-0085@c24d)",
+                "rank_genes_by = shrunken log2FoldChange; keep unshrunken p-values (R-0085@c24d)",
+                "fit_diagnostics = MA plot and dispersion plot (R-0087@c53d)",
+                "reproducibility record = sessionInfo, seed, package versions, gene-set collection version (R-0086@becf)"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "description": "Consolidated report: methods, versions, design, thresholds, n tested/n DE per method, MA and dispersion fit diagnostics, p-value histogram, gene table ranked by shrunken LFC, ORA results, reproducibility record.",
+              "grounding": {
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "Report fields and diagnostics per R-0041@059a, R-0085@c24d, R-0087@c53d",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded"
+              },
+              "id": "T3S1",
+              "name": "Report and reproducibility record",
+              "packages": [],
+              "question": "What are the treatment-responsive genes and pathways, reported with full method and reproducibility detail?",
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "step_type": "report",
+              "track": "T3"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

@@ -1,0 +1,918 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "tf-activity-python-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T15:49:07.276Z",
+  "elapsedMs": 126892,
+  "outcome": "plan_submitted",
+  "planId": "pln-928aa9ce",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 per group a single outlier moves the group mean materially; report it rather than removing it without stating the effect",
+          "A 12,000-gene matrix is already reduced relative to a full transcriptome — note whether it was pre-filtered upstream, since that changes the tested-gene universe"
+        ],
+        "context": "Human kidney bulk RNA-seq, raw integer gene-level counts from Salmon, 6 aldosterone-treated vs 6 vehicle controls, unpaired, single batch. Gene identifiers are HGNC symbols, which is the identifier space the CollecTRI and DoRothEA regulons use, so no ID conversion should be needed — verify the overlap rather than assume it.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "pydeseq2",
+          "scikit-learn",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the 12 kidney samples separate by condition (aldosterone vs vehicle), and does any sample deviate from its group by depth or global expression?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Raw counts before any model: blind VST, PCA on top 500 variable genes, sample distance heatmap per R-0033.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-python@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Python only — no R scripts",
+          "qc_sample_structure: n_top_genes = 500",
+          "qc_sample_structure: transform = vst_blind (blind to the design)",
+          "Do not scale, transform or normalize the raw counts before the DE model in T1S2 — the size factors belong inside the model"
+        ],
+        "description": "Load /eval-eight-arms-with-tf-activity-python-n6-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, gene symbol in the first column) and metadata.csv (12 rows, condition column). Confirm sample IDs match between the two files and report any mismatch. Compute library sizes and detected-gene counts per sample, apply a blind variance-stabilizing transform, run PCA on the 500 most variable genes coloured by condition, and draw a Euclidean sample-distance heatmap. Emit the VST matrix and a log2 CPM matrix for downstream steps.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv and metadata.csv are reconciled and the 6/6 group sizes confirmed",
+          "Library size and detected-gene table written for all 12 samples",
+          "PCA (top 500 variable genes, blind VST) and sample-distance heatmap saved, coloured by condition",
+          "Any sample that does not group with its condition is named explicitly, with the evidence, and is NOT silently dropped",
+          "VST matrix and log2 CPM matrix persisted for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: aldosterone vs vehicle",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "6 vs 6 is adequate for DE but the fold changes of low-count genes remain noisy — this is why the shrunken estimate is reported and the unshrunken statistic is used for ranking",
+          "With <7 replicates per cell, PyDESeq2/DESeq2 sets p-values to NA for Cook's-distance outlier genes rather than replacing counts; those NAs are expected and must be counted, not hidden"
+        ],
+        "context": "The DE step exists to serve the TF question: decoupler's ulm on a contrast needs the Wald statistic of every tested gene, with sign, and it needs the tested-gene universe defined once. The gene list is also reported in its own right.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "pydeseq2",
+          "matplotlib"
+        ],
+        "question": "Which genes change between aldosterone-treated and vehicle kidney samples, and what is the per-gene Wald statistic that ranks every tested gene for the TF inference?",
+        "grounding": {
+          "claims": [
+            "R-0002@087b",
+            "R-0029@fa6d",
+            "R-0036@9ab1",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0010@91a5",
+            "R-0043@4f55",
+            "R-0083@12de",
+            "R-0026@9ab1"
+          ],
+          "reason": "Raw counts, fixed-effects 2-group design with 6 replicates per group: DESeq2 Wald (R-0001), minimal pre-filter (R-0002/R-0029), explicit reference level (R-0036), apeglm shrinkage (R-0009), BH with independent filtering (R-0010).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Python only — use PyDESeq2, not R DESeq2",
+          "filter_low_counts: min_count = 10, min_samples = 6",
+          "differential_expression: DESeq2 Wald test, alpha = 0.05",
+          "shrink_lfc: apeglm shrinkage; keep the unshrunken estimate alongside",
+          "multiple_testing: Benjamini-Hochberg at alpha 0.05 with independent filtering on",
+          "Rank downstream on the Wald statistic, never on the unshrunken log2 fold change alone"
+        ],
+        "description": "Pre-filter to genes with at least 10 counts in at least 6 samples (the smallest group size). Fit PyDESeq2 with design ~condition, setting vehicle as the explicit reference level, and test the contrast (condition, aldosterone, vehicle) with the Wald test so a positive log2 fold change means higher in aldosterone. Apply apeglm shrinkage for the reported fold change while keeping the unshrunken estimate in the table. Report at BH-adjusted p < 0.05 with independent filtering, using the same alpha in results as in the report. Plot the raw p-value histogram and state its shape. Report separately the number of genes with NA p-values from the Cook's-distance outlier flag versus from independent filtering. Export the full results table for every tested gene including the unshrunken Wald statistic — this ranked full list, not a thresholded subset, is the input to T2S1.",
+        "acceptance_criteria": [
+          "Reference level explicitly set to vehicle and the contrast named as (condition, aldosterone, vehicle) in the output",
+          "Filter applied as >=10 counts in >=6 samples, with the number of genes retained out of 12000 reported",
+          "Full results table for ALL tested genes exported with gene symbol, baseMean, unshrunken log2FC, shrunken log2FC, lfcSE, Wald stat, pvalue, padj",
+          "Counts of significant genes at padj<0.05 reported, split by direction",
+          "p-value histogram saved and its shape described; NA counts attributed to outlier flagging versus independent filtering separately",
+          "No selection by unadjusted p-value or by fold change alone"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "TF activity: decoupler ulm on CollecTRI",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A prior knowledge network is tissue-agnostic: a kidney-specific regulator absent from the network is missed, and targets silent in kidney add noise. State this.",
+          "An activity score is an inference from a curated network, not a measurement — a high score is a hypothesis about a regulator for follow-up, not a demonstrated driver",
+          "VIPER on an ARACNe kidney regulon would be the tool of record for a context-specific regulator activity; neither is available here, and the decoupler-on-prior-network substitute must be named as such",
+          "TF activity and TF mRNA level are different quantities and frequently diverge — do not read one as the other"
+        ],
+        "context": "Aldosterone acts through the mineralocorticoid receptor NR3C2, a ligand-activated transcription factor whose activity can change with no change in its own transcript level. The analysis must therefore report inferred activity independently of the TF's own expression, and it should state explicitly where NR3C2 and the glucocorticoid receptor NR3C1 (which shares response elements) fall in the ranking, whether or not they reach significance. A regulatory network cannot be inferred de novo from 12 samples, so a prior network is the only defensible source of regulons here.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "statsmodels",
+          "matplotlib",
+          "seaborn",
+          "rpy2"
+        ],
+        "question": "Which transcription factors show altered inferred activity in aldosterone-treated kidney relative to vehicle, and does the answer hold across two independent prior regulon networks?",
+        "grounding": {
+          "claims": [
+            "R-0112@f200",
+            "R-0111@b668",
+            "R-0113@7a4d",
+            "R-0114@9db7",
+            "R-0121@5f27",
+            "R-0119@5f4d"
+          ],
+          "reason": "TF activity is the research question: decoupler ulm on CollecTRI signed regulons, both on the contrast statistic (R-0111) and per sample with a test on the scores (R-0112); DoRothEA A-C as the second network (R-0113); prior network only, given 12 samples (R-0121).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-decoupler-py-tf-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "activity",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Python only — use the decoupler Python package (2.2.0 is installed), not R decoupleR",
+          "tf_activity: activity_method = ulm; run on both the contrast Wald statistic and the per-sample log2 CPM matrix",
+          "tf_activity: regulon_preference = CollecTRI first; DoRothEA confidence A-C as the alternative/second network",
+          "tf_activity: min_regulon_size = 5",
+          "tf_activity: edge_sign = keep mode of regulation",
+          "tf_activity: score_test = moderated linear model on the per-sample scores with BH across regulators",
+          "Use the full ranked list of tested genes as input, never only the significant genes",
+          "Do NOT infer a regulatory network from this expression matrix — 12 samples cannot support mutual-information network inference"
+        ],
+        "description": "Infer TF activity with decoupler's univariate linear model on a signed human TF-target regulon network, run two ways. (1) Contrast-level: score every TF on the Wald statistic of ALL tested genes from T1S2, giving one activity estimate and p-value per TF for aldosterone vs vehicle. (2) Per-sample: score every TF on the per-sample log2 CPM matrix from T1S1, then test the resulting score matrix between the two conditions with a moderated linear model (design ~condition, vehicle as reference) and adjust across regulators with Benjamini-Hochberg. Keep the sign of each edge so a repressed target lowers rather than raises the score, and test only TFs with at least 5 targets among the tested genes. Repeat the whole inference with a second, confidence-filtered TF regulon resource (levels A-C) as a concordance check, and report the overlap and the disagreement among the top regulators of the two networks. Reference data needed: a literature-curated signed human TF-target regulon network (CollecTRI; present in the reference store as a CSV with source/target/weight columns and directly consumable as decoupler's network argument) and a confidence-levelled human TF regulon set (DoRothEA; present as an R serialized data frame, readable from Python via rpy2, filter to confidence A-C and rename tf/target/mor to source/target/weight). If the second network cannot be read, report the CollecTRI result alone and state that no cross-network concordance check was possible — do not substitute an unsigned binding-based target set for a signed regulon, since it cannot say whether a TF activates or represses.",
+        "acceptance_criteria": [
+          "Activity table with one row per TF for the aldosterone-vs-vehicle contrast: estimate, p-value, BH-adjusted p-value, number of targets used",
+          "Per-sample TF activity score matrix (TFs x 12 samples) plus the between-group test with BH across regulators",
+          "Number of regulators that passed the min-5-targets threshold reported, and the network name and version stated",
+          "Edge signs (mode of regulation) retained — verified by confirming the network weight column carries both +1 and -1 values",
+          "Cross-network concordance reported: overlap and disagreement of the top regulators between the two regulon resources, or an explicit statement that the second network was unavailable",
+          "NR3C2 and NR3C1 positions in the ranking reported explicitly regardless of significance",
+          "Every reported TF is flagged for whether the contrast-level and per-sample results agree in sign; disagreements are stated, not dropped"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Pathway footprint context and TF annotation",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A pathway member can change expression with no change in pathway activity, and the reverse — the footprint score is the claim, member expression is not",
+          "This step is context, not the answer: if the footprint model is absent the run still answers the research question from T2S1"
+        ],
+        "context": "Pathway footprints are read as the transcriptional consequence of pathway activity, not as expression of pathway members. This step is interpretive context for the TF result, plus the TF-expression-versus-TF-activity comparison that keeps the report honest about mechanism.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Which signalling pathway footprints accompany the TF activity changes in aldosterone-treated kidney, and how do the leading TFs' own expression levels compare with their inferred activity?",
+        "grounding": {
+          "claims": [
+            "R-0115@1504",
+            "R-0122@08af",
+            "R-0123@5521"
+          ],
+          "reason": "PROGENy footprint with decoupler mlm on the contrast statistic, top 500 responsive genes (R-0115); SPIA is absent so no topology claim is made (R-0122).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "activity",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Python only",
+          "pathway_activity: activity_method = mlm",
+          "pathway_activity: top_responsive_genes = 500",
+          "pathway_activity: interpretation = footprint, not membership",
+          "Do not claim pathway topology impact — no topology-aware method is available here"
+        ],
+        "description": "Run decoupler's multivariate linear model on the PROGENy human footprint model over the aldosterone-vs-vehicle contrast statistic from T1S2, using the top 500 responsive genes per pathway, to give a pathway footprint score with p-value per pathway. Also compute per-sample pathway scores on the log2 CPM matrix and compare between groups. Separately, for the leading TFs from T2S1, join their own differential expression result from T1S2 (log2FC, padj, baseMean) beside their inferred activity, and state for each whether its own transcript changed. Reference data needed: the PROGENy human footprint model of pathway-responsive genes with weights; if it is not resolvable in this environment, report the TF result without the pathway footprint layer and say so — the research question is answered by T2S1 and does not depend on this step.",
+        "acceptance_criteria": [
+          "Pathway footprint table for the aldosterone-vs-vehicle contrast: score, p-value, BH-adjusted p-value per pathway",
+          "Per-sample pathway score matrix with the between-group comparison",
+          "Leading TFs from T2S1 annotated with their own log2FC, padj and baseMean from T1S2, and an explicit note of whether activity and own-expression agree",
+          "Interpretation states footprint, not membership, and names the model version",
+          "If the footprint model is unavailable, the step reports that fact and still delivers the TF-expression annotation"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Consolidated report and reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not upgrade a TF activity hypothesis into a mechanistic claim; no perturbation or binding data is present in this dataset to support one"
+        ],
+        "context": "Twelve samples and a prior-knowledge network set a hard ceiling on what can be claimed. The report's job is to make the strength of each TF call visible rather than to produce a clean ranked list that reads as more certain than it is.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "matplotlib",
+          "session-info2"
+        ],
+        "question": "What is the defensible answer to 'which TFs drive the aldosterone response in kidney', with its provenance and its limits stated?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0119@5f4d"
+          ],
+          "reason": "Activity report fields and reproducibility record per R-0119 and R-0086.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S2"
+        ],
+        "constraints": [
+          "Python only",
+          "report: state network_name, network_version, input_statistic, contrast, estimator, min_regulon_size, n_regulators_tested, inference_caution",
+          "report: reproducibility record covering session_info, seed, package_versions, collection_version"
+        ],
+        "description": "Assemble a single report from T1S2, T2S1 and T2S2. Lead with the ranked TF activity result for the aldosterone-vs-vehicle contrast, giving for each reported TF: the activity estimate, adjusted p-value, number of targets used, whether the contrast-level and per-sample analyses agree, whether the second regulon network agrees, and the TF's own differential expression. State the network name and version, the input statistic, the named contrast, the estimator, the minimum regulon size, and the number of regulators tested. State plainly that an activity score is an inference from a prior network and not a measurement. Include the DE summary (genes tested, genes significant by direction, p-value histogram shape, NA attribution) and the QC outcome. Close with a reproducibility record: package versions, random seeds, the regulon collection version, and session info. Where the evidence is weak — few targets, network disagreement, contrast/per-sample disagreement — say so in the same sentence as the finding.",
+        "acceptance_criteria": [
+          "Ranked TF table with estimate, adjusted p-value, target count, cross-view agreement, cross-network agreement, and own-expression, in one place",
+          "Network name and version, input statistic, contrast (condition: aldosterone vs vehicle), estimator, min regulon size, and number of regulators tested all stated",
+          "Explicit statement that activity scores are network-derived inferences and are hypotheses for follow-up",
+          "DE and QC summaries included, with the p-value histogram shape and the NA attribution",
+          "Reproducibility record present: package versions, seeds, regulon collection version, session info",
+          "No TF is presented as a confirmed driver on the basis of the activity score alone"
+        ]
+      }
+    ],
+    "title": "Aldosterone vs vehicle kidney: TF activity inference",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is which transcription factors drive the aldosterone-treated kidney samples relative to vehicle controls, on a 12,000 gene x 12 sample raw Salmon count matrix (counts.csv, gene symbols in the first column) with a single condition column in metadata.csv (6 aldosterone vs 6 vehicle, unpaired, single batch, human). TF activity from bulk RNA-seq is an inference from a prior regulatory network, not a measurement, so the plan is built to give that inference two independent, well-conditioned inputs and to state its limits.\n\nT1S1 establishes sample structure before any model: blind VST, PCA on the 500 most variable genes, sample-distance heatmap and library sizes, so an outlier or a depth artefact is seen before it is interpreted as regulation. T1S2 does the minimal pre-filter (>=10 counts in >=6 samples, the smallest group size) and fits the PyDESeq2 Wald model with vehicle as the explicit reference level, contrast condition: aldosterone vs vehicle, apeglm LFC shrinkage for reporting, BH at alpha 0.05 with independent filtering and a p-value histogram diagnostic. Its purpose here is not a gene list for its own sake but the per-gene Wald statistic that the contrast-level TF inference consumes, ranked over every tested gene rather than a thresholded subset.\n\nT2S1 is the answer step. decoupler's univariate linear model runs twice on the CollecTRI human signed regulons (the reference store holds CollecTRI 2.0 as CSV): once on the Wald statistic of all tested genes to give one activity score per TF for the aldosterone-vs-vehicle contrast, and once on the per-sample log2 CPM matrix to give a score per sample per TF, which is then tested between the two groups with a moderated linear model and BH across regulators. The two views must agree in sign for a TF to be reported as a driver. DoRothEA (confidence A-C, also in the store) runs as a second network for a concordance check, since a regulon-derived activity that flips with the network is not a finding. A regulatory network cannot be inferred from 12 samples, so a prior network is the only sound source here and no expression-derived network is attempted.\n\nT2S2 puts the TF result in signalling context with the PROGENy footprint model (decoupler mlm, top 500 responsive genes per pathway) on the same contrast statistic, read as a footprint rather than pathway membership, and annotates the leading TFs with their own differential expression — a TF's activity and its own transcript level often diverge, and saying so prevents overclaiming. T1S3 assembles the report with the required provenance: network name and version, input statistic, contrast, estimator, minimum regulon size, number of regulators tested, the explicit caution that an activity score is a hypothesis about a regulator, and a full reproducibility record.\n\nAll scripts are Python per the user constraint; PyDESeq2 and decoupler (2.2.0) are both installed, so nothing falls back to R. The mineralocorticoid receptor NR3C2 itself is a ligand-activated TF whose activity can change with no change in its own transcript — the analysis must be able to detect that case and report it, not read NR3C2 mRNA as its activity."
+  },
+  "usage": {
+    "inputTokens": 309654,
+    "outputTokens": 10666,
+    "cacheCreationInputTokens": 145723,
+    "cacheReadInputTokens": 163883,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "tf_activity",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "tf_activity"
+        ],
+        "preferred_language": "python"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "tf_activity",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "tf_activity"
+        ],
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: VST (blind), PCA on top 500 variable genes, sample distance heatmap, library sizes",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Pre-filter: at least 10 counts in at least 6 samples (smallest group size)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test (PyDESeq2), aldosterone vs vehicle, reference level vehicle",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "reference_level",
+                "value": "vehicle"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm-style LFC shrinkage via PyDESeq2 lfc_shrink",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, alpha 0.05, p-value histogram diagnostic",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "decoupler ulm on the Wald statistic of all tested genes with the CollecTRI human signed regulons, plus per-sample ulm on the log2 CPM matrix and limma-style moderated test of scores between groups with BH across regulators",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "regulon_collection",
+                "value": "collectri_human"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              },
+              {
+                "name": "edge_sign",
+                "value": "keep_mode_of_regulation"
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_bh_across_regulators"
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "decoupler mlm on the PROGENy human footprint model, top 500 responsive genes per pathway",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Activity report with network name/version, input statistic, contrast, estimator, min regulon size, n regulators tested, inference caution, plus reproducibility record",
+            "package": "session-info2",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "tf_activity",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "tf_activity"
+        ],
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: VST (blind), PCA on top 500 variable genes, sample distance heatmap, library sizes",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Pre-filter: at least 10 counts in at least 6 samples (smallest group size)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test (PyDESeq2), aldosterone vs vehicle, reference level vehicle",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "reference_level",
+                "value": "vehicle"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, alpha 0.05, p-value histogram diagnostic",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "Transcription factor activity with decoupleR ulm on the CollecTRI regulons",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "activity_input",
+                "value": "per_sample_log_matrix"
+              },
+              {
+                "name": "regulon_collection",
+                "value": "collectri_human"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              },
+              {
+                "name": "edge_sign",
+                "value": "keep_mode_of_regulation"
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_bh_across_regulators"
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "Pathway activity with decoupleR mlm on the PROGENy footprint model",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "interpretation",
+                "value": "footprint_not_membership"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Activity report with network name/version, input statistic, contrast, estimator, min regulon size, n regulators tested, inference caution, plus reproducibility record",
+            "package": "session-info2",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Aldosterone vs vehicle kidney: TF activity inference",
+          "analytical_narrative": "The question is which transcription factors drive the aldosterone-treated kidney samples relative to vehicle controls, on a 12,000 gene x 12 sample raw Salmon count matrix (counts.csv, gene symbols in the first column) with a single condition column in metadata.csv (6 aldosterone vs 6 vehicle, unpaired, single batch, human). TF activity from bulk RNA-seq is an inference from a prior regulatory network, not a measurement, so the plan is built to give that inference two independent, well-conditioned inputs and to state its limits.\n\nT1S1 establishes sample structure before any model: blind VST, PCA on the 500 most variable genes, sample-distance heatmap and library sizes, so an outlier or a depth artefact is seen before it is interpreted as regulation. T1S2 does the minimal pre-filter (>=10 counts in >=6 samples, the smallest group size) and fits the PyDESeq2 Wald model with vehicle as the explicit reference level, contrast condition: aldosterone vs vehicle, apeglm LFC shrinkage for reporting, BH at alpha 0.05 with independent filtering and a p-value histogram diagnostic. Its purpose here is not a gene list for its own sake but the per-gene Wald statistic that the contrast-level TF inference consumes, ranked over every tested gene rather than a thresholded subset.\n\nT2S1 is the answer step. decoupler's univariate linear model runs twice on the CollecTRI human signed regulons (the reference store holds CollecTRI 2.0 as CSV): once on the Wald statistic of all tested genes to give one activity score per TF for the aldosterone-vs-vehicle contrast, and once on the per-sample log2 CPM matrix to give a score per sample per TF, which is then tested between the two groups with a moderated linear model and BH across regulators. The two views must agree in sign for a TF to be reported as a driver. DoRothEA (confidence A-C, also in the store) runs as a second network for a concordance check, since a regulon-derived activity that flips with the network is not a finding. A regulatory network cannot be inferred from 12 samples, so a prior network is the only sound source here and no expression-derived network is attempted.\n\nT2S2 puts the TF result in signalling context with the PROGENy footprint model (decoupler mlm, top 500 responsive genes per pathway) on the same contrast statistic, read as a footprint rather than pathway membership, and annotates the leading TFs with their own differential expression — a TF's activity and its own transcript level often diverge, and saying so prevents overclaiming. T1S3 assembles the report with the required provenance: network name and version, input statistic, contrast, estimator, minimum regulon size, number of regulators tested, the explicit caution that an activity score is a hypothesis about a regulator, and a full reproducibility record.\n\nAll scripts are Python per the user constraint; PyDESeq2 and decoupler (2.2.0) are both installed, so nothing falls back to R. The mineralocorticoid receptor NR3C2 itself is a ligand-activated TF whose activity can change with no change in its own transcript — the analysis must be able to detect that case and report it, not read NR3C2 mRNA as its activity.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 kidney samples separate by condition (aldosterone vs vehicle), and does any sample deviate from its group by depth or global expression?",
+              "description": "Load /eval-eight-arms-with-tf-activity-python-n6-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, gene symbol in the first column) and metadata.csv (12 rows, condition column). Confirm sample IDs match between the two files and report any mismatch. Compute library sizes and detected-gene counts per sample, apply a blind variance-stabilizing transform, run PCA on the 500 most variable genes coloured by condition, and draw a Euclidean sample-distance heatmap. Emit the VST matrix and a log2 CPM matrix for downstream steps.",
+              "context": "Human kidney bulk RNA-seq, raw integer gene-level counts from Salmon, 6 aldosterone-treated vs 6 vehicle controls, unpaired, single batch. Gene identifiers are HGNC symbols, which is the identifier space the CollecTRI and DoRothEA regulons use, so no ID conversion should be needed — verify the overlap rather than assume it.",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv and metadata.csv are reconciled and the 6/6 group sizes confirmed",
+                "Library size and detected-gene table written for all 12 samples",
+                "PCA (top 500 variable genes, blind VST) and sample-distance heatmap saved, coloured by condition",
+                "Any sample that does not group with its condition is named explicitly, with the evidence, and is NOT silently dropped",
+                "VST matrix and log2 CPM matrix persisted for downstream steps"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "pydeseq2",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Python only — no R scripts",
+                "qc_sample_structure: n_top_genes = 500",
+                "qc_sample_structure: transform = vst_blind (blind to the design)",
+                "Do not scale, transform or normalize the raw counts before the DE model in T1S2 — the size factors belong inside the model"
+              ],
+              "caveats": [
+                "With 6 per group a single outlier moves the group mean materially; report it rather than removing it without stating the effect",
+                "A 12,000-gene matrix is already reduced relative to a full transcriptome — note whether it was pre-filtered upstream, since that changes the tested-gene universe"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-python@1.0.0",
+                "reason": "Raw counts before any model: blind VST, PCA on top 500 variable genes, sample distance heatmap per R-0033."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: aldosterone vs vehicle",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes change between aldosterone-treated and vehicle kidney samples, and what is the per-gene Wald statistic that ranks every tested gene for the TF inference?",
+              "description": "Pre-filter to genes with at least 10 counts in at least 6 samples (the smallest group size). Fit PyDESeq2 with design ~condition, setting vehicle as the explicit reference level, and test the contrast (condition, aldosterone, vehicle) with the Wald test so a positive log2 fold change means higher in aldosterone. Apply apeglm shrinkage for the reported fold change while keeping the unshrunken estimate in the table. Report at BH-adjusted p < 0.05 with independent filtering, using the same alpha in results as in the report. Plot the raw p-value histogram and state its shape. Report separately the number of genes with NA p-values from the Cook's-distance outlier flag versus from independent filtering. Export the full results table for every tested gene including the unshrunken Wald statistic — this ranked full list, not a thresholded subset, is the input to T2S1.",
+              "context": "The DE step exists to serve the TF question: decoupler's ulm on a contrast needs the Wald statistic of every tested gene, with sign, and it needs the tested-gene universe defined once. The gene list is also reported in its own right.",
+              "acceptance_criteria": [
+                "Reference level explicitly set to vehicle and the contrast named as (condition, aldosterone, vehicle) in the output",
+                "Filter applied as >=10 counts in >=6 samples, with the number of genes retained out of 12000 reported",
+                "Full results table for ALL tested genes exported with gene symbol, baseMean, unshrunken log2FC, shrunken log2FC, lfcSE, Wald stat, pvalue, padj",
+                "Counts of significant genes at padj<0.05 reported, split by direction",
+                "p-value histogram saved and its shape described; NA counts attributed to outlier flagging versus independent filtering separately",
+                "No selection by unadjusted p-value or by fold change alone"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "pydeseq2",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Python only — use PyDESeq2, not R DESeq2",
+                "filter_low_counts: min_count = 10, min_samples = 6",
+                "differential_expression: DESeq2 Wald test, alpha = 0.05",
+                "shrink_lfc: apeglm shrinkage; keep the unshrunken estimate alongside",
+                "multiple_testing: Benjamini-Hochberg at alpha 0.05 with independent filtering on",
+                "Rank downstream on the Wald statistic, never on the unshrunken log2 fold change alone"
+              ],
+              "caveats": [
+                "6 vs 6 is adequate for DE but the fold changes of low-count genes remain noisy — this is why the shrunken estimate is reported and the unshrunken statistic is used for ranking",
+                "With <7 replicates per cell, PyDESeq2/DESeq2 sets p-values to NA for Cook's-distance outlier genes rather than replacing counts; those NAs are expected and must be counted, not hidden"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0002@087b",
+                  "R-0029@fa6d",
+                  "R-0036@9ab1",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0010@91a5",
+                  "R-0043@4f55",
+                  "R-0083@12de",
+                  "R-0026@9ab1"
+                ],
+                "reason": "Raw counts, fixed-effects 2-group design with 6 replicates per group: DESeq2 Wald (R-0001), minimal pre-filter (R-0002/R-0029), explicit reference level (R-0036), apeglm shrinkage (R-0009), BH with independent filtering (R-0010)."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "TF activity: decoupler ulm on CollecTRI",
+              "track": "T2",
+              "step_type": "activity",
+              "question": "Which transcription factors show altered inferred activity in aldosterone-treated kidney relative to vehicle, and does the answer hold across two independent prior regulon networks?",
+              "description": "Infer TF activity with decoupler's univariate linear model on a signed human TF-target regulon network, run two ways. (1) Contrast-level: score every TF on the Wald statistic of ALL tested genes from T1S2, giving one activity estimate and p-value per TF for aldosterone vs vehicle. (2) Per-sample: score every TF on the per-sample log2 CPM matrix from T1S1, then test the resulting score matrix between the two conditions with a moderated linear model (design ~condition, vehicle as reference) and adjust across regulators with Benjamini-Hochberg. Keep the sign of each edge so a repressed target lowers rather than raises the score, and test only TFs with at least 5 targets among the tested genes. Repeat the whole inference with a second, confidence-filtered TF regulon resource (levels A-C) as a concordance check, and report the overlap and the disagreement among the top regulators of the two networks. Reference data needed: a literature-curated signed human TF-target regulon network (CollecTRI; present in the reference store as a CSV with source/target/weight columns and directly consumable as decoupler's network argument) and a confidence-levelled human TF regulon set (DoRothEA; present as an R serialized data frame, readable from Python via rpy2, filter to confidence A-C and rename tf/target/mor to source/target/weight). If the second network cannot be read, report the CollecTRI result alone and state that no cross-network concordance check was possible — do not substitute an unsigned binding-based target set for a signed regulon, since it cannot say whether a TF activates or represses.",
+              "context": "Aldosterone acts through the mineralocorticoid receptor NR3C2, a ligand-activated transcription factor whose activity can change with no change in its own transcript level. The analysis must therefore report inferred activity independently of the TF's own expression, and it should state explicitly where NR3C2 and the glucocorticoid receptor NR3C1 (which shares response elements) fall in the ranking, whether or not they reach significance. A regulatory network cannot be inferred de novo from 12 samples, so a prior network is the only defensible source of regulons here.",
+              "acceptance_criteria": [
+                "Activity table with one row per TF for the aldosterone-vs-vehicle contrast: estimate, p-value, BH-adjusted p-value, number of targets used",
+                "Per-sample TF activity score matrix (TFs x 12 samples) plus the between-group test with BH across regulators",
+                "Number of regulators that passed the min-5-targets threshold reported, and the network name and version stated",
+                "Edge signs (mode of regulation) retained — verified by confirming the network weight column carries both +1 and -1 values",
+                "Cross-network concordance reported: overlap and disagreement of the top regulators between the two regulon resources, or an explicit statement that the second network was unavailable",
+                "NR3C2 and NR3C1 positions in the ranking reported explicitly regardless of significance",
+                "Every reported TF is flagged for whether the contrast-level and per-sample results agree in sign; disagreements are stated, not dropped"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "statsmodels",
+                "matplotlib",
+                "seaborn",
+                "rpy2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent",
+              "constraints": [
+                "Python only — use the decoupler Python package (2.2.0 is installed), not R decoupleR",
+                "tf_activity: activity_method = ulm; run on both the contrast Wald statistic and the per-sample log2 CPM matrix",
+                "tf_activity: regulon_preference = CollecTRI first; DoRothEA confidence A-C as the alternative/second network",
+                "tf_activity: min_regulon_size = 5",
+                "tf_activity: edge_sign = keep mode of regulation",
+                "tf_activity: score_test = moderated linear model on the per-sample scores with BH across regulators",
+                "Use the full ranked list of tested genes as input, never only the significant genes",
+                "Do NOT infer a regulatory network from this expression matrix — 12 samples cannot support mutual-information network inference"
+              ],
+              "caveats": [
+                "A prior knowledge network is tissue-agnostic: a kidney-specific regulator absent from the network is missed, and targets silent in kidney add noise. State this.",
+                "An activity score is an inference from a curated network, not a measurement — a high score is a hypothesis about a regulator for follow-up, not a demonstrated driver",
+                "VIPER on an ARACNe kidney regulon would be the tool of record for a context-specific regulator activity; neither is available here, and the decoupler-on-prior-network substitute must be named as such",
+                "TF activity and TF mRNA level are different quantities and frequently diverge — do not read one as the other"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0112@f200",
+                  "R-0111@b668",
+                  "R-0113@7a4d",
+                  "R-0114@9db7",
+                  "R-0121@5f27",
+                  "R-0119@5f4d"
+                ],
+                "template": "tpl-decoupler-py-tf-activity@1.0.0",
+                "reason": "TF activity is the research question: decoupler ulm on CollecTRI signed regulons, both on the contrast statistic (R-0111) and per sample with a test on the scores (R-0112); DoRothEA A-C as the second network (R-0113); prior network only, given 12 samples (R-0121)."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Pathway footprint context and TF annotation",
+              "track": "T2",
+              "step_type": "activity",
+              "question": "Which signalling pathway footprints accompany the TF activity changes in aldosterone-treated kidney, and how do the leading TFs' own expression levels compare with their inferred activity?",
+              "description": "Run decoupler's multivariate linear model on the PROGENy human footprint model over the aldosterone-vs-vehicle contrast statistic from T1S2, using the top 500 responsive genes per pathway, to give a pathway footprint score with p-value per pathway. Also compute per-sample pathway scores on the log2 CPM matrix and compare between groups. Separately, for the leading TFs from T2S1, join their own differential expression result from T1S2 (log2FC, padj, baseMean) beside their inferred activity, and state for each whether its own transcript changed. Reference data needed: the PROGENy human footprint model of pathway-responsive genes with weights; if it is not resolvable in this environment, report the TF result without the pathway footprint layer and say so — the research question is answered by T2S1 and does not depend on this step.",
+              "context": "Pathway footprints are read as the transcriptional consequence of pathway activity, not as expression of pathway members. This step is interpretive context for the TF result, plus the TF-expression-versus-TF-activity comparison that keeps the report honest about mechanism.",
+              "acceptance_criteria": [
+                "Pathway footprint table for the aldosterone-vs-vehicle contrast: score, p-value, BH-adjusted p-value per pathway",
+                "Per-sample pathway score matrix with the between-group comparison",
+                "Leading TFs from T2S1 annotated with their own log2FC, padj and baseMean from T1S2, and an explicit note of whether activity and own-expression agree",
+                "Interpretation states footprint, not membership, and names the model version",
+                "If the footprint model is unavailable, the step reports that fact and still delivers the TF-expression annotation"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "network-agent",
+              "constraints": [
+                "Python only",
+                "pathway_activity: activity_method = mlm",
+                "pathway_activity: top_responsive_genes = 500",
+                "pathway_activity: interpretation = footprint, not membership",
+                "Do not claim pathway topology impact — no topology-aware method is available here"
+              ],
+              "caveats": [
+                "A pathway member can change expression with no change in pathway activity, and the reverse — the footprint score is the claim, member expression is not",
+                "This step is context, not the answer: if the footprint model is absent the run still answers the research question from T2S1"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0115@1504",
+                  "R-0122@08af",
+                  "R-0123@5521"
+                ],
+                "reason": "PROGENy footprint with decoupler mlm on the contrast statistic, top 500 responsive genes (R-0115); SPIA is absent so no topology claim is made (R-0122)."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Consolidated report and reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the defensible answer to 'which TFs drive the aldosterone response in kidney', with its provenance and its limits stated?",
+              "description": "Assemble a single report from T1S2, T2S1 and T2S2. Lead with the ranked TF activity result for the aldosterone-vs-vehicle contrast, giving for each reported TF: the activity estimate, adjusted p-value, number of targets used, whether the contrast-level and per-sample analyses agree, whether the second regulon network agrees, and the TF's own differential expression. State the network name and version, the input statistic, the named contrast, the estimator, the minimum regulon size, and the number of regulators tested. State plainly that an activity score is an inference from a prior network and not a measurement. Include the DE summary (genes tested, genes significant by direction, p-value histogram shape, NA attribution) and the QC outcome. Close with a reproducibility record: package versions, random seeds, the regulon collection version, and session info. Where the evidence is weak — few targets, network disagreement, contrast/per-sample disagreement — say so in the same sentence as the finding.",
+              "context": "Twelve samples and a prior-knowledge network set a hard ceiling on what can be claimed. The report's job is to make the strength of each TF call visible rather than to produce a clean ranked list that reads as more certain than it is.",
+              "acceptance_criteria": [
+                "Ranked TF table with estimate, adjusted p-value, target count, cross-view agreement, cross-network agreement, and own-expression, in one place",
+                "Network name and version, input statistic, contrast (condition: aldosterone vs vehicle), estimator, min regulon size, and number of regulators tested all stated",
+                "Explicit statement that activity scores are network-derived inferences and are hypotheses for follow-up",
+                "DE and QC summaries included, with the p-value histogram shape and the NA attribution",
+                "Reproducibility record present: package versions, seeds, regulon collection version, session info",
+                "No TF is presented as a confirmed driver on the basis of the activity score alone"
+              ],
+              "packages": [
+                "pandas",
+                "matplotlib",
+                "session-info2"
+              ],
+              "depends_on": [
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Python only",
+                "report: state network_name, network_version, input_statistic, contrast, estimator, min_regulon_size, n_regulators_tested, inference_caution",
+                "report: reproducibility record covering session_info, seed, package_versions, collection_version"
+              ],
+              "caveats": [
+                "Do not upgrade a TF activity hypothesis into a mechanistic claim; no perturbation or binding data is present in this dataset to support one"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0119@5f4d"
+                ],
+                "reason": "Activity report fields and reproducibility record per R-0119 and R-0086."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

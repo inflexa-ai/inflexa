@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect confounding, refuses any batch term or removal method, fits ~ condition with control as explicit reference and the contrast named, and labels every output as treatment+batch not separable, closing with the rebalanced design that would resolve it — exactly the reference behaviour. QC (blind VST PCA on top 500, distance heatmap, library sizes, both annotations, stated outlier policy), the >=10-in->=6 filter tied to group size, in-model median-of-ratios, apeglm shrinkage, BH at 0.05 with independent filtering and lfcThreshold inside results are all explicit. Enrichment was not requested and is of doubtful value on a confounded design, but when included it is fully specified (full ranked list, Wald statistic justified, tested-gene universe, named collections with releases, 15-500 window, seed) and carries the confounding label, so only a small deduction. The report leads with the caveat, states versions, thresholds, tested and significant counts, and stores a reproducibility record."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses to refit the count model, ranks every tested gene by the DESeq2 Wald statistic with an explicit NA-dropping rule, and runs gseapy.prerank against a locally staged, version-named Hallmark GMT (v2026.1) with a 15-500 size window, a recorded seed, and the tested genes as universe, while banning enrichr, R, and thresholded input. QC is design-specific: blind VST PCA, distance heatmap, library sizes, and a stated keep-inspect-report policy for the shallow sample_01. Gaps: the number of permutations is never specified (reference requires at least 1000), and the tie-handling rule is only demanded of the executing agent rather than actually stated in the plan; no low-count filter is defined, which is defensible given the delivered results but leaves the handling of independent-filtering NAs as the only filtering statement. The report requirements are otherwise thorough, with NES, BH-adjusted p, leading edges, overlap, provenance, and composition caveats."
+}

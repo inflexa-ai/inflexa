@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 3,
+    "low_count_filter": 3,
+    "normalization": 3,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 4
+  },
+  "rationale": "The planner correctly recognized that the inputs are unquantified paired-end FASTQ files with no count matrix, no quantifier, and no transcriptome or index, and stopped with a well-targeted question (count matrix vs. provisioned quantifier plus reference, naming the GENCODE v50 GRCh38 annotation in hand); this matches the reference outcome and earns a high design-fit score. It did not invent a count file or run DESeq2 on nonexistent data. However, no downstream plan was sketched for once counts arrive (DESeq2/edgeR, condition-only formula with control as reference, BH at 0.05, LFC shrinkage, minimal count filter, PCA/library-size QC, low-power caveat), so the criteria that depend on stated methods score low. Enrichment was not warranted and is correctly absent."
+}

@@ -5,6 +5,8 @@
  *   --provider cliproxy              the local Inflexa proxy (Anthropic wire, the proxy key)
  *   --provider anthropic             an Anthropic endpoint, key from --api-key-env
  *   --provider openai-compatible     any OpenAI-compatible endpoint (GLM, Qwen, ...), key from --api-key-env
+ *   --provider-order a,b             OpenRouter only: the upstream providers to try, in order, then the rest
+ *   --request-timeout-ms n           the silent-interval bound of one request, which also raises the plan deadline
  *
  * The small target models connect through the OpenAI-compatible form, the same
  * wire the direct connection mode of the CLI uses, thus a run here exercises
@@ -22,6 +24,29 @@ export interface ModelConnection {
     readonly baseUrl?: string;
     readonly apiKeyEnv?: string;
     readonly name?: string;
+    /** The upstream providers of an OpenRouter model, in the order to try. */
+    readonly providerOrder?: readonly string[];
+    /**
+     * The silent-interval bound of one request. The plan deadline of the
+     * harness is the maximum of its 600 s floor and this value, thus a slow
+     * model with long reasoning gets the time to submit a plan.
+     */
+    readonly requestTimeoutMs?: number;
+}
+
+/**
+ * A fetch that adds the routing preference of OpenRouter to each request: the
+ * upstream providers to try, in order, with the fallback to the rest. OpenRouter
+ * reads the preference from the request body, and the SDK gives no hook for an
+ * extra body field, thus the wrapper edits the body. The preference pins the
+ * quantization of a campaign, and it skips an upstream that answers 429.
+ */
+function orderedFetch(order: readonly string[]): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
+    return (input, init) => {
+        if (typeof init?.body !== "string") return fetch(input, init);
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        return fetch(input, { ...init, body: JSON.stringify({ ...body, provider: { order, allow_fallbacks: true } }) });
+    };
 }
 
 async function proxyKey(): Promise<string> {
@@ -67,6 +92,8 @@ export async function buildProvider(connection: ModelConnection): Promise<ChatPr
             baseURL: connection.baseUrl,
             apiKey,
             model: connection.model,
+            ...(connection.providerOrder ? { fetch: orderedFetch(connection.providerOrder) } : {}),
+            ...(connection.requestTimeoutMs ? { requestTimeoutMs: connection.requestTimeoutMs } : {}),
             capabilities: { toolCalling: true, imageToolResults: false },
         },
     });

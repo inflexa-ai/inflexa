@@ -1,0 +1,400 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "no-replicates-1v1",
+  "run": 1,
+  "startedAt": "2026-09-06T15:18:09.553Z",
+  "elapsedMs": 61814,
+  "outcome": "plan_submitted",
+  "planId": "pln-6c7536b1",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (vst, PCA, distances, library sizes)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 2 samples total, PCA is trivially a two-point axis; interpret structure plots as a sanity check on library size and count distribution, not as a group-separation claim."
+        ],
+        "context": "Data: /eval-eight-arms-with-no-replicates-1v1-1/data/inputs/counts/counts.csv (12000 genes x 3 cols, first col gene symbol) and metadata/metadata.csv (2 samples, condition treated/control). Organism: Homo sapiens, tissue: liver.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the two liver samples (treated vs control) show sane library sizes and count structure before any comparison?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)"
+        ],
+        "description": "DESeq2 vst (blind) on the 2 samples; PCA on 500 top-variance genes, sample-distance heatmap, library sizes and size factors reported per sample.",
+        "acceptance_criteria": [
+          "vst applied blind; PCA on 500 top-variance genes and sample-distance heatmap produced",
+          "Library sizes and size factors reported for both samples",
+          "Outputs written under the step directory"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Descriptive log2 fold changes, treated vs control (no inferential test)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Flag R-0003@6b3a: no inferential test is permitted; every output is descriptive.",
+          "No tximport length offsets exist (gene-level counts only); log2FC from counts without length correction can be inflated by differential transcript usage — state this in the report."
+        ],
+        "context": "Counts are gene-level from salmon; per R-0018@a472 the length-offset/tximport route is preferred, but only the gene-level count matrix is staged — no tximport length offsets are available, so use the raw gene counts directly and state this in the report. Human (Homo sapiens), liver.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes have the largest descriptive log2 fold changes between the treated sample and the control sample (control as reference)?",
+        "grounding": {
+          "claims": [
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0003@6b3a"
+          ],
+          "reason": "One sample per condition: descriptive log2 fold changes only per R-0003@6b3a (flagged); filter, size factors, and explicit reference/contrast follow R-0002/R-0026/R-0036",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-descriptive-no-replicates@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)",
+          "filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)",
+          "normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)",
+          "model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+          "model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)"
+        ],
+        "description": "Low-count filter (>=10 counts in >= smallest-group-size samples), DESeq2 median-of-ratios size factors, and a descriptive log2 fold change table for treated vs control. NO p-values, no LFC shrinkage, no multiple-testing correction — the design has one sample per condition (R-0003@6b3a, outcome descriptive_only).",
+        "acceptance_criteria": [
+          "Filter keeps genes with >=10 counts in >=1 sample (smallest group size = 1); n kept reported",
+          "Median-of-ratios size factors computed inside DESeq2, no pre-normalization of counts",
+          "Control set as explicit reference level; contrast named condition, treated, control",
+          "Full ranked table of log2FC (treated/control) with normalized counts, sorted by |log2FC|, written as CSV; no p-value or padj column",
+          "Report states the no-replication limitation and the design (>=3 replicates/group DESeq2) that supports inference"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Report with reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Steps T1S1-T1S2 outputs under the run directory.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What exactly was computed, under what design and thresholds, and what design would be needed for inference?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "Report fields and reproducibility record per R-0041@059a and R-0086@becf",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+          "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)"
+        ],
+        "description": "Final report: method, package versions, design formula and contrast (condition, treated, control), the no-replication limitation, number of genes tested after filtering, top genes by |log2FC|, plus sessionInfo.",
+        "acceptance_criteria": [
+          "Report contains method, DESeq2 version, design, contrast, threshold statement (none applicable), n_tested after filter, sessionInfo",
+          "Explicit statement that the design has no replication and results are descriptive only",
+          "Reproducibility record stored with the results"
+        ]
+      }
+    ],
+    "title": "Descriptive treated-vs-control liver DE (no replicates)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is 12,000 human liver genes x 2 samples (one treated, one control), raw salmon-derived counts, with no biological replication. Per rule R-0003@6b3a, no inferential differential expression test or p-value is possible: without within-group replication no dispersion can be estimated. The plan therefore (1) runs sample-structure QC on the variance-stabilized values, (2) pre-filters low counts, computes DESeq2 median-of-ratios size factors, and reports descriptive log2 fold changes for the treated vs control contrast (control as explicit reference level), explicitly labelled as descriptive, and (3) writes a report naming the design limitation and naming the design (e.g., >=3 replicates per group with DESeq2) that would support inference. Shrinkage and multiple-testing steps are dropped per the service answer (dropped: shrink_lfc, multiple_testing)."
+  },
+  "usage": {
+    "inputTokens": 145297,
+    "outputTokens": 2501,
+    "cacheReadInputTokens": 105216,
+    "reasoningTokens": 63
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 1,
+        "n_per_group_max": 1,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": []
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 1,
+        "n_per_group_max": 1,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst blind PCA and sample distances",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >= smallest group size samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "Descriptive log fold changes only, no inferential test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "contrast",
+                "value": "condition treated vs control"
+              },
+              {
+                "name": "reference_level",
+                "value": "control"
+              }
+            ],
+            "outcome": "descriptive_only"
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record and report fields",
+            "package": "DESeq2",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The dataset is 12,000 human liver genes x 2 samples (one treated, one control), raw salmon-derived counts, with no biological replication. Per rule R-0003@6b3a, no inferential differential expression test or p-value is possible: without within-group replication no dispersion can be estimated. The plan therefore (1) runs sample-structure QC on the variance-stabilized values, (2) pre-filters low counts, computes DESeq2 median-of-ratios size factors, and reports descriptive log2 fold changes for the treated vs control contrast (control as explicit reference level), explicitly labelled as descriptive, and (3) writes a report naming the design limitation and naming the design (e.g., >=3 replicates per group with DESeq2) that would support inference. Shrinkage and multiple-testing steps are dropped per the service answer (dropped: shrink_lfc, multiple_testing).",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "vst applied blind; PCA on 500 top-variance genes and sample-distance heatmap produced",
+                "Library sizes and size factors reported for both samples",
+                "Outputs written under the step directory"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data: /eval-eight-arms-with-no-replicates-1v1-1/data/inputs/counts/counts.csv (12000 genes x 3 cols, first col gene symbol) and metadata/metadata.csv (2 samples, condition treated/control). Organism: Homo sapiens, tissue: liver.",
+              "constraints": [
+                "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+                "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)"
+              ],
+              "caveats": [
+                "With 2 samples total, PCA is trivially a two-point axis; interpret structure plots as a sanity check on library size and count distribution, not as a group-separation claim."
+              ],
+              "depends_on": [],
+              "description": "DESeq2 vst (blind) on the 2 samples; PCA on 500 top-variance genes, sample-distance heatmap, library sizes and size factors reported per sample.",
+              "grounding": {
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded",
+                "template": "tpl-qc-eda@1.0.0"
+              },
+              "id": "T1S1",
+              "name": "Sample structure QC (vst, PCA, distances, library sizes)",
+              "packages": [
+                "DESeq2"
+              ],
+              "question": "Do the two liver samples (treated vs control) show sane library sizes and count structure before any comparison?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Filter keeps genes with >=10 counts in >=1 sample (smallest group size = 1); n kept reported",
+                "Median-of-ratios size factors computed inside DESeq2, no pre-normalization of counts",
+                "Control set as explicit reference level; contrast named condition, treated, control",
+                "Full ranked table of log2FC (treated/control) with normalized counts, sorted by |log2FC|, written as CSV; no p-value or padj column",
+                "Report states the no-replication limitation and the design (>=3 replicates/group DESeq2) that supports inference"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Counts are gene-level from salmon; per R-0018@a472 the length-offset/tximport route is preferred, but only the gene-level count matrix is staged — no tximport length offsets are available, so use the raw gene counts directly and state this in the report. Human (Homo sapiens), liver.",
+              "constraints": [
+                "filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)",
+                "filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)",
+                "normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)",
+                "model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+                "model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)"
+              ],
+              "caveats": [
+                "Flag R-0003@6b3a: no inferential test is permitted; every output is descriptive.",
+                "No tximport length offsets exist (gene-level counts only); log2FC from counts without length correction can be inflated by differential transcript usage — state this in the report."
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Low-count filter (>=10 counts in >= smallest-group-size samples), DESeq2 median-of-ratios size factors, and a descriptive log2 fold change table for treated vs control. NO p-values, no LFC shrinkage, no multiple-testing correction — the design has one sample per condition (R-0003@6b3a, outcome descriptive_only).",
+              "grounding": {
+                "claims": [
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0003@6b3a"
+                ],
+                "reason": "One sample per condition: descriptive log2 fold changes only per R-0003@6b3a (flagged); filter, size factors, and explicit reference/contrast follow R-0002/R-0026/R-0036",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "flagged",
+                "template": "tpl-descriptive-no-replicates@1.0.0"
+              },
+              "id": "T1S2",
+              "name": "Descriptive log2 fold changes, treated vs control (no inferential test)",
+              "packages": [
+                "DESeq2"
+              ],
+              "question": "Which genes have the largest descriptive log2 fold changes between the treated sample and the control sample (control as reference)?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Report contains method, DESeq2 version, design, contrast, threshold statement (none applicable), n_tested after filter, sessionInfo",
+                "Explicit statement that the design has no replication and results are descriptive only",
+                "Reproducibility record stored with the results"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Steps T1S1-T1S2 outputs under the run directory.",
+              "constraints": [
+                "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+                "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)"
+              ],
+              "caveats": [],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Final report: method, package versions, design formula and contrast (condition, treated, control), the no-replication limitation, number of genes tested after filtering, top genes by |log2FC|, plus sessionInfo.",
+              "grounding": {
+                "claims": [
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "Report fields and reproducibility record per R-0041@059a and R-0086@becf",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded"
+              },
+              "id": "T1S3",
+              "name": "Report with reproducibility record",
+              "packages": [],
+              "question": "What exactly was computed, under what design and thresholds, and what design would be needed for inference?",
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 4
+              },
+              "step_type": "report",
+              "track": "T1"
+            }
+          ],
+          "title": "Descriptive treated-vs-control liver DE (no replicates)"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

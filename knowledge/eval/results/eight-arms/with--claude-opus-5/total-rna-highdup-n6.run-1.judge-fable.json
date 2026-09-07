@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: it explicitly refuses de-duplication because the libraries lack UMIs, explains the duplication via rRNA/MT/non-polyA shares, keeps sample_01 with a written keep/drop policy, and runs DESeq2 Wald with an edgeR QL check on raw counts with normalization inside each model. The pre-filter (>=10 in >=6, the smallest group) is minimal and justified; ~condition with control as explicit reference, the contrast triple, BH at 0.05 in results(), and apeglm shrinkage are all stated. The one gap against the reference is that it reports rRNA/MT shares but never states a policy for removing those genes from the matrix if their share is large and uneven across samples. Enrichment was not asked but is specified correctly (full ranked list, Wald stat with justification, per-collection releases, 15-500 window, tested-gene universe for any ORA); the report step is complete with versions, thresholds, counts, diagnostics and a reproducibility record."
+}

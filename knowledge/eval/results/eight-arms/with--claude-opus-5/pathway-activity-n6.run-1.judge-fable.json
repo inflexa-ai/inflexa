@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every axis: DESeq2 Wald on ~condition with vehicle explicitly releveled as reference, a minimal >=10-in->=6 filter tied to the smallest group, size factors inside the model with an explicit ban on pre-normalization, apeglm shrinkage with BH at 0.05 set in results(). The footprint inference is decoupleR mlm on the human PROGENy model, top 500 genes, full unfiltered Wald vector, BH across 14 pathways, plus a per-sample log2-CPM score matrix tested with limma and a heatmap annotated by library size so sample_01 is inspectable; the footprint-not-membership reading and the absence of topology are stated as acceptance criteria. QC keeps sample_01 by default with a written keep/drop reason and numeric reporting against the cohort median. The report enumerates network, version, input statistic, estimator, set sizes, counts tested, shared-input dependence between PROGENy and CollecTRI, and a reproducibility record; the only minor gap is that the PROGENy version is deferred to a reference-store string rather than named."
+}

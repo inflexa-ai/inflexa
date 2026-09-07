@@ -83,7 +83,9 @@ bun eval/src/report.ts --campaign c1
 
 A small open model connects with `--provider openai-compatible --base-url
 <endpoint> --api-key-env <VAR>`, the same wire as the direct connection mode
-of the CLI. The report of the Phase 0 campaign is `eval/results/phase0/report.md`.
+of the CLI. On OpenRouter, `--provider-order <tag,tag>` names the upstream
+providers to try first, thus a campaign keeps one quantization. The report of
+the Phase 0 campaign is `eval/results/phase0/report.md`.
 
 ## Where this differs from the design document
 

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: nested, stratified, repeated CV with glmnet elastic net, all label-aware preprocessing refit inside outer training folds, outer-fold AUC with bootstrap CI plus Brier and calibration, selection-frequency tables for the unstable gene set, a permutation null, and explicit internal-validation, prevalence, and technical-axis caveats. QC is concrete (blind VST, top-500 PCA, distance heatmap, library sizes, flag-not-remove policy) and filtering/normalization are stated (filterByExpr with group and min.count, TMM, log-CPM) with the mild label-awareness of the whole-cohort filter acknowledged. Gaps: no final model refit on all 120 samples with reported coefficients, and the descriptive limma-voom contrast uses BH at 0.05 with SE/CI but no explicit effect-size shrinkage or in-test threshold. Enrichment is correctly omitted."
+}

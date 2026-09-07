@@ -1,0 +1,795 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "deconvolution-tpm-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T15:55:08.315Z",
+  "elapsedMs": 138972,
+  "outcome": "plan_submitted",
+  "planId": "pln-23523b04",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and matrix preparation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A sample with a library size several times below the median must be inspected and reported, not silently deleted — removal is a judgment that requires a stated reason",
+          "TPM values are not comparable across library protocols; if anything in the metadata hints at more than one protocol, flag it, though the profile records a single batch",
+          "With 12,000 genes the table is likely already pre-filtered by the core, so the >=1 TPM filter may remove few genes — report the count either way"
+        ],
+        "context": "Only a gene-level TPM table was delivered — no raw counts, no Salmon quantification directories. TPM is already normalized within each sample for length and depth, so the log transform is the only transform applied; count-model normalizations (size factors, TMM) and count-model transforms (VST, rlog) are invalid here. sample_01 was sequenced at about a quarter of the median depth: TPM rescaling hides that in the column sums but not in the per-gene variance or in the number of genes detected above zero.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats",
+          "ggplot2",
+          "pheatmap",
+          "data.table"
+        ],
+        "question": "Do the 12 melanoma biopsies (6 anti-PD-1 treated, 6 untreated) separate by condition on log2(TPM+1), and does the low-depth sample_01 behave as an outlier?",
+        "grounding": {
+          "claims": [
+            "R-0008@440d",
+            "R-0071@e4e2",
+            "R-0072@881a",
+            "R-0073@8b36",
+            "R-0030@2248"
+          ],
+          "reason": "TPM input with a low-depth sample: QC on log2(TPM+1) with PCA and sample distances (R-0071), sample_01 kept and reported rather than dropped (R-0008, R-0030), >=1 TPM in smallest-group-size filter (R-0072), log transform as the only normalization (R-0073).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Transform for QC is log2(TPM+1) — do not apply VST, rlog, TMM, or DESeq2 size factors to a TPM table",
+          "Low-abundance filter: TPM >= 1 in at least 6 samples (the smallest group size); state the floor and the number of genes kept",
+          "Keep the linear (untransformed) TPM matrix intact and unfiltered as a separate artifact for the deconvolution step",
+          "Keep sample_01 through QC; report its library-depth evidence rather than removing it",
+          "PCA on the top 500 most variable genes"
+        ],
+        "description": "Load /eval-eight-arms-with-deconvolution-tpm-n6-1/data/inputs/abundance/tpm.csv (12,000 gene symbols x 12 samples) and /eval-eight-arms-with-deconvolution-tpm-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample ids match between the two files and that the condition column has exactly 6 treated and 6 control. Produce two matrices for downstream use and write both to disk: (a) LINEAR TPM, all 12,000 genes, no filtering, no transform — this is what the deconvolution methods consume; (b) log2(TPM+1) restricted to genes with TPM >= 1 in at least 6 samples (the smallest group size) — this is what QC and per-sample signature scoring consume. On matrix (b): PCA on the 500 most variable genes, a sample-to-sample distance heatmap, per-sample detected-gene counts (TPM > 0 and TPM >= 1), and the per-sample TPM sum as a sanity check that each column sums to ~1e6. Colour every plot by condition and annotate sample_01. Report where sample_01 sits on the PCA and on the distance heatmap alongside its detected-gene count relative to the other 11. Do NOT drop it — carry all 12 samples forward and record its position so downstream steps can run the sensitivity check.",
+        "acceptance_criteria": [
+          "Sample ids in tpm.csv and metadata.csv reconcile 1:1; the condition column is confirmed as 6 treated vs 6 control and the exact level labels used in the files are reported verbatim",
+          "A linear-TPM matrix (12,000 x 12, unfiltered) and a log2(TPM+1) filtered matrix are both written to disk with the number of genes retained by the >=1 TPM in >=6 samples filter stated",
+          "PCA (500 most variable genes) and a sample distance heatmap are produced from the log matrix, coloured by condition, with sample_01 labelled",
+          "Per-sample detected-gene counts and TPM column sums are tabulated for all 12 samples, with sample_01's values reported explicitly beside the other 11",
+          "All 12 samples are carried forward; no sample is removed"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Multi-method immune and stromal deconvolution per sample",
+        "agent": "immune-profiling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "An enrichment score (xCell, ConsensusTME) is not a proportion: scores of different cell types are not comparable to each other and do not sum to one",
+          "Spillover between closely related cell types (e.g. CD4 vs CD8 T cells, monocyte vs macrophage) persists after compensation",
+          "sample_01's low sequencing depth increases the variance of its expression estimates and can bias rank-based scores such as xCell; flag its estimates in the table",
+          "A 12,000-gene table may be a subset of the transcriptome; low signature-gene overlap for any method is a reason to down-weight that method's estimates"
+        ],
+        "context": "Melanoma biopsy, human, linear TPM from Salmon. The reference profiles behind EPIC and quanTIseq derive from blood and tumor-infiltrating immune cells, which is a reasonable but not exact match for a melanoma biopsy — the tissue/reference match must be stated. CIBERSORT and CIBERSORTx (LM22 proportions) are distributed under licence via a web portal and are not installed here; ESTIMATE (tumor purity, stromal and immune scores) is also absent. Do not present any substitute result as an LM22 or an ESTIMATE result.",
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "EPIC",
+          "quantiseqr",
+          "MCPcounter",
+          "xCell",
+          "ConsensusTME",
+          "data.table",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "What is the immune and stromal cell composition of each of the 12 melanoma biopsies, estimated from the linear TPM matrix?",
+        "grounding": {
+          "claims": [
+            "R-0127@1ec9",
+            "R-0126@a2be",
+            "R-0128@9eee",
+            "R-0130@c0da",
+            "R-0131@6d6f"
+          ],
+          "reason": "Linear human TPM with a matched tissue: EPIC/quanTIseq for absolute fractions (R-0127), xCell for 64 enrichment scores (R-0126), all through the immunedeconv interface (R-0128); ESTIMATE absent so ConsensusTME stands in for the microenvironment and no purity is claimed (R-0130); CIBERSORT/LM22 absent (R-0131).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Input is LINEAR TPM (not logged, not z-scored) — the deconvolution methods expect the untransformed scale",
+          "Use the unfiltered 12,000-gene matrix, not the >=1 TPM filtered one: the signature matrices need their full gene sets",
+          "Run the methods through the immunedeconv interface so the outputs share one schema",
+          "ConsensusTME must be called with an explicit cancer type; use SKCM (skin cutaneous melanoma) and name it in the output",
+          "Do not claim a tumor purity — ESTIMATE is absent. Report EPIC's uncharacterized fraction as the uncharacterized fraction and xCell's immune/stroma scores as relative stand-ins, naming them as such",
+          "Do not label any output as LM22 or CIBERSORT proportions — CIBERSORT is absent"
+        ],
+        "description": "Run deconvolution on the unfiltered LINEAR TPM matrix from T1S1 through the immunedeconv common interface, producing one long table of method x cell type x sample. Methods to run: EPIC (absolute fractions with an uncharacterized fraction, the primary estimate), quanTIseq (absolute fractions of its ten TIL10 immune types), MCP-counter (abundance scores for immune and stromal populations including fibroblasts and endothelial cells), xCell (64 cell-type enrichment scores with spillover compensation), and ConsensusTME with the melanoma cancer type (SKCM) for its 18 microenvironment populations. Report the per-sample composition as a heatmap and a stacked bar chart for the fraction-based methods, and record for each method which gene-symbol overlap it achieved against the 12,000-gene matrix — a signature gene absent from the table changes the estimate. State explicitly in the output which methods return absolute fractions (EPIC, quanTIseq — comparable across cell types and samples), which return abundance scores (MCP-counter — comparable across samples for one cell type only), and which return enrichment scores (xCell, ConsensusTME — not proportions, do not sum to one). Report EPIC's uncharacterized fraction per sample, which in a melanoma biopsy is dominated by malignant cells, and label it as such — do NOT call it a tumor purity estimate.",
+        "acceptance_criteria": [
+          "A long table of method x cell type x sample covering all 12 samples for every method that ran successfully, written to disk",
+          "EPIC and quanTIseq fractions per sample sum to 1 including the uncharacterized/other fraction; this is verified numerically and reported",
+          "Per-method signature-gene overlap against the 12,000-gene TPM matrix is reported as a count and a percentage",
+          "Per-sample composition heatmap and stacked bar chart produced for the fraction-based methods",
+          "The nature of each method's output (absolute fraction vs abundance score vs enrichment score) is stated explicitly in the output text, and the reference-tissue match for a melanoma biopsy is stated",
+          "Any method that fails to run is reported by name with its error, and the remaining methods proceed"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Treated vs control composition comparison with cross-method consensus",
+        "agent": "immune-profiling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "6 vs 6 is small: confidence intervals will be wide and a null result is uninformative about small or moderate composition shifts",
+          "xCell and ConsensusTME scores are enrichment scores, so a between-arm difference in such a score is a relative statement about that one cell type across samples, not a change in a proportion",
+          "Methods will disagree for some cell types — that disagreement is the finding for those types, not a reason to pick the method with the smallest p-value",
+          "Treated and untreated biopsies may differ in malignant-cell content, which shifts every immune fraction in an absolute-fraction method; read EPIC's uncharacterized fraction beside the immune fractions before interpreting"
+        ],
+        "context": "This is the arm-comparison half of the research question. The design is 6 treated vs 6 control, unpaired, single batch, so the model needs no covariate. The composition estimates are the outcome here — they are not being used as a covariate for a gene-level model, and no gene-level differential expression is part of this plan.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "data.table",
+          "ggplot2",
+          "ggpubr"
+        ],
+        "question": "Does any immune or stromal cell type differ in abundance between the 6 anti-PD-1 treated and the 6 untreated melanoma biopsies, consistently across deconvolution methods?",
+        "grounding": {
+          "claims": [
+            "R-0128@9eee",
+            "R-0132@246d",
+            "R-0134@0f16",
+            "R-0036@9786"
+          ],
+          "reason": "Consensus across two or more methods before a composition claim (R-0128); the composition estimate is reported as the outcome with its role stated (R-0132); a per-sample score compared between groups is tested with limma/t-test on the scores with BH across the tested types (R-0134); explicit reference level and named contrast (R-0036).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "The test unit is the sample (6 vs 6), never the gene — do not run a gene-level test here",
+          "BH adjustment across the cell types tested within each method; state the count",
+          "Set the condition reference level explicitly to the untreated/control level; do not rely on alphabetical ordering",
+          "A composition difference is claimed only when two or more methods agree on the direction; single-method differences are reported as non-robust",
+          "Report the composition estimates as the outcome of this analysis, and state that role explicitly",
+          "Re-run the comparison with sample_01 excluded and report both results"
+        ],
+        "description": "Take the long method x cell type x sample table from T2S1 and test the anti-PD-1 treated versus untreated contrast for each cell type within each method. The unit of inference is the sample: one value per sample per cell type, 6 vs 6, unpaired. Fit a linear model per cell type with condition as the only term (equivalently a two-sample t-test) and adjust p-values with Benjamini-Hochberg across the cell types tested within each method; report the number of cell types tested per method. Set the reference level explicitly to the untreated/control level so a positive effect means higher abundance in the anti-PD-1 treated arm, and name the contrast as condition: treated vs control. Report per cell type the mean in each arm, the difference with a 95% confidence interval, the raw and adjusted p-value, and a boxplot with the individual sample points overlaid. Then build the consensus table: mark a cell type as a robust composition difference only when two or more methods agree on the direction of the difference, and present the per-method estimates side by side including where they disagree. Run the whole comparison a second time with sample_01 excluded and report which, if any, conclusions change. Close with an explicit power statement: with 6 vs 6 only large composition shifts are detectable, a non-significant cell type is not evidence of no difference, and the deconvolution estimates carry their own error which these tests do not propagate.",
+        "acceptance_criteria": [
+          "A results table per method: cell type, mean in treated, mean in control, difference with 95% CI, raw p, BH-adjusted p, and the number of cell types tested",
+          "The reference level is the untreated/control arm and the contrast is stated as treated vs control, so the sign of every effect is unambiguous",
+          "A consensus table marking each cell type by how many methods agree on the direction of change, with the per-method estimates side by side",
+          "Boxplots per cell type with the 12 individual sample points shown, split by arm",
+          "A sensitivity re-run excluding sample_01, with a statement of which conclusions changed and which held",
+          "An explicit statement of the power limitation at n=6 per arm and of the fact that deconvolution estimation error is not propagated into these tests"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Marker-based immune and stromal signature scores per sample",
+        "agent": "immune-profiling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "A marker of a cell type in one tissue is not necessarily a marker of that cell type in another tissue; these are being applied to melanoma biopsies and that must be stated",
+          "With n=6 per arm the same power limits as T2S2 apply",
+          "Divergence between a marker score and a deconvolution fraction for the same cell type is a real result — report it rather than reconciling it by choosing one",
+          "The 12,000-gene table may not contain every marker gene; a truncated signature is a different signature"
+        ],
+        "context": "UCell ranks genes within each sample, so its score does not depend on the other samples or on library depth — which makes it the right independent check on sample_01 and on the reference-profile deconvolvers, whose signature matrices come from a fixed external reference. A marker score is a relative enrichment, not a fraction. Human marker/gating signature collections for tumour-microenvironment populations and human pathway gene sets are present in the reference store; the executing agent must resolve them there rather than assume a filename. If a needed marker collection turns out to be absent at run time, report which signatures could not be scored and proceed with the rest — this step enriches the deconvolution answer but T2S1/T2S2 carry the research question on their own.",
+        "maxSteps": 200,
+        "packages": [
+          "UCell",
+          "limma",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Do independent rank-based marker signature scores for immune and stromal populations reproduce the deconvolution picture across the 12 samples and the treated vs control contrast?",
+        "grounding": {
+          "claims": [
+            "R-0133@ce76",
+            "R-0134@0f16",
+            "R-0135@f02d"
+          ],
+          "reason": "Rank-based per-sample scoring with UCell so the score does not depend on sample depth (R-0133); scores compared between groups with limma/t-test and BH across signatures, with the signature source and genes-present stated (R-0134); marker sets taken from a human cell-type marker resource with species and tissue stated (R-0135). Knowledge check warned that preprocessing_scope was unstated; it is now stated on the step — no classifier is fitted, so fold-internal preprocessing does not apply.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T2S1"
+        ],
+        "constraints": [
+          "Score on the log2(TPM+1) filtered matrix, not on linear TPM",
+          "Use human marker sets only — this is a human melanoma biopsy; a mouse or rat set here produces confident nonsense",
+          "Resolve marker and pathway gene sets against the reference data actually present in the environment; verify presence before use and report what was used",
+          "State the marker source, its version, and the count of signature genes present in the matrix for every signature",
+          "Report the scores as relative enrichments, never as cell fractions",
+          "Report a signature score as descriptive whenever fewer than about half its marker genes are present in the matrix",
+          "Preprocessing scope: the filter and any scaling are applied once to the whole matrix here because this is a scoring and two-group testing step, not a trained classifier — no cross-validated model is fitted, so no fold-internal preprocessing applies; state this in the output"
+        ],
+        "description": "Score each of the 12 samples with UCell (rank-based, Mann-Whitney U on the within-sample gene ranks) on the log2(TPM+1) filtered matrix from T1S1, using marker sets for the immune and stromal populations of a tumour microenvironment: CD8 T cells, CD4 T cells, regulatory T cells, B cells, NK cells, monocytes/macrophages, dendritic cells, neutrophils, mast cells, plasma cells, fibroblasts/CAF, endothelial cells, plus a cytotoxicity signature and an interferon-gamma response signature. Resolve the marker sets from the reference data the environment actually holds — human cell-type marker/gating signature collections and human pathway gene sets are present in the reference store; use human sets only and state the source, its version, and the number of signature genes present in the 12,000-gene matrix for every signature scored. A signature whose genes are largely missing from the matrix is a different signature and must be flagged or dropped with the count reported. Then test each score for the treated vs control contrast exactly as in T2S2: limma (or a two-sample t-test) on the per-sample scores with the control arm as reference, BH adjustment across the signatures tested, effect size with a 95% CI, and boxplots with individual points. Finally, correlate each signature score against the corresponding cell-type estimate from T2S1 across the 12 samples (Spearman) and report where the marker-based and reference-profile-based routes agree and where they diverge.",
+        "acceptance_criteria": [
+          "A per-sample score matrix (signatures x 12 samples) written to disk",
+          "For every signature: its source collection, that collection's version, the number of genes in the signature, and the number present in the 12,000-gene matrix",
+          "A treated vs control test per signature with the control arm as reference, BH-adjusted across signatures, with effect sizes and 95% CIs and boxplots showing the 12 individual samples",
+          "Spearman correlations between each marker score and the matching cell-type estimate from T2S1 across the 12 samples, with agreements and divergences named",
+          "Any signature that could not be scored because its markers are absent from the reference store or from the matrix is listed by name with the reason"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Composition report and reproducibility record",
+        "agent": "immune-profiling-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "A composition difference between arms in an absolute-fraction method can arise from a change in malignant-cell content rather than from a change in immune infiltration; read the uncharacterized fraction alongside",
+          "This is an observational comparison of treated and untreated biopsies with n=6 per arm — it does not establish that anti-PD-1 caused any composition difference observed"
+        ],
+        "context": "The audience asked two things: the composition of every sample, and whether it differs between arms. Both are answered here. Only a TPM table was available, which constrains the method set and is stated up front rather than buried.",
+        "maxSteps": 200,
+        "packages": [
+          "rmarkdown",
+          "knitr",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "What is the per-sample immune and stromal composition of the 12 melanoma biopsies, and which composition differences between anti-PD-1 treated and untreated samples are supported by more than one method?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0132@246d"
+          ],
+          "reason": "Reproducibility record with sessionInfo, seeds, package versions and pinned collection versions in the report (R-0086); the composition estimate is reported with its role as the outcome stated (R-0132).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S1",
+          "T2S1",
+          "T2S2",
+          "T3S1"
+        ],
+        "constraints": [
+          "Report the composition first and the statistics second; do not lead with p-values",
+          "State every method's output nature (absolute fraction, abundance score, enrichment score) wherever its numbers appear",
+          "Do not upgrade a single-method difference into a finding",
+          "Store the reproducibility record with the results"
+        ],
+        "description": "Assemble the final report from T1S1, T2S1, T2S2 and T3S1. It contains: (1) the QC summary including sample_01's depth evidence and its position on the PCA and distance heatmap; (2) the per-sample composition table and figures for all 12 samples, method by method, with the nature of each method's output stated; (3) the treated vs control comparison with effect sizes, confidence intervals and BH-adjusted p-values, and the cross-method consensus table naming which cell types are supported by two or more methods and which are single-method or contradictory; (4) the marker-score results beside the deconvolution results with their concordance; (5) the sample_01 sensitivity result; (6) an explicit limitations section covering the n=6-per-arm power limit, the absence of raw counts, the absence of CIBERSORT/LM22 and ESTIMATE and what was used in their place, the reference-tissue match of each method to a melanoma biopsy, and the fact that deconvolution error is not propagated into the between-arm tests; (7) the reproducibility record: sessionInfo, the random seed of every step that used randomness, every package version, and the version of every marker/pathway collection used. Lead the report with what the composition actually is and which differences survived the consensus requirement — not with a p-value list.",
+        "acceptance_criteria": [
+          "A per-sample composition table covering all 12 samples is presented, with each method's output type labelled",
+          "The treated vs control results are presented with effect sizes, 95% CIs and BH-adjusted p-values, and the consensus table separates multi-method-supported differences from single-method ones",
+          "A limitations section explicitly covers: n=6 per arm, TPM-only input with no raw counts, CIBERSORT/LM22 and ESTIMATE absence and their substitutes, reference-tissue match, and unpropagated deconvolution error",
+          "The sample_01 sensitivity result is reported",
+          "A reproducibility record with sessionInfo, seeds, package versions and marker/pathway collection versions is stored with the results, not in a separate note",
+          "No claim of tumor purity and no claim labelled as LM22 proportions appears anywhere in the report"
+        ]
+      }
+    ],
+    "title": "Melanoma TPM immune/stromal deconvolution: anti-PD-1 vs control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The core delivered a gene-level TPM table only (/data/inputs/abundance/tpm.csv, 12,000 gene symbols x 12 samples from Salmon) plus a 12-row metadata table with a single `condition` column (6 anti-PD-1 treated vs 6 untreated melanoma biopsies, unpaired, single batch). The question is per-sample immune and stromal composition and whether it differs between the two arms — a deconvolution question, not a differential-expression question, so no gene-level DE or enrichment step is planned.\n\nThe data state dictates the methods. TPM is not counts: DESeq2/edgeR/voom are excluded, log2(TPM+1) is the only transform, and no TMM or size-factor normalization is applied. Deconvolution methods, however, want LINEAR TPM — so the pipeline keeps two matrices in parallel: linear TPM (unfiltered, for EPIC/quanTIseq/ConsensusTME/xCell, which expect the full transcriptome) and log2(TPM+1) after a >=1 TPM in >=6 samples filter (for QC, marker-signature scoring, and the linear models on scores).\n\nT1S1 is sample-structure QC on the log matrix. It matters here specifically: sample_01 was sequenced at roughly a quarter of the median depth. TPM is depth-normalized within a sample, so a shallow library does not shift the scale but it does raise per-gene variance and depress the count of detected genes, which is exactly what rank-based deconvolution scores are sensitive to. sample_01 is kept, plotted, and reported, not silently dropped; every downstream composition claim is re-checked with it excluded as a sensitivity analysis.\n\nT2S1 runs the deconvolution itself through the immunedeconv interface with several methods on the same linear TPM matrix: EPIC and quanTIseq for absolute fractions with an uncharacterized (tumor) fraction, MCP-counter for between-sample abundance scores, xCell for 64 enrichment scores, ConsensusTME with the SKCM cancer type for a melanoma-matched microenvironment estimate. No single method wins for every cell type, so the per-sample composition table is reported method by method and the between-arm claims in T2S2 require agreement in direction from two or more methods. CIBERSORT/LM22 and ESTIMATE are licensed/absent — no LM22 proportion and no tumor-purity number is claimed; EPIC's uncharacterized fraction and xCell's immune/stroma scores are reported as relative stand-ins with that caveat stated.\n\nT2S2 tests the arm difference. With n=6 per arm the unit of inference is the sample, not the gene: one value per sample per cell type, a two-group unpaired test per cell type, BH across cell types within each method. Six versus six detects only large composition shifts; the step reports effect sizes with confidence intervals and states the power limit rather than reading a p-value list as a finding.\n\nT3S1 is the orthogonal marker-based route: rank-based per-sample scores (UCell) for immune and stromal signatures, which do not depend on a reference profile matrix and so fail differently from the least-squares deconvolvers. Agreement between a fraction estimate and an independent marker score is the strongest evidence available from a 12-sample TPM table; disagreement is reported as such.\n\nT4S1 assembles the per-sample composition matrix, the between-arm comparison, the cross-method concordance, the sample_01 sensitivity result, and the reproducibility record."
+  },
+  "usage": {
+    "inputTokens": 214520,
+    "outputTokens": 11356,
+    "cacheCreationInputTokens": 135708,
+    "cacheReadInputTokens": 78776,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "signature_scoring"
+        ],
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "quantiseqr",
+          "MCPcounter",
+          "xCell",
+          "EPIC",
+          "ConsensusTME",
+          "GSVA",
+          "singscore",
+          "UCell",
+          "decoupleR",
+          "limma",
+          "edgeR",
+          "DESeq2"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "signature_scoring"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC on log2(TPM+1): PCA, sample distance heatmap, detected genes",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low abundance filter on TPM",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "log2(TPM+1) only, no count-based between-sample normalization",
+            "package": "base",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "EPIC absolute cell fractions from TPM with uncharacterized fraction, plus quanTIseq, MCP-counter, xCell and ConsensusTME through immunedeconv for consensus",
+            "package": "immunedeconv",
+            "parameters": [
+              {
+                "name": "interface",
+                "value": "immunedeconv"
+              },
+              {
+                "name": "input_scale",
+                "value": "tpm_linear"
+              },
+              {
+                "name": "consensus",
+                "value": "two_or_more_methods_agree"
+              },
+              {
+                "name": "output",
+                "value": "absolute_fractions_with_uncharacterized_fraction"
+              },
+              {
+                "name": "reference_tissue_match",
+                "value": "state_in_report"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "UCell rank-based per-sample immune/stromal marker signature scores, tested with limma on the scores",
+            "package": "UCell",
+            "parameters": [
+              {
+                "name": "score_method",
+                "value": "rank_based_per_sample"
+              },
+              {
+                "name": "input_scale",
+                "value": "log_normalized_expression"
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_the_design"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH_across_signatures"
+              },
+              {
+                "name": "marker_source",
+                "value": "panglaodb_or_hpa_tissue"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Composition report with reproducibility record",
+            "package": "rmarkdown",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Melanoma TPM immune/stromal deconvolution: anti-PD-1 vs control",
+          "analytical_narrative": "The core delivered a gene-level TPM table only (/data/inputs/abundance/tpm.csv, 12,000 gene symbols x 12 samples from Salmon) plus a 12-row metadata table with a single `condition` column (6 anti-PD-1 treated vs 6 untreated melanoma biopsies, unpaired, single batch). The question is per-sample immune and stromal composition and whether it differs between the two arms — a deconvolution question, not a differential-expression question, so no gene-level DE or enrichment step is planned.\n\nThe data state dictates the methods. TPM is not counts: DESeq2/edgeR/voom are excluded, log2(TPM+1) is the only transform, and no TMM or size-factor normalization is applied. Deconvolution methods, however, want LINEAR TPM — so the pipeline keeps two matrices in parallel: linear TPM (unfiltered, for EPIC/quanTIseq/ConsensusTME/xCell, which expect the full transcriptome) and log2(TPM+1) after a >=1 TPM in >=6 samples filter (for QC, marker-signature scoring, and the linear models on scores).\n\nT1S1 is sample-structure QC on the log matrix. It matters here specifically: sample_01 was sequenced at roughly a quarter of the median depth. TPM is depth-normalized within a sample, so a shallow library does not shift the scale but it does raise per-gene variance and depress the count of detected genes, which is exactly what rank-based deconvolution scores are sensitive to. sample_01 is kept, plotted, and reported, not silently dropped; every downstream composition claim is re-checked with it excluded as a sensitivity analysis.\n\nT2S1 runs the deconvolution itself through the immunedeconv interface with several methods on the same linear TPM matrix: EPIC and quanTIseq for absolute fractions with an uncharacterized (tumor) fraction, MCP-counter for between-sample abundance scores, xCell for 64 enrichment scores, ConsensusTME with the SKCM cancer type for a melanoma-matched microenvironment estimate. No single method wins for every cell type, so the per-sample composition table is reported method by method and the between-arm claims in T2S2 require agreement in direction from two or more methods. CIBERSORT/LM22 and ESTIMATE are licensed/absent — no LM22 proportion and no tumor-purity number is claimed; EPIC's uncharacterized fraction and xCell's immune/stroma scores are reported as relative stand-ins with that caveat stated.\n\nT2S2 tests the arm difference. With n=6 per arm the unit of inference is the sample, not the gene: one value per sample per cell type, a two-group unpaired test per cell type, BH across cell types within each method. Six versus six detects only large composition shifts; the step reports effect sizes with confidence intervals and states the power limit rather than reading a p-value list as a finding.\n\nT3S1 is the orthogonal marker-based route: rank-based per-sample scores (UCell) for immune and stromal signatures, which do not depend on a reference profile matrix and so fail differently from the least-squares deconvolvers. Agreement between a fraction estimate and an independent marker score is the strongest evidence available from a 12-sample TPM table; disagreement is reported as such.\n\nT4S1 assembles the per-sample composition matrix, the between-arm comparison, the cross-method concordance, the sample_01 sensitivity result, and the reproducibility record.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-06T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and matrix preparation",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 melanoma biopsies (6 anti-PD-1 treated, 6 untreated) separate by condition on log2(TPM+1), and does the low-depth sample_01 behave as an outlier?",
+              "description": "Load /eval-eight-arms-with-deconvolution-tpm-n6-1/data/inputs/abundance/tpm.csv (12,000 gene symbols x 12 samples) and /eval-eight-arms-with-deconvolution-tpm-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample ids match between the two files and that the condition column has exactly 6 treated and 6 control. Produce two matrices for downstream use and write both to disk: (a) LINEAR TPM, all 12,000 genes, no filtering, no transform — this is what the deconvolution methods consume; (b) log2(TPM+1) restricted to genes with TPM >= 1 in at least 6 samples (the smallest group size) — this is what QC and per-sample signature scoring consume. On matrix (b): PCA on the 500 most variable genes, a sample-to-sample distance heatmap, per-sample detected-gene counts (TPM > 0 and TPM >= 1), and the per-sample TPM sum as a sanity check that each column sums to ~1e6. Colour every plot by condition and annotate sample_01. Report where sample_01 sits on the PCA and on the distance heatmap alongside its detected-gene count relative to the other 11. Do NOT drop it — carry all 12 samples forward and record its position so downstream steps can run the sensitivity check.",
+              "context": "Only a gene-level TPM table was delivered — no raw counts, no Salmon quantification directories. TPM is already normalized within each sample for length and depth, so the log transform is the only transform applied; count-model normalizations (size factors, TMM) and count-model transforms (VST, rlog) are invalid here. sample_01 was sequenced at about a quarter of the median depth: TPM rescaling hides that in the column sums but not in the per-gene variance or in the number of genes detected above zero.",
+              "packages": [
+                "limma",
+                "matrixStats",
+                "ggplot2",
+                "pheatmap",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "acceptance_criteria": [
+                "Sample ids in tpm.csv and metadata.csv reconcile 1:1; the condition column is confirmed as 6 treated vs 6 control and the exact level labels used in the files are reported verbatim",
+                "A linear-TPM matrix (12,000 x 12, unfiltered) and a log2(TPM+1) filtered matrix are both written to disk with the number of genes retained by the >=1 TPM in >=6 samples filter stated",
+                "PCA (500 most variable genes) and a sample distance heatmap are produced from the log matrix, coloured by condition, with sample_01 labelled",
+                "Per-sample detected-gene counts and TPM column sums are tabulated for all 12 samples, with sample_01's values reported explicitly beside the other 11",
+                "All 12 samples are carried forward; no sample is removed"
+              ],
+              "constraints": [
+                "Transform for QC is log2(TPM+1) — do not apply VST, rlog, TMM, or DESeq2 size factors to a TPM table",
+                "Low-abundance filter: TPM >= 1 in at least 6 samples (the smallest group size); state the floor and the number of genes kept",
+                "Keep the linear (untransformed) TPM matrix intact and unfiltered as a separate artifact for the deconvolution step",
+                "Keep sample_01 through QC; report its library-depth evidence rather than removing it",
+                "PCA on the top 500 most variable genes"
+              ],
+              "caveats": [
+                "A sample with a library size several times below the median must be inspected and reported, not silently deleted — removal is a judgment that requires a stated reason",
+                "TPM values are not comparable across library protocols; if anything in the metadata hints at more than one protocol, flag it, though the profile records a single batch",
+                "With 12,000 genes the table is likely already pre-filtered by the core, so the >=1 TPM filter may remove few genes — report the count either way"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0008@440d",
+                  "R-0071@e4e2",
+                  "R-0072@881a",
+                  "R-0073@8b36",
+                  "R-0030@2248"
+                ],
+                "template": "tpl-qc-log-abundance@1.0.0",
+                "reason": "TPM input with a low-depth sample: QC on log2(TPM+1) with PCA and sample distances (R-0071), sample_01 kept and reported rather than dropped (R-0008, R-0030), >=1 TPM in smallest-group-size filter (R-0072), log transform as the only normalization (R-0073)."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Multi-method immune and stromal deconvolution per sample",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "What is the immune and stromal cell composition of each of the 12 melanoma biopsies, estimated from the linear TPM matrix?",
+              "description": "Run deconvolution on the unfiltered LINEAR TPM matrix from T1S1 through the immunedeconv common interface, producing one long table of method x cell type x sample. Methods to run: EPIC (absolute fractions with an uncharacterized fraction, the primary estimate), quanTIseq (absolute fractions of its ten TIL10 immune types), MCP-counter (abundance scores for immune and stromal populations including fibroblasts and endothelial cells), xCell (64 cell-type enrichment scores with spillover compensation), and ConsensusTME with the melanoma cancer type (SKCM) for its 18 microenvironment populations. Report the per-sample composition as a heatmap and a stacked bar chart for the fraction-based methods, and record for each method which gene-symbol overlap it achieved against the 12,000-gene matrix — a signature gene absent from the table changes the estimate. State explicitly in the output which methods return absolute fractions (EPIC, quanTIseq — comparable across cell types and samples), which return abundance scores (MCP-counter — comparable across samples for one cell type only), and which return enrichment scores (xCell, ConsensusTME — not proportions, do not sum to one). Report EPIC's uncharacterized fraction per sample, which in a melanoma biopsy is dominated by malignant cells, and label it as such — do NOT call it a tumor purity estimate.",
+              "context": "Melanoma biopsy, human, linear TPM from Salmon. The reference profiles behind EPIC and quanTIseq derive from blood and tumor-infiltrating immune cells, which is a reasonable but not exact match for a melanoma biopsy — the tissue/reference match must be stated. CIBERSORT and CIBERSORTx (LM22 proportions) are distributed under licence via a web portal and are not installed here; ESTIMATE (tumor purity, stromal and immune scores) is also absent. Do not present any substitute result as an LM22 or an ESTIMATE result.",
+              "packages": [
+                "immunedeconv",
+                "EPIC",
+                "quantiseqr",
+                "MCPcounter",
+                "xCell",
+                "ConsensusTME",
+                "data.table",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "immune-profiling-agent",
+              "acceptance_criteria": [
+                "A long table of method x cell type x sample covering all 12 samples for every method that ran successfully, written to disk",
+                "EPIC and quanTIseq fractions per sample sum to 1 including the uncharacterized/other fraction; this is verified numerically and reported",
+                "Per-method signature-gene overlap against the 12,000-gene TPM matrix is reported as a count and a percentage",
+                "Per-sample composition heatmap and stacked bar chart produced for the fraction-based methods",
+                "The nature of each method's output (absolute fraction vs abundance score vs enrichment score) is stated explicitly in the output text, and the reference-tissue match for a melanoma biopsy is stated",
+                "Any method that fails to run is reported by name with its error, and the remaining methods proceed"
+              ],
+              "constraints": [
+                "Input is LINEAR TPM (not logged, not z-scored) — the deconvolution methods expect the untransformed scale",
+                "Use the unfiltered 12,000-gene matrix, not the >=1 TPM filtered one: the signature matrices need their full gene sets",
+                "Run the methods through the immunedeconv interface so the outputs share one schema",
+                "ConsensusTME must be called with an explicit cancer type; use SKCM (skin cutaneous melanoma) and name it in the output",
+                "Do not claim a tumor purity — ESTIMATE is absent. Report EPIC's uncharacterized fraction as the uncharacterized fraction and xCell's immune/stroma scores as relative stand-ins, naming them as such",
+                "Do not label any output as LM22 or CIBERSORT proportions — CIBERSORT is absent"
+              ],
+              "caveats": [
+                "An enrichment score (xCell, ConsensusTME) is not a proportion: scores of different cell types are not comparable to each other and do not sum to one",
+                "Spillover between closely related cell types (e.g. CD4 vs CD8 T cells, monocyte vs macrophage) persists after compensation",
+                "sample_01's low sequencing depth increases the variance of its expression estimates and can bias rank-based scores such as xCell; flag its estimates in the table",
+                "A 12,000-gene table may be a subset of the transcriptome; low signature-gene overlap for any method is a reason to down-weight that method's estimates"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0127@1ec9",
+                  "R-0126@a2be",
+                  "R-0128@9eee",
+                  "R-0130@c0da",
+                  "R-0131@6d6f"
+                ],
+                "reason": "Linear human TPM with a matched tissue: EPIC/quanTIseq for absolute fractions (R-0127), xCell for 64 enrichment scores (R-0126), all through the immunedeconv interface (R-0128); ESTIMATE absent so ConsensusTME stands in for the microenvironment and no purity is claimed (R-0130); CIBERSORT/LM22 absent (R-0131)."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Treated vs control composition comparison with cross-method consensus",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Does any immune or stromal cell type differ in abundance between the 6 anti-PD-1 treated and the 6 untreated melanoma biopsies, consistently across deconvolution methods?",
+              "description": "Take the long method x cell type x sample table from T2S1 and test the anti-PD-1 treated versus untreated contrast for each cell type within each method. The unit of inference is the sample: one value per sample per cell type, 6 vs 6, unpaired. Fit a linear model per cell type with condition as the only term (equivalently a two-sample t-test) and adjust p-values with Benjamini-Hochberg across the cell types tested within each method; report the number of cell types tested per method. Set the reference level explicitly to the untreated/control level so a positive effect means higher abundance in the anti-PD-1 treated arm, and name the contrast as condition: treated vs control. Report per cell type the mean in each arm, the difference with a 95% confidence interval, the raw and adjusted p-value, and a boxplot with the individual sample points overlaid. Then build the consensus table: mark a cell type as a robust composition difference only when two or more methods agree on the direction of the difference, and present the per-method estimates side by side including where they disagree. Run the whole comparison a second time with sample_01 excluded and report which, if any, conclusions change. Close with an explicit power statement: with 6 vs 6 only large composition shifts are detectable, a non-significant cell type is not evidence of no difference, and the deconvolution estimates carry their own error which these tests do not propagate.",
+              "context": "This is the arm-comparison half of the research question. The design is 6 treated vs 6 control, unpaired, single batch, so the model needs no covariate. The composition estimates are the outcome here — they are not being used as a covariate for a gene-level model, and no gene-level differential expression is part of this plan.",
+              "packages": [
+                "limma",
+                "data.table",
+                "ggplot2",
+                "ggpubr"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "acceptance_criteria": [
+                "A results table per method: cell type, mean in treated, mean in control, difference with 95% CI, raw p, BH-adjusted p, and the number of cell types tested",
+                "The reference level is the untreated/control arm and the contrast is stated as treated vs control, so the sign of every effect is unambiguous",
+                "A consensus table marking each cell type by how many methods agree on the direction of change, with the per-method estimates side by side",
+                "Boxplots per cell type with the 12 individual sample points shown, split by arm",
+                "A sensitivity re-run excluding sample_01, with a statement of which conclusions changed and which held",
+                "An explicit statement of the power limitation at n=6 per arm and of the fact that deconvolution estimation error is not propagated into these tests"
+              ],
+              "constraints": [
+                "The test unit is the sample (6 vs 6), never the gene — do not run a gene-level test here",
+                "BH adjustment across the cell types tested within each method; state the count",
+                "Set the condition reference level explicitly to the untreated/control level; do not rely on alphabetical ordering",
+                "A composition difference is claimed only when two or more methods agree on the direction; single-method differences are reported as non-robust",
+                "Report the composition estimates as the outcome of this analysis, and state that role explicitly",
+                "Re-run the comparison with sample_01 excluded and report both results"
+              ],
+              "caveats": [
+                "6 vs 6 is small: confidence intervals will be wide and a null result is uninformative about small or moderate composition shifts",
+                "xCell and ConsensusTME scores are enrichment scores, so a between-arm difference in such a score is a relative statement about that one cell type across samples, not a change in a proportion",
+                "Methods will disagree for some cell types — that disagreement is the finding for those types, not a reason to pick the method with the smallest p-value",
+                "Treated and untreated biopsies may differ in malignant-cell content, which shifts every immune fraction in an absolute-fraction method; read EPIC's uncharacterized fraction beside the immune fractions before interpreting"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0128@9eee",
+                  "R-0132@246d",
+                  "R-0134@0f16",
+                  "R-0036@9786"
+                ],
+                "reason": "Consensus across two or more methods before a composition claim (R-0128); the composition estimate is reported as the outcome with its role stated (R-0132); a per-sample score compared between groups is tested with limma/t-test on the scores with BH across the tested types (R-0134); explicit reference level and named contrast (R-0036)."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Marker-based immune and stromal signature scores per sample",
+              "track": "T3",
+              "step_type": "analysis",
+              "question": "Do independent rank-based marker signature scores for immune and stromal populations reproduce the deconvolution picture across the 12 samples and the treated vs control contrast?",
+              "description": "Score each of the 12 samples with UCell (rank-based, Mann-Whitney U on the within-sample gene ranks) on the log2(TPM+1) filtered matrix from T1S1, using marker sets for the immune and stromal populations of a tumour microenvironment: CD8 T cells, CD4 T cells, regulatory T cells, B cells, NK cells, monocytes/macrophages, dendritic cells, neutrophils, mast cells, plasma cells, fibroblasts/CAF, endothelial cells, plus a cytotoxicity signature and an interferon-gamma response signature. Resolve the marker sets from the reference data the environment actually holds — human cell-type marker/gating signature collections and human pathway gene sets are present in the reference store; use human sets only and state the source, its version, and the number of signature genes present in the 12,000-gene matrix for every signature scored. A signature whose genes are largely missing from the matrix is a different signature and must be flagged or dropped with the count reported. Then test each score for the treated vs control contrast exactly as in T2S2: limma (or a two-sample t-test) on the per-sample scores with the control arm as reference, BH adjustment across the signatures tested, effect size with a 95% CI, and boxplots with individual points. Finally, correlate each signature score against the corresponding cell-type estimate from T2S1 across the 12 samples (Spearman) and report where the marker-based and reference-profile-based routes agree and where they diverge.",
+              "context": "UCell ranks genes within each sample, so its score does not depend on the other samples or on library depth — which makes it the right independent check on sample_01 and on the reference-profile deconvolvers, whose signature matrices come from a fixed external reference. A marker score is a relative enrichment, not a fraction. Human marker/gating signature collections for tumour-microenvironment populations and human pathway gene sets are present in the reference store; the executing agent must resolve them there rather than assume a filename. If a needed marker collection turns out to be absent at run time, report which signatures could not be scored and proceed with the rest — this step enriches the deconvolution answer but T2S1/T2S2 carry the research question on their own.",
+              "packages": [
+                "UCell",
+                "limma",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "acceptance_criteria": [
+                "A per-sample score matrix (signatures x 12 samples) written to disk",
+                "For every signature: its source collection, that collection's version, the number of genes in the signature, and the number present in the 12,000-gene matrix",
+                "A treated vs control test per signature with the control arm as reference, BH-adjusted across signatures, with effect sizes and 95% CIs and boxplots showing the 12 individual samples",
+                "Spearman correlations between each marker score and the matching cell-type estimate from T2S1 across the 12 samples, with agreements and divergences named",
+                "Any signature that could not be scored because its markers are absent from the reference store or from the matrix is listed by name with the reason"
+              ],
+              "constraints": [
+                "Score on the log2(TPM+1) filtered matrix, not on linear TPM",
+                "Use human marker sets only — this is a human melanoma biopsy; a mouse or rat set here produces confident nonsense",
+                "Resolve marker and pathway gene sets against the reference data actually present in the environment; verify presence before use and report what was used",
+                "State the marker source, its version, and the count of signature genes present in the matrix for every signature",
+                "Report the scores as relative enrichments, never as cell fractions",
+                "Report a signature score as descriptive whenever fewer than about half its marker genes are present in the matrix",
+                "Preprocessing scope: the filter and any scaling are applied once to the whole matrix here because this is a scoring and two-group testing step, not a trained classifier — no cross-validated model is fitted, so no fold-internal preprocessing applies; state this in the output"
+              ],
+              "caveats": [
+                "A marker of a cell type in one tissue is not necessarily a marker of that cell type in another tissue; these are being applied to melanoma biopsies and that must be stated",
+                "With n=6 per arm the same power limits as T2S2 apply",
+                "Divergence between a marker score and a deconvolution fraction for the same cell type is a real result — report it rather than reconciling it by choosing one",
+                "The 12,000-gene table may not contain every marker gene; a truncated signature is a different signature"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0133@ce76",
+                  "R-0134@0f16",
+                  "R-0135@f02d"
+                ],
+                "reason": "Rank-based per-sample scoring with UCell so the score does not depend on sample depth (R-0133); scores compared between groups with limma/t-test and BH across signatures, with the signature source and genes-present stated (R-0134); marker sets taken from a human cell-type marker resource with species and tissue stated (R-0135). Knowledge check warned that preprocessing_scope was unstated; it is now stated on the step — no classifier is fitted, so fold-internal preprocessing does not apply."
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "Composition report and reproducibility record",
+              "track": "T4",
+              "step_type": "report",
+              "question": "What is the per-sample immune and stromal composition of the 12 melanoma biopsies, and which composition differences between anti-PD-1 treated and untreated samples are supported by more than one method?",
+              "description": "Assemble the final report from T1S1, T2S1, T2S2 and T3S1. It contains: (1) the QC summary including sample_01's depth evidence and its position on the PCA and distance heatmap; (2) the per-sample composition table and figures for all 12 samples, method by method, with the nature of each method's output stated; (3) the treated vs control comparison with effect sizes, confidence intervals and BH-adjusted p-values, and the cross-method consensus table naming which cell types are supported by two or more methods and which are single-method or contradictory; (4) the marker-score results beside the deconvolution results with their concordance; (5) the sample_01 sensitivity result; (6) an explicit limitations section covering the n=6-per-arm power limit, the absence of raw counts, the absence of CIBERSORT/LM22 and ESTIMATE and what was used in their place, the reference-tissue match of each method to a melanoma biopsy, and the fact that deconvolution error is not propagated into the between-arm tests; (7) the reproducibility record: sessionInfo, the random seed of every step that used randomness, every package version, and the version of every marker/pathway collection used. Lead the report with what the composition actually is and which differences survived the consensus requirement — not with a p-value list.",
+              "context": "The audience asked two things: the composition of every sample, and whether it differs between arms. Both are answered here. Only a TPM table was available, which constrains the method set and is stated up front rather than buried.",
+              "packages": [
+                "rmarkdown",
+                "knitr",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1",
+                "T2S2",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "acceptance_criteria": [
+                "A per-sample composition table covering all 12 samples is presented, with each method's output type labelled",
+                "The treated vs control results are presented with effect sizes, 95% CIs and BH-adjusted p-values, and the consensus table separates multi-method-supported differences from single-method ones",
+                "A limitations section explicitly covers: n=6 per arm, TPM-only input with no raw counts, CIBERSORT/LM22 and ESTIMATE absence and their substitutes, reference-tissue match, and unpropagated deconvolution error",
+                "The sample_01 sensitivity result is reported",
+                "A reproducibility record with sessionInfo, seeds, package versions and marker/pathway collection versions is stored with the results, not in a separate note",
+                "No claim of tumor purity and no claim labelled as LM22 proportions appears anywhere in the report"
+              ],
+              "constraints": [
+                "Report the composition first and the statistics second; do not lead with p-values",
+                "State every method's output nature (absolute fraction, abundance score, enrichment score) wherever its numbers appear",
+                "Do not upgrade a single-method difference into a finding",
+                "Store the reproducibility record with the results"
+              ],
+              "caveats": [
+                "A composition difference between arms in an absolute-fraction method can arise from a change in malignant-cell content rather than from a change in immune infiltration; read the uncharacterized fraction alongside",
+                "This is an observational comparison of treated and untreated biopsies with n=6 per arm — it does not establish that anti-PD-1 caused any composition difference observed"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0132@246d"
+                ],
+                "reason": "Reproducibility record with sessionInfo, seeds, package versions and pinned collection versions in the report (R-0086); the composition estimate is reported with its role as the outcome stated (R-0132)."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "campaign": "eight-arms",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "transcript-usage-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T15:41:59.406Z",
+  "elapsedMs": 18061,
+  "outcome": "clarification_needed",
+  "question": "This research question — \"which genes switch their dominant isoform between treated and control?\" — is a differential transcript usage (isoform switch) question. It cannot be answered from the data provided. The only input file is a gene-level count matrix (counts.csv, 12000 genes x 13 samples), which sums all isoforms of each gene into one number and therefore has no information about which transcript/isoform is dominant in a sample. Detecting an isoform switch requires transcript-level quantification — the per-transcript quant.sf files from Salmon (or comparable kallisto/RSEM transcript-level output) for each of the 12 samples, imported without summarizing to the gene level, so that per-transcript usage proportions can be tested with DEXSeq/DRIMSeq + stageR (and characterized with IsoformSwitchAnalyzeR). Can you provide the transcript-level Salmon quantification files (quant.sf per sample, or a transcript x sample count/TPM matrix) for these 12 samples? Without them, no valid isoform-switch analysis can be planned — a gene-level DE test would answer a different question (which genes change total expression) and should not be substituted for it.",
+  "usage": {
+    "inputTokens": 236654,
+    "outputTokens": 1247,
+    "cacheCreationInputTokens": 108419,
+    "cacheReadInputTokens": 128187,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "transcript annotation human gene isoform"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTF"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "genome-annotation"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "transcript_level"
+        ]
+      }
+    },
+    {
+      "name": "request_clarification",
+      "input": {
+        "question": "This research question — \"which genes switch their dominant isoform between treated and control?\" — is a differential transcript usage (isoform switch) question. It cannot be answered from the data provided. The only input file is a gene-level count matrix (counts.csv, 12000 genes x 13 samples), which sums all isoforms of each gene into one number and therefore has no information about which transcript/isoform is dominant in a sample. Detecting an isoform switch requires transcript-level quantification — the per-transcript quant.sf files from Salmon (or comparable kallisto/RSEM transcript-level output) for each of the 12 samples, imported without summarizing to the gene level, so that per-transcript usage proportions can be tested with DEXSeq/DRIMSeq + stageR (and characterized with IsoformSwitchAnalyzeR). Can you provide the transcript-level Salmon quantification files (quant.sf per sample, or a transcript x sample count/TPM matrix) for these 12 samples? Without them, no valid isoform-switch analysis can be planned — a gene-level DE test would answer a different question (which genes change total expression) and should not be substituted for it.",
+        "questionContext": "Data context lists only one count file: counts.csv described as \"Raw integer gene-level counts from salmon; first column gene symbol, one column per sample (12000 x 13, CSV)\". This is a gene x sample matrix, not a transcript x sample matrix. The knowledge-recommend service (rule R-0158) confirms: a gene-level count matrix cannot answer a differential transcript usage / isoform switch question, the tools of record (DEXSeq, DRIMSeq, stageR, IsoformSwitchAnalyzeR) require transcript-level quant.sf/abundance.h5 input, and none of them are even installed in this environment's package pool as a further complication. The plan cannot substitute a gene-level DESeq2 test for the isoform-switch question without misrepresenting the analysis."
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}
