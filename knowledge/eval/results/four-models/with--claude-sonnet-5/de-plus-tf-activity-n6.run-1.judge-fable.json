@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on the 6v6 unpaired single-batch design, a justified >=10-in->=6 filter, median-of-ratios inside the model, explicit reference level and contrast, BH at 0.05 with apeglm shrinkage, and decoupleR ulm on the unshrunken Wald stat of all tested genes against CollecTRI with mode of regulation kept and a minimum regulon size of five. Gaps versus the reference are that BH across regulators is not stated, the per-sample activity matrix on vst with limma to check replicate consistency is absent, the design formula is implied rather than written, the outlier policy is 'flag' without a stated action, and the CollecTRI version is only promised in the report step rather than named. The added pathway GSEA is not asked for but is specified correctly (full ranked list, Wald stat, named collections with releases, size window), so it neither helps nor hurts much."
+}

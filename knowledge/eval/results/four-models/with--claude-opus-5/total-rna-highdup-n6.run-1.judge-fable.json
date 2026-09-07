@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan fits the design exactly: DESeq2 Wald on raw counts with ~condition, control releveled as reference, an explicit treated-vs-control contrast, a minimal justified filter (>=10 counts in >=6 samples), BH at 0.05 with apeglm shrinkage and lfcThreshold inside the test, plus edgeR QL as a stated robustness overlap. It correctly explains rather than corrects the duplication rate (no UMIs, no MarkDuplicates), reports rRNA, mitochondrial and complexity fractions per sample, keeps sample_01 with a stated keep/drop policy and sensitivity re-run, and honestly flags that intronic share cannot come from a gene-level matrix. The one gap against the reference is that it reports rRNA/mitochondrial shares but never states a decision rule for removing those genes from the matrix before normalization if their share is large and uneven. Enrichment was not asked for but is done correctly: full Wald-statistic ranked list, explicit universe, named collections with releases, 15-500 size window, seed recorded; the report block is complete with versions, counts, and design caveats."
+}

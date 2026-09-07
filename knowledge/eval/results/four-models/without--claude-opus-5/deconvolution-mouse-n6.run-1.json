@@ -1,0 +1,610 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "deconvolution-mouse-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T01:13:40.825Z",
+  "elapsedMs": 122061,
+  "outcome": "plan_submitted",
+  "planId": "pln-7235ae8a",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Normalization and QC gate for deconvolution input",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon counts are non-integer in general; if any non-integer values appear despite the profile calling them raw integers, round before DESeq2 and report that this was needed",
+          "12,000 genes is fewer than a full mouse annotation — some marker genes of downstream signatures will be missing, so record the matrix's gene universe for later coverage checks",
+          "n=6 per group means a single excluded sample costs 17% of one arm; exclusion must be justified by evidence, not by convention"
+        ],
+        "context": "Design is 6 anti-PD-1 vs 6 isotype control subcutaneous mouse tumors, unpaired, single batch. The one documented data caveat is sample_01's low depth. Composition estimates are ratios of marker-gene expression and are the analysis type most easily corrupted by a depth outlier, so this gate is load-bearing rather than routine.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "DESeq2",
+          "data.table",
+          "ggplot2",
+          "matrixStats"
+        ],
+        "question": "After library-size normalization, is the 12,000 x 12 mouse count matrix suitable for per-sample composition estimation, and should sample_01 (library size ~4x below median) be retained?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Do not apply any human-based transformation or ortholog mapping — keep mouse MGI gene symbols throughout",
+          "Collapse duplicate gene symbols by summing raw counts before normalization, and report how many symbols were duplicated",
+          "Emit BOTH a raw filtered count matrix (for DESeq2) and a normalized log-scale matrix (for deconvolution) — do not feed normalized values into DESeq2",
+          "State explicitly that CPM is used in place of TPM because gene lengths are absent, and that this is an approximation for mMCPcounter input"
+        ],
+        "description": "Load /eval-four-models-without-deconvolution-mouse-n6-1/data/inputs/counts/counts.csv (raw integer Salmon gene-level counts, first column mouse gene symbol, 12 sample columns) and /eval-four-models-without-deconvolution-mouse-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition: anti-PD-1 vs isotype control). Verify sample IDs match between files and that the condition column splits 6 vs 6. Report per-sample library size, detected-gene count, and the exact ratio of sample_01 to the median. Resolve duplicate gene symbols by summing counts. Produce (a) the filtered raw count matrix for DESeq2 downstream, keeping genes with counts >= 10 in at least 6 samples, and (b) a CPM/TPM-like normalized, log2(x+1) expression matrix on the linear scale that mMCPcounter and signature scoring expect — note mMCPcounter was trained on log2(TPM+1)-like input, so state explicitly which scale is emitted and in what units. Since gene lengths are not available in this input, use CPM as the TPM surrogate and record that substitution as a documented approximation. Emit a PCA / sample-correlation plot of the normalized matrix coloured by condition and by library size, so depth-driven separation can be distinguished from treatment-driven separation. Make an explicit, justified retain/exclude decision for sample_01 and write it to a small JSON that downstream steps read; default to retaining it while requiring every downstream comparison to be repeated without it.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv and metadata.csv are confirmed to match 1:1 with a 6/6 condition split reported",
+          "Per-sample library size and detected-gene counts are tabulated, with sample_01's ratio to the median stated numerically",
+          "A normalized log-scale expression matrix (genes x 12 samples, mouse symbols) and a filtered raw count matrix are written to disk with the gene count of each reported",
+          "A PCA or sample-correlation figure coloured by condition and by library size is produced and interpreted in one or two sentences",
+          "An explicit retain/exclude decision for sample_01 with its justification is written to a machine-readable file"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "mMCPcounter murine immune and stromal deconvolution",
+        "agent": "immune-profiling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "mMCPcounter scores are on an arbitrary per-signature scale; a higher score for macrophages than for T cells says nothing about which is more abundant",
+          "With only 12,000 genes in the matrix, some signatures will lose markers — coverage must be checked, not assumed",
+          "Bulk tumor deconvolution cannot separate a genuine influx of cells from a change in per-cell transcriptional output of the same population"
+        ],
+        "context": "This is the only true deconvolution method in the sandbox with murine-derived signatures. immunedeconv 2.1.4, mMCPcounter 1.1.0 and MCPcounter 1.2.0 are all installed; the human methods bundled in immunedeconv (EPIC, quanTIseq, xCell, CIBERSORT) are built on human reference profiles and are not valid on mouse data.",
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "mMCPcounter",
+          "dplyr",
+          "tidyr",
+          "ComplexHeatmap",
+          "ggplot2"
+        ],
+        "question": "What is the per-sample abundance of each murine immune and stromal population in the 12 subcutaneous tumors, estimated with a mouse-native deconvolution signature?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "deconvolution",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use ONLY mouse-derived signatures — do not run EPIC, quanTIseq, xCell, xCell2, CIBERSORT or human MCP-counter on this data, and do not ortholog-map the mouse matrix to human to enable them",
+          "Take the normalized log-scale matrix from T1S1 as input, not raw counts",
+          "Repeat the full score table with sample_01 excluded and store it alongside the primary table for the sensitivity check in T2S1",
+          "Never rescale scores to sum to 100% across cell types"
+        ],
+        "description": "Run mMCPcounter (murine MCP-counter) on the normalized log-scale expression matrix from T1S1 to produce per-sample abundance scores for the murine immune and stromal populations it covers — T cells, CD8 T cells, NK cells, B-derived cells, monocytes/macrophages, monocytes, granulocytes, mast cells, eosinophils, neutrophils, endothelial cells, fibroblasts, and vessels, as the package's signature table defines them. Call it either directly via the mMCPcounter package or through immunedeconv with method 'mmcp_counter'; confirm the entry point against the installed version before committing. Report, for every signature, how many of its marker genes are present in this 12,000-gene matrix and drop or flag any population whose marker coverage is below 50% — a score computed from two surviving markers is noise dressed as a cell type. Output a tidy per-sample x per-cell-type score table (long format, with condition joined from metadata) plus a heatmap of z-scored abundances with samples annotated by condition and by library size. Do NOT convert mMCPcounter scores into percentages or fractions: they are relative abundance scores comparable across samples within one cell type, not across cell types.",
+        "acceptance_criteria": [
+          "A per-sample abundance score is produced for every mMCPcounter population, for all 12 samples",
+          "Marker-gene coverage per population is reported as present/total, with any population below 50% coverage explicitly flagged or excluded",
+          "A tidy long-format score table with sample, cell type, score and condition is written to disk",
+          "A z-scored heatmap annotated by condition and library size is produced",
+          "The output documents that scores are relative and within-cell-type comparable only, not fractions summing to one"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Marker-set immune and stromal signature scoring",
+        "agent": "immune-profiling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Marker sets for closely related myeloid populations overlap heavily; correlated scores between macrophages and monocytes are expected and are not independent evidence",
+          "Foxp3 and Pdcd1 are low-expressed in bulk tumor RNA and may be at or near the detection floor in a 12,000-gene matrix — report their counts, not just their scores",
+          "A signature score is not a cell fraction; treat it as a relative ordering of samples"
+        ],
+        "context": "mMCPcounter alone gives one view built on one signature matrix. An independent, rank-based marker-set score is the cheapest orthogonal check available, and it covers populations mMCPcounter does not resolve separately (Tregs, CD4 vs CD8 split, dendritic cells). Mouse hallmark, mouse immunologic (m7) and mouse GO gene sets, plus a species-tagged cell-type marker table, are all present in this environment; if any is missing at run time, proceed with those that are present and say which were unavailable.",
+        "maxSteps": 200,
+        "packages": [
+          "singscore",
+          "UCell",
+          "GSVA",
+          "GSEABase",
+          "dplyr",
+          "ComplexHeatmap",
+          "ggplot2"
+        ],
+        "question": "Do rank-based scores for curated murine immune and stromal marker sets — including cytotoxicity, exhaustion and checkpoint programs — reproduce the mMCPcounter picture per sample?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "signature_scoring",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Use a rank-based per-sample scorer (singscore or UCell); do not use a z-score-across-samples method that would make each score depend on the cohort composition",
+          "Filter any multi-species marker resource to the mouse rows before building sets, and verify symbols are in MGI case (Cd8a, not CD8A)",
+          "Drop any gene set with fewer than 5 members present in the matrix and report how many sets were dropped",
+          "If a named gene-set resource is absent from the environment at run time, report that explicitly and continue with the resources that are present rather than substituting a human collection"
+        ],
+        "description": "Score each of the 12 samples against curated murine immune and stromal marker sets using a rank-based, per-sample method (singscore or UCell) on the T1S1 normalized matrix. Two families of sets are needed and both must be mouse-native: (i) cell-identity marker sets — draw murine cell-type markers from a curated cell-type marker resource in the environment, filtering to the mouse species rows, covering at minimum T cells, CD8 T cells, CD4 T cells, regulatory T cells, NK cells, B cells, macrophages/monocytes, dendritic cells, neutrophils, endothelial cells and fibroblasts; (ii) functional immune programs — from the mouse hallmark collection (interferon-gamma response, interferon-alpha response, inflammatory response, allograft rejection, TNFA signaling, epithelial-mesenchymal transition, angiogenesis) and from the mouse immunologic signature collection. Additionally report the raw normalized expression of the checkpoint and cytotoxicity genes directly: Pdcd1, Cd274, Pdcd1lg2, Ctla4, Lag3, Havcr2, Tigit, Gzmb, Prf1, Ifng, Cd8a, Cd4, Foxp3, Ncr1, Cd19, Itgam, Adgre1, Pecam1, Col1a1, Acta2 — noting which are absent from the 12,000-gene matrix. Use a rank-based scorer specifically because it is robust to the residual depth heterogeneity that sample_01 introduces. Output a per-sample x per-signature score matrix and a heatmap, and report Spearman correlation between each mMCPcounter population from T1S2 and its corresponding marker-set score as a concordance check.",
+        "acceptance_criteria": [
+          "A per-sample score is produced for every retained cell-identity set and every functional program set, for all 12 samples",
+          "All gene sets used are mouse-symbol native — no human sets, no ortholog mapping — and the source collection of each set is named in the output",
+          "Checkpoint and cytotoxicity gene expression is tabulated per sample with absent genes explicitly listed",
+          "Spearman correlations between mMCPcounter populations and the matching marker-set scores are reported",
+          "A heatmap of z-scored signature scores annotated by condition is produced"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Treated vs control composition testing",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With ~13-25 tested populations at n=6 per arm, BH adjustment will rarely produce an adjusted p below 0.05 even for a real large effect — absence of an adjusted-significant hit is not evidence of no compositional change",
+          "mMCPcounter scores and signature scores are not independent tests; the BH family is conservative in one direction and anti-conservative in another, and this should be stated",
+          "One mouse with an extreme value can drive a Wilcoxon result at this n — inspect the point clouds before interpreting"
+        ],
+        "context": "This is the second half of the research question. The honest reading of a 6-vs-6 unpaired design is that it detects large compositional shifts and misses moderate ones; the step must quantify that rather than let a p-value carry the claim alone.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "tidyr",
+          "ggplot2",
+          "rstatix",
+          "ggpubr",
+          "effectsize"
+        ],
+        "question": "Does any immune or stromal population differ in abundance between the 6 anti-PD-1 and the 6 isotype control tumors, and is the effect large enough to be credible at n=6 per arm?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistical_testing",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use non-parametric tests as primary — do not assume normality of deconvolution scores at n=6",
+          "Report BH-adjusted p-values for the whole family of populations tested; do not report only nominal p-values",
+          "Do not describe any result as significant on nominal p alone when the adjusted p exceeds 0.1 — label it suggestive",
+          "Present the with-sample_01 and without-sample_01 results together, not one in place of the other"
+        ],
+        "description": "For every mMCPcounter population (T1S2) and every signature score (T1S3), test anti-PD-1 vs isotype control with a two-sided Wilcoxon rank-sum test, and report alongside it the group medians, the difference, a rank-biserial or Cliff's delta effect size with a bootstrap confidence interval, and a Benjamini-Hochberg adjusted p-value computed across the full family of tested populations. Because n=6 vs 6 gives a minimum attainable Wilcoxon p of ~0.002 and low power for anything but a large shift, also report a permutation p-value and state, for each population, the smallest effect this design could have detected. Produce per-cell-type boxplots with individual mice overlaid — with n=6, showing every point is mandatory, not decorative. Repeat the entire testing procedure with sample_01 excluded and present the two result sets side by side, flagging any population whose significance status changes. Conclude with a plain statement of which populations show a treatment difference supported by both a nominal test and a large effect size, which show suggestive-only signal, and which show none.",
+        "acceptance_criteria": [
+          "Every mMCPcounter population and signature score is tested with group medians, difference, effect size with CI, raw p and BH-adjusted p reported in one table",
+          "The number of tests in the BH family is stated explicitly",
+          "Boxplots with individual sample points overlaid are produced for all tested populations",
+          "The full test table is reproduced with sample_01 excluded and populations whose conclusion changes are named",
+          "A written statement of the detectable effect size floor for n=6 vs 6 accompanies the results"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Deconvolution-free DE and immune pathway enrichment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group with a single batch may yield few or zero FDR<0.05 genes; a null DE result is a legitimate outcome and must not be rescued by dropping to nominal p-values without labelling them as such",
+          "Salmon gene-level counts may be non-integer — round if needed and record it",
+          "GSEA on a 12,000-gene universe has a restricted background relative to a full mouse annotation; report the universe size with the enrichment results"
+        ],
+        "context": "Deconvolution of bulk tumors is an inference, not a measurement. A concordant transcriptome-wide signal is the strongest cheap evidence that an inferred compositional shift is real; a discordant one is a reason to hold the composition claim loosely. Mouse hallmark, m7 immunologic and mouse GO BP gene sets are present in the environment in MGI symbols.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "EnhancedVolcano",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Does transcriptome-wide differential expression between anti-PD-1 and isotype control tumors independently corroborate the inferred immune composition shift?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use raw integer counts from T1S1, never the normalized matrix, as DESeq2 input",
+          "Use ONLY mouse-symbol gene set collections — running human sets against Mm symbols returns near-empty results silently rather than erroring",
+          "Set the contrast direction explicitly to anti-PD-1 over isotype control and state it in the output",
+          "If a named mouse gene set collection is unavailable at run time, report which and continue with those present"
+        ],
+        "description": "Run DESeq2 on the filtered raw count matrix from T1S1 with design ~condition, contrasting anti-PD-1 against isotype control. Report the number of genes at FDR < 0.05 and at FDR < 0.1, an MA plot, a volcano plot labelling immune and stromal genes, and the full result table with shrunken log2 fold changes (apeglm or ashr). Because sample_01's depth is an order-of-magnitude concern for a size-factor-based method, report its DESeq2 size factor explicitly and refit without it as a sensitivity analysis, comparing the two gene rankings by Spearman correlation. Then run pre-ranked GSEA (fgsea) on the shrunken-LFC-ranked gene list against mouse-native gene set collections — the mouse hallmark collection, the mouse immunologic signature collection, and mouse GO biological process — and report the leading-edge genes of any immune or stromal set that reaches FDR < 0.25. The purpose of this step is corroboration: an increase in an inferred T cell or macrophage population should be accompanied by coherent movement of interferon-gamma response, allograft rejection or inflammatory response sets. Where the two disagree, say so.",
+        "acceptance_criteria": [
+          "DESeq2 results for anti-PD-1 vs isotype control are produced with shrunken LFCs and gene counts at FDR < 0.05 and FDR < 0.1 reported",
+          "DESeq2 size factors for all 12 samples are reported, with sample_01's called out",
+          "A sensitivity refit excluding sample_01 is run and the Spearman correlation of gene rankings between the two fits is reported",
+          "fgsea results against mouse hallmark, mouse immunologic and mouse GO BP collections are reported with NES, FDR and leading-edge genes for immune and stromal sets",
+          "An explicit statement of whether the enrichment result corroborates or contradicts the T1S2/T1S3 composition findings"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Integrated TME composition report",
+        "agent": "immune-profiling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "The temptation at this stage is to build a narrative from the strongest nominal signal; the verdict scheme exists to prevent that",
+          "Concordance between mMCPcounter and marker scoring is partly circular — both read the same marker genes from the same matrix — and should be described as internal consistency, not independent replication"
+        ],
+        "context": "The four upstream steps produce two composition views and two comparison views. Without an explicit reconciliation step, a reader gets four tables and no answer, and the risk is that whichever result looks most favourable gets quoted.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "tidyr",
+          "ComplexHeatmap",
+          "ggplot2",
+          "knitr"
+        ],
+        "question": "What is the consolidated per-sample immune and stromal composition of the 12 tumors, and what is the defensible answer on whether anti-PD-1 changed it?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "synthesis",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "Do not introduce any new statistical test in this step — synthesize only what T1S2, T1S3, T2S1 and T2S2 produced",
+          "Do not report composition as percentages or fractions of the tumor",
+          "State the anti-PD-1 vs isotype control direction of every reported difference",
+          "If no population survives multiple-testing correction, say that as the headline rather than leading with nominal-p findings"
+        ],
+        "description": "Assemble a single report answering both halves of the question. Part one: a per-sample composition table for all 12 mice — mMCPcounter abundance scores (T1S2) beside the corresponding marker-set signature scores (T1S3), with condition, library size and the sample_01 flag as annotations — plus one combined heatmap that a reader can use to read off any individual mouse's tumor microenvironment. Part two: the treated-vs-control comparison, integrating the T2S1 test statistics with the T2S2 DESeq2/GSEA corroboration into a per-population verdict of one of: supported by both methods, supported by deconvolution only, supported by expression only, or no evidence of difference. Explicitly reconcile the two deconvolution views and name every population where mMCPcounter and marker scoring disagree in direction. Close with a limitations paragraph that states in plain terms: the estimates are relative scores and not cell fractions; mMCPcounter is the only murine-signature deconvolution available and its output was not validated against flow cytometry or scRNA-seq here; n=6 per arm detects only large shifts; sample_01's depth was a real risk that was handled by sensitivity analysis; and bulk deconvolution cannot distinguish cell influx from changed per-cell transcription.",
+        "acceptance_criteria": [
+          "A single per-sample table covering all 12 mice with both mMCPcounter and signature scores, annotated by condition and library size, is written to disk",
+          "A combined annotated heatmap of per-sample composition is produced",
+          "Each population carries an explicit verdict of supported-by-both / deconvolution-only / expression-only / no-evidence",
+          "Every population where the two deconvolution approaches disagree in direction is named",
+          "A limitations paragraph covering relative-not-fractional scores, single murine method, n=6 power, the sample_01 sensitivity outcome, and influx-vs-transcription ambiguity is included"
+        ]
+      }
+    ],
+    "title": "Mouse TME deconvolution: anti-PD-1 vs isotype",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is compositional: per-sample immune and stromal content of 12 subcutaneous mouse tumors (6 anti-PD-1, 6 isotype control), and whether composition shifts with treatment. The input is a single raw Salmon count matrix (12,000 genes x 12 samples, mouse gene symbols) plus a 12-row metadata table with a condition column. Two facts drive the design. First, the species is mouse, so the usual human deconvolution references (CIBERSORT LM22, EPIC, quanTIseq, xCell) are invalid — the only method in this sandbox built on murine signatures is mMCPcounter (immunedeconv exposes it as method='mmcp_counter'), so it is the primary estimator, complemented by marker-set scoring against mouse-native gene sets (MSigDB mouse hallmark/immunologic, PanglaoDB mouse markers) which is signature- rather than reference-matrix-based and therefore species-safe. Second, sample_01 has a library size ~4x below the median, which is exactly the situation that distorts abundance scores computed on inadequately normalized data; T1S1 therefore builds a library-size-normalized, log-scaled TPM-like expression matrix and formally decides whether sample_01 is retained, with every downstream step required to report results both with and without it. T1S2 runs mMCPcounter per sample; T1S3 scores curated murine immune/stromal signatures per sample with a rank-based method (singscore/UCell) that is insensitive to residual depth differences and cross-checks the mMCPcounter cell types. T2S1 tests each cell-type score for a treated-vs-control difference with a non-parametric test plus effect size and BH correction, and states plainly that n=6 per arm gives power only for large shifts. T2S2 provides the orthogonal, deconvolution-free evidence: DESeq2 differential expression on raw counts and enrichment against mouse hallmark/immunologic sets, which tells whether an inferred composition change is corroborated by the transcriptome-wide signal. T3S1 assembles the per-sample composition table and the between-group comparison into a single reconciled report, flagging where the methods disagree."
+  },
+  "usage": {
+    "inputTokens": 98387,
+    "outputTokens": 8845,
+    "cacheCreationInputTokens": 80215,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "mMCPcounter",
+          "ConsensusTME",
+          "MCPcounter",
+          "quantiseqr",
+          "GSVA",
+          "UCell",
+          "decoupleR",
+          "DESeq2",
+          "edgeR",
+          "singscore",
+          "xCell2",
+          "EPIC",
+          "granulator",
+          "BayesPrism",
+          "SCDC",
+          "MuSiC"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "mouse",
+        "limit": 80
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Mouse TME deconvolution: anti-PD-1 vs isotype",
+          "analytical_narrative": "The question is compositional: per-sample immune and stromal content of 12 subcutaneous mouse tumors (6 anti-PD-1, 6 isotype control), and whether composition shifts with treatment. The input is a single raw Salmon count matrix (12,000 genes x 12 samples, mouse gene symbols) plus a 12-row metadata table with a condition column. Two facts drive the design. First, the species is mouse, so the usual human deconvolution references (CIBERSORT LM22, EPIC, quanTIseq, xCell) are invalid — the only method in this sandbox built on murine signatures is mMCPcounter (immunedeconv exposes it as method='mmcp_counter'), so it is the primary estimator, complemented by marker-set scoring against mouse-native gene sets (MSigDB mouse hallmark/immunologic, PanglaoDB mouse markers) which is signature- rather than reference-matrix-based and therefore species-safe. Second, sample_01 has a library size ~4x below the median, which is exactly the situation that distorts abundance scores computed on inadequately normalized data; T1S1 therefore builds a library-size-normalized, log-scaled TPM-like expression matrix and formally decides whether sample_01 is retained, with every downstream step required to report results both with and without it. T1S2 runs mMCPcounter per sample; T1S3 scores curated murine immune/stromal signatures per sample with a rank-based method (singscore/UCell) that is insensitive to residual depth differences and cross-checks the mMCPcounter cell types. T2S1 tests each cell-type score for a treated-vs-control difference with a non-parametric test plus effect size and BH correction, and states plainly that n=6 per arm gives power only for large shifts. T2S2 provides the orthogonal, deconvolution-free evidence: DESeq2 differential expression on raw counts and enrichment against mouse hallmark/immunologic sets, which tells whether an inferred composition change is corroborated by the transcriptome-wide signal. T3S1 assembles the per-sample composition table and the between-group comparison into a single reconciled report, flagging where the methods disagree.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Normalization and QC gate for deconvolution input",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "After library-size normalization, is the 12,000 x 12 mouse count matrix suitable for per-sample composition estimation, and should sample_01 (library size ~4x below median) be retained?",
+              "description": "Load /eval-four-models-without-deconvolution-mouse-n6-1/data/inputs/counts/counts.csv (raw integer Salmon gene-level counts, first column mouse gene symbol, 12 sample columns) and /eval-four-models-without-deconvolution-mouse-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition: anti-PD-1 vs isotype control). Verify sample IDs match between files and that the condition column splits 6 vs 6. Report per-sample library size, detected-gene count, and the exact ratio of sample_01 to the median. Resolve duplicate gene symbols by summing counts. Produce (a) the filtered raw count matrix for DESeq2 downstream, keeping genes with counts >= 10 in at least 6 samples, and (b) a CPM/TPM-like normalized, log2(x+1) expression matrix on the linear scale that mMCPcounter and signature scoring expect — note mMCPcounter was trained on log2(TPM+1)-like input, so state explicitly which scale is emitted and in what units. Since gene lengths are not available in this input, use CPM as the TPM surrogate and record that substitution as a documented approximation. Emit a PCA / sample-correlation plot of the normalized matrix coloured by condition and by library size, so depth-driven separation can be distinguished from treatment-driven separation. Make an explicit, justified retain/exclude decision for sample_01 and write it to a small JSON that downstream steps read; default to retaining it while requiring every downstream comparison to be repeated without it.",
+              "question_context": "",
+              "context": "Design is 6 anti-PD-1 vs 6 isotype control subcutaneous mouse tumors, unpaired, single batch. The one documented data caveat is sample_01's low depth. Composition estimates are ratios of marker-gene expression and are the analysis type most easily corrupted by a depth outlier, so this gate is load-bearing rather than routine.",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv and metadata.csv are confirmed to match 1:1 with a 6/6 condition split reported",
+                "Per-sample library size and detected-gene counts are tabulated, with sample_01's ratio to the median stated numerically",
+                "A normalized log-scale expression matrix (genes x 12 samples, mouse symbols) and a filtered raw count matrix are written to disk with the gene count of each reported",
+                "A PCA or sample-correlation figure coloured by condition and by library size is produced and interpreted in one or two sentences",
+                "An explicit retain/exclude decision for sample_01 with its justification is written to a machine-readable file"
+              ],
+              "constraints": [
+                "Do not apply any human-based transformation or ortholog mapping — keep mouse MGI gene symbols throughout",
+                "Collapse duplicate gene symbols by summing raw counts before normalization, and report how many symbols were duplicated",
+                "Emit BOTH a raw filtered count matrix (for DESeq2) and a normalized log-scale matrix (for deconvolution) — do not feed normalized values into DESeq2",
+                "State explicitly that CPM is used in place of TPM because gene lengths are absent, and that this is an approximation for mMCPcounter input"
+              ],
+              "caveats": [
+                "Salmon counts are non-integer in general; if any non-integer values appear despite the profile calling them raw integers, round before DESeq2 and report that this was needed",
+                "12,000 genes is fewer than a full mouse annotation — some marker genes of downstream signatures will be missing, so record the matrix's gene universe for later coverage checks",
+                "n=6 per group means a single excluded sample costs 17% of one arm; exclusion must be justified by evidence, not by convention"
+              ],
+              "depends_on": [],
+              "packages": [
+                "edgeR",
+                "limma",
+                "DESeq2",
+                "data.table",
+                "ggplot2",
+                "matrixStats"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "mMCPcounter murine immune and stromal deconvolution",
+              "track": "T1",
+              "step_type": "deconvolution",
+              "question": "What is the per-sample abundance of each murine immune and stromal population in the 12 subcutaneous tumors, estimated with a mouse-native deconvolution signature?",
+              "description": "Run mMCPcounter (murine MCP-counter) on the normalized log-scale expression matrix from T1S1 to produce per-sample abundance scores for the murine immune and stromal populations it covers — T cells, CD8 T cells, NK cells, B-derived cells, monocytes/macrophages, monocytes, granulocytes, mast cells, eosinophils, neutrophils, endothelial cells, fibroblasts, and vessels, as the package's signature table defines them. Call it either directly via the mMCPcounter package or through immunedeconv with method 'mmcp_counter'; confirm the entry point against the installed version before committing. Report, for every signature, how many of its marker genes are present in this 12,000-gene matrix and drop or flag any population whose marker coverage is below 50% — a score computed from two surviving markers is noise dressed as a cell type. Output a tidy per-sample x per-cell-type score table (long format, with condition joined from metadata) plus a heatmap of z-scored abundances with samples annotated by condition and by library size. Do NOT convert mMCPcounter scores into percentages or fractions: they are relative abundance scores comparable across samples within one cell type, not across cell types.",
+              "question_context": "",
+              "context": "This is the only true deconvolution method in the sandbox with murine-derived signatures. immunedeconv 2.1.4, mMCPcounter 1.1.0 and MCPcounter 1.2.0 are all installed; the human methods bundled in immunedeconv (EPIC, quanTIseq, xCell, CIBERSORT) are built on human reference profiles and are not valid on mouse data.",
+              "acceptance_criteria": [
+                "A per-sample abundance score is produced for every mMCPcounter population, for all 12 samples",
+                "Marker-gene coverage per population is reported as present/total, with any population below 50% coverage explicitly flagged or excluded",
+                "A tidy long-format score table with sample, cell type, score and condition is written to disk",
+                "A z-scored heatmap annotated by condition and library size is produced",
+                "The output documents that scores are relative and within-cell-type comparable only, not fractions summing to one"
+              ],
+              "constraints": [
+                "Use ONLY mouse-derived signatures — do not run EPIC, quanTIseq, xCell, xCell2, CIBERSORT or human MCP-counter on this data, and do not ortholog-map the mouse matrix to human to enable them",
+                "Take the normalized log-scale matrix from T1S1 as input, not raw counts",
+                "Repeat the full score table with sample_01 excluded and store it alongside the primary table for the sensitivity check in T2S1",
+                "Never rescale scores to sum to 100% across cell types"
+              ],
+              "caveats": [
+                "mMCPcounter scores are on an arbitrary per-signature scale; a higher score for macrophages than for T cells says nothing about which is more abundant",
+                "With only 12,000 genes in the matrix, some signatures will lose markers — coverage must be checked, not assumed",
+                "Bulk tumor deconvolution cannot separate a genuine influx of cells from a change in per-cell transcriptional output of the same population"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "packages": [
+                "immunedeconv",
+                "mMCPcounter",
+                "dplyr",
+                "tidyr",
+                "ComplexHeatmap",
+                "ggplot2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Marker-set immune and stromal signature scoring",
+              "track": "T1",
+              "step_type": "signature_scoring",
+              "question": "Do rank-based scores for curated murine immune and stromal marker sets — including cytotoxicity, exhaustion and checkpoint programs — reproduce the mMCPcounter picture per sample?",
+              "description": "Score each of the 12 samples against curated murine immune and stromal marker sets using a rank-based, per-sample method (singscore or UCell) on the T1S1 normalized matrix. Two families of sets are needed and both must be mouse-native: (i) cell-identity marker sets — draw murine cell-type markers from a curated cell-type marker resource in the environment, filtering to the mouse species rows, covering at minimum T cells, CD8 T cells, CD4 T cells, regulatory T cells, NK cells, B cells, macrophages/monocytes, dendritic cells, neutrophils, endothelial cells and fibroblasts; (ii) functional immune programs — from the mouse hallmark collection (interferon-gamma response, interferon-alpha response, inflammatory response, allograft rejection, TNFA signaling, epithelial-mesenchymal transition, angiogenesis) and from the mouse immunologic signature collection. Additionally report the raw normalized expression of the checkpoint and cytotoxicity genes directly: Pdcd1, Cd274, Pdcd1lg2, Ctla4, Lag3, Havcr2, Tigit, Gzmb, Prf1, Ifng, Cd8a, Cd4, Foxp3, Ncr1, Cd19, Itgam, Adgre1, Pecam1, Col1a1, Acta2 — noting which are absent from the 12,000-gene matrix. Use a rank-based scorer specifically because it is robust to the residual depth heterogeneity that sample_01 introduces. Output a per-sample x per-signature score matrix and a heatmap, and report Spearman correlation between each mMCPcounter population from T1S2 and its corresponding marker-set score as a concordance check.",
+              "question_context": "",
+              "context": "mMCPcounter alone gives one view built on one signature matrix. An independent, rank-based marker-set score is the cheapest orthogonal check available, and it covers populations mMCPcounter does not resolve separately (Tregs, CD4 vs CD8 split, dendritic cells). Mouse hallmark, mouse immunologic (m7) and mouse GO gene sets, plus a species-tagged cell-type marker table, are all present in this environment; if any is missing at run time, proceed with those that are present and say which were unavailable.",
+              "acceptance_criteria": [
+                "A per-sample score is produced for every retained cell-identity set and every functional program set, for all 12 samples",
+                "All gene sets used are mouse-symbol native — no human sets, no ortholog mapping — and the source collection of each set is named in the output",
+                "Checkpoint and cytotoxicity gene expression is tabulated per sample with absent genes explicitly listed",
+                "Spearman correlations between mMCPcounter populations and the matching marker-set scores are reported",
+                "A heatmap of z-scored signature scores annotated by condition is produced"
+              ],
+              "constraints": [
+                "Use a rank-based per-sample scorer (singscore or UCell); do not use a z-score-across-samples method that would make each score depend on the cohort composition",
+                "Filter any multi-species marker resource to the mouse rows before building sets, and verify symbols are in MGI case (Cd8a, not CD8A)",
+                "Drop any gene set with fewer than 5 members present in the matrix and report how many sets were dropped",
+                "If a named gene-set resource is absent from the environment at run time, report that explicitly and continue with the resources that are present rather than substituting a human collection"
+              ],
+              "caveats": [
+                "Marker sets for closely related myeloid populations overlap heavily; correlated scores between macrophages and monocytes are expected and are not independent evidence",
+                "Foxp3 and Pdcd1 are low-expressed in bulk tumor RNA and may be at or near the detection floor in a 12,000-gene matrix — report their counts, not just their scores",
+                "A signature score is not a cell fraction; treat it as a relative ordering of samples"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "packages": [
+                "singscore",
+                "UCell",
+                "GSVA",
+                "GSEABase",
+                "dplyr",
+                "ComplexHeatmap",
+                "ggplot2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "immune-profiling-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Treated vs control composition testing",
+              "track": "T2",
+              "step_type": "statistical_testing",
+              "question": "Does any immune or stromal population differ in abundance between the 6 anti-PD-1 and the 6 isotype control tumors, and is the effect large enough to be credible at n=6 per arm?",
+              "description": "For every mMCPcounter population (T1S2) and every signature score (T1S3), test anti-PD-1 vs isotype control with a two-sided Wilcoxon rank-sum test, and report alongside it the group medians, the difference, a rank-biserial or Cliff's delta effect size with a bootstrap confidence interval, and a Benjamini-Hochberg adjusted p-value computed across the full family of tested populations. Because n=6 vs 6 gives a minimum attainable Wilcoxon p of ~0.002 and low power for anything but a large shift, also report a permutation p-value and state, for each population, the smallest effect this design could have detected. Produce per-cell-type boxplots with individual mice overlaid — with n=6, showing every point is mandatory, not decorative. Repeat the entire testing procedure with sample_01 excluded and present the two result sets side by side, flagging any population whose significance status changes. Conclude with a plain statement of which populations show a treatment difference supported by both a nominal test and a large effect size, which show suggestive-only signal, and which show none.",
+              "question_context": "",
+              "context": "This is the second half of the research question. The honest reading of a 6-vs-6 unpaired design is that it detects large compositional shifts and misses moderate ones; the step must quantify that rather than let a p-value carry the claim alone.",
+              "acceptance_criteria": [
+                "Every mMCPcounter population and signature score is tested with group medians, difference, effect size with CI, raw p and BH-adjusted p reported in one table",
+                "The number of tests in the BH family is stated explicitly",
+                "Boxplots with individual sample points overlaid are produced for all tested populations",
+                "The full test table is reproduced with sample_01 excluded and populations whose conclusion changes are named",
+                "A written statement of the detectable effect size floor for n=6 vs 6 accompanies the results"
+              ],
+              "constraints": [
+                "Use non-parametric tests as primary — do not assume normality of deconvolution scores at n=6",
+                "Report BH-adjusted p-values for the whole family of populations tested; do not report only nominal p-values",
+                "Do not describe any result as significant on nominal p alone when the adjusted p exceeds 0.1 — label it suggestive",
+                "Present the with-sample_01 and without-sample_01 results together, not one in place of the other"
+              ],
+              "caveats": [
+                "With ~13-25 tested populations at n=6 per arm, BH adjustment will rarely produce an adjusted p below 0.05 even for a real large effect — absence of an adjusted-significant hit is not evidence of no compositional change",
+                "mMCPcounter scores and signature scores are not independent tests; the BH family is conservative in one direction and anti-conservative in another, and this should be stated",
+                "One mouse with an extreme value can drive a Wilcoxon result at this n — inspect the point clouds before interpreting"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "packages": [
+                "dplyr",
+                "tidyr",
+                "ggplot2",
+                "rstatix",
+                "ggpubr",
+                "effectsize"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Deconvolution-free DE and immune pathway enrichment",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Does transcriptome-wide differential expression between anti-PD-1 and isotype control tumors independently corroborate the inferred immune composition shift?",
+              "description": "Run DESeq2 on the filtered raw count matrix from T1S1 with design ~condition, contrasting anti-PD-1 against isotype control. Report the number of genes at FDR < 0.05 and at FDR < 0.1, an MA plot, a volcano plot labelling immune and stromal genes, and the full result table with shrunken log2 fold changes (apeglm or ashr). Because sample_01's depth is an order-of-magnitude concern for a size-factor-based method, report its DESeq2 size factor explicitly and refit without it as a sensitivity analysis, comparing the two gene rankings by Spearman correlation. Then run pre-ranked GSEA (fgsea) on the shrunken-LFC-ranked gene list against mouse-native gene set collections — the mouse hallmark collection, the mouse immunologic signature collection, and mouse GO biological process — and report the leading-edge genes of any immune or stromal set that reaches FDR < 0.25. The purpose of this step is corroboration: an increase in an inferred T cell or macrophage population should be accompanied by coherent movement of interferon-gamma response, allograft rejection or inflammatory response sets. Where the two disagree, say so.",
+              "question_context": "",
+              "context": "Deconvolution of bulk tumors is an inference, not a measurement. A concordant transcriptome-wide signal is the strongest cheap evidence that an inferred compositional shift is real; a discordant one is a reason to hold the composition claim loosely. Mouse hallmark, m7 immunologic and mouse GO BP gene sets are present in the environment in MGI symbols.",
+              "acceptance_criteria": [
+                "DESeq2 results for anti-PD-1 vs isotype control are produced with shrunken LFCs and gene counts at FDR < 0.05 and FDR < 0.1 reported",
+                "DESeq2 size factors for all 12 samples are reported, with sample_01's called out",
+                "A sensitivity refit excluding sample_01 is run and the Spearman correlation of gene rankings between the two fits is reported",
+                "fgsea results against mouse hallmark, mouse immunologic and mouse GO BP collections are reported with NES, FDR and leading-edge genes for immune and stromal sets",
+                "An explicit statement of whether the enrichment result corroborates or contradicts the T1S2/T1S3 composition findings"
+              ],
+              "constraints": [
+                "Use raw integer counts from T1S1, never the normalized matrix, as DESeq2 input",
+                "Use ONLY mouse-symbol gene set collections — running human sets against Mm symbols returns near-empty results silently rather than erroring",
+                "Set the contrast direction explicitly to anti-PD-1 over isotype control and state it in the output",
+                "If a named mouse gene set collection is unavailable at run time, report which and continue with those present"
+              ],
+              "caveats": [
+                "n=6 per group with a single batch may yield few or zero FDR<0.05 genes; a null DE result is a legitimate outcome and must not be rescued by dropping to nominal p-values without labelling them as such",
+                "Salmon gene-level counts may be non-integer — round if needed and record it",
+                "GSEA on a 12,000-gene universe has a restricted background relative to a full mouse annotation; report the universe size with the enrichment results"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "fgsea",
+                "EnhancedVolcano",
+                "dplyr",
+                "ggplot2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Integrated TME composition report",
+              "track": "T3",
+              "step_type": "synthesis",
+              "question": "What is the consolidated per-sample immune and stromal composition of the 12 tumors, and what is the defensible answer on whether anti-PD-1 changed it?",
+              "description": "Assemble a single report answering both halves of the question. Part one: a per-sample composition table for all 12 mice — mMCPcounter abundance scores (T1S2) beside the corresponding marker-set signature scores (T1S3), with condition, library size and the sample_01 flag as annotations — plus one combined heatmap that a reader can use to read off any individual mouse's tumor microenvironment. Part two: the treated-vs-control comparison, integrating the T2S1 test statistics with the T2S2 DESeq2/GSEA corroboration into a per-population verdict of one of: supported by both methods, supported by deconvolution only, supported by expression only, or no evidence of difference. Explicitly reconcile the two deconvolution views and name every population where mMCPcounter and marker scoring disagree in direction. Close with a limitations paragraph that states in plain terms: the estimates are relative scores and not cell fractions; mMCPcounter is the only murine-signature deconvolution available and its output was not validated against flow cytometry or scRNA-seq here; n=6 per arm detects only large shifts; sample_01's depth was a real risk that was handled by sensitivity analysis; and bulk deconvolution cannot distinguish cell influx from changed per-cell transcription.",
+              "question_context": "",
+              "context": "The four upstream steps produce two composition views and two comparison views. Without an explicit reconciliation step, a reader gets four tables and no answer, and the risk is that whichever result looks most favourable gets quoted.",
+              "acceptance_criteria": [
+                "A single per-sample table covering all 12 mice with both mMCPcounter and signature scores, annotated by condition and library size, is written to disk",
+                "A combined annotated heatmap of per-sample composition is produced",
+                "Each population carries an explicit verdict of supported-by-both / deconvolution-only / expression-only / no-evidence",
+                "Every population where the two deconvolution approaches disagree in direction is named",
+                "A limitations paragraph covering relative-not-fractional scores, single murine method, n=6 power, the sample_01 sensitivity outcome, and influx-vs-transcription ambiguity is included"
+              ],
+              "constraints": [
+                "Do not introduce any new statistical test in this step — synthesize only what T1S2, T1S3, T2S1 and T2S2 produced",
+                "Do not report composition as percentages or fractions of the tumor",
+                "State the anti-PD-1 vs isotype control direction of every reported difference",
+                "If no population survives multiple-testing correction, say that as the headline rather than leading with nominal-p findings"
+              ],
+              "caveats": [
+                "The temptation at this stage is to build a narrative from the strongest nominal signal; the verdict scheme exists to prevent that",
+                "Concordance between mMCPcounter and marker scoring is partly circular — both read the same marker genes from the same matrix — and should be described as internal consistency, not independent replication"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "packages": [
+                "dplyr",
+                "tidyr",
+                "ComplexHeatmap",
+                "ggplot2",
+                "knitr"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

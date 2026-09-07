@@ -1,0 +1,677 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "deconvolution-tpm-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T21:53:04.197Z",
+  "elapsedMs": 180318,
+  "outcome": "plan_submitted",
+  "planId": "pln-b6af05af",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load and QC the TPM matrix for deconvolution readiness",
+        "agent": "immune-profiling-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "readr",
+          "dplyr",
+          "tibble"
+        ],
+        "question": "Does the tpm.csv (12000 genes x 12 samples, gene-symbol rows, TPM columns) load cleanly with valid HGNC symbols as rownames and non-log-scale values suitable as input to quanTIseq/EPIC/MCPcounter/xCell/ConsensusTME/ESTIMATE, and what is the depth/library-composition profile of each of the 12 samples including the flagged low-depth sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Expression matrix loaded with genes as rows (HGNC symbols, deduplicated by max or mean if duplicates exist) and 12 samples as columns, values confirmed non-log (sums per column near 1e6 as expected for TPM)",
+          "Metadata.csv joined to matrix columns confirming the 6 treated vs 6 control label assignment matches sample order",
+          "Per-sample summary (number of detected genes, total TPM sanity check, distribution of top-expressed genes) computed and sample_01 flagged/annotated as the low-depth sample in the output table",
+          "A cleaned expression matrix object (matrix with rownames=symbols) and matching sample metadata saved for use by downstream deconvolution steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Run four orthogonal TPM-native immune/stromal deconvolution methods",
+        "agent": "immune-profiling-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "quantiseqr",
+          "EPIC",
+          "MCPcounter",
+          "ConsensusTME",
+          "GSVA"
+        ],
+        "question": "What are the estimated immune and stromal cell-type fractions/scores for each of the 12 melanoma biopsy samples using quanTIseq, EPIC, MCPcounter, and ConsensusTME (all TPM-compatible, HGNC-symbol methods bundled in the immunedeconv R package), with ConsensusTME run with the 'skcm' (melanoma) cancer-type indication for all 12 samples?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "quanTIseq run with tumor=TRUE, arrays=FALSE, scale_mrna=TRUE on the cleaned TPM matrix from T1S1, returning cell-type fractions (0-1, summing to ~1 per sample including 'uncharacterized cell')",
+          "EPIC run with tumor=TRUE, scale_mrna=TRUE, returning absolute-ish cell fractions per sample",
+          "MCPcounter run via deconvolute_mcp_counter with HUGO_symbols feature type and auto-detected log transform, returning per-cell-type abundance scores (not fractions — must be reported as such, not normalized to sum to 1)",
+          "ConsensusTME run with indications=rep('skcm', 12) and stat_method='ssgsea', returning per-cell-type enrichment scores",
+          "All four result matrices (cell type x 12 samples) saved with clear method labels; sample_01 retained in all outputs and annotated as low-depth in accompanying notes",
+          "If any method's underlying package or required internal data cannot be loaded in this sandbox, the failure is reported explicitly for that method rather than silently omitted, and the other three methods' results still delivered"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Reference-free enrichment scoring: xCell and ESTIMATE for stromal/immune/purity context",
+        "agent": "immune-profiling-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "xCell",
+          "estimate"
+        ],
+        "question": "What do xCell's 64 immune/stromal cell-type enrichment scores and the ESTIMATE algorithm's StromalScore/ImmuneScore/ESTIMATEScore/TumorPurity indicate for each of the 12 melanoma samples, providing a broader stromal cell-type panel (fibroblasts, endothelial cells, adipocytes) than the four methods in T1S2 offer?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "xCell run via immunedeconv::deconvolute or xCell::xCellAnalysis on the cleaned TPM matrix (arrays=FALSE), returning all ~64 cell-type enrichment scores per sample including stromal types (Fibroblasts, Endothelial cells, Adipocytes) alongside immune types",
+          "ESTIMATE run via deconvolute_estimate on the cleaned TPM matrix, returning StromalScore, ImmuneScore, ESTIMATEScore, and TumorPurity per sample, with the documented caveat that TumorPurity was calibrated on microarray data and is less reliable on RNA-seq stated in the output notes",
+          "Both result tables saved with method labels; sample_01 flagged as low-depth in the output",
+          "NA or out-of-bounds TumorPurity values (if any) reported explicitly rather than silently dropped"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Treated-vs-control comparison of every cell-type estimate across all six methods",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "rstatix",
+          "dplyr",
+          "tidyr"
+        ],
+        "question": "For each cell type reported by each of the six deconvolution/scoring approaches (quanTIseq, EPIC, MCPcounter, ConsensusTME, xCell, ESTIMATE), does the immune or stromal cell abundance/score differ between the 6 anti-PD-1-treated and 6 untreated (control) melanoma biopsies, using unpaired non-parametric testing appropriate for this small single-batch design?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistics",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Wilcoxon rank-sum (Mann-Whitney) test run per cell type per method comparing treated (n=6) vs control (n=6), since n=6/arm is too small to assume normality and design is unpaired",
+          "Raw p-values and Benjamini-Hochberg FDR-adjusted q-values reported per cell type per method; explicit statement that with only 6 vs 6 samples this analysis is underpowered for anything but large effect sizes, and results are exploratory/hypothesis-generating, not confirmatory",
+          "A sensitivity check re-running the same tests with sample_01 excluded, to show whether its low sequencing depth is driving any nominally significant result — both with- and without-sample_01 results reported side by side",
+          "Summary table combining effect direction (treated higher/lower) and significance flag (FDR<0.1 as an exploratory threshold, explicitly labeled as such and not a conventional 0.05 confirmatory cutoff) across all methods for cell types that appear in more than one method (e.g., CD8 T cells, macrophages/monocytes, B cells, NK cells), to assess concordance across independent algorithms rather than trusting any single method's call",
+          "No claim of statistical significance is overstated given the small n; language in the output explicitly separates 'nominal trend' from 'robust finding'"
+        ]
+      },
+      {
+        "id": "T1S5",
+        "name": "Visualize composition per sample and treatment-group comparison",
+        "agent": "immune-profiling-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "ComplexHeatmap",
+          "pheatmap",
+          "ggpubr",
+          "reshape2"
+        ],
+        "question": "How does the immune/stromal cell-type composition profile visually differ across the 12 individual melanoma samples and between the anti-PD-1-treated and control groups, across the six deconvolution approaches?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "visualization",
+        "depends_on": [
+          "T1S4"
+        ],
+        "acceptance_criteria": [
+          "Stacked bar plot of quanTIseq (and separately EPIC) fractional composition per sample, samples ordered/colored by treatment group, sample_01 visually annotated as low-depth",
+          "Heatmap (z-scored per cell type across samples) of MCPcounter, ConsensusTME, and xCell scores with samples annotated by treatment group and a separate annotation row/column flagging sample_01",
+          "Boxplots/violin plots with individual sample points for any cell type flagged as nominally different (FDR<0.1) in T1S4, split by treatment group, one plot per such cell type per method",
+          "ESTIMATE ImmuneScore/StromalScore/TumorPurity plotted per sample grouped by treatment",
+          "All figures saved as image files with clear titles identifying the method and cell type; sample_01's low-depth status visible in every plot that shows per-sample data"
+        ]
+      }
+    ],
+    "title": "Melanoma anti-PD-1 immune/stromal deconvolution from TPM",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The core delivered gene-level TPM only (12000 genes x 12 samples, HGNC symbols, Salmon-derived) with no raw counts and no quant directories — this rules out any count-based differential expression or CIBERSORTx-style methods that need raw counts, and directly determines the design: TPM-native immune/stromal deconvolution methods only. quanTIseq, EPIC, MCPcounter, xCell, ConsensusTME, and the ESTIMATE algorithm (all bundled in the immunedeconv R package, confirmed installed) natively accept non-log TPM matrices with HGNC gene symbols as rownames, matching the input exactly. CIBERSORT itself is excluded because it requires a proprietary LM22.txt signature matrix and CIBERSORT.R binary obtained under academic license from the Stanford site — neither is present in this environment's reference store, so it is dropped rather than planned around. TIMER and ConsensusTME require a per-sample cancer-type indication; since all 12 samples are melanoma biopsies this is straightforward ('skcm' for TIMER, and ConsensusTME's analogous code) and is set explicitly in that step. Because the design is unpaired 6 vs 6 with one flagged low-depth sample (sample_01, ~1/4 median depth), the plan (a) runs four orthogonal reference-free/reference-based methods to cross-validate cell-fraction estimates rather than trust a single algorithm, (b) explicitly flags sample_01 in every downstream table/plot instead of silently dropping it, since low sequencing depth degrades TPM-based signature scoring (rare transcripts undercounted) but there is no principled floor to exclude a sample outright from a 6vs6 design without erasing 1/6 of one arm, and (c) uses non-parametric two-group tests (Wilcoxon rank-sum) given n=6 per arm, not t-tests, and treats results as exploratory/hypothesis-generating given the small unpaired n. A stromal/microenvironment lens (ESTIMATE, ConsensusTME's stromal signatures, xCell's stromal cell types) is included because the research question explicitly asks about stromal, not only immune, composition. Results are synthesized as per-sample composition heatmaps/bar plots and treatment-group comparison statistics for every cell type each method reports, with methods reported side by side rather than collapsed into one number, since the four methods differ in what they call 'CD8 T cell' or 'macrophage' and forcing agreement would overclaim precision the data does not support."
+  },
+  "usage": {
+    "inputTokens": 4986225,
+    "outputTokens": 8010,
+    "cacheCreationInputTokens": 325796,
+    "cacheReadInputTokens": 4659973,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune deconvolution signature LM22 xCell"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "xCell",
+          "xCell2",
+          "MCPcounter",
+          "EPIC",
+          "quantiseqr",
+          "ConsensusTME",
+          "GSVA",
+          "singscore"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/scgate-human-tme"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "cell-typing"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cell-typing",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immunedeconv signature matrix reference LM22 CIBERSORT"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "MSigDB hallmark gene sets"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "CIBERSORT",
+          "BisqueRNA",
+          "granulator",
+          "immunedeconv",
+          "MCPcounter",
+          "EPIC",
+          "quantiseqr",
+          "ConsensusTME",
+          "xCell",
+          "xCell2"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "immunedeconv",
+        "query": "available deconvolution methods for TPM data, does it require network access, xCell EPIC quanTIseq MCPcounter usage"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "immunedeconv",
+        "query": "deconvolute function TPM methods xcell mcp_counter epic quantiseq"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/omnideconv/immunedeconv",
+        "query": "deconvolute function input format TPM gene symbols methods xcell mcp_counter epic quantiseq tumor indication"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "melanoma anti-PD-1 tumor microenvironment immune deconvolution bulk RNA-seq quanTIseq MCPcounter",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "melanoma anti-PD-1 immune cell deconvolution bulk RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "quanTIseq immune cell quantification RNA-seq tumor",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "benchmarking immune deconvolution methods bulk RNA-seq comparison",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/omnideconv/immunedeconv",
+        "query": "timer and consensus_tme require indications parameter melanoma skcm cancer type code"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "CIBERSORT LM22"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/omnideconv/immunedeconv",
+        "query": "cibersort requires binary and signature matrix setup not available offline error"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/msigdb-immunologic-human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR",
+          "GSVA",
+          "singscore",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ggpubr",
+          "rstatix",
+          "pheatmap",
+          "ComplexHeatmap",
+          "vegan"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EPIC",
+          "quantiseqr",
+          "MCPcounter",
+          "ConsensusTME",
+          "immunedeconv",
+          "biomaRt",
+          "curl",
+          "httr"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "Biobase"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/omnideconv/immunedeconv",
+        "query": "R package biomaRt network requirement mouse conversion offline no internet does deconvolute call the internet at runtime"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtex normal tissue skin"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/gtex-v8"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/gtex-v8/8"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/panglaodb-markers"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ggplot2",
+          "reshape2",
+          "tidyr",
+          "dplyr",
+          "corrplot"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EPIC",
+          "quantiseqr",
+          "MCPcounter",
+          "xCell",
+          "immunedeconv",
+          "GSVA",
+          "singscore",
+          "ggpubr",
+          "rstatix"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ComplexHeatmap",
+          "pheatmap",
+          "circlize"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "scGate",
+          "Seurat"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "stats",
+          "car"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "readr",
+          "tibble"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "patchwork",
+          "cowplot"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "EPIC quanTIseq MCP-counter ConsensusTME cross-method concordance tumor infiltrating lymphocytes agreement",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Sturm comprehensive evaluation transcriptome deconvolution immune cell types",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "31510660"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "EPIC estimation immune cell proportions from tumor gene expression Racle",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "MCP-counter transcriptomic estimate populations immune stromal cells tumor Becht",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Melanoma anti-PD-1 immune/stromal deconvolution from TPM",
+          "analytical_narrative": "The core delivered gene-level TPM only (12000 genes x 12 samples, HGNC symbols, Salmon-derived) with no raw counts and no quant directories — this rules out any count-based differential expression or CIBERSORTx-style methods that need raw counts, and directly determines the design: TPM-native immune/stromal deconvolution methods only. quanTIseq, EPIC, MCPcounter, xCell, ConsensusTME, and the ESTIMATE algorithm (all bundled in the immunedeconv R package, confirmed installed) natively accept non-log TPM matrices with HGNC gene symbols as rownames, matching the input exactly. CIBERSORT itself is excluded because it requires a proprietary LM22.txt signature matrix and CIBERSORT.R binary obtained under academic license from the Stanford site — neither is present in this environment's reference store, so it is dropped rather than planned around. TIMER and ConsensusTME require a per-sample cancer-type indication; since all 12 samples are melanoma biopsies this is straightforward ('skcm' for TIMER, and ConsensusTME's analogous code) and is set explicitly in that step. Because the design is unpaired 6 vs 6 with one flagged low-depth sample (sample_01, ~1/4 median depth), the plan (a) runs four orthogonal reference-free/reference-based methods to cross-validate cell-fraction estimates rather than trust a single algorithm, (b) explicitly flags sample_01 in every downstream table/plot instead of silently dropping it, since low sequencing depth degrades TPM-based signature scoring (rare transcripts undercounted) but there is no principled floor to exclude a sample outright from a 6vs6 design without erasing 1/6 of one arm, and (c) uses non-parametric two-group tests (Wilcoxon rank-sum) given n=6 per arm, not t-tests, and treats results as exploratory/hypothesis-generating given the small unpaired n. A stromal/microenvironment lens (ESTIMATE, ConsensusTME's stromal signatures, xCell's stromal cell types) is included because the research question explicitly asks about stromal, not only immune, composition. Results are synthesized as per-sample composition heatmaps/bar plots and treatment-group comparison statistics for every cell type each method reports, with methods reported side by side rather than collapsed into one number, since the four methods differ in what they call 'CD8 T cell' or 'macrophage' and forcing agreement would overclaim precision the data does not support.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load and QC the TPM matrix for deconvolution readiness",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Does the tpm.csv (12000 genes x 12 samples, gene-symbol rows, TPM columns) load cleanly with valid HGNC symbols as rownames and non-log-scale values suitable as input to quanTIseq/EPIC/MCPcounter/xCell/ConsensusTME/ESTIMATE, and what is the depth/library-composition profile of each of the 12 samples including the flagged low-depth sample_01?",
+              "acceptance_criteria": [
+                "Expression matrix loaded with genes as rows (HGNC symbols, deduplicated by max or mean if duplicates exist) and 12 samples as columns, values confirmed non-log (sums per column near 1e6 as expected for TPM)",
+                "Metadata.csv joined to matrix columns confirming the 6 treated vs 6 control label assignment matches sample order",
+                "Per-sample summary (number of detected genes, total TPM sanity check, distribution of top-expressed genes) computed and sample_01 flagged/annotated as the low-depth sample in the output table",
+                "A cleaned expression matrix object (matrix with rownames=symbols) and matching sample metadata saved for use by downstream deconvolution steps"
+              ],
+              "packages": [
+                "readr",
+                "dplyr",
+                "tibble"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Run four orthogonal TPM-native immune/stromal deconvolution methods",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What are the estimated immune and stromal cell-type fractions/scores for each of the 12 melanoma biopsy samples using quanTIseq, EPIC, MCPcounter, and ConsensusTME (all TPM-compatible, HGNC-symbol methods bundled in the immunedeconv R package), with ConsensusTME run with the 'skcm' (melanoma) cancer-type indication for all 12 samples?",
+              "acceptance_criteria": [
+                "quanTIseq run with tumor=TRUE, arrays=FALSE, scale_mrna=TRUE on the cleaned TPM matrix from T1S1, returning cell-type fractions (0-1, summing to ~1 per sample including 'uncharacterized cell')",
+                "EPIC run with tumor=TRUE, scale_mrna=TRUE, returning absolute-ish cell fractions per sample",
+                "MCPcounter run via deconvolute_mcp_counter with HUGO_symbols feature type and auto-detected log transform, returning per-cell-type abundance scores (not fractions — must be reported as such, not normalized to sum to 1)",
+                "ConsensusTME run with indications=rep('skcm', 12) and stat_method='ssgsea', returning per-cell-type enrichment scores",
+                "All four result matrices (cell type x 12 samples) saved with clear method labels; sample_01 retained in all outputs and annotated as low-depth in accompanying notes",
+                "If any method's underlying package or required internal data cannot be loaded in this sandbox, the failure is reported explicitly for that method rather than silently omitted, and the other three methods' results still delivered"
+              ],
+              "packages": [
+                "immunedeconv",
+                "quantiseqr",
+                "EPIC",
+                "MCPcounter",
+                "ConsensusTME",
+                "GSVA"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "immune-profiling-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Reference-free enrichment scoring: xCell and ESTIMATE for stromal/immune/purity context",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What do xCell's 64 immune/stromal cell-type enrichment scores and the ESTIMATE algorithm's StromalScore/ImmuneScore/ESTIMATEScore/TumorPurity indicate for each of the 12 melanoma samples, providing a broader stromal cell-type panel (fibroblasts, endothelial cells, adipocytes) than the four methods in T1S2 offer?",
+              "acceptance_criteria": [
+                "xCell run via immunedeconv::deconvolute or xCell::xCellAnalysis on the cleaned TPM matrix (arrays=FALSE), returning all ~64 cell-type enrichment scores per sample including stromal types (Fibroblasts, Endothelial cells, Adipocytes) alongside immune types",
+                "ESTIMATE run via deconvolute_estimate on the cleaned TPM matrix, returning StromalScore, ImmuneScore, ESTIMATEScore, and TumorPurity per sample, with the documented caveat that TumorPurity was calibrated on microarray data and is less reliable on RNA-seq stated in the output notes",
+                "Both result tables saved with method labels; sample_01 flagged as low-depth in the output",
+                "NA or out-of-bounds TumorPurity values (if any) reported explicitly rather than silently dropped"
+              ],
+              "packages": [
+                "immunedeconv",
+                "xCell",
+                "estimate"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Treated-vs-control comparison of every cell-type estimate across all six methods",
+              "track": "T1",
+              "step_type": "statistics",
+              "question": "For each cell type reported by each of the six deconvolution/scoring approaches (quanTIseq, EPIC, MCPcounter, ConsensusTME, xCell, ESTIMATE), does the immune or stromal cell abundance/score differ between the 6 anti-PD-1-treated and 6 untreated (control) melanoma biopsies, using unpaired non-parametric testing appropriate for this small single-batch design?",
+              "acceptance_criteria": [
+                "Wilcoxon rank-sum (Mann-Whitney) test run per cell type per method comparing treated (n=6) vs control (n=6), since n=6/arm is too small to assume normality and design is unpaired",
+                "Raw p-values and Benjamini-Hochberg FDR-adjusted q-values reported per cell type per method; explicit statement that with only 6 vs 6 samples this analysis is underpowered for anything but large effect sizes, and results are exploratory/hypothesis-generating, not confirmatory",
+                "A sensitivity check re-running the same tests with sample_01 excluded, to show whether its low sequencing depth is driving any nominally significant result — both with- and without-sample_01 results reported side by side",
+                "Summary table combining effect direction (treated higher/lower) and significance flag (FDR<0.1 as an exploratory threshold, explicitly labeled as such and not a conventional 0.05 confirmatory cutoff) across all methods for cell types that appear in more than one method (e.g., CD8 T cells, macrophages/monocytes, B cells, NK cells), to assess concordance across independent algorithms rather than trusting any single method's call",
+                "No claim of statistical significance is overstated given the small n; language in the output explicitly separates 'nominal trend' from 'robust finding'"
+              ],
+              "packages": [
+                "rstatix",
+                "dplyr",
+                "tidyr"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T1S5",
+              "name": "Visualize composition per sample and treatment-group comparison",
+              "track": "T1",
+              "step_type": "visualization",
+              "question": "How does the immune/stromal cell-type composition profile visually differ across the 12 individual melanoma samples and between the anti-PD-1-treated and control groups, across the six deconvolution approaches?",
+              "acceptance_criteria": [
+                "Stacked bar plot of quanTIseq (and separately EPIC) fractional composition per sample, samples ordered/colored by treatment group, sample_01 visually annotated as low-depth",
+                "Heatmap (z-scored per cell type across samples) of MCPcounter, ConsensusTME, and xCell scores with samples annotated by treatment group and a separate annotation row/column flagging sample_01",
+                "Boxplots/violin plots with individual sample points for any cell type flagged as nominally different (FDR<0.1) in T1S4, split by treatment group, one plot per such cell type per method",
+                "ESTIMATE ImmuneScore/StromalScore/TumorPurity plotted per sample grouped by treatment",
+                "All figures saved as image files with clear titles identifying the method and cell type; sample_01's low-depth status visible in every plot that shows per-sample data"
+              ],
+              "packages": [
+                "ggplot2",
+                "ComplexHeatmap",
+                "pheatmap",
+                "ggpubr",
+                "reshape2"
+              ],
+              "depends_on": [
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

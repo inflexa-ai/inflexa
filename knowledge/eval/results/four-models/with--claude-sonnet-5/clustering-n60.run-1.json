@@ -1,0 +1,1178 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "clustering-n60",
+  "run": 1,
+  "startedAt": "2026-09-06T20:41:30.194Z",
+  "elapsedMs": 145350,
+  "outcome": "plan_submitted",
+  "planId": "pln-7a8d1870",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (blind VST, PCA, distance heatmap)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Before subgroup discovery, does the raw structure of the 120 whole-blood samples (60 case / 60 control) show any dominant technical axis, outlier sample, or pre-existing separation by case/control status?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC on every count dataset: blind vst, PCA on top variable genes, sample distance heatmap, per R-0033.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "DESeq2 blind VST computed on the raw count matrix (12000 genes x 120 samples)",
+          "PCA on the top 500 most-variable genes, colored by case/control status and by library size",
+          "Sample-distance heatmap (Euclidean distance on VST values) produced",
+          "Any sample with markedly aberrant distance or library size flagged and reported, not silently removed"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count gene filter (filterByExpr)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Which of the 12000 genes have too little signal across the 120 samples (60/60 split) to usefully inform clustering or downstream group comparisons?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0058@99e1",
+            "R-0002@087b"
+          ],
+          "reason": "Minimal filterByExpr pre-filter at 10 counts / smallest group size, per R-0002/R-0029/R-0058.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-edger-ql@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "edgeR filterByExpr applied with min.count=10 and group defined by case/control (min group size 60)",
+          "Number of genes retained vs removed reported",
+          "Filtered count matrix and a TMM-normalized log2-CPM matrix produced for downstream use"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Consensus clustering of the 120 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "ConsensusClusterPlus"
+        ],
+        "question": "Do the 120 whole-blood samples (60 case, 60 control) form subgroups beyond the case/control label, and if so, how many (k) and how stable are they?",
+        "grounding": {
+          "claims": [
+            "R-0141@ac9d",
+            "R-0142@c982",
+            "R-0145@3579"
+          ],
+          "reason": "Sample subgroups: consensus clustering with resampling, k from CDF delta-area and PAC, stated distance/linkage and top-variable-gene input, per R-0141/R-0142; confirmed by execute_knowledge_check with no violations or warnings.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-consensus-clustering@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "clustering",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "ConsensusClusterPlus run on the VST-transformed, filtered matrix, restricted to the top 2000 most-variable genes, each gene centered",
+          "Distance = 1 - Pearson correlation, linkage = average, as stated in the plan",
+          "Resampling: 1000 reputations, 80% item subsample per iteration, k swept from 2 to 8",
+          "k selected using the consensus CDF delta-area AND the proportion of ambiguous clustering (PAC); both reported, not delta-area alone",
+          "Per-sample cluster assignment with item-consensus value, and per-cluster cluster-consensus value, reported for the chosen k",
+          "Report explicitly states that consensus clustering can return apparent clusters on unstructured data, so any subgroup found is a hypothesis, not a validated subtype, absent an external cohort"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Cross-tabulate clusters against case/control and technical covariates",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2"
+        ],
+        "question": "Is the discovered cluster structure explained by the known case/control label, by library size, or by any other available technical/processing variable, rather than representing a novel biological subgroup?",
+        "grounding": {
+          "claims": [
+            "R-0142@c982",
+            "R-0152@7a42"
+          ],
+          "reason": "Before a cluster claim, tabulate clusters against batch, library size, and processing variables and against the condition, per R-0142 and the clustering-report rule R-0152.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Contingency table of consensus cluster assignment (at the chosen k) against case/control status, with a chi-square or Fisher's exact test as appropriate to sample counts",
+          "Cluster assignment plotted/tabulated against library size (total counts) and any other sample metadata column present in metadata.csv",
+          "Explicit statement of whether the clustering aligns with, cuts across, or is confounded by case/control status and by library depth"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Immune-cell composition per cluster (MCP-counter)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "MCPcounter"
+        ],
+        "question": "Do the discovered whole-blood transcriptomic subgroups correspond to differences in immune/stromal cell composition (e.g. neutrophil vs lymphoid dominance), the most common driver of blood transcriptome heterogeneity?",
+        "grounding": {
+          "claims": [
+            "R-0125@2548",
+            "R-0129@2909",
+            "R-0132@246d"
+          ],
+          "reason": "MCP-counter on log2-normalized expression as immune/stromal composition covariate for the discovered clusters, per R-0125/R-0132; confirmed by execute_knowledge_check with no violations or warnings.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "deconvolution",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "MCP-counter abundance scores computed on log2-CPM of the filtered count matrix for the 8 immune + 2 stromal populations",
+          "Scores compared across the consensus clusters (not across populations) with an appropriate non-parametric test (e.g. Kruskal-Wallis) and BH correction across populations",
+          "Input transform (log2 CPM) and marker-set version stated in the output",
+          "Result explicitly framed as a covariate/explanatory check on the clusters, not as a replacement for the clustering itself"
+        ]
+      },
+      {
+        "id": "T2S4",
+        "name": "PCA loadings as descriptive gene-program summary",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What gene programs (descriptive, not formal metagenes) load most strongly on the principal components that separate the discovered subgroups?",
+        "grounding": {
+          "claims": [
+            "R-0144@dcfc",
+            "R-0145@3579"
+          ],
+          "reason": "NMF is absent from the pool; PCA loadings on centered log values are the stated descriptive substitute, with the caution that a PC is not a metagene, per R-0144/R-0145.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "clustering",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "PCA computed on the same centered top-variable-gene VST matrix used for clustering",
+          "Top 20 positive- and negative-loading genes reported per leading PC (PC1-PC3)",
+          "Explicit statement that NMF (the tool of record for metagene discovery) is absent from the environment, that this PCA-loadings view is a descriptive substitute only, and that a PC mixes positive and negative weights and is not a metagene",
+          "PCA/embedding used strictly as a picture beside the formal ConsensusClusterPlus result, never as an independent cluster claim"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Subgroup marker genes and Hallmark/WikiPathways enrichment",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "edgeR",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "fgsea"
+        ],
+        "question": "What biological pathways distinguish each discovered subgroup from the rest, using its one-vs-rest marker genes tested against MSigDB Hallmark (with WikiPathways human as a second collection)?",
+        "grounding": {
+          "claims": [
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0165@e456"
+          ],
+          "reason": "Hallmark-first over-representation with tested-gene universe and 15-500 size window, WikiPathways as stated second collection from the reference store, per R-0046/R-0047/R-0048/R-0165; ORA-on-short-list caution per R-0103.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Per cluster, a one-vs-rest limma (voom, TMM-normalized) comparison of that cluster against all other samples, since n=120 total falls in the population-scale regime where limma-voom is grounded over a count model",
+          "Marker genes selected by BH-adjusted p<0.05; if fewer than ~50 genes pass per cluster, state this explicitly and fall back to a ranked (fgsea) test on the full gene list instead of an under-powered over-representation test",
+          "Over-representation test (clusterProfiler, universe = all filtered/tested genes, never whole genome) against MSigDB Hallmark human gene sets, gene-set size window 15-500",
+          "WikiPathways human collection run as a stated second pass, with the release/version of both collections named in the output",
+          "Gene identifiers mapped to Entrez via org.Hs.eg.db with the unmapped share reported",
+          "Redundant/overlapping significant gene sets collapsed to representative sets before reporting"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Final clustering report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T4",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the number of subgroups (k), their stability, their relationship to case/control status and to technical covariates, and their distinguishing biology, stated with the caveats a reader needs to judge the finding?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0152@7a42"
+          ],
+          "reason": "No single rule covers report assembly; content requirements are drawn directly from R-0086 (reproducibility record) and R-0152 (clustering report contents).",
+          "status": "ungrounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S2",
+          "T2S3",
+          "T2S4",
+          "T3S1"
+        ],
+        "acceptance_criteria": [
+          "States input matrix/transform, number of genes kept and criterion, distance/linkage, and number of resamples",
+          "States the k evidence: consensus CDF, relative delta-area, and PAC across k=2-8, and the chosen k with justification",
+          "Lists per-sample cluster assignment with item consensus, and per-cluster cluster consensus",
+          "Reports the confounder table (case/control, library size, other metadata) against the clusters",
+          "Reports immune composition differences (MCP-counter) across clusters as a candidate explanatory covariate",
+          "States explicitly that consensus clustering finds structure even in unstructured data, thus any subgroup identified here is a hypothesis pending independent/external validation, not a confirmed molecular subtype",
+          "Reproducibility record: session info, package versions, random seeds, gene-set collection versions"
+        ]
+      }
+    ],
+    "title": "Whole-blood case/control cohort: consensus subgroup discovery beyond diagnosis",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The research question asks whether the 120 whole-blood samples (60 case, 60 control, single batch, Salmon gene-level counts, 12000 genes) fall into subgroups beyond the case/control label, how many, and how stable they are. This is a sample-clustering question, not a differential-expression question, so the plan follows the Inflexa-grounded clustering procedure rather than inventing an ad hoc approach. Track 1 establishes the count matrix's structure and removes low-information genes so that clustering runs on a defensible feature set: (T1S1) blind variance-stabilizing transform + PCA + sample-distance heatmap to see what already separates the 120 samples and to catch any single dominant outlier or artefact before subgroup discovery begins; (T1S2) a minimal filterByExpr low-count filter (edgeR, threshold 10 counts in >=60 samples, the smaller group size) so genes with no real signal do not add clustering noise. Track 2 is the central analysis: (T2S1) ConsensusClusterPlus resampling-based consensus clustering on the top 2000 most-variable genes from the VST matrix (item subsample 80%, 1000 reps, 1-Pearson-correlation distance with average linkage as stated in the grounded procedure), sweeping k=2 to 8 and selecting k from the consensus CDF delta-area and the proportion of ambiguous clustering (PAC), per the knowledge-service rule that delta-area alone can point to structure in noise. (T2S2) cross-tabulates the chosen clusters against case/control status, library size, and any other metadata columns available, because a subgroup that is really a library-depth or a case/control proxy is not a novel finding, and per rule R-0142 this check is mandatory before any cluster claim. (T2S3) supplies immune-cell composition (MCP-counter, on log2-CPM of the filtered counts) as a biologically interpretable covariate table beside the clusters, since whole blood composition (neutrophil/lymphocyte shifts) is the most common driver of blood transcriptome subgroups and the clusters must be checked against it rather than presented as intrinsic biology; this mirrors the pattern seen in comparable published whole-blood endotype discovery (e.g. PMID 41399015, four transcriptional clusters characterized partly by distinct immune-cell deconvolution profiles). (T2S4) runs a descriptive PCA-loadings summary of the genes driving the top components as the explicitly-flagged stand-in for NMF metagene discovery (NMF is absent from the environment; the knowledge service directs PCA loadings as the descriptive substitute, with the caveat that a PC mixes positive and negative weights and is not a metagene). Track 3 asks what distinguishes the discovered subgroups biologically: (T3S1) over-representation enrichment (clusterProfiler, MSigDB Hallmark, universe = tested genes, size window 15-500) of the marker genes for each subgroup (from a one-vs-rest limma comparison inside T3S1, since n=120 population-scale samples means limma-voom rather than a count model is the grounded choice for any group comparison here) against Hallmark, with WikiPathways human as a stated second collection from the reference store. Track 4 is the final report, which states explicitly per the knowledge service's clustering-report rule: the input transform, genes kept, distance/linkage, resampling count, the k evidence (CDF delta-area + PAC), the item- and cluster-consensus of each sample, the confounder table, and the caution that consensus clustering finds structure even in unstructured data, so any subgroup is reported as a hypothesis needing independent or external-cohort confirmation, not a settled subtype."
+  },
+  "usage": {
+    "inputTokens": 5662660,
+    "outputTokens": 12254,
+    "cacheCreationInputTokens": 331379,
+    "cacheReadInputTokens": 5330801,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "clustering",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "clustering",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) + PCA + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "clustering",
+            "method": "ConsensusClusterPlus consensus clustering (hierarchical, 1-Pearson correlation distance, average linkage) on top 2000 variable genes from vst counts",
+            "package": "ConsensusClusterPlus",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 2000
+              },
+              {
+                "name": "resampling_reps",
+                "value": 1000
+              },
+              {
+                "name": "item_subsample_share",
+                "value": 0.8
+              },
+              {
+                "name": "k_range",
+                "value": "2-8"
+              },
+              {
+                "name": "k_criterion",
+                "value": "consensus_cdf_delta_area_and_pac"
+              }
+            ]
+          },
+          {
+            "step_type": "clustering",
+            "method": "PCA loadings on top variable genes (descriptive substitute for NMF metagenes)",
+            "package": "stats/prcomp",
+            "parameters": []
+          },
+          {
+            "step_type": "report",
+            "method": "clustering stability and confounder report",
+            "package": "none",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "cell type xCell MCP-counter marker"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune deconvolution reference LM22 EPIC quanTIseq"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "cell-typing"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "scgate",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "EPIC",
+          "quantiseqr",
+          "MCPcounter",
+          "ConsensusTME",
+          "xCell",
+          "xCell2",
+          "MCP-counter"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "clustering",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "clustering",
+            "method": "Consensus clustering of samples with ConsensusClusterPlus",
+            "package": "ConsensusClusterPlus",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 2000
+              },
+              {
+                "name": "resampling_reps",
+                "value": 1000
+              },
+              {
+                "name": "item_subsample_share",
+                "value": 0.8
+              },
+              {
+                "name": "k_range",
+                "value": "2-8"
+              },
+              {
+                "name": "k_criterion",
+                "value": "consensus_cdf_delta_area_and_pac"
+              },
+              {
+                "name": "distance_and_linkage",
+                "value": "1-Pearson correlation distance, average linkage"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "deconvolution",
+            "method": "MCP-counter abundance scores of immune and stromal populations",
+            "package": "MCPcounter",
+            "parameters": [
+              {
+                "name": "input_scale",
+                "value": "log2_normalized_expression"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene length transcript length hg38 gtf gencode annotation",
+        "limit": 10
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gencode"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "genome-annotation"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ConsensusClusterPlus",
+          "DESeq2",
+          "edgeR",
+          "MCPcounter",
+          "immunedeconv",
+          "cluster",
+          "mclust",
+          "fpc"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "sva"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ComplexHeatmap",
+          "matrixStats"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifiers ncbi gene info"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark gene set human enrichment pathway"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "enrichment_input": "gene_list"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "enrichment_input": "gene_list",
+        "steps": [
+          {
+            "step_type": "enrichment",
+            "method": "clusterProfiler enrichGO / enricher over-representation of cluster-defining marker genes (per subgroup vs rest) against MSigDB Hallmark, universe = tested genes",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "fgsea",
+          "rrvgo"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "tximport",
+          "GenomicFeatures",
+          "variancePartition",
+          "limma",
+          "SummarizedExperiment"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "Rsubread",
+          "GenomicRanges",
+          "rtracklayer"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "count_source": "salmon",
+        "enrichment_input": "gene_list",
+        "steps": [
+          {
+            "step_type": "enrichment",
+            "method": "clusterProfiler enricher over-representation of cluster-defining marker genes against MSigDB Hallmark, universe = tested genes",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ggplot2",
+          "pheatmap",
+          "ComplexUpset",
+          "cowplot"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "stats"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "DESeq2"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "survival",
+          "chisq.test",
+          "car"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "survival"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "nnet"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "consensus clustering whole blood transcriptomics subgroups case control cohort molecular subtypes",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "consensus clustering proportion ambiguous clustering PAC molecular subtype discovery gene expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "disease heterogeneity molecular subtypes bulk RNA-seq blood case control unsupervised clustering chi-square association clinical covariates",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "whole blood gene expression endotypes disease heterogeneity unsupervised clustering",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "41399015"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "nnet",
+          "gtools",
+          "rstatix",
+          "vcd"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood case/control cohort: consensus subgroup discovery beyond diagnosis",
+          "analytical_narrative": "The research question asks whether the 120 whole-blood samples (60 case, 60 control, single batch, Salmon gene-level counts, 12000 genes) fall into subgroups beyond the case/control label, how many, and how stable they are. This is a sample-clustering question, not a differential-expression question, so the plan follows the Inflexa-grounded clustering procedure rather than inventing an ad hoc approach. Track 1 establishes the count matrix's structure and removes low-information genes so that clustering runs on a defensible feature set: (T1S1) blind variance-stabilizing transform + PCA + sample-distance heatmap to see what already separates the 120 samples and to catch any single dominant outlier or artefact before subgroup discovery begins; (T1S2) a minimal filterByExpr low-count filter (edgeR, threshold 10 counts in >=60 samples, the smaller group size) so genes with no real signal do not add clustering noise. Track 2 is the central analysis: (T2S1) ConsensusClusterPlus resampling-based consensus clustering on the top 2000 most-variable genes from the VST matrix (item subsample 80%, 1000 reps, 1-Pearson-correlation distance with average linkage as stated in the grounded procedure), sweeping k=2 to 8 and selecting k from the consensus CDF delta-area and the proportion of ambiguous clustering (PAC), per the knowledge-service rule that delta-area alone can point to structure in noise. (T2S2) cross-tabulates the chosen clusters against case/control status, library size, and any other metadata columns available, because a subgroup that is really a library-depth or a case/control proxy is not a novel finding, and per rule R-0142 this check is mandatory before any cluster claim. (T2S3) supplies immune-cell composition (MCP-counter, on log2-CPM of the filtered counts) as a biologically interpretable covariate table beside the clusters, since whole blood composition (neutrophil/lymphocyte shifts) is the most common driver of blood transcriptome subgroups and the clusters must be checked against it rather than presented as intrinsic biology; this mirrors the pattern seen in comparable published whole-blood endotype discovery (e.g. PMID 41399015, four transcriptional clusters characterized partly by distinct immune-cell deconvolution profiles). (T2S4) runs a descriptive PCA-loadings summary of the genes driving the top components as the explicitly-flagged stand-in for NMF metagene discovery (NMF is absent from the environment; the knowledge service directs PCA loadings as the descriptive substitute, with the caveat that a PC mixes positive and negative weights and is not a metagene). Track 3 asks what distinguishes the discovered subgroups biologically: (T3S1) over-representation enrichment (clusterProfiler, MSigDB Hallmark, universe = tested genes, size window 15-500) of the marker genes for each subgroup (from a one-vs-rest limma comparison inside T3S1, since n=120 population-scale samples means limma-voom rather than a count model is the grounded choice for any group comparison here) against Hallmark, with WikiPathways human as a stated second collection from the reference store. Track 4 is the final report, which states explicitly per the knowledge service's clustering-report rule: the input transform, genes kept, distance/linkage, resampling count, the k evidence (CDF delta-area + PAC), the item- and cluster-consensus of each sample, the confounder table, and the caution that consensus clustering finds structure even in unstructured data, so any subgroup is reported as a hypothesis needing independent or external-cohort confirmation, not a settled subtype.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC (blind VST, PCA, distance heatmap)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Before subgroup discovery, does the raw structure of the 120 whole-blood samples (60 case / 60 control) show any dominant technical axis, outlier sample, or pre-existing separation by case/control status?",
+              "acceptance_criteria": [
+                "DESeq2 blind VST computed on the raw count matrix (12000 genes x 120 samples)",
+                "PCA on the top 500 most-variable genes, colored by case/control status and by library size",
+                "Sample-distance heatmap (Euclidean distance on VST values) produced",
+                "Any sample with markedly aberrant distance or library size flagged and reported, not silently removed"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC on every count dataset: blind vst, PCA on top variable genes, sample distance heatmap, per R-0033."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count gene filter (filterByExpr)",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "Which of the 12000 genes have too little signal across the 120 samples (60/60 split) to usefully inform clustering or downstream group comparisons?",
+              "acceptance_criteria": [
+                "edgeR filterByExpr applied with min.count=10 and group defined by case/control (min group size 60)",
+                "Number of genes retained vs removed reported",
+                "Filtered count matrix and a TMM-normalized log2-CPM matrix produced for downstream use"
+              ],
+              "packages": [
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0058@99e1",
+                  "R-0002@087b"
+                ],
+                "template": "tpl-edger-ql@1.0.0",
+                "reason": "Minimal filterByExpr pre-filter at 10 counts / smallest group size, per R-0002/R-0029/R-0058."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Consensus clustering of the 120 samples",
+              "track": "T2",
+              "step_type": "clustering",
+              "question": "Do the 120 whole-blood samples (60 case, 60 control) form subgroups beyond the case/control label, and if so, how many (k) and how stable are they?",
+              "acceptance_criteria": [
+                "ConsensusClusterPlus run on the VST-transformed, filtered matrix, restricted to the top 2000 most-variable genes, each gene centered",
+                "Distance = 1 - Pearson correlation, linkage = average, as stated in the plan",
+                "Resampling: 1000 reputations, 80% item subsample per iteration, k swept from 2 to 8",
+                "k selected using the consensus CDF delta-area AND the proportion of ambiguous clustering (PAC); both reported, not delta-area alone",
+                "Per-sample cluster assignment with item-consensus value, and per-cluster cluster-consensus value, reported for the chosen k",
+                "Report explicitly states that consensus clustering can return apparent clusters on unstructured data, so any subgroup found is a hypothesis, not a validated subtype, absent an external cohort"
+              ],
+              "packages": [
+                "ConsensusClusterPlus"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0141@ac9d",
+                  "R-0142@c982",
+                  "R-0145@3579"
+                ],
+                "template": "tpl-consensus-clustering@1.0.0",
+                "reason": "Sample subgroups: consensus clustering with resampling, k from CDF delta-area and PAC, stated distance/linkage and top-variable-gene input, per R-0141/R-0142; confirmed by execute_knowledge_check with no violations or warnings."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Cross-tabulate clusters against case/control and technical covariates",
+              "track": "T2",
+              "step_type": "qc_sample_structure",
+              "question": "Is the discovered cluster structure explained by the known case/control label, by library size, or by any other available technical/processing variable, rather than representing a novel biological subgroup?",
+              "acceptance_criteria": [
+                "Contingency table of consensus cluster assignment (at the chosen k) against case/control status, with a chi-square or Fisher's exact test as appropriate to sample counts",
+                "Cluster assignment plotted/tabulated against library size (total counts) and any other sample metadata column present in metadata.csv",
+                "Explicit statement of whether the clustering aligns with, cuts across, or is confounded by case/control status and by library depth"
+              ],
+              "packages": [
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0142@c982",
+                  "R-0152@7a42"
+                ],
+                "reason": "Before a cluster claim, tabulate clusters against batch, library size, and processing variables and against the condition, per R-0142 and the clustering-report rule R-0152."
+              }
+            },
+            {
+              "id": "T2S3",
+              "name": "Immune-cell composition per cluster (MCP-counter)",
+              "track": "T2",
+              "step_type": "deconvolution",
+              "question": "Do the discovered whole-blood transcriptomic subgroups correspond to differences in immune/stromal cell composition (e.g. neutrophil vs lymphoid dominance), the most common driver of blood transcriptome heterogeneity?",
+              "acceptance_criteria": [
+                "MCP-counter abundance scores computed on log2-CPM of the filtered count matrix for the 8 immune + 2 stromal populations",
+                "Scores compared across the consensus clusters (not across populations) with an appropriate non-parametric test (e.g. Kruskal-Wallis) and BH correction across populations",
+                "Input transform (log2 CPM) and marker-set version stated in the output",
+                "Result explicitly framed as a covariate/explanatory check on the clusters, not as a replacement for the clustering itself"
+              ],
+              "packages": [
+                "MCPcounter"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0125@2548",
+                  "R-0129@2909",
+                  "R-0132@246d"
+                ],
+                "reason": "MCP-counter on log2-normalized expression as immune/stromal composition covariate for the discovered clusters, per R-0125/R-0132; confirmed by execute_knowledge_check with no violations or warnings."
+              }
+            },
+            {
+              "id": "T2S4",
+              "name": "PCA loadings as descriptive gene-program summary",
+              "track": "T2",
+              "step_type": "clustering",
+              "question": "What gene programs (descriptive, not formal metagenes) load most strongly on the principal components that separate the discovered subgroups?",
+              "acceptance_criteria": [
+                "PCA computed on the same centered top-variable-gene VST matrix used for clustering",
+                "Top 20 positive- and negative-loading genes reported per leading PC (PC1-PC3)",
+                "Explicit statement that NMF (the tool of record for metagene discovery) is absent from the environment, that this PCA-loadings view is a descriptive substitute only, and that a PC mixes positive and negative weights and is not a metagene",
+                "PCA/embedding used strictly as a picture beside the formal ConsensusClusterPlus result, never as an independent cluster claim"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0144@dcfc",
+                  "R-0145@3579"
+                ],
+                "reason": "NMF is absent from the pool; PCA loadings on centered log values are the stated descriptive substitute, with the caution that a PC is not a metagene, per R-0144/R-0145."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Subgroup marker genes and Hallmark/WikiPathways enrichment",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "What biological pathways distinguish each discovered subgroup from the rest, using its one-vs-rest marker genes tested against MSigDB Hallmark (with WikiPathways human as a second collection)?",
+              "acceptance_criteria": [
+                "Per cluster, a one-vs-rest limma (voom, TMM-normalized) comparison of that cluster against all other samples, since n=120 total falls in the population-scale regime where limma-voom is grounded over a count model",
+                "Marker genes selected by BH-adjusted p<0.05; if fewer than ~50 genes pass per cluster, state this explicitly and fall back to a ranked (fgsea) test on the full gene list instead of an under-powered over-representation test",
+                "Over-representation test (clusterProfiler, universe = all filtered/tested genes, never whole genome) against MSigDB Hallmark human gene sets, gene-set size window 15-500",
+                "WikiPathways human collection run as a stated second pass, with the release/version of both collections named in the output",
+                "Gene identifiers mapped to Entrez via org.Hs.eg.db with the unmapped share reported",
+                "Redundant/overlapping significant gene sets collapsed to representative sets before reporting"
+              ],
+              "packages": [
+                "limma",
+                "edgeR",
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0165@e456"
+                ],
+                "reason": "Hallmark-first over-representation with tested-gene universe and 15-500 size window, WikiPathways as stated second collection from the reference store, per R-0046/R-0047/R-0048/R-0165; ORA-on-short-list caution per R-0103."
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "Final clustering report",
+              "track": "T4",
+              "step_type": "report",
+              "question": "What is the number of subgroups (k), their stability, their relationship to case/control status and to technical covariates, and their distinguishing biology, stated with the caveats a reader needs to judge the finding?",
+              "acceptance_criteria": [
+                "States input matrix/transform, number of genes kept and criterion, distance/linkage, and number of resamples",
+                "States the k evidence: consensus CDF, relative delta-area, and PAC across k=2-8, and the chosen k with justification",
+                "Lists per-sample cluster assignment with item consensus, and per-cluster cluster consensus",
+                "Reports the confounder table (case/control, library size, other metadata) against the clusters",
+                "Reports immune composition differences (MCP-counter) across clusters as a candidate explanatory covariate",
+                "States explicitly that consensus clustering finds structure even in unstructured data, thus any subgroup identified here is a hypothesis pending independent/external validation, not a confirmed molecular subtype",
+                "Reproducibility record: session info, package versions, random seeds, gene-set collection versions"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T2S2",
+                "T2S3",
+                "T2S4",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0152@7a42"
+                ],
+                "reason": "No single rule covers report assembly; content requirements are drawn directly from R-0086 (reproducibility record) and R-0152 (clustering report contents)."
+              }
+            }
+          ],
+          "created_at": "2026-09-07T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

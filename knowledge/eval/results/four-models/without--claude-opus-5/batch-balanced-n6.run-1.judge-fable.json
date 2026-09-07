@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference: balanced batch enters as a covariate (~ batch + condition) with control as the explicit reference, counts are never adjusted before DESeq2, removeBatchEffect is confined to display, and the ComBat_seq variant is explicitly quarantined as illustrative. QC is thorough (library sizes, filterByExpr with the design, PCA coloured by condition and shaped by batch, distance heatmap, quantified batch/condition variance, a stated no-silent-drop outlier policy), and BH at 0.05/0.10 with apeglm shrinkage is specified, though the |LFC|>1 subsets are post hoc rather than tested via lfcThreshold. Enrichment was not asked for, but when included it is done correctly (full Wald-statistic ranking, human hallmark/GO-BP GMTs, 15-500 size window, seed, collapsed nested sets) with only the collection version left unstated. Reporting is strong on design, thresholds, tested/significant counts and caveats, but package versions are listed as inputs rather than required in the report output."
+}

@@ -1,0 +1,966 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "deconvolution-mouse-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T20:57:16.723Z",
+  "elapsedMs": 142305,
+  "outcome": "plan_submitted",
+  "planId": "pln-0e831913",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A library-size outlier is not by itself grounds for removal; DESeq2 size factors down-weight it appropriately"
+        ],
+        "context": "Input: /eval-four-models-with-deconvolution-mouse-n6-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw Salmon gene-level integer counts, mouse symbols) and metadata.csv (12 x 2, condition: anti-PD-1 vs isotype control). sample_01 has library size ~4x below median.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 12 tumor samples (6 anti-PD-1, 6 isotype control) separate by condition on PCA, and how does the low-depth sample_01 behave relative to its group?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033/R-0008 given the flagged low-depth sample_01",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use vst(blind=TRUE), PCA on top 500 variance genes, sample distance heatmap per grounded template tpl-qc-eda",
+          "Do not delete sample_01 silently; report its library size and detected genes beside the others and state the removal decision explicitly with reason if removed"
+        ],
+        "acceptance_criteria": [
+          "PCA on vst(blind)-transformed counts (top 500 variable genes) with samples colored by condition",
+          "Sample-to-sample Euclidean distance heatmap produced",
+          "Library size and detected-gene count reported per sample, with sample_01 explicitly flagged and NOT removed by default",
+          "A stated, evidence-based decision on whether sample_01 is retained for downstream analysis"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Filter, normalize, and prepare linear-scale expression matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Independent filtering at the results stage (T2S2) will further refine the tested gene set; this pre-filter is intentionally minimal"
+        ],
+        "context": "12000 x 12 raw integer counts, single batch, unpaired 6 vs 6 design.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "After removing low-count genes (>=10 counts in >=6 samples, the smallest group size), what are the DESeq2 median-of-ratios size factors and the linear-scale CPM matrix to feed into deconvolution and marker scoring?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248",
+            "R-0129@2909"
+          ],
+          "reason": "Minimal pre-filter and median-of-ratios normalization per R-0029/R-0002/R-0026; linear CPM export per R-0129 for the deconvolution step",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Pre-filter minimal: keep gene with >=10 counts in >=6 samples (smallest group)",
+          "Normalize via DESeq2 median-of-ratios size factors; do not pre-scale counts before the DE model in T2S1",
+          "Produce a separate linear-scale (non-log) CPM matrix strictly for deconvolution/scoring inputs"
+        ],
+        "acceptance_criteria": [
+          "Genes filtered to >=10 counts in at least 6 samples (smallest group size)",
+          "DESeq2 size factors computed via median-of-ratios and reported per sample",
+          "A linear-scale CPM matrix (not log-transformed) derived from the size-factor-normalized counts, with mouse gene symbols as rownames, produced for downstream deconvolution/scoring steps",
+          "Explicit note that gene lengths were unavailable from the counts file, so CPM (not TPM) is used, and this limitation is stated in the output"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Differential expression: anti-PD-1 vs isotype control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group and DESeq2's outlier handling threshold at 7 replicates, a flagged-gene Cook's-distance NA is expected for some genes; report these explicitly"
+        ],
+        "context": "6 vs 6 unpaired design, single batch, no covariates named in metadata beyond condition.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes are differentially expressed between anti-PD-1-treated and isotype-control tumors (reference level = isotype control)?",
+        "grounding": {
+          "claims": [
+            "R-0001@9a17",
+            "R-0036@9786",
+            "R-0009@f54e",
+            "R-0010@91a5",
+            "R-0039@e17a",
+            "R-0083@12de"
+          ],
+          "reason": "Standard DESeq2 Wald + apeglm shrinkage + BH at alpha 0.05 for a 6v6 unpaired single-batch design",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Set reference level explicitly to isotype control; name the contrast as condition, anti-PD-1, isotype_control",
+          "Use apeglm for LFC shrinkage (single coefficient)",
+          "Report number of genes with NA p-values from Cook's outlier flagging separately from independent-filter-removed genes"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 Wald test with condition explicitly releveled so isotype control is the reference",
+          "apeglm shrinkage applied to the reported log2 fold changes for the anti-PD-1 vs control coefficient",
+          "BH-adjusted p-values reported at alpha=0.05 with independent filtering left on",
+          "p-value histogram inspected and reported as a QC diagnostic"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Mouse immune/stromal cell deconvolution with mMCP-counter (immunedeconv)",
+        "agent": "immune-profiling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "mMCP-counter gives semi-quantitative marker-based scores, not absolute fractions; do not interpret scores as cell percentages",
+          "A population estimate is an outcome/covariate for this question, never a substitute for the DE design in T2S1"
+        ],
+        "context": "Mouse subcutaneous tumor, anti-PD-1 vs isotype control, n=6/6. mMCPcounter (v1.1.0) and immunedeconv (v2.1.4) are both installed in this environment and were confirmed present before drafting this step. mMCP-counter markers require MGI gene symbols; the counts file already carries mouse gene symbols as its first column.",
+        "maxSteps": 200,
+        "packages": [
+          "mMCPcounter",
+          "immunedeconv"
+        ],
+        "question": "What is the estimated relative abundance of the 16 mMCP-counter immune/stromal cell populations in each of the 12 tumor samples, and does any population differ between anti-PD-1 and isotype control?",
+        "grounding": {
+          "claims": [
+            "R-0129@2909",
+            "R-0132@246d",
+            "R-0136@b81f"
+          ],
+          "reason": "R-0136 flags human deconvolution tools as invalid on mouse data and names mMCP-counter as the tool of record; mMCPcounter and immunedeconv are confirmed present in this environment, so the flagged outcome (mouse_reference_required) is satisfied directly rather than falling back to descriptive-only scoring",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "deconvolution",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use linear-scale CPM/TPM input, never log-transformed for the marker-based estimate itself (the wrapper may apply its own internal log2 step per its documented default; follow the tool's documented input convention)",
+          "Do not substitute a human deconvolution tool (MCP-counter, xCell, EPIC, quanTIseq, CIBERSORT, TIMER, ConsensusTME as primary) for mouse data",
+          "Report composition beside, not instead of, the T2S1 differential expression results",
+          "State BH-adjusted p-values across the 16 cell populations tested"
+        ],
+        "acceptance_criteria": [
+          "mMCP-counter run via immunedeconv::deconvolute_mouse(method='mmcp_counter') (or direct mMCPcounter::mMCPcounter.estimate) on the linear-scale CPM matrix with MGI mouse gene symbols as rownames",
+          "One abundance score per cell population per sample (16 populations x 12 samples) reported",
+          "Group comparison (treated vs control) per population via a two-group test appropriate for n=6/group (e.g., Wilcoxon rank-sum or limma on the scores) with BH correction across the 16 populations",
+          "sample_01 included with its score reported alongside a note on its low depth",
+          "Explicit statement that this is a validated mouse-specific tool (unlike human tools MCP-counter/xCell/EPIC/quanTIseq, which are NOT used here)"
+        ]
+      },
+      {
+        "id": "T3S2",
+        "name": "Cross-check composition with ConsensusTME enrichment and PanglaoDB mouse marker scoring",
+        "agent": "immune-profiling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "ConsensusTME gene sets are derived from human tumor data; symbol-overlap scoring on mouse data does not carry the same specificity as a mouse-trained method and must be reported as descriptive only, consistent with the R-0136 caution",
+          "A score from a marker set is a relative enrichment, not a cell fraction"
+        ],
+        "context": "Reference data available: PanglaoDB marker table (managed/panglaodb-markers, human+mouse combined, filter species column to 'Mm'). ConsensusTME gene sets are human-curated; used here strictly as a secondary, caveated cross-check per R-0135/R-0133/R-0134, not as the primary mouse deconvolution (that role is filled by mMCP-counter in T3S1).",
+        "maxSteps": 200,
+        "packages": [
+          "ConsensusTME",
+          "UCell",
+          "singscore"
+        ],
+        "question": "Do ConsensusTME-style enrichment scores and PanglaoDB mouse (Mm) marker-gene scores (UCell) corroborate the mMCP-counter composition differences between anti-PD-1 and isotype-control tumors, particularly for stromal populations (fibroblasts, endothelial cells) not resolved by mMCP-counter's panel?",
+        "grounding": {
+          "claims": [
+            "R-0135@f02d",
+            "R-0133@ce76",
+            "R-0134@0f16",
+            "R-0136@b81f"
+          ],
+          "reason": "Secondary descriptive cross-check per R-0135 (PanglaoDB mouse markers) and per R-0136's caution that any human-derived gene-set method on mouse data must be reported as descriptive, not a validated deconvolution",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "signature_scoring",
+        "depends_on": [
+          "T1S2",
+          "T3S1"
+        ],
+        "constraints": [
+          "Filter PanglaoDB markers to species=='Mm' before scoring; report the number of markers found per signature in the expression matrix",
+          "State the source and version of every gene set/signature used",
+          "BH-adjust p-values across all signatures/cell types tested in this step"
+        ],
+        "acceptance_criteria": [
+          "ConsensusTME gene sets intersected with genes present in the mouse count matrix; ssGSEA-style enrichment score computed per sample per cell type, explicitly labeled as a descriptive cross-check derived from human-curated gene sets applied via symbol overlap, not a validated mouse deconvolution",
+          "PanglaoDB markers filtered to species=='Mm' (or Mm+Hs shared) for fibroblast, endothelial, pericyte and other stromal/immune populations, scored per sample with UCell",
+          "Both score sets compared treated vs control (t-test or limma per R-0134) with BH correction across all signatures/cell types tested and reported with the source/version of each gene set",
+          "Report explicitly states the two mMCP-counter-uncovered stromal populations these scores are meant to supplement, and the caveat that these are relative enrichment scores, not fractions"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Integrated report: composition, DE, and reproducibility record",
+        "agent": "immune-profiling-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "n=6/group is a small cohort for stable enrichment/marker-score estimates; state that BH-adjusted findings here are hypothesis-generating pending a larger cohort or flow-cytometry validation"
+        ],
+        "context": "Synthesizes T2S1 (DE) with T3S1/T3S2 (composition) for the 12-sample anti-PD-1 vs isotype-control cohort.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the composite picture of immune/stromal composition per sample, how does it compare between anti-PD-1 and isotype-control tumors, and how does it relate to the gene-level DE result?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0132@246d"
+          ],
+          "reason": "Reproducibility record requirement and composition-as-covariate/outcome framing",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S1",
+          "T3S1",
+          "T3S2"
+        ],
+        "constraints": [
+          "Report composition as an outcome/covariate beside DE, never as a replacement for the DE design",
+          "Include the reproducibility record per R-0086: sessionInfo, seeds, package versions, gene-set/collection versions"
+        ],
+        "acceptance_criteria": [
+          "Per-sample table of mMCP-counter scores, ConsensusTME cross-check scores, and PanglaoDB/UCell stromal scores, annotated with condition and library size (sample_01 flagged)",
+          "Summary of which cell populations/signatures differ significantly (BH-adjusted) between treated and control, with effect direction stated",
+          "Explicit cross-reference to the T2S1 DE gene list: note any DE genes that are markers of a differentially abundant cell population, flagged as a possible composition-driven signal rather than a cell-intrinsic effect",
+          "Full reproducibility record: package versions (mMCPcounter, immunedeconv, ConsensusTME, UCell, singscore, DESeq2), gene-set/marker source versions (PanglaoDB 2020.03.27), and random seeds for any stochastic step"
+        ]
+      }
+    ],
+    "title": "Mouse tumor immune/stromal composition: anti-PD-1 vs control",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The dataset is 6 anti-PD-1-treated vs 6 isotype-control mouse subcutaneous tumors, raw gene-level Salmon counts (12000 genes x 12 samples), single batch, unpaired. sample_01 has a library size ~4x below the median and per the grounded QC rule (R-0008/R-0030) must be kept and inspected, not silently dropped, since DESeq2's size factors already account for depth differences. The research question is descriptive/comparative composition (immune and stromal cell fractions per sample, treated vs control), not a DE question per se, so the core analytical work is deconvolution, routed to the immune-profiling-agent. Because this is mouse data, the knowledge service explicitly flags that human-trained deconvolution tools (MCP-counter, xCell, EPIC, quanTIseq, CIBERSORT) are invalid here (R-0136) — their marker sets and reference profiles are human-derived. The mouse tool of record, mMCP-counter, IS present in this environment (mMCPcounter R package, v1.1.0), so we use it directly rather than stopping or falling back to descriptive-only scoring. immunedeconv (present, v2.1.4) is also available and wraps mMCP-counter, seqImmuCC, DCQ and BASE for mouse — we use it as the primary interface since it standardizes cell type names and additionally gives cross-checks (DCQ, BASE) plus mouse-specific utilities. As a secondary cross-check we run ConsensusTME (present) in its mouse-adaptable ssGSEA/enrichment mode restricted to gene sets intersected with the mouse gene symbols in the matrix (ConsensusTME itself is human-derived gene sets, so this is reported strictly as a descriptive cross-check, not a validated mouse deconvolution, consistent with R-0136's caution). We also score PanglaoDB mouse-specific (Mm) marker gene sets per sample with UCell/singscore for stromal/immune populations (fibroblasts, endothelial, pericyte) that mMCP-counter's 16-population panel may not fully resolve, again as descriptive signature scores, not fraction estimates. Counts are converted to linear-scale TPM/CPM (gene lengths unavailable without transcript info from Salmon quant metadata, so CPM is used with this stated as a limitation) per R-0129 before any deconvolution/marker-scoring step — never log-transformed for the absolute/marker methods. Composition estimates and marker scores are compared treated vs control with a two-group test (limma or Wilcoxon given n=6 per group) per R-0134/R-0155-adjacent logic, with BH correction across the tested populations/signatures, and reported beside — never substituting for — a proper DESeq2 differential expression analysis (also included, since the research question implicitly invites checking whether compositional differences confound or explain any gene-level signal). QC step keeps sample_01 through vst(blind) PCA and sample-distance diagnostics and reports it explicitly rather than removing it by default."
+  },
+  "usage": {
+    "inputTokens": 2048676,
+    "outputTokens": 11113,
+    "cacheCreationInputTokens": 194572,
+    "cacheReadInputTokens": 1853840,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "mouse immune deconvolution signature"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "mouse",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "count_source": "salmon"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "mMCP-counter",
+          "mmcp-counter",
+          "immunedeconv",
+          "ConsensusTME",
+          "xCell2",
+          "BisqueRNA",
+          "MuSiC"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "mouse marker"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "cell-typing"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "cell-typing",
+        "path": "managed"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "panglao"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "mMCP"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ImmuCC"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "mMCP"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "mMCP-counter mouse immune cell deconvolution transcriptome",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "mMCPcounter",
+          "ConsensusTME",
+          "immunedeconv",
+          "xCell2",
+          "GSVA",
+          "UCell",
+          "singscore",
+          "decoupleR"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "mouse",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA + sample distance heatmap + library size QC",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >= smallest group size (6)",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors, convert to TPM/CPM for deconvolution separately",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "mMCP-counter (mouse marker-based abundance score) on linear-scale CPM/TPM",
+            "package": "mMCPcounter",
+            "parameters": [
+              {
+                "name": "deconvolution_input",
+                "value": "linear_cpm_or_tpm"
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "ConsensusTME mouse-adapted signature scoring (ssGSEA) as secondary cross-check",
+            "package": "ConsensusTME"
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "PanglaoDB mouse marker gene sets scored per sample with UCell/singscore for stromal populations not covered by mMCP-counter",
+            "package": "UCell"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test with apeglm shrinkage, treated vs control",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "report",
+            "method": "composition summary beside DE, reproducibility record",
+            "package": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "mouse",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "count_source": "salmon",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA + sample distance heatmap + library size QC",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >= smallest group size (6)",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors, convert to TPM/CPM for deconvolution separately",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "mMCP-counter (mouse marker-based abundance score) on linear-scale CPM/TPM",
+            "package": "mMCPcounter",
+            "parameters": [
+              {
+                "name": "deconvolution_input",
+                "value": "linear_cpm_or_tpm"
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "ConsensusTME mouse-adapted signature scoring (ssGSEA) as secondary cross-check",
+            "package": "ConsensusTME"
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "PanglaoDB mouse marker gene sets scored per sample with UCell/singscore for stromal populations not covered by mMCP-counter",
+            "package": "UCell"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test with apeglm shrinkage, treated vs control",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "report",
+            "method": "composition summary beside DE, reproducibility record",
+            "package": "none"
+          }
+        ]
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "ConsensusTME mouse tumor microenvironment consensus signature",
+        "limit": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "mMCP-counter mouse transcriptome immune cell population estimation",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "33023656"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 0
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "mMCPcounter",
+        "query": "mouse tissue-infiltrating immune stromal cell population estimation from RNA-seq"
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "mMCPcounter mouse immune deconvolution",
+        "limit": 5
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/ebecht/mcpcounter",
+        "query": "mMCPcounter mouse function signature genesymbol input transformation"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "mMCPcounter",
+        "query": "murine mMCPcounter.estimate function usage gene symbol input"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "ConsensusTME",
+        "query": "ConsensusTME cancer_type ssgsea method function usage"
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "mMCPcounter",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "ConsensusTME",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "ConsensusTME cancer type gene set signature ssGSEA method R package",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "ConsensusTME estimating tumor infiltrating cell populations consensus",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "ConsensusTME tumour microenvironment cell type consensus gene sets Jiménez-Sánchez",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "31641033"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 0
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "cansysbio ConsensusTME mouse",
+        "limit": 5
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/ebecht/mcpcounter",
+        "query": "mMCPcounter murine estimate function human gene symbol input"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "immunedeconv",
+        "query": "mMCPcounter deconvolute mouse method wrapper"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/omnideconv/immunedeconv",
+        "query": "mouse deconvolution mMCPcounter method parameter mouse_dataset"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Mouse tumor immune/stromal composition: anti-PD-1 vs control",
+          "analytical_narrative": "The dataset is 6 anti-PD-1-treated vs 6 isotype-control mouse subcutaneous tumors, raw gene-level Salmon counts (12000 genes x 12 samples), single batch, unpaired. sample_01 has a library size ~4x below the median and per the grounded QC rule (R-0008/R-0030) must be kept and inspected, not silently dropped, since DESeq2's size factors already account for depth differences. The research question is descriptive/comparative composition (immune and stromal cell fractions per sample, treated vs control), not a DE question per se, so the core analytical work is deconvolution, routed to the immune-profiling-agent. Because this is mouse data, the knowledge service explicitly flags that human-trained deconvolution tools (MCP-counter, xCell, EPIC, quanTIseq, CIBERSORT) are invalid here (R-0136) — their marker sets and reference profiles are human-derived. The mouse tool of record, mMCP-counter, IS present in this environment (mMCPcounter R package, v1.1.0), so we use it directly rather than stopping or falling back to descriptive-only scoring. immunedeconv (present, v2.1.4) is also available and wraps mMCP-counter, seqImmuCC, DCQ and BASE for mouse — we use it as the primary interface since it standardizes cell type names and additionally gives cross-checks (DCQ, BASE) plus mouse-specific utilities. As a secondary cross-check we run ConsensusTME (present) in its mouse-adaptable ssGSEA/enrichment mode restricted to gene sets intersected with the mouse gene symbols in the matrix (ConsensusTME itself is human-derived gene sets, so this is reported strictly as a descriptive cross-check, not a validated mouse deconvolution, consistent with R-0136's caution). We also score PanglaoDB mouse-specific (Mm) marker gene sets per sample with UCell/singscore for stromal/immune populations (fibroblasts, endothelial, pericyte) that mMCP-counter's 16-population panel may not fully resolve, again as descriptive signature scores, not fraction estimates. Counts are converted to linear-scale TPM/CPM (gene lengths unavailable without transcript info from Salmon quant metadata, so CPM is used with this stated as a limitation) per R-0129 before any deconvolution/marker-scoring step — never log-transformed for the absolute/marker methods. Composition estimates and marker scores are compared treated vs control with a two-group test (limma or Wilcoxon given n=6 per group) per R-0134/R-0155-adjacent logic, with BH correction across the tested populations/signatures, and reported beside — never substituting for — a proper DESeq2 differential expression analysis (also included, since the research question implicitly invites checking whether compositional differences confound or explain any gene-level signal). QC step keeps sample_01 through vst(blind) PCA and sample-distance diagnostics and reports it explicitly rather than removing it by default.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 12 tumor samples (6 anti-PD-1, 6 isotype control) separate by condition on PCA, and how does the low-depth sample_01 behave relative to its group?",
+              "acceptance_criteria": [
+                "PCA on vst(blind)-transformed counts (top 500 variable genes) with samples colored by condition",
+                "Sample-to-sample Euclidean distance heatmap produced",
+                "Library size and detected-gene count reported per sample, with sample_01 explicitly flagged and NOT removed by default",
+                "A stated, evidence-based decision on whether sample_01 is retained for downstream analysis"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: /eval-four-models-with-deconvolution-mouse-n6-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw Salmon gene-level integer counts, mouse symbols) and metadata.csv (12 x 2, condition: anti-PD-1 vs isotype control). sample_01 has library size ~4x below median.",
+              "constraints": [
+                "Use vst(blind=TRUE), PCA on top 500 variance genes, sample distance heatmap per grounded template tpl-qc-eda",
+                "Do not delete sample_01 silently; report its library size and detected genes beside the others and state the removal decision explicitly with reason if removed"
+              ],
+              "caveats": [
+                "A library-size outlier is not by itself grounds for removal; DESeq2 size factors down-weight it appropriately"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033/R-0008 given the flagged low-depth sample_01"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Filter, normalize, and prepare linear-scale expression matrix",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "After removing low-count genes (>=10 counts in >=6 samples, the smallest group size), what are the DESeq2 median-of-ratios size factors and the linear-scale CPM matrix to feed into deconvolution and marker scoring?",
+              "acceptance_criteria": [
+                "Genes filtered to >=10 counts in at least 6 samples (smallest group size)",
+                "DESeq2 size factors computed via median-of-ratios and reported per sample",
+                "A linear-scale CPM matrix (not log-transformed) derived from the size-factor-normalized counts, with mouse gene symbols as rownames, produced for downstream deconvolution/scoring steps",
+                "Explicit note that gene lengths were unavailable from the counts file, so CPM (not TPM) is used, and this limitation is stated in the output"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 x 12 raw integer counts, single batch, unpaired 6 vs 6 design.",
+              "constraints": [
+                "Pre-filter minimal: keep gene with >=10 counts in >=6 samples (smallest group)",
+                "Normalize via DESeq2 median-of-ratios size factors; do not pre-scale counts before the DE model in T2S1",
+                "Produce a separate linear-scale (non-log) CPM matrix strictly for deconvolution/scoring inputs"
+              ],
+              "caveats": [
+                "Independent filtering at the results stage (T2S2) will further refine the tested gene set; this pre-filter is intentionally minimal"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0030@2248",
+                  "R-0129@2909"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Minimal pre-filter and median-of-ratios normalization per R-0029/R-0002/R-0026; linear CPM export per R-0129 for the deconvolution step"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Differential expression: anti-PD-1 vs isotype control",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between anti-PD-1-treated and isotype-control tumors (reference level = isotype control)?",
+              "acceptance_criteria": [
+                "DESeq2 Wald test with condition explicitly releveled so isotype control is the reference",
+                "apeglm shrinkage applied to the reported log2 fold changes for the anti-PD-1 vs control coefficient",
+                "BH-adjusted p-values reported at alpha=0.05 with independent filtering left on",
+                "p-value histogram inspected and reported as a QC diagnostic"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "6 vs 6 unpaired design, single batch, no covariates named in metadata beyond condition.",
+              "constraints": [
+                "Set reference level explicitly to isotype control; name the contrast as condition, anti-PD-1, isotype_control",
+                "Use apeglm for LFC shrinkage (single coefficient)",
+                "Report number of genes with NA p-values from Cook's outlier flagging separately from independent-filter-removed genes"
+              ],
+              "caveats": [
+                "With n=6 per group and DESeq2's outlier handling threshold at 7 replicates, a flagged-gene Cook's-distance NA is expected for some genes; report these explicitly"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0001@9a17",
+                  "R-0036@9786",
+                  "R-0009@f54e",
+                  "R-0010@91a5",
+                  "R-0039@e17a",
+                  "R-0083@12de"
+                ],
+                "reason": "Standard DESeq2 Wald + apeglm shrinkage + BH at alpha 0.05 for a 6v6 unpaired single-batch design"
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Mouse immune/stromal cell deconvolution with mMCP-counter (immunedeconv)",
+              "track": "T3",
+              "step_type": "deconvolution",
+              "question": "What is the estimated relative abundance of the 16 mMCP-counter immune/stromal cell populations in each of the 12 tumor samples, and does any population differ between anti-PD-1 and isotype control?",
+              "acceptance_criteria": [
+                "mMCP-counter run via immunedeconv::deconvolute_mouse(method='mmcp_counter') (or direct mMCPcounter::mMCPcounter.estimate) on the linear-scale CPM matrix with MGI mouse gene symbols as rownames",
+                "One abundance score per cell population per sample (16 populations x 12 samples) reported",
+                "Group comparison (treated vs control) per population via a two-group test appropriate for n=6/group (e.g., Wilcoxon rank-sum or limma on the scores) with BH correction across the 16 populations",
+                "sample_01 included with its score reported alongside a note on its low depth",
+                "Explicit statement that this is a validated mouse-specific tool (unlike human tools MCP-counter/xCell/EPIC/quanTIseq, which are NOT used here)"
+              ],
+              "packages": [
+                "mMCPcounter",
+                "immunedeconv"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "context": "Mouse subcutaneous tumor, anti-PD-1 vs isotype control, n=6/6. mMCPcounter (v1.1.0) and immunedeconv (v2.1.4) are both installed in this environment and were confirmed present before drafting this step. mMCP-counter markers require MGI gene symbols; the counts file already carries mouse gene symbols as its first column.",
+              "constraints": [
+                "Use linear-scale CPM/TPM input, never log-transformed for the marker-based estimate itself (the wrapper may apply its own internal log2 step per its documented default; follow the tool's documented input convention)",
+                "Do not substitute a human deconvolution tool (MCP-counter, xCell, EPIC, quanTIseq, CIBERSORT, TIMER, ConsensusTME as primary) for mouse data",
+                "Report composition beside, not instead of, the T2S1 differential expression results",
+                "State BH-adjusted p-values across the 16 cell populations tested"
+              ],
+              "caveats": [
+                "mMCP-counter gives semi-quantitative marker-based scores, not absolute fractions; do not interpret scores as cell percentages",
+                "A population estimate is an outcome/covariate for this question, never a substitute for the DE design in T2S1"
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0129@2909",
+                  "R-0132@246d",
+                  "R-0136@b81f"
+                ],
+                "reason": "R-0136 flags human deconvolution tools as invalid on mouse data and names mMCP-counter as the tool of record; mMCPcounter and immunedeconv are confirmed present in this environment, so the flagged outcome (mouse_reference_required) is satisfied directly rather than falling back to descriptive-only scoring"
+              }
+            },
+            {
+              "id": "T3S2",
+              "name": "Cross-check composition with ConsensusTME enrichment and PanglaoDB mouse marker scoring",
+              "track": "T3",
+              "step_type": "signature_scoring",
+              "question": "Do ConsensusTME-style enrichment scores and PanglaoDB mouse (Mm) marker-gene scores (UCell) corroborate the mMCP-counter composition differences between anti-PD-1 and isotype-control tumors, particularly for stromal populations (fibroblasts, endothelial cells) not resolved by mMCP-counter's panel?",
+              "acceptance_criteria": [
+                "ConsensusTME gene sets intersected with genes present in the mouse count matrix; ssGSEA-style enrichment score computed per sample per cell type, explicitly labeled as a descriptive cross-check derived from human-curated gene sets applied via symbol overlap, not a validated mouse deconvolution",
+                "PanglaoDB markers filtered to species=='Mm' (or Mm+Hs shared) for fibroblast, endothelial, pericyte and other stromal/immune populations, scored per sample with UCell",
+                "Both score sets compared treated vs control (t-test or limma per R-0134) with BH correction across all signatures/cell types tested and reported with the source/version of each gene set",
+                "Report explicitly states the two mMCP-counter-uncovered stromal populations these scores are meant to supplement, and the caveat that these are relative enrichment scores, not fractions"
+              ],
+              "packages": [
+                "ConsensusTME",
+                "UCell",
+                "singscore"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "context": "Reference data available: PanglaoDB marker table (managed/panglaodb-markers, human+mouse combined, filter species column to 'Mm'). ConsensusTME gene sets are human-curated; used here strictly as a secondary, caveated cross-check per R-0135/R-0133/R-0134, not as the primary mouse deconvolution (that role is filled by mMCP-counter in T3S1).",
+              "constraints": [
+                "Filter PanglaoDB markers to species=='Mm' before scoring; report the number of markers found per signature in the expression matrix",
+                "State the source and version of every gene set/signature used",
+                "BH-adjust p-values across all signatures/cell types tested in this step"
+              ],
+              "caveats": [
+                "ConsensusTME gene sets are derived from human tumor data; symbol-overlap scoring on mouse data does not carry the same specificity as a mouse-trained method and must be reported as descriptive only, consistent with the R-0136 caution",
+                "A score from a marker set is a relative enrichment, not a cell fraction"
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0135@f02d",
+                  "R-0133@ce76",
+                  "R-0134@0f16",
+                  "R-0136@b81f"
+                ],
+                "reason": "Secondary descriptive cross-check per R-0135 (PanglaoDB mouse markers) and per R-0136's caution that any human-derived gene-set method on mouse data must be reported as descriptive, not a validated deconvolution"
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "Integrated report: composition, DE, and reproducibility record",
+              "track": "T4",
+              "step_type": "report",
+              "question": "What is the composite picture of immune/stromal composition per sample, how does it compare between anti-PD-1 and isotype-control tumors, and how does it relate to the gene-level DE result?",
+              "acceptance_criteria": [
+                "Per-sample table of mMCP-counter scores, ConsensusTME cross-check scores, and PanglaoDB/UCell stromal scores, annotated with condition and library size (sample_01 flagged)",
+                "Summary of which cell populations/signatures differ significantly (BH-adjusted) between treated and control, with effect direction stated",
+                "Explicit cross-reference to the T2S1 DE gene list: note any DE genes that are markers of a differentially abundant cell population, flagged as a possible composition-driven signal rather than a cell-intrinsic effect",
+                "Full reproducibility record: package versions (mMCPcounter, immunedeconv, ConsensusTME, UCell, singscore, DESeq2), gene-set/marker source versions (PanglaoDB 2020.03.27), and random seeds for any stochastic step"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T2S1",
+                "T3S1",
+                "T3S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "immune-profiling-agent",
+              "context": "Synthesizes T2S1 (DE) with T3S1/T3S2 (composition) for the 12-sample anti-PD-1 vs isotype-control cohort.",
+              "constraints": [
+                "Report composition as an outcome/covariate beside DE, never as a replacement for the DE design",
+                "Include the reproducibility record per R-0086: sessionInfo, seeds, package versions, gene-set/collection versions"
+              ],
+              "caveats": [
+                "n=6/group is a small cohort for stable enrichment/marker-score estimates; state that BH-adjusted findings here are hypothesis-generating pending a larger cohort or flow-cytometry validation"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0132@246d"
+                ],
+                "reason": "Reproducibility record requirement and composition-as-covariate/outcome framing"
+              }
+            }
+          ],
+          "created_at": "2026-09-07T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

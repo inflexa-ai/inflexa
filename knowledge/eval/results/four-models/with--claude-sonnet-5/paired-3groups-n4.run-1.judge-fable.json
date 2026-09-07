@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: DESeq2 with ~subject+condition, an LRT against ~subject for any-condition effect, then three named pairwise Wald contrasts with ashr shrinkage and BH at 0.05 within each contrast, reference level set explicitly to control. QC is design-specific (blind VST, PCA and distance heatmap colored by subject and condition, library-size flagging, a stated action if a subject's triplet fails to cluster), the low-count filter is minimal and tied to the smallest group size, and normalization is left to DESeq2 size factors on raw counts with the missing length-offset limitation noted. Enrichment uses a tested-gene universe, named and versioned collections, a 15-500 size window, and a small-list power caveat, though the stated reason for rejecting preranked GSEA is an appeal to a 'knowledge check' rather than a scientific justification. The report specification is complete, including counts tested/significant per contrast, NA-padj causes, package and reference versions, and the n=4 underpowering caveat."
+}

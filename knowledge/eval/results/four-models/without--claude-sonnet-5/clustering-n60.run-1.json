@@ -1,0 +1,748 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "clustering-n60",
+  "run": 1,
+  "startedAt": "2026-09-06T21:43:00.438Z",
+  "elapsedMs": 160070,
+  "outcome": "plan_submitted",
+  "planId": "pln-8137bd05",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, and variance-stabilized expression matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Raw integer counts must not be fed directly into a distance-based clustering algorithm — library size and mean-variance dependence will dominate",
+          "Do not regress out the case/control label at this stage — the point of the analysis is to find structure orthogonal to or nested within it, not to remove it"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "vsn",
+          "matrixStats",
+          "pheatmap"
+        ],
+        "question": "Given the raw Salmon gene-level counts (12000 genes x 120 samples: 60 case, 60 control) in counts.csv, what is a filtered, normalized, variance-stabilized expression matrix suitable for unsupervised clustering, and do PCA/library-size diagnostics reveal any samples that are outliers or batch artifacts distorting downstream distances?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Genes with near-zero counts across most samples are filtered (e.g., require count >=10 in at least 10% of samples) before normalization",
+          "Library size, PCA on normalized data, and a sample-sample correlation heatmap are produced and inspected for outlier samples",
+          "A DESeq2 (or edgeR/vsn) variance-stabilizing transform is applied and the resulting matrix is saved for downstream clustering steps",
+          "Metadata (case/control label per sample) is merged and retained alongside the expression matrix for later cross-tabulation, but is NOT used to guide normalization or gene filtering"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Most-variable-gene feature selection and cell-composition confound check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This is a diagnostic step, not a clustering step — its output feeds interpretation of whatever clusters T2 finds, it does not itself claim subgroups exist",
+          "Blood cell composition is a very common source of spurious 'subtype' signal in whole-blood cohorts; flag this prominently if lineage markers dominate the variable-gene PCs"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "matrixStats",
+          "immunedeconv",
+          "MCPcounter"
+        ],
+        "question": "Among the 12,000 genes, which top variable genes (e.g., top 500-2000 by variance or MAD on the VST matrix from T1S1) should define the feature space for clustering, and to what extent does leukocyte lineage marker expression (proxy for blood cell-type composition, since whole blood is majority-neutrophil/lymphocyte) explain the dominant axes of variance seen in this feature space?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "A top-variable-gene matrix (protocol: rank by MAD or variance on VST data, report the exact gene count used) is produced as the clustering feature matrix",
+          "PC1-PC5 of this feature matrix are correlated against classic lineage marker genes present in the count matrix (e.g., CD3D/CD3E for T cells, CD19/MS4A1 for B cells, CD14/LYZ for monocytes, NCAM1 for NK, HBB/HBA1 for erythroid contamination, FCGR3B/CSF3R for neutrophils) to flag whether composition, not case/control status, is the dominant driver of variance",
+          "Report explicitly whether any PC correlates more strongly with a lineage-marker proxy than with the case/control label",
+          "If immunedeconv/MCPcounter/xCell/EPIC resolve against the available packages, run one bulk deconvolution method as a quantitative composition estimate; if no compatible signature reference resolves in the sandbox, state that explicitly and rely on the marker-gene proxy analysis instead — do not fabricate a deconvolution result"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Consensus clustering across k=2..8 with stability metrics",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Consensus clustering can produce a plausible-looking k even on structureless data (well documented over-optimism of the CDF/delta-area heuristics) — the PAC score and comparison across k are required, not optional",
+          "n=120 with a modest feature set means clusters beyond k=3-4 are likely underpowered; state sample-size limits on resolvable subgroup number explicitly"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "ConsensusClusterPlus",
+          "matrixStats"
+        ],
+        "question": "Using the top-variable-gene VST feature matrix from T1S2 across all 120 samples, does resampling-based consensus clustering (ConsensusClusterPlus, hierarchical agglomerative with Pearson/1-correlation distance, item resampling 80% x 1000 iterations) support a number of subgroups k>1 beyond the known case/control split, and how stable is the assignment at the best-supported k?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Consensus clustering is run for k=2 through k=8 with a resampling scheme (e.g., 1000 iterations, 80% sample and 80% gene subsampling) using ConsensusClusterPlus",
+          "For each k, the consensus CDF, delta-area plot, and proportion-of-ambiguous-clustering (PAC) score (or equivalent stability statistic) are computed and reported numerically, not just plotted",
+          "The best-supported k is chosen by an explicit, stated stability criterion (e.g., lowest PAC, or largest silhouette-consistent delta-area gain) rather than eyeballing a plot",
+          "The consensus matrix and cluster assignments per sample are saved for the downstream validation step",
+          "Report is explicit if no k>1 shows meaningfully better stability than a random/null baseline expectation — a negative finding (no additional structure) is a valid, reportable outcome"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Orthogonal clustering validation (hierarchical + PAM) and internal validity indices",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A silhouette or gap statistic alone should not be used to override the PAC-based k choice from T2S1 — this step is a cross-check, and disagreement between methods is itself informative and should be reported, not resolved by picking whichever agrees with a preferred narrative"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "Rtsne",
+          "dendextend",
+          "mclust"
+        ],
+        "question": "Do an independent clustering method (Ward hierarchical clustering and PAM/k-medoids on Euclidean and 1-correlation distances) and internal validity indices (silhouette width, gap statistic) at the k selected in T2S1 agree with the ConsensusClusterPlus assignment, confirming the subgroup structure is not an artifact of one specific algorithm?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Ward hierarchical clustering and PAM are each run on the same T1S2 feature matrix at the k chosen in T2S1 (and at k-1, k+1 for context)",
+          "Agreement between the ConsensusClusterPlus assignment and each alternative method is quantified (Adjusted Rand Index or similar)",
+          "Silhouette width per sample and per cluster is reported for the chosen k across all three methods",
+          "Conclusion states plainly whether the alternative methods corroborate the consensus-clustering k or diverge, and by how much (ARI value)"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Cross-tabulate discovered subgroups against case/control label and technical covariates",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A subgroup that is really a composition or batch effect must be labeled as such, not presented as a biological finding",
+          "With n=60 per arm, sub-splits smaller than ~15-20 samples per subgroup will have very wide confidence intervals in any downstream comparison — flag this"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "matrixStats"
+        ],
+        "question": "How do the subgroups discovered in T2S1/T2S2 (at the stability-selected k) distribute across the known case (n=60) versus control (n=60) label, and does subgroup membership correlate with any measurable technical covariate (library size, RNA-derived cell-composition proxy from T1S2) rather than with disease status?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1",
+          "T2S2",
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "A contingency table (subgroup x case/control) with a chi-square or Fisher's exact test is produced",
+          "Subgroup membership is tested for association with library size and with the lineage-marker/composition proxy from T1S2 (ANOVA or Kruskal-Wallis across subgroups)",
+          "Report states explicitly whether subgroups split within case, within control, across both, or track a technical/composition covariate instead of, or in addition to, disease status",
+          "If subgroups are indistinguishable from the case/control split itself (i.e., k=2 exactly recovers case vs control), this is stated as the finding rather than reported as a novel subgroup discovery"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway/biological characterization of stable subgroups",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "GO-BP is a nested hierarchy; collapse or note redundant parent/child hits rather than reporting them as independent findings",
+          "This step is only meaningful if a stable k>1 (beyond the trivial case/control split) survives T2S1-T2S3; do not run it as a formality on a null result"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "clusterProfiler",
+          "fgsea"
+        ],
+        "question": "For the stability-selected subgroups (from T2S1/T2S3), which MSigDB hallmark and GO biological process gene sets are differentially enriched between subgroups (pairwise or one-vs-rest), giving each subgroup a biological label distinct from a mere case/control re-labeling?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S3"
+        ],
+        "acceptance_criteria": [
+          "Differential expression between subgroups (one-vs-rest, or pairwise if only 2-3 subgroups) is computed on the raw counts using DESeq2 with subgroup as the design factor",
+          "Ranked gene lists per subgroup contrast are tested against MSigDB human hallmark gene sets and MSigDB human GO-BP gene sets using GSEA/ORA",
+          "Enriched pathways are reported per subgroup with FDR-adjusted p-values, and the report distinguishes signal driven by known immune/lineage pathways (consistent with the T1S2 composition confound) from signal independent of composition",
+          "If T2S1 concluded no stable subgroup exists beyond case/control, this step is skipped and that is stated rather than manufacturing a spurious enrichment result"
+        ]
+      }
+    ],
+    "title": "Unsupervised subgroup discovery in whole-blood case/control cohort",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The dataset is 12,000 genes x 120 whole-blood RNA-seq samples (60 case, 60 control, single batch, raw Salmon counts) with a known case/control label already assigned. The question asks whether additional structure exists beyond that binary split — i.e., whether cases and/or controls further partition into molecular subgroups, and how many such subgroups are statistically supported and reproducible. This is a classic unsupervised subtype-discovery problem, best approached with: (1) proper count normalization and variance stabilization before any distance-based method is applied to raw counts (raw Salmon counts must not be clustered directly — library size and mean-variance dependence would dominate the distance metric); (2) a check for whether cell-type composition (a well-known confound in whole-blood transcriptomics) is what's actually driving any apparent structure, since blood transcriptomes are heavily influenced by leukocyte proportions rather than disease-intrinsic signal; (3) consensus clustering across multiple k with a stability metric (rather than a single k-means run) because sample count (n=120) is modest and stability must be quantified, not asserted; (4) validation that any discovered subgroups are not simply recapitulating the known case/control label, sex, or other technical covariates; (5) an orthogonal clustering approach (hierarchical / PAM on a distinct distance) to confirm robustness against method choice; and (6) biological characterization of any stable subgroups via pathway enrichment and case/control cross-tabulation, so a discovered subgroup is reported as a hypothesis-generating pattern with named biology, not just a cluster label. Reference gene sets (MSigDB hallmark and GO-BP, both human, confirmed present in this environment) support the enrichment step. No blood cell-type reference (LM22-style signature matrix) was found in the current reference store — the immune-profiling package stack (immunedeconv, MCPcounter, xCell, EPIC, quantiseqr) is installed, but the composition step is written to auto-detect available marker sets/references at runtime and to report the confound qualitatively via marker-gene proxies (e.g., known lineage markers such as CD3D/CD14/CD19/NCAM1/HBB from the count matrix itself) if no bundled full reference resolves in the sandbox, rather than block on it."
+  },
+  "usage": {
+    "inputTokens": 2240556,
+    "outputTokens": 8897,
+    "cacheCreationInputTokens": 194913,
+    "cacheReadInputTokens": 2045211,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune cell signature blood deconvolution"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ConsensusClusterPlus",
+          "M3C",
+          "NbClust",
+          "cluster",
+          "umap",
+          "scikit-learn",
+          "Rtsne",
+          "pvclust"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "consensusclustering",
+          "WGCNA",
+          "sva",
+          "limma",
+          "pheatmap",
+          "factoextra",
+          "cola"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "whole blood transcriptomics unsupervised subgroup clustering consensus stability case control",
+        "maxResults": 6
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "consensus clustering stability gene expression subtype discovery number of clusters",
+        "limit": 6
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "blood transcriptomic endotype subgroups hidden heterogeneity disease",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "molecular endotypes whole blood gene expression clustering sepsis",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "consensus clustering gene expression subtypes number of clusters",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "LM22 immune cell reference signature matrix"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "xCell",
+          "MCPcounter",
+          "quantiseqr",
+          "EPIC",
+          "ConsensusTME"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "cell-typing",
+        "limit": 60
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "scGate",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "CIBERSORT LM22"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "blood cell type signature reference matrix bulk deconvolution"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune-profiling-agent MCPcounter xCell signature matrix"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ComplexHeatmap",
+          "mclust",
+          "dendextend",
+          "matrixStats",
+          "DESeq2",
+          "vsn",
+          "sva",
+          "limma",
+          "prcomp",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ConsensusClusterPlus",
+          "SNFtool",
+          "kneed",
+          "gseapy",
+          "decoupleR"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clue",
+          "immunedeconv",
+          "e1071",
+          "GSVA",
+          "AnnotationDbi",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "consensus clustering proportion of ambiguous clustering PAC k selection RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "consensus clustering random labelling limitations RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Senbabaoglu consensus clustering random data",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "Senbabaoglu clustering stability random data misleading consensus clustering",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "molecular degree of perturbation sepsis endotype blood RNA",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "surrogate variable analysis hidden batch effects gene expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "CIBERSORT cell type composition confounds gene expression clustering blood",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "immune cell proportion confounder gene expression clustering deconvolution whole blood",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "cell type composition drives unsupervised clustering bulk RNA blood",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "CIBERSORTx leukocyte composition bulk blood transcriptome deconvolution",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "CIBERSORT blood cell type composition confounds bulk transcriptome subgroup clustering",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "consensus clustering stability evaluation gene expression number of clusters",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "most variable genes whole blood transcriptomic module WGCNA subgroup discovery disease heterogeneity",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "proportion of ambiguous clustering PAC metric cluster stability determine k",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "ConsensusClusterPlus RNA-seq subtype discovery",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "variancePartition",
+          "rrvgo",
+          "corrplot",
+          "singscore",
+          "GSVA",
+          "cluster",
+          "cola"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "cluster",
+        "language": "r"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Unsupervised subgroup discovery in whole-blood case/control cohort",
+          "analytical_narrative": "The dataset is 12,000 genes x 120 whole-blood RNA-seq samples (60 case, 60 control, single batch, raw Salmon counts) with a known case/control label already assigned. The question asks whether additional structure exists beyond that binary split — i.e., whether cases and/or controls further partition into molecular subgroups, and how many such subgroups are statistically supported and reproducible. This is a classic unsupervised subtype-discovery problem, best approached with: (1) proper count normalization and variance stabilization before any distance-based method is applied to raw counts (raw Salmon counts must not be clustered directly — library size and mean-variance dependence would dominate the distance metric); (2) a check for whether cell-type composition (a well-known confound in whole-blood transcriptomics) is what's actually driving any apparent structure, since blood transcriptomes are heavily influenced by leukocyte proportions rather than disease-intrinsic signal; (3) consensus clustering across multiple k with a stability metric (rather than a single k-means run) because sample count (n=120) is modest and stability must be quantified, not asserted; (4) validation that any discovered subgroups are not simply recapitulating the known case/control label, sex, or other technical covariates; (5) an orthogonal clustering approach (hierarchical / PAM on a distinct distance) to confirm robustness against method choice; and (6) biological characterization of any stable subgroups via pathway enrichment and case/control cross-tabulation, so a discovered subgroup is reported as a hypothesis-generating pattern with named biology, not just a cluster label. Reference gene sets (MSigDB hallmark and GO-BP, both human, confirmed present in this environment) support the enrichment step. No blood cell-type reference (LM22-style signature matrix) was found in the current reference store — the immune-profiling package stack (immunedeconv, MCPcounter, xCell, EPIC, quantiseqr) is installed, but the composition step is written to auto-detect available marker sets/references at runtime and to report the confound qualitatively via marker-gene proxies (e.g., known lineage markers such as CD3D/CD14/CD19/NCAM1/HBB from the count matrix itself) if no bundled full reference resolves in the sandbox, rather than block on it.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization, and variance-stabilized expression matrix",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Given the raw Salmon gene-level counts (12000 genes x 120 samples: 60 case, 60 control) in counts.csv, what is a filtered, normalized, variance-stabilized expression matrix suitable for unsupervised clustering, and do PCA/library-size diagnostics reveal any samples that are outliers or batch artifacts distorting downstream distances?",
+              "acceptance_criteria": [
+                "Genes with near-zero counts across most samples are filtered (e.g., require count >=10 in at least 10% of samples) before normalization",
+                "Library size, PCA on normalized data, and a sample-sample correlation heatmap are produced and inspected for outlier samples",
+                "A DESeq2 (or edgeR/vsn) variance-stabilizing transform is applied and the resulting matrix is saved for downstream clustering steps",
+                "Metadata (case/control label per sample) is merged and retained alongside the expression matrix for later cross-tabulation, but is NOT used to guide normalization or gene filtering"
+              ],
+              "caveats": [
+                "Raw integer counts must not be fed directly into a distance-based clustering algorithm — library size and mean-variance dependence will dominate",
+                "Do not regress out the case/control label at this stage — the point of the analysis is to find structure orthogonal to or nested within it, not to remove it"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "vsn",
+                "matrixStats",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Most-variable-gene feature selection and cell-composition confound check",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Among the 12,000 genes, which top variable genes (e.g., top 500-2000 by variance or MAD on the VST matrix from T1S1) should define the feature space for clustering, and to what extent does leukocyte lineage marker expression (proxy for blood cell-type composition, since whole blood is majority-neutrophil/lymphocyte) explain the dominant axes of variance seen in this feature space?",
+              "acceptance_criteria": [
+                "A top-variable-gene matrix (protocol: rank by MAD or variance on VST data, report the exact gene count used) is produced as the clustering feature matrix",
+                "PC1-PC5 of this feature matrix are correlated against classic lineage marker genes present in the count matrix (e.g., CD3D/CD3E for T cells, CD19/MS4A1 for B cells, CD14/LYZ for monocytes, NCAM1 for NK, HBB/HBA1 for erythroid contamination, FCGR3B/CSF3R for neutrophils) to flag whether composition, not case/control status, is the dominant driver of variance",
+                "Report explicitly whether any PC correlates more strongly with a lineage-marker proxy than with the case/control label",
+                "If immunedeconv/MCPcounter/xCell/EPIC resolve against the available packages, run one bulk deconvolution method as a quantitative composition estimate; if no compatible signature reference resolves in the sandbox, state that explicitly and rely on the marker-gene proxy analysis instead — do not fabricate a deconvolution result"
+              ],
+              "caveats": [
+                "This is a diagnostic step, not a clustering step — its output feeds interpretation of whatever clusters T2 finds, it does not itself claim subgroups exist",
+                "Blood cell composition is a very common source of spurious 'subtype' signal in whole-blood cohorts; flag this prominently if lineage markers dominate the variable-gene PCs"
+              ],
+              "packages": [
+                "matrixStats",
+                "immunedeconv",
+                "MCPcounter"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Consensus clustering across k=2..8 with stability metrics",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Using the top-variable-gene VST feature matrix from T1S2 across all 120 samples, does resampling-based consensus clustering (ConsensusClusterPlus, hierarchical agglomerative with Pearson/1-correlation distance, item resampling 80% x 1000 iterations) support a number of subgroups k>1 beyond the known case/control split, and how stable is the assignment at the best-supported k?",
+              "acceptance_criteria": [
+                "Consensus clustering is run for k=2 through k=8 with a resampling scheme (e.g., 1000 iterations, 80% sample and 80% gene subsampling) using ConsensusClusterPlus",
+                "For each k, the consensus CDF, delta-area plot, and proportion-of-ambiguous-clustering (PAC) score (or equivalent stability statistic) are computed and reported numerically, not just plotted",
+                "The best-supported k is chosen by an explicit, stated stability criterion (e.g., lowest PAC, or largest silhouette-consistent delta-area gain) rather than eyeballing a plot",
+                "The consensus matrix and cluster assignments per sample are saved for the downstream validation step",
+                "Report is explicit if no k>1 shows meaningfully better stability than a random/null baseline expectation — a negative finding (no additional structure) is a valid, reportable outcome"
+              ],
+              "caveats": [
+                "Consensus clustering can produce a plausible-looking k even on structureless data (well documented over-optimism of the CDF/delta-area heuristics) — the PAC score and comparison across k are required, not optional",
+                "n=120 with a modest feature set means clusters beyond k=3-4 are likely underpowered; state sample-size limits on resolvable subgroup number explicitly"
+              ],
+              "packages": [
+                "ConsensusClusterPlus",
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Orthogonal clustering validation (hierarchical + PAM) and internal validity indices",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do an independent clustering method (Ward hierarchical clustering and PAM/k-medoids on Euclidean and 1-correlation distances) and internal validity indices (silhouette width, gap statistic) at the k selected in T2S1 agree with the ConsensusClusterPlus assignment, confirming the subgroup structure is not an artifact of one specific algorithm?",
+              "acceptance_criteria": [
+                "Ward hierarchical clustering and PAM are each run on the same T1S2 feature matrix at the k chosen in T2S1 (and at k-1, k+1 for context)",
+                "Agreement between the ConsensusClusterPlus assignment and each alternative method is quantified (Adjusted Rand Index or similar)",
+                "Silhouette width per sample and per cluster is reported for the chosen k across all three methods",
+                "Conclusion states plainly whether the alternative methods corroborate the consensus-clustering k or diverge, and by how much (ARI value)"
+              ],
+              "caveats": [
+                "A silhouette or gap statistic alone should not be used to override the PAC-based k choice from T2S1 — this step is a cross-check, and disagreement between methods is itself informative and should be reported, not resolved by picking whichever agrees with a preferred narrative"
+              ],
+              "packages": [
+                "Rtsne",
+                "dendextend",
+                "mclust"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S3",
+              "name": "Cross-tabulate discovered subgroups against case/control label and technical covariates",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "How do the subgroups discovered in T2S1/T2S2 (at the stability-selected k) distribute across the known case (n=60) versus control (n=60) label, and does subgroup membership correlate with any measurable technical covariate (library size, RNA-derived cell-composition proxy from T1S2) rather than with disease status?",
+              "acceptance_criteria": [
+                "A contingency table (subgroup x case/control) with a chi-square or Fisher's exact test is produced",
+                "Subgroup membership is tested for association with library size and with the lineage-marker/composition proxy from T1S2 (ANOVA or Kruskal-Wallis across subgroups)",
+                "Report states explicitly whether subgroups split within case, within control, across both, or track a technical/composition covariate instead of, or in addition to, disease status",
+                "If subgroups are indistinguishable from the case/control split itself (i.e., k=2 exactly recovers case vs control), this is stated as the finding rather than reported as a novel subgroup discovery"
+              ],
+              "caveats": [
+                "A subgroup that is really a composition or batch effect must be labeled as such, not presented as a biological finding",
+                "With n=60 per arm, sub-splits smaller than ~15-20 samples per subgroup will have very wide confidence intervals in any downstream comparison — flag this"
+              ],
+              "packages": [
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway/biological characterization of stable subgroups",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "For the stability-selected subgroups (from T2S1/T2S3), which MSigDB hallmark and GO biological process gene sets are differentially enriched between subgroups (pairwise or one-vs-rest), giving each subgroup a biological label distinct from a mere case/control re-labeling?",
+              "acceptance_criteria": [
+                "Differential expression between subgroups (one-vs-rest, or pairwise if only 2-3 subgroups) is computed on the raw counts using DESeq2 with subgroup as the design factor",
+                "Ranked gene lists per subgroup contrast are tested against MSigDB human hallmark gene sets and MSigDB human GO-BP gene sets using GSEA/ORA",
+                "Enriched pathways are reported per subgroup with FDR-adjusted p-values, and the report distinguishes signal driven by known immune/lineage pathways (consistent with the T1S2 composition confound) from signal independent of composition",
+                "If T2S1 concluded no stable subgroup exists beyond case/control, this step is skipped and that is stated rather than manufacturing a spurious enrichment result"
+              ],
+              "caveats": [
+                "GO-BP is a nested hierarchy; collapse or note redundant parent/child hits rather than reporting them as independent findings",
+                "This step is only meaningful if a stable k>1 (beyond the trivial case/control split) survives T2S1-T2S3; do not run it as a formality on a null result"
+              ],
+              "packages": [
+                "DESeq2",
+                "clusterProfiler",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T2S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

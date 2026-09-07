@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the 3' tag-seq counts as length-independent: no tximport, no length offset, no TPM/FPKM, raw counts into DESeq2 Wald with median-of-ratios normalization, ~condition with control releveled as reference and an explicit treated-vs-control contrast, apeglm shrinkage with BH at 0.05, and a stated n=3/group power caveat. QC is blind-VST PCA and distance heatmap with library sizes and a flag-not-drop outlier policy; the filter is a justified >=5 counts in >=3 samples with kept/removed counts reported. Enrichment was not requested and is not needed to answer the question, and the Reactome collection lacks a stated release number, though the ranking metric, universe, and size window are otherwise explicit and no length-bias correction is misapplied. The report enumerates method, versions, design, thresholds, gene counts, and design caveats as required."
+}

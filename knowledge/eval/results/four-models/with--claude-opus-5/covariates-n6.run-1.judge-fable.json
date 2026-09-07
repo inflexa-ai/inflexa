@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on design: sex and mean-centred age enter ~ sex + age_c + condition as fixed terms, the counts are never pre-adjusted, balance of sex and age against condition is tabulated and collinearity is flagged as a threat to identifiability, and DESeq2 Wald with edgeR QL confirmation, a justified >=10-in-6 filter, in-model size factors/TMM, explicit relevel, BH at 0.05 with independent filtering, and apeglm on the condition coefficient are all stated. Enrichment is correctly omitted with a stated reason. The report step names methods, versions, design, contrast, thresholds, tested/significant counts, NA causes, sensitivity to adjustment, and power/limitation caveats. The only gap is QC: PCA is coloured by condition, sex and age with an explicit no-removal outlier policy, but the reference's sex check against XIST and Y-linked genes to verify the recorded sex is absent."
+}

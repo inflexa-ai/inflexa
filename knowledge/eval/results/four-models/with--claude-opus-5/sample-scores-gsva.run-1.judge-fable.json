@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly frames this as a per-sample scoring question: blind vst QC with PCA, distances and library sizes, sample_01 kept and inspected with an explicit policy, a minimal group-size-justified filter, median-of-ratios size factors, and GSVA with the Gaussian kernel on the vst matrix, tested with limma under ~condition with the control reference level set explicitly and BH across the 50 hallmarks, then a row-scaled condition-annotated heatmap with a clear statement that separation rests on the test, not the clustering. The extra UCell and PROGENy layers are defensible robustness/orthogonal checks rather than noise. Small deductions: the plan never names the BH alpha as a decision threshold (0.05 is only implied in a caveat), and the Hallmark collection version is deferred to output rather than named in the plan; the report also does not explicitly promise counts of tested versus significant sets, though the ranked table would carry them."
+}

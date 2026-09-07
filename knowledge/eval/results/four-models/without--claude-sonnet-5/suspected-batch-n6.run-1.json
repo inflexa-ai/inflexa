@@ -1,0 +1,365 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "suspected-batch-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T21:22:45.743Z",
+  "elapsedMs": 48653,
+  "outcome": "plan_submitted",
+  "planId": "pln-2863c079",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Characterize PCA cluster split vs condition",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If the two clusters map exactly onto the 6 treated / 6 control split, condition and the hidden factor are perfectly confounded and no adjustment can separate their effects - this must be reported, not silently modeled around",
+          "12 samples is a small n for robust k-means; corroborate with hierarchical clustering on the top 500 most variable genes"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the two six-sample clusters seen in PCA of the 12000x12 kidney count matrix align with, partially overlap, or run orthogonal to the treated(n=6)/control(n=6) condition labels, and what fraction of total variance does PC1/PC2 explain?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use variance-stabilizing transform (vst or rlog) from DESeq2 before PCA, not raw or log2(counts+1)",
+          "Read counts.csv (12000 genes x 12 samples) and metadata.csv (12 samples x condition) directly from the provided input paths"
+        ],
+        "acceptance_criteria": [
+          "Reports a cross-tabulation of PC1-based (or k-means k=2 on top PCs) cluster assignment against the condition column for all 12 samples",
+          "Reports % variance explained by PC1 and PC2 from a variance-stabilized (vst/rlog) PCA",
+          "Explicitly states whether the 2-cluster split is confounded with condition (e.g., all 6 treated in one cluster), partially associated, or independent of condition",
+          "Produces a labeled PCA plot colored by condition and shaped/annotated by cluster assignment"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Estimate hidden surrogate variable(s) via SVA",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 12 samples and a full (condition-only) vs null model, SVA power is limited; sanity-check the estimated SVs against the PCA clusters from T1S1 rather than trusting the algorithm blindly",
+          "If T1S1 found condition and the cluster split are confounded, the surrogate variable will be collinear with condition and cannot be included in the DESeq2 design without absorbing the treatment effect - this step must flag that case rather than proceeding to add a collinear covariate"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "sva",
+          "DESeq2"
+        ],
+        "question": "Given no recorded batch, what latent factor(s) estimated by surrogate variable analysis on the kidney count matrix best explain the non-condition PCA clustering, and how many surrogate variables should be retained?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use raw integer counts as input to sva (with condition as the variable of interest in the full model, intercept-only as the null model), not the vst-transformed matrix used for PCA visualization"
+        ],
+        "acceptance_criteria": [
+          "Reports the number of surrogate variables (SVs) estimated (via sva::num.sv or equivalent permutation-based method)",
+          "Reports correlation of each retained SV with the PCA cluster assignment from T1S1 and with condition, to confirm the SV captures the unexplained clustering rather than condition itself",
+          "Outputs an SV-by-sample matrix usable as covariates in the downstream DESeq2 design"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DESeq2 differential expression: naive vs SV-adjusted design",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Unpaired 6 vs 6 design already has limited power; adding covariates further reduces residual degrees of freedom (12 samples - 1 intercept - 1 condition - k SVs), so check that df remains adequate for the Wald test",
+          "Do not report the naive model's gene list as the primary answer if adjustment materially changes it - the adjusted model is the intended primary result given the documented confound risk"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between treated (n=6) and control (n=6) kidney samples when modeled with condition alone versus condition plus the estimated surrogate variable(s), and how do the two gene lists differ?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use raw integer counts as DESeq2 input (already gene-level, salmon-derived, integer)",
+          "Use independent filtering and BH correction as implemented by default in DESeq2::results()"
+        ],
+        "acceptance_criteria": [
+          "Reports DESeq2 results (log2FC, padj, Wald stats) for the condition contrast under design ~condition (naive) and under design ~SV1(+SV2...)+condition (adjusted), using BH-adjusted p<0.05 as the significance threshold",
+          "Reports the number of genes significant in each model, the overlap between the two significant gene sets, and genes that lose or gain significance after adjustment",
+          "Includes an MA plot and a volcano plot for the adjusted model",
+          "If T1S1/T1S2 flagged condition as confounded with the hidden cluster split, this step must report that the SV-adjusted contrast is not reliably interpretable as a treatment effect, rather than presenting it as a clean result"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway enrichment of adjusted DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways gene sets use HGNC symbols; confirm the counts.csv gene symbol column matches this namespace before joining, and report any unmapped fraction",
+          "Enrichment on a small (12000-gene, 12-sample) DE list already limited by low power will itself be underpowered - treat results as hypothesis-generating"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control kidney samples after adjusting for the estimated hidden surrogate variable(s)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the WikiPathways Homo sapiens GMT file located under the managed reference store for pathways (human); parse the '%'-delimited first field to recover pathway names",
+          "Rank genes by the SV-adjusted model's signed test statistic (e.g., stat column from DESeq2 results), not the naive model's"
+        ],
+        "acceptance_criteria": [
+          "Runs over-representation or GSEA-style enrichment (fgsea, ranked on the SV-adjusted model's test statistic) against the WikiPathways human gene sets",
+          "Reports enriched pathways at FDR<0.05 with normalized enrichment score/odds ratio and leading-edge/overlapping genes",
+          "States explicitly if the reference resource is unavailable or the gene symbol overlap with pathway sets is low (<50% of DE genes mapped)"
+        ]
+      }
+    ],
+    "title": "Kidney RNA-seq DE with hidden-batch adjustment",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The data profile flags a critical confound: PCA of the 12-sample kidney bulk RNA-seq count matrix (12000 genes x 12 samples, 6 treated vs 6 control, unpaired) shows two clusters of six that do NOT align with treated/control, and no processing batch was recorded in metadata. A naive treated-vs-control DESeq2 run would model condition only, leaving this unrecorded structure as unmodeled variance (or, worse, if the PCA split happens to correlate with condition membership, as an unrecognized confound that could produce spurious or masked DE calls). The plan therefore: (1) formally quantifies the PC1/PC2 cluster split and cross-tabulates it against condition to establish whether the clustering is orthogonal to, correlated with, or confounded with treatment - this determines whether adjustment is safe or whether condition and the hidden factor are inseparable; (2) uses surrogate variable analysis (SVA) on the count data to estimate the latent factor(s) driving the non-condition clustering, since no batch label exists to include directly as a covariate; (3) runs DESeq2 with the estimated surrogate variable(s) included in the design alongside condition, contrasted against a naive condition-only model, so both results are reported and the difference is attributable to the hidden structure; (4) runs pathway enrichment on the batch-adjusted DE gene list using WikiPathways human gene sets, the only pathway reference available for this organism; (5) documents the confound explicitly rather than silently resolving it, since if condition is confounded with the hidden clustering (e.g., 6 treated samples are entirely in one PC cluster), no statistical adjustment can fully separate the two effects and the result must be reported as such."
+  },
+  "usage": {
+    "inputTokens": 358574,
+    "outputTokens": 3970,
+    "cacheCreationInputTokens": 74168,
+    "cacheReadInputTokens": 284310,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "unsupervised clustering confounding surrogate variable analysis RNA-seq batch effect not recorded",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "surrogate variable analysis RNA-seq unwanted variation differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "sva",
+          "limma",
+          "edgeR",
+          "RUVSeq",
+          "pheatmap",
+          "ComplexHeatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "clusterProfiler",
+          "GSVA",
+          "gseapy"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ggplot2",
+          "factoextra"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney RNA-seq DE with hidden-batch adjustment",
+          "analytical_narrative": "The data profile flags a critical confound: PCA of the 12-sample kidney bulk RNA-seq count matrix (12000 genes x 12 samples, 6 treated vs 6 control, unpaired) shows two clusters of six that do NOT align with treated/control, and no processing batch was recorded in metadata. A naive treated-vs-control DESeq2 run would model condition only, leaving this unrecorded structure as unmodeled variance (or, worse, if the PCA split happens to correlate with condition membership, as an unrecognized confound that could produce spurious or masked DE calls). The plan therefore: (1) formally quantifies the PC1/PC2 cluster split and cross-tabulates it against condition to establish whether the clustering is orthogonal to, correlated with, or confounded with treatment - this determines whether adjustment is safe or whether condition and the hidden factor are inseparable; (2) uses surrogate variable analysis (SVA) on the count data to estimate the latent factor(s) driving the non-condition clustering, since no batch label exists to include directly as a covariate; (3) runs DESeq2 with the estimated surrogate variable(s) included in the design alongside condition, contrasted against a naive condition-only model, so both results are reported and the difference is attributable to the hidden structure; (4) runs pathway enrichment on the batch-adjusted DE gene list using WikiPathways human gene sets, the only pathway reference available for this organism; (5) documents the confound explicitly rather than silently resolving it, since if condition is confounded with the hidden clustering (e.g., 6 treated samples are entirely in one PC cluster), no statistical adjustment can fully separate the two effects and the result must be reported as such.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Characterize PCA cluster split vs condition",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the two six-sample clusters seen in PCA of the 12000x12 kidney count matrix align with, partially overlap, or run orthogonal to the treated(n=6)/control(n=6) condition labels, and what fraction of total variance does PC1/PC2 explain?",
+              "acceptance_criteria": [
+                "Reports a cross-tabulation of PC1-based (or k-means k=2 on top PCs) cluster assignment against the condition column for all 12 samples",
+                "Reports % variance explained by PC1 and PC2 from a variance-stabilized (vst/rlog) PCA",
+                "Explicitly states whether the 2-cluster split is confounded with condition (e.g., all 6 treated in one cluster), partially associated, or independent of condition",
+                "Produces a labeled PCA plot colored by condition and shaped/annotated by cluster assignment"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "If the two clusters map exactly onto the 6 treated / 6 control split, condition and the hidden factor are perfectly confounded and no adjustment can separate their effects - this must be reported, not silently modeled around",
+                "12 samples is a small n for robust k-means; corroborate with hierarchical clustering on the top 500 most variable genes"
+              ],
+              "constraints": [
+                "Use variance-stabilizing transform (vst or rlog) from DESeq2 before PCA, not raw or log2(counts+1)",
+                "Read counts.csv (12000 genes x 12 samples) and metadata.csv (12 samples x condition) directly from the provided input paths"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Estimate hidden surrogate variable(s) via SVA",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Given no recorded batch, what latent factor(s) estimated by surrogate variable analysis on the kidney count matrix best explain the non-condition PCA clustering, and how many surrogate variables should be retained?",
+              "acceptance_criteria": [
+                "Reports the number of surrogate variables (SVs) estimated (via sva::num.sv or equivalent permutation-based method)",
+                "Reports correlation of each retained SV with the PCA cluster assignment from T1S1 and with condition, to confirm the SV captures the unexplained clustering rather than condition itself",
+                "Outputs an SV-by-sample matrix usable as covariates in the downstream DESeq2 design"
+              ],
+              "packages": [
+                "sva",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With only 12 samples and a full (condition-only) vs null model, SVA power is limited; sanity-check the estimated SVs against the PCA clusters from T1S1 rather than trusting the algorithm blindly",
+                "If T1S1 found condition and the cluster split are confounded, the surrogate variable will be collinear with condition and cannot be included in the DESeq2 design without absorbing the treatment effect - this step must flag that case rather than proceeding to add a collinear covariate"
+              ],
+              "constraints": [
+                "Use raw integer counts as input to sva (with condition as the variable of interest in the full model, intercept-only as the null model), not the vst-transformed matrix used for PCA visualization"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "DESeq2 differential expression: naive vs SV-adjusted design",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated (n=6) and control (n=6) kidney samples when modeled with condition alone versus condition plus the estimated surrogate variable(s), and how do the two gene lists differ?",
+              "acceptance_criteria": [
+                "Reports DESeq2 results (log2FC, padj, Wald stats) for the condition contrast under design ~condition (naive) and under design ~SV1(+SV2...)+condition (adjusted), using BH-adjusted p<0.05 as the significance threshold",
+                "Reports the number of genes significant in each model, the overlap between the two significant gene sets, and genes that lose or gain significance after adjustment",
+                "Includes an MA plot and a volcano plot for the adjusted model",
+                "If T1S1/T1S2 flagged condition as confounded with the hidden cluster split, this step must report that the SV-adjusted contrast is not reliably interpretable as a treatment effect, rather than presenting it as a clean result"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Unpaired 6 vs 6 design already has limited power; adding covariates further reduces residual degrees of freedom (12 samples - 1 intercept - 1 condition - k SVs), so check that df remains adequate for the Wald test",
+                "Do not report the naive model's gene list as the primary answer if adjustment materially changes it - the adjusted model is the intended primary result given the documented confound risk"
+              ],
+              "constraints": [
+                "Use raw integer counts as DESeq2 input (already gene-level, salmon-derived, integer)",
+                "Use independent filtering and BH correction as implemented by default in DESeq2::results()"
+              ]
+            },
+            {
+              "id": "T1S4",
+              "name": "Pathway enrichment of adjusted DE gene list",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control kidney samples after adjusting for the estimated hidden surrogate variable(s)?",
+              "acceptance_criteria": [
+                "Runs over-representation or GSEA-style enrichment (fgsea, ranked on the SV-adjusted model's test statistic) against the WikiPathways human gene sets",
+                "Reports enriched pathways at FDR<0.05 with normalized enrichment score/odds ratio and leading-edge/overlapping genes",
+                "States explicitly if the reference resource is unavailable or the gene symbol overlap with pathway sets is low (<50% of DE genes mapped)"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "WikiPathways gene sets use HGNC symbols; confirm the counts.csv gene symbol column matches this namespace before joining, and report any unmapped fraction",
+                "Enrichment on a small (12000-gene, 12-sample) DE list already limited by low power will itself be underpowered - treat results as hypothesis-generating"
+              ],
+              "constraints": [
+                "Use the WikiPathways Homo sapiens GMT file located under the managed reference store for pathways (human); parse the '%'-delimited first field to recover pathway names",
+                "Rank genes by the SV-adjusted model's signed test statistic (e.g., stat column from DESeq2 results), not the naive model's"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

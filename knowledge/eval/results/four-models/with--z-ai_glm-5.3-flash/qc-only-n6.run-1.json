@@ -1,0 +1,289 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "qc-only-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T03:08:40.167Z",
+  "elapsedMs": 171694,
+  "outcome": "plan_submitted",
+  "planId": "pln-62d31840",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default.",
+          "vst is blind so the condition does not drive the transformation; PCA axes reflect overall variance structure, not a fitted contrast",
+          "A low-depth sample can appear as a distance outlier purely from its higher sampling noise — distinguish depth-driven distance from group separation when reading the heatmap"
+        ],
+        "context": "Inputs: /eval-four-models-with-qc-only-n6-1/data/inputs/counts/counts.csv — raw integer gene-level counts from Salmon, first column gene symbol, one column per sample, 12000 genes x 13 columns; /eval-four-models-with-qc-only-n6-1/data/inputs/metadata/metadata.csv — 12 rows x 2 columns with condition. Design: 6 treated vs 6 control, unpaired, single batch. Caveat: sample_01 has a library size about 4x below the median. Environment: DESeq2 1.52.0 present. No reference data is needed for this step — it operates on the two input files only.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "How do the twelve samples (6 AD lesional treated vs 6 control) look before any testing: library sizes, PCA structure, sample-to-sample distances, and the verdict on the shallow sample sample_01?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)",
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+          "Do not filter, normalize, or transform counts before vst beyond what DESeq2 does internally; no DE testing in this step",
+          "Color PCA and distance heatmap by condition; there is no batch column in the metadata",
+          "Keep sample_01 in every QC plot and table; any removal recommendation must carry a stated reason"
+        ],
+        "description": "Sample structure QC per the grounded procedure: import the raw counts, apply DESeq2 vst blind to the design, compute PCA on the 500 genes with the highest variance, draw a heatmap of Euclidean sample-to-sample distances on the vst values, and tabulate library sizes and detected genes per sample. Report sample_01's library size, size factor, and detected-gene count beside the other samples, and its position on the PCA and distance heatmap. Deliver a verdict on sample_01 grounded in: (a) its depth relative to the median, (b) whether it clusters with its condition group on the PCA and in the distance matrix, (c) its detected-gene count. Apply the keep-inspect-report policy: keep sample_01 in all QC output; state any removal recommendation only with an explicit reason (failed library, identity doubt), never depth alone.",
+        "acceptance_criteria": [
+          "Library-size table covering all 12 samples with rank vs median and the sample_01 ratio to median stated explicitly",
+          "PCA plot on the 500 top-variance vst genes colored by condition, with sample_01 visibly locatable",
+          "Sample-to-sample Euclidean distance heatmap on vst values annotated by condition",
+          "Detected-gene count (e.g. genes with count > 10) per sample, including sample_01",
+          "A written verdict on sample_01 with the evidence behind it, and an explicit keep-or-remove recommendation with its reason",
+          "PCA and distance heatmap interpreted: do samples separate by condition, and does any sample depart from its group?"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "QC report and reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Consumes the QC outputs of T1S1 (library-size table, PCA, distance heatmap, verdict text). No reference data needed.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the final QC verdict on the twelve samples and on sample_01, and what exactly was run to produce it?",
+        "grounding": {
+          "claims": [
+            "R-0086@f54e"
+          ],
+          "reason": "Reproducibility record per R-0086@f54e: sessionInfo, package versions, and seed stored with the results",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Report must state the sessionInfo/package versions and the seed; store the record with the results",
+          "Verdict on sample_01 must cite the concrete numbers (library size ratio, detected genes, PCA/distance behavior), not a bare label"
+        ],
+        "description": "Compile the QC findings into a report: library sizes, PCA structure, sample-to-sample distances, and the explicit verdict on sample_01 including any keep-or-remove recommendation with its stated reason. Attach the reproducibility record per R-0086@f54e: sessionInfo output, DESeq2 and dependency versions, and the fixed random seed used in any step with stochastic output.",
+        "acceptance_criteria": [
+          "Report contains library sizes, PCA interpretation, distance-heatmap interpretation, and the sample_01 verdict",
+          "Reproducibility record (sessionInfo, versions, seed) stored alongside the results",
+          "No differential-expression or downstream results implied — the report stays within QC"
+        ]
+      }
+    ],
+    "title": "AD sample structure QC: library sizes, PCA, distances",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question asks only for a pre-test look at the twelve samples: 6 atopic-dermatitis lesional vs 6 control, unpaired, single batch, raw gene-level counts from Salmon (counts.csv, 12000 genes x 13 columns incl. gene symbol; metadata.csv, 12 x 2). The profile flags sample_01 with a library size about 4x below the median. The plan therefore runs exactly one analysis track: sample structure QC on the raw counts with DESeq2 — blind variance-stabilizing transformation, PCA on the 500 most variable genes, a sample-to-sample Euclidean distance heatmap, and library-size / detected-gene summaries — applying the keep-inspect-report policy for the low-depth sample (R-0008@440d): sample_01 is kept through the QC, inspected on the PCA and the distance heatmap, its library size and detected-gene count reported beside the others, and any removal decision is left as an explicit stated-reason judgment, not a default. A reproducibility record closes the run (R-0086@f54e). No filtering, modeling, or differential expression is planned: the question stops at the sample structure."
+  },
+  "usage": {
+    "inputTokens": 200427,
+    "outputTokens": 2758,
+    "cacheReadInputTokens": 63360,
+    "reasoningTokens": 609
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst (blind) + PCA + sample distance heatmap + library size QC",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record (sessionInfo, package versions, gene set/annotation versions, seed)",
+            "package": "base",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": "title</arg_key><arg_value>AD sample structure QC: library sizes, PCA, distances"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD sample structure QC: library sizes, PCA, distances",
+          "analytical_narrative": "The research question asks only for a pre-test look at the twelve samples: 6 atopic-dermatitis lesional vs 6 control, unpaired, single batch, raw gene-level counts from Salmon (counts.csv, 12000 genes x 13 columns incl. gene symbol; metadata.csv, 12 x 2). The profile flags sample_01 with a library size about 4x below the median. The plan therefore runs exactly one analysis track: sample structure QC on the raw counts with DESeq2 — blind variance-stabilizing transformation, PCA on the 500 most variable genes, a sample-to-sample Euclidean distance heatmap, and library-size / detected-gene summaries — applying the keep-inspect-report policy for the low-depth sample (R-0008@440d): sample_01 is kept through the QC, inspected on the PCA and the distance heatmap, its library size and detected-gene count reported beside the others, and any removal decision is left as an explicit stated-reason judgment, not a default. A reproducibility record closes the run (R-0086@f54e). No filtering, modeling, or differential expression is planned: the question stops at the sample structure.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "How do the twelve samples (6 AD lesional treated vs 6 control) look before any testing: library sizes, PCA structure, sample-to-sample distances, and the verdict on the shallow sample sample_01?",
+              "context": "Inputs: /eval-four-models-with-qc-only-n6-1/data/inputs/counts/counts.csv — raw integer gene-level counts from Salmon, first column gene symbol, one column per sample, 12000 genes x 13 columns; /eval-four-models-with-qc-only-n6-1/data/inputs/metadata/metadata.csv — 12 rows x 2 columns with condition. Design: 6 treated vs 6 control, unpaired, single batch. Caveat: sample_01 has a library size about 4x below the median. Environment: DESeq2 1.52.0 present. No reference data is needed for this step — it operates on the two input files only.",
+              "description": "Sample structure QC per the grounded procedure: import the raw counts, apply DESeq2 vst blind to the design, compute PCA on the 500 genes with the highest variance, draw a heatmap of Euclidean sample-to-sample distances on the vst values, and tabulate library sizes and detected genes per sample. Report sample_01's library size, size factor, and detected-gene count beside the other samples, and its position on the PCA and distance heatmap. Deliver a verdict on sample_01 grounded in: (a) its depth relative to the median, (b) whether it clusters with its condition group on the PCA and in the distance matrix, (c) its detected-gene count. Apply the keep-inspect-report policy: keep sample_01 in all QC output; state any removal recommendation only with an explicit reason (failed library, identity doubt), never depth alone.",
+              "constraints": [
+                "qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)",
+                "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+                "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+                "Do not filter, normalize, or transform counts before vst beyond what DESeq2 does internally; no DE testing in this step",
+                "Color PCA and distance heatmap by condition; there is no batch column in the metadata",
+                "Keep sample_01 in every QC plot and table; any removal recommendation must carry a stated reason"
+              ],
+              "acceptance_criteria": [
+                "Library-size table covering all 12 samples with rank vs median and the sample_01 ratio to median stated explicitly",
+                "PCA plot on the 500 top-variance vst genes colored by condition, with sample_01 visibly locatable",
+                "Sample-to-sample Euclidean distance heatmap on vst values annotated by condition",
+                "Detected-gene count (e.g. genes with count > 10) per sample, including sample_01",
+                "A written verdict on sample_01 with the evidence behind it, and an explicit keep-or-remove recommendation with its reason",
+                "PCA and distance heatmap interpreted: do samples separate by condition, and does any sample depart from its group?"
+              ],
+              "caveats": [
+                "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default.",
+                "vst is blind so the condition does not drive the transformation; PCA axes reflect overall variance structure, not a fitted contrast",
+                "A low-depth sample can appear as a distance outlier purely from its higher sampling noise — distinguish depth-driven distance from group separation when reading the heatmap"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "QC report and reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "What is the final QC verdict on the twelve samples and on sample_01, and what exactly was run to produce it?",
+              "context": "Consumes the QC outputs of T1S1 (library-size table, PCA, distance heatmap, verdict text). No reference data needed.",
+              "description": "Compile the QC findings into a report: library sizes, PCA structure, sample-to-sample distances, and the explicit verdict on sample_01 including any keep-or-remove recommendation with its stated reason. Attach the reproducibility record per R-0086@f54e: sessionInfo output, DESeq2 and dependency versions, and the fixed random seed used in any step with stochastic output.",
+              "constraints": [
+                "Report must state the sessionInfo/package versions and the seed; store the record with the results",
+                "Verdict on sample_01 must cite the concrete numbers (library size ratio, detected genes, PCA/distance behavior), not a bare label"
+              ],
+              "acceptance_criteria": [
+                "Report contains library sizes, PCA interpretation, distance-heatmap interpretation, and the sample_01 verdict",
+                "Reproducibility record (sessionInfo, versions, seed) stored alongside the results",
+                "No differential-expression or downstream results implied — the report stays within QC"
+              ],
+              "caveats": [],
+              "packages": [],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@f54e"
+                ],
+                "reason": "Reproducibility record per R-0086@f54e: sessionInfo, package versions, and seed stored with the results"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

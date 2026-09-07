@@ -1,0 +1,197 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "qc-only-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T21:15:09.271Z",
+  "elapsedMs": 33268,
+  "outcome": "plan_submitted",
+  "planId": "pln-23cee3a8",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Library sizes, normalization, PCA, sample-distance matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not run any differential expression test in this step — this is QC only",
+          "sample_01's low library size can distort size-factor estimation in DESeq2-style normalization; check whether excluding it changes size factors materially and note this rather than silently accepting a skewed factor",
+          "With only 12000 genes and 12 samples, PCA is being computed in a low-n regime — do not over-interpret components beyond PC1/PC2 without checking explained variance",
+          "12 samples is a small n for correlation-based distance stability; report distances descriptively rather than testing significance of clustering"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scikit-learn",
+          "scipy"
+        ],
+        "question": "Across the 12 skin samples (6 AD lesional vs 6 control, unpaired, single batch, raw Salmon gene counts, 12000 genes x 12 samples), what are the per-sample library sizes, how do samples separate on a PCA of variance-stabilized/normalized expression, and what does the sample-to-sample distance (or correlation) matrix show about clustering by condition versus outlier behavior — with particular attention to sample_01, flagged as having a library size about 4x below the median?",
+        "grounding": {
+          "claims": [],
+          "reason": "No knowledge_recommend tool was attached in this session; standard bulk RNA-seq QC practice (size factors, vst/rlog, PCA, sample-distance heatmap) applied directly to the profiled counts and metadata.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports raw library size (total counts) per sample from counts.csv, ranked, with the median and sample_01's ratio to median stated explicitly",
+          "Counts are normalized/variance-stabilized (e.g., DESeq2 vst or rlog, or size-factor + log-CPM) before PCA and distance computation, with the method named",
+          "PCA is computed on the normalized matrix and at least PC1 vs PC2 (with % variance explained) is reported, samples labeled by condition (AD lesional vs control) and sample ID",
+          "A full 12x12 sample-to-sample distance or correlation matrix (e.g., Euclidean distance on vst counts, or Spearman/Pearson correlation) is computed and summarized, e.g. via hierarchical clustering or a heatmap-equivalent table",
+          "Sample_01's position is explicitly reported in all three diagnostics: library size rank, PCA coordinates/distance from condition centroid or other samples, and its row/column in the distance matrix versus its nearest and farthest neighbors",
+          "Gene count filtering (if any, e.g. removing all-zero genes) prior to normalization is stated",
+          "Output includes per-sample numeric tables (library size, PCA coordinates, distance-matrix summary) suitable for the next step to interpret, not just plots"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "QC synthesis and verdict on sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This step must not introduce new computation beyond what T1S1 produced — it interprets those numeric outputs",
+          "Avoid recommending a hard-and-fast exclusion rule based on library size alone without corroborating it against the PCA/distance evidence from T1S1"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Given the library-size ranking, PCA structure, and sample-to-sample distance matrix computed for the 12 AD-lesional-vs-control skin samples, does sample_01's low library size (~4x below median) correspond to a genuine outlier in expression space, and what is the concrete recommendation (keep as-is, flag and proceed with sensitivity check, downweight, or exclude) before proceeding to differential expression?",
+        "grounding": {
+          "claims": [],
+          "reason": "Interpretive synthesis step with no external method dependency; grounded directly in T1S1's numeric outputs.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "synthesis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "States explicitly whether sample_01 is an outlier on PCA (e.g., distance from its condition group's centroid relative to other samples of the same condition) and on the sample-distance matrix (e.g., is it the most dissimilar sample to all others, or only mildly so)",
+          "Distinguishes the observation (low library size) from the interpretation (whether this manifests as expression-level distortion) from the recommendation (what to do about it) — does not conflate a low count depth with an automatic quality failure",
+          "Gives a specific, actionable verdict: e.g. exclude sample_01 from downstream DE, retain with a note to check DE result sensitivity by excluding it, or retain as unremarkable if PCA/distance show it clustering normally with its condition group",
+          "If condition balance would be affected by excluding sample_01 (currently 6 vs 6), states the resulting design (e.g. 5 vs 6) and flags that this is an unpaired design already, so removal does not break pairing but does reduce power in one arm",
+          "Does not overclaim — if the diagnostics are ambiguous (e.g., low depth but no PCA outlier signal), states that explicitly rather than forcing a binary verdict"
+        ]
+      }
+    ],
+    "title": "AD skin RNA-seq: QC, PCA, sample distances",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "This is a pre-testing QC pass on a 12-sample (6 AD lesional vs 6 control), single-batch bulk RNA-seq dataset (12000 x 12 raw Salmon gene counts) with one flagged caveat: sample_01 has a library size ~4x below the median. Before any differential expression is run, we need to characterize library sizes, normalize and variance-stabilize the counts, examine global sample structure by PCA, and quantify sample-to-sample similarity via a distance matrix / hierarchical clustering, then render an explicit verdict on whether sample_01 should be flagged, downweighted, or excluded going forward. All of this is a single cohesive QC task on one count matrix, so it is one track on the bulk-transcriptomics-agent, split into two dependent steps: (1) library-size + normalization/variance-stabilization + PCA + sample-distance computation, and (2) a synthesis step that interprets those diagnostics into a concrete verdict on sample_01 and overall cohort quality. No differential expression, enrichment, or reference data is invoked here since the question is purely descriptive QC on the count matrix and metadata already provided."
+  },
+  "usage": {
+    "inputTokens": 43276,
+    "outputTokens": 2377,
+    "cacheCreationInputTokens": 34122,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD skin RNA-seq: QC, PCA, sample distances",
+          "analytical_narrative": "This is a pre-testing QC pass on a 12-sample (6 AD lesional vs 6 control), single-batch bulk RNA-seq dataset (12000 x 12 raw Salmon gene counts) with one flagged caveat: sample_01 has a library size ~4x below the median. Before any differential expression is run, we need to characterize library sizes, normalize and variance-stabilize the counts, examine global sample structure by PCA, and quantify sample-to-sample similarity via a distance matrix / hierarchical clustering, then render an explicit verdict on whether sample_01 should be flagged, downweighted, or excluded going forward. All of this is a single cohesive QC task on one count matrix, so it is one track on the bulk-transcriptomics-agent, split into two dependent steps: (1) library-size + normalization/variance-stabilization + PCA + sample-distance computation, and (2) a synthesis step that interprets those diagnostics into a concrete verdict on sample_01 and overall cohort quality. No differential expression, enrichment, or reference data is invoked here since the question is purely descriptive QC on the count matrix and metadata already provided.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Library sizes, normalization, PCA, sample-distance matrix",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Across the 12 skin samples (6 AD lesional vs 6 control, unpaired, single batch, raw Salmon gene counts, 12000 genes x 12 samples), what are the per-sample library sizes, how do samples separate on a PCA of variance-stabilized/normalized expression, and what does the sample-to-sample distance (or correlation) matrix show about clustering by condition versus outlier behavior — with particular attention to sample_01, flagged as having a library size about 4x below the median?",
+              "acceptance_criteria": [
+                "Reports raw library size (total counts) per sample from counts.csv, ranked, with the median and sample_01's ratio to median stated explicitly",
+                "Counts are normalized/variance-stabilized (e.g., DESeq2 vst or rlog, or size-factor + log-CPM) before PCA and distance computation, with the method named",
+                "PCA is computed on the normalized matrix and at least PC1 vs PC2 (with % variance explained) is reported, samples labeled by condition (AD lesional vs control) and sample ID",
+                "A full 12x12 sample-to-sample distance or correlation matrix (e.g., Euclidean distance on vst counts, or Spearman/Pearson correlation) is computed and summarized, e.g. via hierarchical clustering or a heatmap-equivalent table",
+                "Sample_01's position is explicitly reported in all three diagnostics: library size rank, PCA coordinates/distance from condition centroid or other samples, and its row/column in the distance matrix versus its nearest and farthest neighbors",
+                "Gene count filtering (if any, e.g. removing all-zero genes) prior to normalization is stated",
+                "Output includes per-sample numeric tables (library size, PCA coordinates, distance-matrix summary) suitable for the next step to interpret, not just plots"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "scipy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do not run any differential expression test in this step — this is QC only",
+                "sample_01's low library size can distort size-factor estimation in DESeq2-style normalization; check whether excluding it changes size factors materially and note this rather than silently accepting a skewed factor",
+                "With only 12000 genes and 12 samples, PCA is being computed in a low-n regime — do not over-interpret components beyond PC1/PC2 without checking explained variance",
+                "12 samples is a small n for correlation-based distance stability; report distances descriptively rather than testing significance of clustering"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "No knowledge_recommend tool was attached in this session; standard bulk RNA-seq QC practice (size factors, vst/rlog, PCA, sample-distance heatmap) applied directly to the profiled counts and metadata."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "QC synthesis and verdict on sample_01",
+              "track": "T1",
+              "step_type": "synthesis",
+              "question": "Given the library-size ranking, PCA structure, and sample-to-sample distance matrix computed for the 12 AD-lesional-vs-control skin samples, does sample_01's low library size (~4x below median) correspond to a genuine outlier in expression space, and what is the concrete recommendation (keep as-is, flag and proceed with sensitivity check, downweight, or exclude) before proceeding to differential expression?",
+              "acceptance_criteria": [
+                "States explicitly whether sample_01 is an outlier on PCA (e.g., distance from its condition group's centroid relative to other samples of the same condition) and on the sample-distance matrix (e.g., is it the most dissimilar sample to all others, or only mildly so)",
+                "Distinguishes the observation (low library size) from the interpretation (whether this manifests as expression-level distortion) from the recommendation (what to do about it) — does not conflate a low count depth with an automatic quality failure",
+                "Gives a specific, actionable verdict: e.g. exclude sample_01 from downstream DE, retain with a note to check DE result sensitivity by excluding it, or retain as unremarkable if PCA/distance show it clustering normally with its condition group",
+                "If condition balance would be affected by excluding sample_01 (currently 6 vs 6), states the resulting design (e.g. 5 vs 6) and flags that this is an unpaired design already, so removal does not break pairing but does reduce power in one arm",
+                "Does not overclaim — if the diagnostics are ambiguous (e.g., low depth but no PCA outlier signal), states that explicitly rather than forcing a binary verdict"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "This step must not introduce new computation beyond what T1S1 produced — it interprets those numeric outputs",
+                "Avoid recommending a hard-and-fast exclusion rule based on library size alone without corroborating it against the PCA/distance evidence from T1S1"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "Interpretive synthesis step with no external method dependency; grounded directly in T1S1's numeric outputs."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

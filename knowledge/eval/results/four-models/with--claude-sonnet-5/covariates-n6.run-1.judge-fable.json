@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The core model is right and explicit: DESeq2 Wald with ~ sex + age_centered + condition, control as reference, age centered, covariates entering as fixed terms rather than regressed out of counts, median-of-ratios inside the model, a justified 10-counts-in-6-samples filter, BH at 0.05 and apeglm on the condition coefficient, with an edgeR QL cross-check. The main gaps against the reference are that the plan never tabulates sex and age by group to report balance and decide whether a covariate is confounded with condition (it only inspects PCA colored by covariates), omits the XIST/Y-linked sex check, and gives no policy for outlier or shallow samples beyond flagging. Enrichment was not asked for; it is included with an explicit universe, size window, and versioned collections, but the narrative wavers between fgsea and ORA, and the strandedness caveat is filler while the actual design caveat (age imbalance) is not explicitly carried into the report."
+}

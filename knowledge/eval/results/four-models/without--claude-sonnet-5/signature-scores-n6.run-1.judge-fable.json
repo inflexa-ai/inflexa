@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 1,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly frames a per-sample GSVA score on a log-scale normalized matrix followed by a two-group test per signature with BH across the 50 hallmarks, and it keeps sample_01 with a documented decision and a sensitivity rerun, which fits the six-versus-six unpaired single-batch design; the parallel DESeq2 run is extra but not presented as the signature answer. QC reports library sizes and a retention policy but never mentions PCA or sample distances colored by condition. No low-count filter is stated anywhere, the MSigDB version and the fraction of each signature present in the matrix are not reported, DESeq2 fold-change shrinkage and the reference level are unstated, and package versions are absent from the report."
+}

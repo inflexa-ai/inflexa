@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 3,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "DESeq2 on raw Salmon counts for an unpaired 6v6 single-batch design is appropriate, and the plan correctly refuses to deduplicate and treats duplication as a covariate/caveat, though it never proposes measuring the rRNA, mitochondrial, or intronic fractions that would actually explain the duplication as the reference does. QC covers library sizes, PCA colored by condition, and a Cook's-distance policy for sample_01, but the low-count filter is only DESeq2 independent filtering with no stated pre-filter threshold, and the design formula/reference level is only implied ('condition as the sole term'). BH at 0.05 is stated but there is no fold-change shrinkage, and the |log2FC| cut is applied post hoc. Enrichment on WikiPathways lacks an explicit universe, collection version, and set-size window, and the report omits software versions."
+}

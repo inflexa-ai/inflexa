@@ -1,0 +1,199 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "suspected-batch-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T03:46:38.771Z",
+  "elapsedMs": 674337,
+  "outcome": "error",
+  "error": "Plan generation failed: Provider call failed for analysis:eval-four-models-with-suspected-batch-n6-1: Network connection lost.",
+  "usage": {
+    "inputTokens": 97250,
+    "outputTokens": 5188,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 4310
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "suspected",
+        "library_type": "unknown",
+        "strandedness": "unknown",
+        "preferred_language": "R",
+        "quality_flags": []
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "suspected",
+        "library_type": "unknown",
+        "strandedness": "unknown",
+        "preferred_language": "R",
+        "quality_flags": [],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind vst + PCA on top-variable genes + sample distance heatmap, colored by condition and library size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "batch_check",
+                "value": "pca_by_processing_variable"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with at least 10 counts in at least the smallest group size of samples (6)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "sva surrogate variables estimated with condition as the known factor, added to the design as covariates",
+            "package": "sva",
+            "parameters": [
+              {
+                "name": "surrogate_variable_tool",
+                "value": "sva"
+              },
+              {
+                "name": "surrogate_variables",
+                "value": "as_covariates"
+              },
+              {
+                "name": "report_n_surrogate_variables",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test, condition contrast with explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg at alpha 0.05 with independent filtering, p-value histogram inspected before adjustment",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DESeq2 report with MA plot, dispersion plot, and edgeR quasi-likelihood overlap as the two-method robustness check",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "robustness",
+                "value": "overlap_of_two_methods"
+              },
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot_dispersion_plot"
+              },
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange_shrunken_lfcSE"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

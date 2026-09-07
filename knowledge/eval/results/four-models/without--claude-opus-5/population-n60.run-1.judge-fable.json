@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "DESeq2 with ~condition, control as reference, is a valid fit for an unpaired single-batch 60 vs 60 cohort, though the reference notes limma-voom scales better at this size. The effect-size handling is exemplary: apeglm shrinkage, a formal lfcThreshold test distinguished from post-hoc filtering, BH at 0.05, and tier counts at two cutoffs. QC covers PCA, library sizes, correlation heatmap, Cook's flags and a whole-blood-specific globin check, but omits the sex check (XIST/Y-linked) and any search for hidden structure; the filter (>=10 counts in 60 samples) is justified by group size but on the strict side. Enrichment names collections and a tested-gene universe but gives no version or set-size window, ranks GSEA on shrunk LFC rather than the test statistic, and spends effort on ORA of a cutoff list; the report plan lacks software versions."
+}

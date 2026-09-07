@@ -1,0 +1,752 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "deconvolution-mouse-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T05:13:33.306Z",
+  "elapsedMs": 135501,
+  "outcome": "plan_submitted",
+  "planId": "pln-0e7962db",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not silently drop sample_01; removal needs a stated reason (failed library or identity doubt), not depth alone."
+        ],
+        "context": "counts.csv (12000 genes x 13 samples incl. gene-symbol column), metadata.csv (12 samples, condition anti-PD-1 vs isotype). sample_01 library size ~4x below median.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 12 samples structure by condition on vst PCA / distance heatmap, and is sample_01 (low-depth) a technical outlier needing removal?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC per R-0033@40bf with low-depth sample kept and reported per R-0008@440d",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "low_depth_policy = keep_inspect_report",
+          "n_top_genes = 500",
+          "transform = vst_blind"
+        ],
+        "acceptance_criteria": [
+          "vst (blind) PCA on 500 top-variance genes and sample-distance heatmap produced",
+          "library size and detected-gene count per sample tabulated",
+          "explicit stated judgment on keeping or removing sample_01"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Filter and normalize counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Raw salmon gene-level counts; smallest group size = 6.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR"
+        ],
+        "question": "Which genes are testable, and what are the DESeq2 size factors and logCPM matrices the scoring steps use?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248"
+          ],
+          "reason": "Minimal pre-filter and median-of-ratios size factors per R-0029@fa6d, R-0026@9ab1",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count = 10",
+          "min_samples = smallest_group_size (6)",
+          "size_factors = median-of-ratios"
+        ],
+        "acceptance_criteria": [
+          "Genes with >=10 counts in >=6 samples retained; others dropped with counts reported",
+          "DESeq2 median-of-ratios size factors computed; raw counts never pre-normalized for the model",
+          "log2-CPM matrix produced as input for mMCP-counter and UCell"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Mouse TME deconvolution with mMCP-counter",
+        "agent": "immune-profiling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "mMCP-counter scores are relative abundance probes, not cell fractions; interpret as such.",
+          "If mMCPcounter fails to load, fall back to descriptive UCell scores from mouse marker sets and state that no reference-based deconvolution ran."
+        ],
+        "context": "mMCPcounter R package (1.1.0) is installed and is the mouse tool of record; a human deconvolution on mouse data is prohibited (R-0136). Input: log2-CPM matrix from T1S2.",
+        "maxSteps": 200,
+        "packages": [
+          "mMCPcounter",
+          "pheatmap"
+        ],
+        "question": "What are the immune and stromal population abundance scores per sample from mouse-specific markers?",
+        "grounding": {
+          "claims": [
+            "R-0129@2909",
+            "R-0132@246d",
+            "R-0136@b81f"
+          ],
+          "reason": "R-0136 flags human deconvolution; resolved by using the mouse tool of record mMCP-counter, which is present in the environment (v1.1.0) unlike the pool the rule references.",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "input_scale = log2_cpm (MCP-counter convention; not linear, not absolute fractions)",
+          "composition_role = outcome (composition itself is the research question)"
+        ],
+        "acceptance_criteria": [
+          "Per-sample abundance score matrix for mouse immune and stromal populations (T cells, CD8 T cells, NK, B cells, myeloid/monocytes, fibroblasts, endothelial, etc.)",
+          "Method, input scale (log2 CPM), and marker source stated beside results",
+          "Heatmap of population scores x samples annotated by condition"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "UCell mouse immune/stromal signature scores",
+        "agent": "immune-profiling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "This is descriptive marker enrichment, not deconvolution; state that in the report."
+        ],
+        "context": "Descriptive second view: UCell rank-based scores on curated mouse immune/stromal marker sets (species: mouse; state number of markers present in the matrix). Input: logCPM from T1S2.",
+        "maxSteps": 200,
+        "packages": [
+          "UCell"
+        ],
+        "question": "Do independent rank-based marker scores corroborate the mMCP-counter composition picture per sample?",
+        "grounding": {
+          "claims": [
+            "R-0133@ce76",
+            "R-0135@f02d",
+            "R-0134@0f16"
+          ],
+          "reason": "UCell rank-based per-sample scoring on mouse markers per R-0133@ce76 / R-0135@f02d",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-signature-scoring@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "score_method = rank_based_per_sample",
+          "marker_species_and_tissue = mouse, subcutaneous tumor",
+          "signature_provenance = source_version_and_genes_present"
+        ],
+        "acceptance_criteria": [
+          "Per-sample UCell scores for each immune/stromal signature",
+          "Signature provenance stated: source, species (mouse), and gene count present in matrix",
+          "Reported as relative enrichment, not cell fractions"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Test composition differences anti-PD-1 vs isotype",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With 6 vs 6, per-population power is limited; present effect sizes with the statistics, not significance alone.",
+          "mMCP-counter scores are compositional-adjacent probes, not measured fractions; interpret differences as relative."
+        ],
+        "context": "12 unpaired samples, 6 vs 6, no covariates. Test each population/signature score with limma (equivalent to two-group t-test here) on the score matrix with the condition design; BH-adjust across populations/signatures.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "ggplot2"
+        ],
+        "question": "Do per-sample mMCP-counter population scores and UCell signature scores differ between anti-PD-1 and isotype control tumors?",
+        "grounding": {
+          "claims": [
+            "R-0134@0f16",
+            "R-0132@246d"
+          ],
+          "reason": "limma on per-sample scores with the design and BH across signatures per R-0134@0f16",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "score_test = limma_on_scores_with_the_design",
+          "score_adjustment = BH_across_signatures",
+          "n = 6 per group: report wide uncertainty; a null result is not evidence of no difference"
+        ],
+        "acceptance_criteria": [
+          "Score ~ condition linear model per population, both from mMCP-counter and UCell",
+          "BH-adjusted p-values across tested populations/signatures; results table with effect direction (anti-PD-1 minus isotype)",
+          "Volcano or bar plot of per-population differences with significance annotated",
+          "Composition reported as outcome, clearly labeled beside any descriptive DE-like summary"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Integrated report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [],
+        "context": "Integrates QC, deconvolution, signature scores, and tests into one reproducible report.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the immune/stromal composition of each sample and does it differ anti-PD-1 vs isotype?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf"
+          ],
+          "reason": "Reproducibility record per R-0086@becf",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S3"
+        ],
+        "constraints": [
+          "reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release"
+        ],
+        "acceptance_criteria": [
+          "Per-sample composition table (mMCP-counter + UCell scores) annotated by condition",
+          "Test results table with BH-adjusted p-values",
+          "Sample_01 QC disposition stated explicitly",
+          "sessionInfo, seed, package versions, and marker/signature source version recorded"
+        ]
+      }
+    ],
+    "title": "Anti-PD-1 vs isotype: mouse TME deconvolution",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks for the immune and stromal cell composition of each of 12 mouse subcutaneous tumors (6 anti-PD-1 vs 6 isotype) and whether composition differs between treatments. Because the data are mouse bulk RNA-seq counts, human deconvolution methods (MCP-counter, xCell, EPIC, quanTIseq) are prohibited (rule R-0136); the mouse tool of record, mMCP-counter, IS installed in the environment (mMCPcounter 1.1.0), so the deconvolution runs on mMCP-counter with mouse markers. This is complemented by rank-based UCell signature scores from mouse immune/stromal marker sets as a descriptive second view. Per-sample composition scores are then compared anti-PD-1 vs isotype with a linear model (limma/t-test) with BH adjustment across cell types. Sample structure QC runs first because sample_01 has a library size ~4x below median — it is kept and inspected, not silently dropped (R-0008)."
+  },
+  "usage": {
+    "inputTokens": 205950,
+    "outputTokens": 4239,
+    "cacheReadInputTokens": 148224,
+    "reasoningTokens": 518
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "mouse",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "signature_scoring"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "mouse",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst blind PCA and sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "min 10 counts in smallest group size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors plus logCPM for scoring",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "mMCP-counter mouse immune stromal abundance on logCPM",
+            "package": "mMCPcounter",
+            "parameters": [
+              {
+                "name": "input_scale",
+                "value": "log2_cpm"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "UCell rank-based scores on mouse immune cell marker sets",
+            "package": "UCell",
+            "parameters": [
+              {
+                "name": "score_method",
+                "value": "rank_based_per_sample"
+              }
+            ]
+          },
+          {
+            "step_type": "clustering",
+            "method": "none - inferential test on scores instead",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_the_design"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record",
+            "package": "base"
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "mouse",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst blind PCA and sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "min 10 counts in smallest group size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors plus logCPM for scoring",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "mMCP-counter mouse immune stromal abundance on logCPM",
+            "package": "mMCPcounter",
+            "parameters": [
+              {
+                "name": "input_scale",
+                "value": "log2_cpm"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "UCell rank-based scores on mouse immune cell marker sets, limma on scores with BH across signatures",
+            "package": "UCell",
+            "parameters": [
+              {
+                "name": "score_method",
+                "value": "rank_based_per_sample"
+              },
+              {
+                "name": "preprocessing_scope",
+                "value": "filter_and_scaling_inside_each_training_fold"
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_the_design"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record",
+            "package": "base"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Anti-PD-1 vs isotype: mouse TME deconvolution",
+          "analytical_narrative": "The question asks for the immune and stromal cell composition of each of 12 mouse subcutaneous tumors (6 anti-PD-1 vs 6 isotype) and whether composition differs between treatments. Because the data are mouse bulk RNA-seq counts, human deconvolution methods (MCP-counter, xCell, EPIC, quanTIseq) are prohibited (rule R-0136); the mouse tool of record, mMCP-counter, IS installed in the environment (mMCPcounter 1.1.0), so the deconvolution runs on mMCP-counter with mouse markers. This is complemented by rank-based UCell signature scores from mouse immune/stromal marker sets as a descriptive second view. Per-sample composition scores are then compared anti-PD-1 vs isotype with a linear model (limma/t-test) with BH adjustment across cell types. Sample structure QC runs first because sample_01 has a library size ~4x below median — it is kept and inspected, not silently dropped (R-0008).",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the 12 samples structure by condition on vst PCA / distance heatmap, and is sample_01 (low-depth) a technical outlier needing removal?",
+              "context": "counts.csv (12000 genes x 13 samples incl. gene-symbol column), metadata.csv (12 samples, condition anti-PD-1 vs isotype). sample_01 library size ~4x below median.",
+              "acceptance_criteria": [
+                "vst (blind) PCA on 500 top-variance genes and sample-distance heatmap produced",
+                "library size and detected-gene count per sample tabulated",
+                "explicit stated judgment on keeping or removing sample_01"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "low_depth_policy = keep_inspect_report",
+                "n_top_genes = 500",
+                "transform = vst_blind"
+              ],
+              "caveats": [
+                "Do not silently drop sample_01; removal needs a stated reason (failed library or identity doubt), not depth alone."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC per R-0033@40bf with low-depth sample kept and reported per R-0008@440d"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Filter and normalize counts",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are testable, and what are the DESeq2 size factors and logCPM matrices the scoring steps use?",
+              "context": "Raw salmon gene-level counts; smallest group size = 6.",
+              "acceptance_criteria": [
+                "Genes with >=10 counts in >=6 samples retained; others dropped with counts reported",
+                "DESeq2 median-of-ratios size factors computed; raw counts never pre-normalized for the model",
+                "log2-CPM matrix produced as input for mMCP-counter and UCell"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "min_count = 10",
+                "min_samples = smallest_group_size (6)",
+                "size_factors = median-of-ratios"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0030@2248"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Minimal pre-filter and median-of-ratios size factors per R-0029@fa6d, R-0026@9ab1"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Mouse TME deconvolution with mMCP-counter",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "What are the immune and stromal population abundance scores per sample from mouse-specific markers?",
+              "context": "mMCPcounter R package (1.1.0) is installed and is the mouse tool of record; a human deconvolution on mouse data is prohibited (R-0136). Input: log2-CPM matrix from T1S2.",
+              "acceptance_criteria": [
+                "Per-sample abundance score matrix for mouse immune and stromal populations (T cells, CD8 T cells, NK, B cells, myeloid/monocytes, fibroblasts, endothelial, etc.)",
+                "Method, input scale (log2 CPM), and marker source stated beside results",
+                "Heatmap of population scores x samples annotated by condition"
+              ],
+              "packages": [
+                "mMCPcounter",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "constraints": [
+                "input_scale = log2_cpm (MCP-counter convention; not linear, not absolute fractions)",
+                "composition_role = outcome (composition itself is the research question)"
+              ],
+              "caveats": [
+                "mMCP-counter scores are relative abundance probes, not cell fractions; interpret as such.",
+                "If mMCPcounter fails to load, fall back to descriptive UCell scores from mouse marker sets and state that no reference-based deconvolution ran."
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0129@2909",
+                  "R-0132@246d",
+                  "R-0136@b81f"
+                ],
+                "reason": "R-0136 flags human deconvolution; resolved by using the mouse tool of record mMCP-counter, which is present in the environment (v1.1.0) unlike the pool the rule references."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "UCell mouse immune/stromal signature scores",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do independent rank-based marker scores corroborate the mMCP-counter composition picture per sample?",
+              "context": "Descriptive second view: UCell rank-based scores on curated mouse immune/stromal marker sets (species: mouse; state number of markers present in the matrix). Input: logCPM from T1S2.",
+              "acceptance_criteria": [
+                "Per-sample UCell scores for each immune/stromal signature",
+                "Signature provenance stated: source, species (mouse), and gene count present in matrix",
+                "Reported as relative enrichment, not cell fractions"
+              ],
+              "packages": [
+                "UCell"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "constraints": [
+                "score_method = rank_based_per_sample",
+                "marker_species_and_tissue = mouse, subcutaneous tumor",
+                "signature_provenance = source_version_and_genes_present"
+              ],
+              "caveats": [
+                "This is descriptive marker enrichment, not deconvolution; state that in the report."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0133@ce76",
+                  "R-0135@f02d",
+                  "R-0134@0f16"
+                ],
+                "template": "tpl-signature-scoring@1.0.0",
+                "reason": "UCell rank-based per-sample scoring on mouse markers per R-0133@ce76 / R-0135@f02d"
+              }
+            },
+            {
+              "id": "T2S3",
+              "name": "Test composition differences anti-PD-1 vs isotype",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do per-sample mMCP-counter population scores and UCell signature scores differ between anti-PD-1 and isotype control tumors?",
+              "context": "12 unpaired samples, 6 vs 6, no covariates. Test each population/signature score with limma (equivalent to two-group t-test here) on the score matrix with the condition design; BH-adjust across populations/signatures.",
+              "acceptance_criteria": [
+                "Score ~ condition linear model per population, both from mMCP-counter and UCell",
+                "BH-adjusted p-values across tested populations/signatures; results table with effect direction (anti-PD-1 minus isotype)",
+                "Volcano or bar plot of per-population differences with significance annotated",
+                "Composition reported as outcome, clearly labeled beside any descriptive DE-like summary"
+              ],
+              "packages": [
+                "limma",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "constraints": [
+                "score_test = limma_on_scores_with_the_design",
+                "score_adjustment = BH_across_signatures",
+                "n = 6 per group: report wide uncertainty; a null result is not evidence of no difference"
+              ],
+              "caveats": [
+                "With 6 vs 6, per-population power is limited; present effect sizes with the statistics, not significance alone.",
+                "mMCP-counter scores are compositional-adjacent probes, not measured fractions; interpret differences as relative."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0134@0f16",
+                  "R-0132@246d"
+                ],
+                "reason": "limma on per-sample scores with the design and BH across signatures per R-0134@0f16"
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Integrated report",
+              "track": "T3",
+              "step_type": "report",
+              "question": "What is the immune/stromal composition of each sample and does it differ anti-PD-1 vs isotype?",
+              "context": "Integrates QC, deconvolution, signature scores, and tests into one reproducible report.",
+              "acceptance_criteria": [
+                "Per-sample composition table (mMCP-counter + UCell scores) annotated by condition",
+                "Test results table with BH-adjusted p-values",
+                "Sample_01 QC disposition stated explicitly",
+                "sessionInfo, seed, package versions, and marker/signature source version recorded"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T2S3"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf"
+                ],
+                "reason": "Reproducibility record per R-0086@becf"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

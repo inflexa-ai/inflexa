@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 4,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly frames the question as a genotype:treatment interaction, fits a single full factorial DESeq2 model with explicit reference levels, tests the interaction coefficient by Wald, and pulls simple effects as contrasts from the same fit; BH at 0.05 and apeglm/ashr shrinkage of the interaction coefficient are stated, with a power caveat for n=4/cell. QC covers library size, detection, PCA/correlation and the 17-vs-16 sample reconciliation, though coloring and a concrete outlier policy are only loosely stated; the count filter is documented and matched to group size. Normalization is never mentioned (size factors are implied only by using DESeq2 on raw counts). Enrichment was not asked for and is weakly specified: ORA vs GSEA left ambiguous, ranking by LFC rather than the test statistic, no universe, no gene-set size window, no collection versions, plus an unrequested STRING network. The report lists method, design, thresholds and gene counts but omits software versions."
+}

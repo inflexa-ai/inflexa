@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly names RSeQC infer_experiment on alignments as the method of record and builds an honest indirect audit, but because no BAM/FASTQ is available it never actually infers the strandedness or re-counts with the correct -s setting, and it proceeds to fit DESeq2 and edgeR on the delivered counts with only a carried-forward caveat rather than requesting the reads and holding the test; that is a partial rather than full match to the reference. The negative binomial modelling itself is exemplary: minimal justified filter, median-of-ratios/TMM inside the model, explicit ~condition with control as reference and a named contrast, BH at 0.05 with apeglm shrinkage and any effect threshold inside the test, plus a stated low-power caveat without loosening alpha. Sample-structure QC precedes the test with PCA, distances and library sizes coloured by condition, and the outlier policy (describe, do not exclude at n=3) is stated. Enrichment is well specified (full ranked list, Wald statistic, tested-gene universe, named collections with releases, 15-500 window, seed) and the report specification covers method, versions, design, thresholds, tested/significant counts and the strandedness and power caveats up front."
+}

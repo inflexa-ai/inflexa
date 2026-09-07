@@ -1,0 +1,670 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "rsem-counts-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T23:18:36.822Z",
+  "elapsedMs": 102037,
+  "outcome": "plan_submitted",
+  "planId": "pln-06ea58a0",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and sample_01 depth assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The matrix holds RSEM expected counts, which are not integers — rounding is a deliberate, stated step, not an accident",
+          "sample_01's ~4x lower depth will compress its detected-gene count; a lower detected-gene count alone is expected and is not evidence of a failed library",
+          "With 12 samples a PCA is easily dominated by a single sample; read the distance heatmap alongside it"
+        ],
+        "context": "RSEM expected counts are non-integer; rounding is required for the DESeq2 container. Rule R-0008: a sample several-fold below the median library size is kept, inspected and reported, never silently deleted — the negative binomial model down-weights it through its size factor, so removal is a judgment call requiring a stated non-depth reason.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the 12 colon samples separate by condition (treated vs control), and does sample_01 — whose library size is ~4x below the median — behave as a genuine outlier beyond its depth?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Counts with a low-depth sample: blind VST, PCA on top 500 genes, distance heatmap (R-0033@40bf), and sample_01 kept, inspected and reported rather than dropped (R-0008@440d).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use blind VST (blind=TRUE) for QC — the transform must not be informed by the design",
+          "PCA uses the top 500 most variable genes",
+          "Do not remove sample_01 for low depth alone; removal requires a stated non-depth reason recorded in the output",
+          "Round RSEM expected counts to integers before constructing the DESeq2 object; do not rescale, CPM-normalise or log the counts beforehand"
+        ],
+        "description": "Load /eval-four-models-with-rsem-counts-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbol in column 1) and metadata/metadata.csv (12 rows, one condition per sample). Check that sample columns and metadata rows match exactly by name and in order. Report per-sample library size (column sum of the RSEM expected counts) and number of detected genes, with sample_01 marked. Round the expected counts to integers, build a DESeq2 object with design ~condition, apply blind VST, then produce: PCA on the 500 most variable genes coloured by condition and annotated with library size, a Euclidean sample-distance heatmap, and a library-size bar chart. State whether sample_01 sits with its condition group on both plots.",
+        "acceptance_criteria": [
+          "Sample-to-metadata correspondence verified and reported; 12 samples, 6 treated and 6 control confirmed",
+          "Per-sample library size and detected-gene count tabulated, with sample_01's values stated explicitly relative to the median",
+          "PCA on the top 500 variable genes of the blind VST and a sample-distance heatmap are produced, coloured/annotated by condition and library size",
+          "An explicit written verdict on whether sample_01 is retained, with the reason; if retained (the default), no sample is dropped downstream"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test, treated vs control, with apeglm shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Rounded RSEM expected counts without the effective-length offset: state this limitation in the output rather than presenting the result as a full tximport-based RSEM analysis",
+          "With 6 per group and one sample at ~1/4 the median depth, that sample contributes wider per-gene uncertainty — this is correct model behaviour, not a defect",
+          "Gene identifiers are symbols, which are not stable across annotation releases; carry them as labels and note the annotation ambiguity in the table"
+        ],
+        "context": "IMPORTANT — the procedure's default RSEM route is tximport with type='rsem', which carries the per-gene, per-sample effective lengths into the model as an offset. Those genes.results files were NOT delivered; only the summarised matrix exists. The step must therefore proceed on the rounded matrix and record in its output that the effective-length offset is absent, that fold changes are consequently uncorrected for any between-sample shift in effective length, and that supplying the per-sample genes.results files would remove this limitation. Do not fabricate lengths, do not substitute a TPM column for the counts.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between treated and control colon samples at BH-adjusted p < 0.05, with control as the reference level?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248",
+            "R-0036@9786",
+            "R-0065@1a71",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "Two-group unpaired counts at 6 replicates per group: DESeq2 Wald with apeglm shrinkage (R-0001@9a17, R-0009@f54e), minimal pre-filter plus independent filtering (R-0029@fa6d, R-0002@087b), BH at alpha 0.05 (R-0010@91a5); R-0065@1a71 prescribes tximport type='rsem' with effective lengths but the genes.results files were not delivered, so the step runs on the rounded matrix and states the deviation.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Set the reference level explicitly with relevel; do not rely on alphabetical ordering",
+          "Use DESeq2 median-of-ratios size factors inside the model — no pre-scaled, CPM'd or log-transformed input",
+          "Pass alpha=0.05 to results() and keep independentFiltering=TRUE",
+          "Select significant genes by padj only, never by unadjusted p-value or fold change alone",
+          "Keep the DESeq2 Cook's-distance outlier behaviour on (at 6 replicates per group it sets p and padj to NA rather than replacing counts) and report the flagged genes separately from filter-driven NAs",
+          "Use apeglm shrinkage on the coefficient; keep the unshrunken estimate in the table beside it",
+          "Do not apply a post-hoc fold-change filter; if any effect-size threshold is wanted it must go into results() as lfcThreshold",
+          "Do not drop any sample unless T1S1 recorded a stated non-depth reason"
+        ],
+        "description": "Round the RSEM expected counts to integers and build a DESeq2 dataset with design ~condition, setting control explicitly as the reference level via relevel. Pre-filter to genes with at least 10 counts in at least 6 samples (the smallest group size). Run DESeq with median-of-ratios size factors — do not pre-normalise the counts. Extract results for contrast c('condition','treated','control') with alpha=0.05 and independent filtering on. Plot the histogram of unadjusted p-values before reading the adjusted values and state its shape (flat, right-skewed, or irregular). Apply apeglm shrinkage via lfcShrink on the treated-vs-control coefficient. Emit a full results table with baseMean, unshrunken log2FoldChange, lfcSE, stat (Wald), pvalue, padj, and the apeglm-shrunken log2FoldChange, plus the size factors per sample. Count and report separately: genes tested after the pre-filter, genes with padj NA from Cook's-distance outlier flagging, genes with padj NA from independent filtering, and genes with padj < 0.05 split by direction.",
+        "acceptance_criteria": [
+          "Reference level is control and the contrast is stated as (condition, treated, control), so a positive log2FoldChange means higher in treated",
+          "Pre-filter applied as >=10 counts in >=6 samples, with the number of genes retained out of 12,000 reported",
+          "Results table carries baseMean, log2FoldChange, lfcSE, Wald stat, pvalue, padj and the apeglm-shrunken log2FoldChange for every tested gene",
+          "p-value histogram produced and its shape stated in words before the adjusted p-values are interpreted",
+          "Counts reported for: genes tested, padj NA from Cook's outlier flag, padj NA from independent filtering, and padj < 0.05 up and down",
+          "Output explicitly records that the RSEM effective-length offset was unavailable and what that costs"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR quasi-likelihood cross-check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Agreement between two count models is a robustness check, not independent validation — both read the same 12 libraries",
+          "Disagreement is expected to concentrate at low counts; report where the discordant genes sit on the baseMean axis rather than treating discordance as a defect"
+        ],
+        "context": "Six replicates per group is at the lower end of the range where DESeq2 and edgeR agree on most but not all genes, and disagreement concentrates in low-count genes. The missing RSEM length offset is an extra reason to check that the calls are not an artefact of one tool's normalisation. TMM replaces median-of-ratios here; both operate inside their respective models.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma"
+        ],
+        "question": "Which treated-vs-control genes does the edgeR quasi-likelihood F-test also call, and what is the intersection with the DESeq2 calls?",
+        "grounding": {
+          "claims": [
+            "R-0001@9a17",
+            "R-0042@54e1",
+            "R-0026@9ab1"
+          ],
+          "reason": "edgeR quasi-likelihood is the named second method at 2-11 replicates per group (R-0001@9a17), and the intersection of the two methods is the high-confidence set (R-0042@54e1).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the identical gene filter and the identical contrast direction as T1S2 so the comparison is like for like",
+          "Use TMM normalisation factors inside the edgeR model — do not feed pre-normalised values",
+          "Use glmQLFit/glmQLFTest (quasi-likelihood), not the classic exact test",
+          "Adjust with BH and use padj < 0.05 as the cutoff, matching T1S2"
+        ],
+        "description": "On the same rounded RSEM count matrix and the same filtered gene set used in T1S2, fit an edgeR pipeline: DGEList, filterByExpr or the identical >=10-counts-in->=6-samples filter, TMM normalisation factors, estimateDisp under ~condition, glmQLFit and glmQLFTest for treated vs control, BH adjustment at 0.05. Report the number of significant genes from edgeR, from DESeq2 (read from T1S2), and the size of the intersection. Emit the intersection as the high-confidence gene set and the method-specific calls as a secondary table labelled with the calling method. Do not present the union as the result.",
+        "acceptance_criteria": [
+          "edgeR QL run on the same rounded counts, same filter, same contrast direction (treated vs control) as T1S2",
+          "Three numbers reported: n significant DESeq2, n significant edgeR, n in the intersection",
+          "Intersection exported as the high-confidence set; method-exclusive genes exported separately with the method named",
+          "The union is not presented as the headline result"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Differential expression report and diagnostics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not describe the result as an RSEM tximport analysis; the effective-length offset was unavailable",
+          "A 6 vs 6 design with one shallow library detects large, consistent effects; small coordinated changes may go uncalled and that must be said, not implied"
+        ],
+        "context": "This is the deliverable for the research question. It must be readable without re-running the analysis and must not overstate: the study is a 12-sample, single-batch, unpaired comparison on a gene-level matrix that lost its length information upstream.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "knitr"
+        ],
+        "question": "What is the reportable answer to 'which genes differ between treated and control', with the fit diagnostics, the effect sizes, and the limitations that the RSEM matrix and sample_01 impose?",
+        "grounding": {
+          "claims": [
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0086@becf",
+            "R-0042@54e1"
+          ],
+          "reason": "Report carries the MA and dispersion diagnostics (R-0087@c53d), the shrunken and unshrunken effect columns with ranking on the shrunken value (R-0085@c24d), the method/design/threshold/count fields (R-0041@059a), the reproducibility record (R-0086@becf) and the two-method overlap (R-0042@54e1).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Rank genes and draw plots on the shrunken log2 fold change; keep the p-values from the unshrunken fit",
+          "Do not report a gene list selected by unadjusted p-value or by fold change alone",
+          "State the number of NA padj values from Cook's outlier flagging separately from those from independent filtering",
+          "Do not add enrichment, pathway or druggability interpretation — the research question asks only which genes differ"
+        ],
+        "description": "Assemble the final report from T1S1-T1S3. Include: the MA plot (log2 fold change against mean normalized count with significant genes marked, drawn on the shrunken values) and the DESeq2 dispersion plot, placed before the gene tables, each with a sentence on what it shows. Give the ranked gene table using the apeglm-shrunken log2FoldChange for ranking while carrying the unshrunken log2FoldChange, lfcSE and padj alongside, with the shrinkage estimator named in the header. State the method, package versions, the design formula ~condition, the contrast (condition, treated, control), the padj < 0.05 threshold, the number of genes tested after filtering, and the number of DE genes per direction. Report the DESeq2/edgeR overlap from T1S3. Record the limitations plainly: RSEM expected counts rounded without effective-length offsets because the genes.results files were not delivered; sample_01 at ~4x below median depth and the decision taken about it; 6 vs 6 is modest power, so absence of a call is not evidence of no effect. Attach sessionInfo, package versions and any random seed used.",
+        "acceptance_criteria": [
+          "MA plot and dispersion plot included ahead of the gene tables, each with a one-line reading",
+          "Gene table carries unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, pvalue and padj; ranking is on the shrunken value and the estimator is named",
+          "Method, package versions, design formula, contrast direction, alpha, n genes tested and n DE per direction are all stated",
+          "DESeq2 vs edgeR overlap reported with the intersection identified as the high-confidence set",
+          "Limitations section explicitly names the missing RSEM effective lengths, the sample_01 depth and its disposition, and the power of a 6 vs 6 design",
+          "sessionInfo and package versions attached with the results"
+        ]
+      }
+    ],
+    "title": "Colon treated vs control DE (RSEM counts, n=6/6)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single gene-level matrix of RSEM expected counts (12,000 genes x 12 samples, counts.csv, gene symbols in column 1) with metadata.csv giving one condition label per sample: 6 treated vs 6 control, unpaired, single batch, human colon. The research question is simply which genes differ between treated and control, so the plan stops at the differential expression result and its diagnostics — no enrichment, no downstream translational steps, since none were asked for.\n\nTwo data facts drive the method choices. First, the counts are RSEM expected counts and are therefore non-integer, and the per-sample genes.results files carrying the effective lengths were NOT delivered. The tximport type='rsem' route, which would pass the effective lengths into the model as an offset, is therefore not executable on these inputs. T1S2 must round the expected counts to integers for DESeq2/edgeR and state explicitly in its output that the length offset is missing, that gene-level fold changes are consequently not corrected for any between-sample shift in effective length, and that the per-sample genes.results files would remove this caveat. It must not fabricate lengths and must not use a TPM column. Second, sample_01 has a library size about 4x below the median. It is kept through QC and inspected on the PCA and the distance heatmap rather than deleted; median-of-ratios size factors already account for depth, so depth alone is not grounds for removal. T1S1 reports its library size and detected-gene count beside the others and states whether it also behaves as an expression outlier; only a stated non-depth reason would justify exclusion, and any such decision is reported, not silent.\n\nT1S2 fits ~condition with control set explicitly as the reference level, contrast (condition, treated, control), a minimal pre-filter of >=10 counts in >=6 samples, the DESeq2 Wald test with apeglm shrinkage, BH adjustment with independent filtering at alpha 0.05, and inspects the raw p-value histogram before trusting the adjustment. With 6 per group DESeq2 flags Cook's-distance count outliers and returns NA p-values rather than replacing counts, so the flagged genes are counted and reported separately from genes dropped by the independent filter. T1S3 runs edgeR quasi-likelihood on the same rounded matrix as an independent second method and reports the intersection as the high-confidence set — appropriate here because 6 replicates per group sits at the low end where the two tools diverge on low-count genes, and because the missing length offset makes a single-tool result worth cross-checking. T1S4 assembles the report: MA and dispersion diagnostics, the gene table carrying unshrunken log2FC, shrunken log2FC and lfcSE with ranking on the shrunken value, the method overlap, and a full reproducibility record. No reference data beyond the input files is required by any step."
+  },
+  "usage": {
+    "inputTokens": 220622,
+    "outputTokens": 8260,
+    "cacheCreationInputTokens": 141838,
+    "cacheReadInputTokens": 78748,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "rsem",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "rsem",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: blind VST, PCA on top 500 variable genes, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with at least 10 counts in at least 6 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ condition with explicit reference level control; RSEM expected counts rounded because per-sample genes.results with effective lengths were not delivered",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "import",
+                "value": "matrix_only_rsem_expected_counts_no_effective_lengths"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "edgeR quasi-likelihood F-test as the second method for robustness",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "TMM"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Method, versions, design, thresholds, n_tested, n_de, MA and dispersion plots, DESeq2/edgeR overlap, session info",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              },
+              {
+                "name": "robustness",
+                "value": "overlap_of_two_methods"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Colon treated vs control DE (RSEM counts, n=6/6)",
+          "analytical_narrative": "The input is a single gene-level matrix of RSEM expected counts (12,000 genes x 12 samples, counts.csv, gene symbols in column 1) with metadata.csv giving one condition label per sample: 6 treated vs 6 control, unpaired, single batch, human colon. The research question is simply which genes differ between treated and control, so the plan stops at the differential expression result and its diagnostics — no enrichment, no downstream translational steps, since none were asked for.\n\nTwo data facts drive the method choices. First, the counts are RSEM expected counts and are therefore non-integer, and the per-sample genes.results files carrying the effective lengths were NOT delivered. The tximport type='rsem' route, which would pass the effective lengths into the model as an offset, is therefore not executable on these inputs. T1S2 must round the expected counts to integers for DESeq2/edgeR and state explicitly in its output that the length offset is missing, that gene-level fold changes are consequently not corrected for any between-sample shift in effective length, and that the per-sample genes.results files would remove this caveat. It must not fabricate lengths and must not use a TPM column. Second, sample_01 has a library size about 4x below the median. It is kept through QC and inspected on the PCA and the distance heatmap rather than deleted; median-of-ratios size factors already account for depth, so depth alone is not grounds for removal. T1S1 reports its library size and detected-gene count beside the others and states whether it also behaves as an expression outlier; only a stated non-depth reason would justify exclusion, and any such decision is reported, not silent.\n\nT1S2 fits ~condition with control set explicitly as the reference level, contrast (condition, treated, control), a minimal pre-filter of >=10 counts in >=6 samples, the DESeq2 Wald test with apeglm shrinkage, BH adjustment with independent filtering at alpha 0.05, and inspects the raw p-value histogram before trusting the adjustment. With 6 per group DESeq2 flags Cook's-distance count outliers and returns NA p-values rather than replacing counts, so the flagged genes are counted and reported separately from genes dropped by the independent filter. T1S3 runs edgeR quasi-likelihood on the same rounded matrix as an independent second method and reports the intersection as the high-confidence set — appropriate here because 6 replicates per group sits at the low end where the two tools diverge on low-count genes, and because the missing length offset makes a single-tool result worth cross-checking. T1S4 assembles the report: MA and dispersion diagnostics, the gene table carrying unshrunken log2FC, shrunken log2FC and lfcSE with ranking on the shrunken value, the method overlap, and a full reproducibility record. No reference data beyond the input files is required by any step.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and sample_01 depth assessment",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 colon samples separate by condition (treated vs control), and does sample_01 — whose library size is ~4x below the median — behave as a genuine outlier beyond its depth?",
+              "description": "Load /eval-four-models-with-rsem-counts-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbol in column 1) and metadata/metadata.csv (12 rows, one condition per sample). Check that sample columns and metadata rows match exactly by name and in order. Report per-sample library size (column sum of the RSEM expected counts) and number of detected genes, with sample_01 marked. Round the expected counts to integers, build a DESeq2 object with design ~condition, apply blind VST, then produce: PCA on the 500 most variable genes coloured by condition and annotated with library size, a Euclidean sample-distance heatmap, and a library-size bar chart. State whether sample_01 sits with its condition group on both plots.",
+              "context": "RSEM expected counts are non-integer; rounding is required for the DESeq2 container. Rule R-0008: a sample several-fold below the median library size is kept, inspected and reported, never silently deleted — the negative binomial model down-weights it through its size factor, so removal is a judgment call requiring a stated non-depth reason.",
+              "acceptance_criteria": [
+                "Sample-to-metadata correspondence verified and reported; 12 samples, 6 treated and 6 control confirmed",
+                "Per-sample library size and detected-gene count tabulated, with sample_01's values stated explicitly relative to the median",
+                "PCA on the top 500 variable genes of the blind VST and a sample-distance heatmap are produced, coloured/annotated by condition and library size",
+                "An explicit written verdict on whether sample_01 is retained, with the reason; if retained (the default), no sample is dropped downstream"
+              ],
+              "constraints": [
+                "Use blind VST (blind=TRUE) for QC — the transform must not be informed by the design",
+                "PCA uses the top 500 most variable genes",
+                "Do not remove sample_01 for low depth alone; removal requires a stated non-depth reason recorded in the output",
+                "Round RSEM expected counts to integers before constructing the DESeq2 object; do not rescale, CPM-normalise or log the counts beforehand"
+              ],
+              "caveats": [
+                "The matrix holds RSEM expected counts, which are not integers — rounding is a deliberate, stated step, not an accident",
+                "sample_01's ~4x lower depth will compress its detected-gene count; a lower detected-gene count alone is expected and is not evidence of a failed library",
+                "With 12 samples a PCA is easily dominated by a single sample; read the distance heatmap alongside it"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Counts with a low-depth sample: blind VST, PCA on top 500 genes, distance heatmap (R-0033@40bf), and sample_01 kept, inspected and reported rather than dropped (R-0008@440d)."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test, treated vs control, with apeglm shrinkage",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated and control colon samples at BH-adjusted p < 0.05, with control as the reference level?",
+              "description": "Round the RSEM expected counts to integers and build a DESeq2 dataset with design ~condition, setting control explicitly as the reference level via relevel. Pre-filter to genes with at least 10 counts in at least 6 samples (the smallest group size). Run DESeq with median-of-ratios size factors — do not pre-normalise the counts. Extract results for contrast c('condition','treated','control') with alpha=0.05 and independent filtering on. Plot the histogram of unadjusted p-values before reading the adjusted values and state its shape (flat, right-skewed, or irregular). Apply apeglm shrinkage via lfcShrink on the treated-vs-control coefficient. Emit a full results table with baseMean, unshrunken log2FoldChange, lfcSE, stat (Wald), pvalue, padj, and the apeglm-shrunken log2FoldChange, plus the size factors per sample. Count and report separately: genes tested after the pre-filter, genes with padj NA from Cook's-distance outlier flagging, genes with padj NA from independent filtering, and genes with padj < 0.05 split by direction.",
+              "context": "IMPORTANT — the procedure's default RSEM route is tximport with type='rsem', which carries the per-gene, per-sample effective lengths into the model as an offset. Those genes.results files were NOT delivered; only the summarised matrix exists. The step must therefore proceed on the rounded matrix and record in its output that the effective-length offset is absent, that fold changes are consequently uncorrected for any between-sample shift in effective length, and that supplying the per-sample genes.results files would remove this limitation. Do not fabricate lengths, do not substitute a TPM column for the counts.",
+              "acceptance_criteria": [
+                "Reference level is control and the contrast is stated as (condition, treated, control), so a positive log2FoldChange means higher in treated",
+                "Pre-filter applied as >=10 counts in >=6 samples, with the number of genes retained out of 12,000 reported",
+                "Results table carries baseMean, log2FoldChange, lfcSE, Wald stat, pvalue, padj and the apeglm-shrunken log2FoldChange for every tested gene",
+                "p-value histogram produced and its shape stated in words before the adjusted p-values are interpreted",
+                "Counts reported for: genes tested, padj NA from Cook's outlier flag, padj NA from independent filtering, and padj < 0.05 up and down",
+                "Output explicitly records that the RSEM effective-length offset was unavailable and what that costs"
+              ],
+              "constraints": [
+                "Set the reference level explicitly with relevel; do not rely on alphabetical ordering",
+                "Use DESeq2 median-of-ratios size factors inside the model — no pre-scaled, CPM'd or log-transformed input",
+                "Pass alpha=0.05 to results() and keep independentFiltering=TRUE",
+                "Select significant genes by padj only, never by unadjusted p-value or fold change alone",
+                "Keep the DESeq2 Cook's-distance outlier behaviour on (at 6 replicates per group it sets p and padj to NA rather than replacing counts) and report the flagged genes separately from filter-driven NAs",
+                "Use apeglm shrinkage on the coefficient; keep the unshrunken estimate in the table beside it",
+                "Do not apply a post-hoc fold-change filter; if any effect-size threshold is wanted it must go into results() as lfcThreshold",
+                "Do not drop any sample unless T1S1 recorded a stated non-depth reason"
+              ],
+              "caveats": [
+                "Rounded RSEM expected counts without the effective-length offset: state this limitation in the output rather than presenting the result as a full tximport-based RSEM analysis",
+                "With 6 per group and one sample at ~1/4 the median depth, that sample contributes wider per-gene uncertainty — this is correct model behaviour, not a defect",
+                "Gene identifiers are symbols, which are not stable across annotation releases; carry them as labels and note the annotation ambiguity in the table"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0030@2248",
+                  "R-0036@9786",
+                  "R-0065@1a71",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Two-group unpaired counts at 6 replicates per group: DESeq2 Wald with apeglm shrinkage (R-0001@9a17, R-0009@f54e), minimal pre-filter plus independent filtering (R-0029@fa6d, R-0002@087b), BH at alpha 0.05 (R-0010@91a5); R-0065@1a71 prescribes tximport type='rsem' with effective lengths but the genes.results files were not delivered, so the step runs on the rounded matrix and states the deviation."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "edgeR quasi-likelihood cross-check",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which treated-vs-control genes does the edgeR quasi-likelihood F-test also call, and what is the intersection with the DESeq2 calls?",
+              "description": "On the same rounded RSEM count matrix and the same filtered gene set used in T1S2, fit an edgeR pipeline: DGEList, filterByExpr or the identical >=10-counts-in->=6-samples filter, TMM normalisation factors, estimateDisp under ~condition, glmQLFit and glmQLFTest for treated vs control, BH adjustment at 0.05. Report the number of significant genes from edgeR, from DESeq2 (read from T1S2), and the size of the intersection. Emit the intersection as the high-confidence gene set and the method-specific calls as a secondary table labelled with the calling method. Do not present the union as the result.",
+              "context": "Six replicates per group is at the lower end of the range where DESeq2 and edgeR agree on most but not all genes, and disagreement concentrates in low-count genes. The missing RSEM length offset is an extra reason to check that the calls are not an artefact of one tool's normalisation. TMM replaces median-of-ratios here; both operate inside their respective models.",
+              "acceptance_criteria": [
+                "edgeR QL run on the same rounded counts, same filter, same contrast direction (treated vs control) as T1S2",
+                "Three numbers reported: n significant DESeq2, n significant edgeR, n in the intersection",
+                "Intersection exported as the high-confidence set; method-exclusive genes exported separately with the method named",
+                "The union is not presented as the headline result"
+              ],
+              "constraints": [
+                "Use the identical gene filter and the identical contrast direction as T1S2 so the comparison is like for like",
+                "Use TMM normalisation factors inside the edgeR model — do not feed pre-normalised values",
+                "Use glmQLFit/glmQLFTest (quasi-likelihood), not the classic exact test",
+                "Adjust with BH and use padj < 0.05 as the cutoff, matching T1S2"
+              ],
+              "caveats": [
+                "Agreement between two count models is a robustness check, not independent validation — both read the same 12 libraries",
+                "Disagreement is expected to concentrate at low counts; report where the discordant genes sit on the baseMean axis rather than treating discordance as a defect"
+              ],
+              "packages": [
+                "edgeR",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0001@9a17",
+                  "R-0042@54e1",
+                  "R-0026@9ab1"
+                ],
+                "reason": "edgeR quasi-likelihood is the named second method at 2-11 replicates per group (R-0001@9a17), and the intersection of the two methods is the high-confidence set (R-0042@54e1)."
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Differential expression report and diagnostics",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the reportable answer to 'which genes differ between treated and control', with the fit diagnostics, the effect sizes, and the limitations that the RSEM matrix and sample_01 impose?",
+              "description": "Assemble the final report from T1S1-T1S3. Include: the MA plot (log2 fold change against mean normalized count with significant genes marked, drawn on the shrunken values) and the DESeq2 dispersion plot, placed before the gene tables, each with a sentence on what it shows. Give the ranked gene table using the apeglm-shrunken log2FoldChange for ranking while carrying the unshrunken log2FoldChange, lfcSE and padj alongside, with the shrinkage estimator named in the header. State the method, package versions, the design formula ~condition, the contrast (condition, treated, control), the padj < 0.05 threshold, the number of genes tested after filtering, and the number of DE genes per direction. Report the DESeq2/edgeR overlap from T1S3. Record the limitations plainly: RSEM expected counts rounded without effective-length offsets because the genes.results files were not delivered; sample_01 at ~4x below median depth and the decision taken about it; 6 vs 6 is modest power, so absence of a call is not evidence of no effect. Attach sessionInfo, package versions and any random seed used.",
+              "context": "This is the deliverable for the research question. It must be readable without re-running the analysis and must not overstate: the study is a 12-sample, single-batch, unpaired comparison on a gene-level matrix that lost its length information upstream.",
+              "acceptance_criteria": [
+                "MA plot and dispersion plot included ahead of the gene tables, each with a one-line reading",
+                "Gene table carries unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, pvalue and padj; ranking is on the shrunken value and the estimator is named",
+                "Method, package versions, design formula, contrast direction, alpha, n genes tested and n DE per direction are all stated",
+                "DESeq2 vs edgeR overlap reported with the intersection identified as the high-confidence set",
+                "Limitations section explicitly names the missing RSEM effective lengths, the sample_01 depth and its disposition, and the power of a 6 vs 6 design",
+                "sessionInfo and package versions attached with the results"
+              ],
+              "constraints": [
+                "Rank genes and draw plots on the shrunken log2 fold change; keep the p-values from the unshrunken fit",
+                "Do not report a gene list selected by unadjusted p-value or by fold change alone",
+                "State the number of NA padj values from Cook's outlier flagging separately from those from independent filtering",
+                "Do not add enrichment, pathway or druggability interpretation — the research question asks only which genes differ"
+              ],
+              "caveats": [
+                "Do not describe the result as an RSEM tximport analysis; the effective-length offset was unavailable",
+                "A 6 vs 6 design with one shallow library detects large, consistent effects; small coordinated changes may go uncalled and that must be said, not implied"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "knitr"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0086@becf",
+                  "R-0042@54e1"
+                ],
+                "reason": "Report carries the MA and dispersion diagnostics (R-0087@c53d), the shrunken and unshrunken effect columns with ranking on the shrunken value (R-0085@c24d), the method/design/threshold/count fields (R-0041@059a), the reproducibility record (R-0086@becf) and the two-method overlap (R-0042@54e1)."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

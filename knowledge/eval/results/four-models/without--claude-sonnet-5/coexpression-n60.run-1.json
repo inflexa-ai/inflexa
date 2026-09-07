@@ -1,0 +1,712 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "coexpression-n60",
+  "run": 1,
+  "startedAt": "2026-09-06T21:40:05.154Z",
+  "elapsedMs": 164414,
+  "outcome": "plan_submitted",
+  "planId": "pln-e7dd480f",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC filter and variance-stabilize counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "counts.csv has 121 sample columns but metadata.csv has 120 rows — resolve this mismatch explicitly rather than assuming which column to drop",
+          "Raw Salmon counts must not be treated as normally distributed; use VST, not log2(CPM+1), as WGCNA's expected input for RNA-seq"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "data.table"
+        ],
+        "question": "After removing low-count genes and any sample not present in both counts.csv and metadata.csv (121 count columns vs 120 metadata rows), what is the VST-normalized expression matrix suitable as WGCNA input for the 60 case vs 60 control whole-blood cohort?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Do not use TPM/FPKM for network construction; use DESeq2 VST on raw counts",
+          "Single batch design stated in context — no batch correction step needed"
+        ],
+        "acceptance_criteria": [
+          "Sample identifiers in the counts matrix are reconciled against metadata.csv; the single discrepant sample (121 vs 120) is identified and either matched or dropped, with the reason logged",
+          "Genes with near-zero counts across all 120 samples are filtered (e.g., mean count or CPM threshold) before variance stabilization",
+          "DESeq2 varianceStabilizingTransformation (or vst) is applied on raw integer counts; output is a gene x sample matrix on the variance-stabilized scale",
+          "A sample-level clustering or PCA is produced to flag outlier samples/batch structure, reported but not silently removed without justification",
+          "Output VST matrix and cleaned metadata (condition per sample) are saved for the network step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "WGCNA network construction and module detection",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 12000 genes, full TOM computation is feasible in one block on 4 cores/12GB but should still use blockwiseModules with a single block (maxBlockSize >= 12000) rather than default multi-block splitting, to avoid module fragmentation",
+          "Signed networks better preserve the direction of co-expression, relevant for a case/control trait interpretation; state which network type (signed vs signed hybrid vs unsigned) was used"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "dynamicTreeCut",
+          "fastcluster"
+        ],
+        "question": "What co-expression modules do the ~12000 whole-blood genes form across the 120 case/control samples when a signed weighted gene co-expression network is built on the VST-normalized matrix from T1S1?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 12
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the same VST matrix and sample order/metadata produced by T1S1",
+          "Report the chosen soft power and the scale-free fit R^2 achieved, not just the power value"
+        ],
+        "acceptance_criteria": [
+          "Soft-thresholding power selected via WGCNA::pickSoftThreshold using the scale-free topology fit criterion (target R^2 typically >=0.8), with the fit plot/table reported",
+          "A signed (or signed hybrid) adjacency and TOM are constructed at the chosen power; blockwiseModules or the stepwise adjacency->TOM->hierarchical clustering->cutreeDynamic pipeline is run",
+          "Module assignment (color/label per gene) and module eigengenes (first PC per module) are produced for all ~12000 genes across 120 samples",
+          "Module sizes are reported, including the count and identity of genes left unassigned (grey module)",
+          "Sample dendrogram used to confirm no extreme outlier samples remain before network construction"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Module-trait association testing (case vs control)",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Data context states metadata.csv has only condition as the second column (120 x 2) — no covariates (age, sex, RIN) are available to adjust for; report this as a limitation, not silently assume balance",
+          "60 vs 60 unpaired design has limited power to detect small-effect modules; report effect sizes (correlation coefficients) alongside p-values, not p-values alone"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA"
+        ],
+        "question": "Which of the co-expression modules from T1S2 have eigengenes significantly correlated with case/control status across the 120 samples, after multiple-testing correction?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistics",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the exact module eigengenes computed in T1S2, not a re-derived summary"
+        ],
+        "acceptance_criteria": [
+          "Module eigengene vs case/control (coded 0/1) correlation computed per module (Pearson correlation with Student's t approximation, as in the standard WGCNA module-trait heatmap)",
+          "P-values corrected for the number of modules tested (BH-FDR)",
+          "A module-trait heatmap (correlation and FDR) is produced ranking modules by trait association strength",
+          "For each significant module, the top hub genes (highest module membership / intramodular connectivity, kME) are reported",
+          "Sex or other metadata covariates are checked if present in metadata.csv beyond condition; if metadata.csv only has 2 columns (sample id + condition), state explicitly that no covariate adjustment beyond condition was possible"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Functional annotation of case/control-associated modules",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Gene sets use HGNC symbols; confirm gene identifiers in counts.csv (stated as gene symbol) match without further ID mapping needed",
+          "Report only for modules that passed the FDR threshold in T1S3, not all modules, to avoid diluting interpretation with noise modules"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "What biological pathways and processes are enriched in the genes of each module significantly associated with case vs control status (from T1S3)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the WikiPathways human GMT and MSigDB Hallmark human GMT confirmed present in this environment; do not substitute mouse or rat gene sets"
+        ],
+        "acceptance_criteria": [
+          "Over-representation or gene set enrichment analysis run per significant module's gene list against WikiPathways human and MSigDB Hallmark human gene sets, with the ~12000 profiled genes as background",
+          "Multiple-testing corrected (BH-FDR) enriched terms reported per module, with the member genes driving each term",
+          "If MSigDB GO Biological Process is used, hierarchical redundancy among significant terms is acknowledged/collapsed rather than reported as independent counts",
+          "Results linked back explicitly to the module IDs and their trait-correlation direction (up in cases vs down in cases) from T1S3"
+        ]
+      },
+      {
+        "id": "T1S5",
+        "name": "Immune cell composition confound check for trait-associated modules",
+        "agent": "immune-profiling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Whole blood is compositionally dominated by neutrophils, which most deconvolution signature matrices (built on PBMC) under-resolve — note this limitation explicitly rather than presenting neutrophil-fraction estimates as precise",
+          "This step reports a confound flag, it does not adjudicate causality between composition and disease status"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "MCPcounter",
+          "EPIC"
+        ],
+        "question": "Do the case/control-associated modules identified in T1S3 track shifts in immune cell composition rather than a cell-intrinsic transcriptional program, given this is whole blood?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the same 120-sample VST-normalized matrix and condition labels used in T1S1/T1S3"
+        ],
+        "acceptance_criteria": [
+          "Immune cell fraction estimates produced per sample from the VST/normalized expression matrix using at least one deconvolution method suited to whole blood (e.g., MCPcounter, EPIC, or quanTIseq)",
+          "Correlation computed between each significant module's eigengene (from T1S3) and each estimated cell-type fraction across the 120 samples",
+          "For any module whose eigengene correlates strongly (e.g., |r|>0.5) with a specific cell fraction, flag it explicitly as compositionally confounded and state this before any functional/mechanistic claim from T1S4 is asserted for that module",
+          "Report whether cell-type composition itself differs significantly between cases and controls (t-test or Wilcoxon per cell type, FDR-corrected)"
+        ]
+      }
+    ],
+    "title": "WGCNA co-expression modules linked to case/control status",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch bulk RNA-seq whole-blood cohort (12000 genes x 121 samples, but 120 annotated samples: 60 cases vs 60 controls) with raw Salmon gene-level counts. To answer 'which co-expression modules form across the 120 samples, and which track case vs control', the standard and only rigorous path is: (1) QC/filter and variance-stabilize the counts so Pearson correlation across samples is not dominated by mean-variance heteroscedasticity, since WGCNA assumes roughly homoscedastic, approximately normal input; (2) build a signed weighted gene co-expression network with WGCNA, picking a soft-thresholding power via the scale-free topology criterion (Langfelder & Horvath 2008, PMID 19114008), then detect modules via dynamic tree cutting; (3) correlate module eigengenes against the case/control trait (biserial/Pearson correlation with Student approximation, as WGCNA's standard module-trait heatmap does) to identify which modules track diagnosis, correcting for the number of modules tested; (4) functionally annotate the trait-associated modules using pathway gene sets (WikiPathways human, MSigDB Hallmark/GO human — all confirmed present for Homo sapiens) to interpret what biology those modules represent; (5) since the tissue is whole blood, check whether case-associated modules are confounded by shifts in immune cell composition, a very common artifact in blood transcriptomics, using deconvolution methods (immunedeconv/MCPcounter/EPIC/xCell, all confirmed installed) — if a trait-associated module's eigengene tracks a specific immune cell fraction, that must be reported as a compositional confound, not a cell-intrinsic transcriptional signature. All steps use only packages and reference sets confirmed present in this environment (WGCNA 1.74, DESeq2 1.52.0 for VST, WikiPathways/MSigDB human GMTs, clusterProfiler/fgsea, immunedeconv/MCPcounter/EPIC family). No coexpression-specific external reference (e.g., a curated regulon) is required for WGCNA itself, since it derives the network de novo from the correlation structure of this dataset's 12000 genes across 120 samples."
+  },
+  "usage": {
+    "inputTokens": 2292445,
+    "outputTokens": 7733,
+    "cacheCreationInputTokens": 150002,
+    "cacheReadInputTokens": 2141975,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human",
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "WGCNA",
+          "pywgcna",
+          "clusterProfiler",
+          "fgsea",
+          "STRINGdb"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "limma",
+          "sva",
+          "variancePartition"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "hdWGCNA",
+          "flashClust",
+          "dynamicTreeCut"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph",
+          "STRINGdb"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "WGCNA whole blood case control co-expression module trait association",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "WGCNA blood transcriptome module trait association disease",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "WGCNA soft thresholding power scale-free topology RNA-seq recommendations",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "WGCNA network analysis R package",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "19114008"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "variance stabilizing transformation RNA-seq WGCNA workflow recommendations",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq normalization for gene co-expression network analysis best practices",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "gene co-expression network analysis RNA-seq normalization",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq gene expression WGCNA batch effect blood biomarker module preservation",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "weighted gene coexpression network RNA-seq case control disease biomarkers module",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "32125527"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "module eigengene trait association significance p-value correlation",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "module eigengene disease trait correlation network",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon dorothea"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "immune-cell-composition"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune deconvolution signature"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "LM22 xCell cibersort immune cell reference"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "MCPcounter",
+          "xCell",
+          "quantiseqr"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string ppi human",
+        "category": "interaction-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string-ppi-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "LM22 signature matrix"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathway-activity"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EPIC",
+          "MCPcounter",
+          "ConsensusTME"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "xCell2"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "enrichplot"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fastcluster",
+          "corrplot"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "pheatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "network",
+          "igraph",
+          "visNetwork"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "R.utils",
+          "data.table"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph"
+        ],
+        "language": "r"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/scanpy",
+        "query": "test"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "WGCNA",
+        "query": "blockwiseModules pickSoftThreshold module trait correlation"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "WGCNA co-expression modules linked to case/control status",
+          "created_at": "2026-09-07T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The input is a single-batch bulk RNA-seq whole-blood cohort (12000 genes x 121 samples, but 120 annotated samples: 60 cases vs 60 controls) with raw Salmon gene-level counts. To answer 'which co-expression modules form across the 120 samples, and which track case vs control', the standard and only rigorous path is: (1) QC/filter and variance-stabilize the counts so Pearson correlation across samples is not dominated by mean-variance heteroscedasticity, since WGCNA assumes roughly homoscedastic, approximately normal input; (2) build a signed weighted gene co-expression network with WGCNA, picking a soft-thresholding power via the scale-free topology criterion (Langfelder & Horvath 2008, PMID 19114008), then detect modules via dynamic tree cutting; (3) correlate module eigengenes against the case/control trait (biserial/Pearson correlation with Student approximation, as WGCNA's standard module-trait heatmap does) to identify which modules track diagnosis, correcting for the number of modules tested; (4) functionally annotate the trait-associated modules using pathway gene sets (WikiPathways human, MSigDB Hallmark/GO human — all confirmed present for Homo sapiens) to interpret what biology those modules represent; (5) since the tissue is whole blood, check whether case-associated modules are confounded by shifts in immune cell composition, a very common artifact in blood transcriptomics, using deconvolution methods (immunedeconv/MCPcounter/EPIC/xCell, all confirmed installed) — if a trait-associated module's eigengene tracks a specific immune cell fraction, that must be reported as a compositional confound, not a cell-intrinsic transcriptional signature. All steps use only packages and reference sets confirmed present in this environment (WGCNA 1.74, DESeq2 1.52.0 for VST, WikiPathways/MSigDB human GMTs, clusterProfiler/fgsea, immunedeconv/MCPcounter/EPIC family). No coexpression-specific external reference (e.g., a curated regulon) is required for WGCNA itself, since it derives the network de novo from the correlation structure of this dataset's 12000 genes across 120 samples.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC filter and variance-stabilize counts",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "After removing low-count genes and any sample not present in both counts.csv and metadata.csv (121 count columns vs 120 metadata rows), what is the VST-normalized expression matrix suitable as WGCNA input for the 60 case vs 60 control whole-blood cohort?",
+              "acceptance_criteria": [
+                "Sample identifiers in the counts matrix are reconciled against metadata.csv; the single discrepant sample (121 vs 120) is identified and either matched or dropped, with the reason logged",
+                "Genes with near-zero counts across all 120 samples are filtered (e.g., mean count or CPM threshold) before variance stabilization",
+                "DESeq2 varianceStabilizingTransformation (or vst) is applied on raw integer counts; output is a gene x sample matrix on the variance-stabilized scale",
+                "A sample-level clustering or PCA is produced to flag outlier samples/batch structure, reported but not silently removed without justification",
+                "Output VST matrix and cleaned metadata (condition per sample) are saved for the network step"
+              ],
+              "packages": [
+                "DESeq2",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "counts.csv has 121 sample columns but metadata.csv has 120 rows — resolve this mismatch explicitly rather than assuming which column to drop",
+                "Raw Salmon counts must not be treated as normally distributed; use VST, not log2(CPM+1), as WGCNA's expected input for RNA-seq"
+              ],
+              "constraints": [
+                "Do not use TPM/FPKM for network construction; use DESeq2 VST on raw counts",
+                "Single batch design stated in context — no batch correction step needed"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "WGCNA network construction and module detection",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What co-expression modules do the ~12000 whole-blood genes form across the 120 case/control samples when a signed weighted gene co-expression network is built on the VST-normalized matrix from T1S1?",
+              "acceptance_criteria": [
+                "Soft-thresholding power selected via WGCNA::pickSoftThreshold using the scale-free topology fit criterion (target R^2 typically >=0.8), with the fit plot/table reported",
+                "A signed (or signed hybrid) adjacency and TOM are constructed at the chosen power; blockwiseModules or the stepwise adjacency->TOM->hierarchical clustering->cutreeDynamic pipeline is run",
+                "Module assignment (color/label per gene) and module eigengenes (first PC per module) are produced for all ~12000 genes across 120 samples",
+                "Module sizes are reported, including the count and identity of genes left unassigned (grey module)",
+                "Sample dendrogram used to confirm no extreme outlier samples remain before network construction"
+              ],
+              "packages": [
+                "WGCNA",
+                "dynamicTreeCut",
+                "fastcluster"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 12
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "With 12000 genes, full TOM computation is feasible in one block on 4 cores/12GB but should still use blockwiseModules with a single block (maxBlockSize >= 12000) rather than default multi-block splitting, to avoid module fragmentation",
+                "Signed networks better preserve the direction of co-expression, relevant for a case/control trait interpretation; state which network type (signed vs signed hybrid vs unsigned) was used"
+              ],
+              "constraints": [
+                "Use the same VST matrix and sample order/metadata produced by T1S1",
+                "Report the chosen soft power and the scale-free fit R^2 achieved, not just the power value"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Module-trait association testing (case vs control)",
+              "track": "T1",
+              "step_type": "statistics",
+              "question": "Which of the co-expression modules from T1S2 have eigengenes significantly correlated with case/control status across the 120 samples, after multiple-testing correction?",
+              "acceptance_criteria": [
+                "Module eigengene vs case/control (coded 0/1) correlation computed per module (Pearson correlation with Student's t approximation, as in the standard WGCNA module-trait heatmap)",
+                "P-values corrected for the number of modules tested (BH-FDR)",
+                "A module-trait heatmap (correlation and FDR) is produced ranking modules by trait association strength",
+                "For each significant module, the top hub genes (highest module membership / intramodular connectivity, kME) are reported",
+                "Sex or other metadata covariates are checked if present in metadata.csv beyond condition; if metadata.csv only has 2 columns (sample id + condition), state explicitly that no covariate adjustment beyond condition was possible"
+              ],
+              "packages": [
+                "WGCNA"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "Data context states metadata.csv has only condition as the second column (120 x 2) — no covariates (age, sex, RIN) are available to adjust for; report this as a limitation, not silently assume balance",
+                "60 vs 60 unpaired design has limited power to detect small-effect modules; report effect sizes (correlation coefficients) alongside p-values, not p-values alone"
+              ],
+              "constraints": [
+                "Use the exact module eigengenes computed in T1S2, not a re-derived summary"
+              ]
+            },
+            {
+              "id": "T1S4",
+              "name": "Functional annotation of case/control-associated modules",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "What biological pathways and processes are enriched in the genes of each module significantly associated with case vs control status (from T1S3)?",
+              "acceptance_criteria": [
+                "Over-representation or gene set enrichment analysis run per significant module's gene list against WikiPathways human and MSigDB Hallmark human gene sets, with the ~12000 profiled genes as background",
+                "Multiple-testing corrected (BH-FDR) enriched terms reported per module, with the member genes driving each term",
+                "If MSigDB GO Biological Process is used, hierarchical redundancy among significant terms is acknowledged/collapsed rather than reported as independent counts",
+                "Results linked back explicitly to the module IDs and their trait-correlation direction (up in cases vs down in cases) from T1S3"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Gene sets use HGNC symbols; confirm gene identifiers in counts.csv (stated as gene symbol) match without further ID mapping needed",
+                "Report only for modules that passed the FDR threshold in T1S3, not all modules, to avoid diluting interpretation with noise modules"
+              ],
+              "constraints": [
+                "Use the WikiPathways human GMT and MSigDB Hallmark human GMT confirmed present in this environment; do not substitute mouse or rat gene sets"
+              ]
+            },
+            {
+              "id": "T1S5",
+              "name": "Immune cell composition confound check for trait-associated modules",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the case/control-associated modules identified in T1S3 track shifts in immune cell composition rather than a cell-intrinsic transcriptional program, given this is whole blood?",
+              "acceptance_criteria": [
+                "Immune cell fraction estimates produced per sample from the VST/normalized expression matrix using at least one deconvolution method suited to whole blood (e.g., MCPcounter, EPIC, or quanTIseq)",
+                "Correlation computed between each significant module's eigengene (from T1S3) and each estimated cell-type fraction across the 120 samples",
+                "For any module whose eigengene correlates strongly (e.g., |r|>0.5) with a specific cell fraction, flag it explicitly as compositionally confounded and state this before any functional/mechanistic claim from T1S4 is asserted for that module",
+                "Report whether cell-type composition itself differs significantly between cases and controls (t-test or Wilcoxon per cell type, FDR-corrected)"
+              ],
+              "packages": [
+                "immunedeconv",
+                "MCPcounter",
+                "EPIC"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "immune-profiling-agent",
+              "caveats": [
+                "Whole blood is compositionally dominated by neutrophils, which most deconvolution signature matrices (built on PBMC) under-resolve — note this limitation explicitly rather than presenting neutrophil-fraction estimates as precise",
+                "This step reports a confound flag, it does not adjudicate causality between composition and disease status"
+              ],
+              "constraints": [
+                "Use the same 120-sample VST-normalized matrix and condition labels used in T1S1/T1S3"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

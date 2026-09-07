@@ -1,0 +1,229 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n6-enrich",
+  "run": 1,
+  "startedAt": "2026-09-06T21:01:56.340Z",
+  "elapsedMs": 23609,
+  "outcome": "plan_submitted",
+  "planId": "pln-fd46e8f0",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and outlier characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "Low library size alone does not justify exclusion — check whether sample_01 also separates on PCA/sample-distance before deciding",
+          "12000 x 13 counts.csv includes a gene-symbol column; verify it is dropped from the numeric matrix before any computation"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Does sample_01's low library size (about 4x below median) distort normalization or clustering relative to the other 5 AD-lesional and 6 control samples, and should it be flagged, downweighted, or excluded from the primary DESeq2 model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Library size distribution reported for all 12 samples with sample_01 explicitly flagged",
+          "PCA/sample-distance clustering computed on variance-stabilized counts to check whether sample_01 is an outlier in expression space, not just depth",
+          "A documented recommendation (keep with covariate, keep as-is, or exclude with sensitivity check) based on the clustering result"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, AD-lesional vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "n=6 vs 6 is modest power for a 12000-gene test; note this when interpreting borderline padj genes",
+          "Do not drop sample_01 outright without reporting the sensitivity comparison from T1S1's clustering result",
+          "Use raw counts as input to DESeq2, not pre-normalized values"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes are significantly differentially expressed between AD-lesional (n=6) and control (n=6) skin samples using raw Salmon gene-level counts?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run with condition (AD-lesional vs control) as the sole factor, unpaired two-group design, using raw integer counts",
+          "Full results table (log2FC, p-value, BH-adjusted p-value) exported for all ~12000 genes",
+          "Significant gene list defined at padj < 0.05 (report count) with independent filtering applied",
+          "A parallel DESeq2 run excluding sample_01 is produced as a sensitivity check, and the two significant-gene lists are compared for overlap"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark pathway enrichment on DE results",
+        "agent": "enrichment-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "Confirm the hallmark GMT (HGNC symbols) is present in the reference store before running; if absent, report the gap rather than substituting an unrelated collection",
+          "Gene symbol matching between DESeq2 output and the hallmark GMT must be exact HGNC symbols; check for version/case mismatches before scoring"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 50 MSigDB hallmark gene sets are enriched among genes changed between AD-lesional and control skin, using the DESeq2-ranked gene list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Pre-ranked GSEA (or equivalent rank-based enrichment) run using a rank metric derived from DESeq2 log2FC and p-value, against the MSigDB human hallmark gene set collection (50 sets, HGNC symbols)",
+          "Report normalized enrichment score, p-value, and BH-adjusted p-value per hallmark set",
+          "Significant hallmark pathways (padj < 0.05) listed with leading-edge genes",
+          "Sensitivity: note whether top hallmark pathways change when using the sample_01-excluded DE ranking from T1S2"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark enrichment",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "Design is 6 atopic-dermatitis-lesional vs 6 control skin samples, unpaired, single batch, raw Salmon gene-level counts (12000 genes x 12 samples in counts.csv, 2-column metadata.csv). sample_01 has library size ~4x below median, a QC red flag that can distort size-factor normalization and inflate its dispersion contribution — it is flagged and evaluated (not silently dropped) before the main DESeq2 fit, and a sensitivity re-run excluding it is planned to check robustness of the DE gene list rather than assuming the standard pipeline is unaffected. Track 1 runs QC/outlier characterization then DESeq2 differential expression (treated vs control) on the full raw count matrix. Track 2 takes the DESeq2 output (ranked gene list) and runs hallmark gene set enrichment (GSEA-style, pre-ranked) against the MSigDB human hallmark collection (50 sets, HGNC symbols) confirmed present in the reference store, appropriate for the human skin RNA-seq design. A final synthesis step cross-checks whether the DE gene list and pathway calls are stable to the sample_01 exclusion."
+  },
+  "usage": {
+    "inputTokens": 90699,
+    "outputTokens": 2114,
+    "cacheCreationInputTokens": 72391,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark enrichment",
+          "analytical_narrative": "Design is 6 atopic-dermatitis-lesional vs 6 control skin samples, unpaired, single batch, raw Salmon gene-level counts (12000 genes x 12 samples in counts.csv, 2-column metadata.csv). sample_01 has library size ~4x below median, a QC red flag that can distort size-factor normalization and inflate its dispersion contribution — it is flagged and evaluated (not silently dropped) before the main DESeq2 fit, and a sensitivity re-run excluding it is planned to check robustness of the DE gene list rather than assuming the standard pipeline is unaffected. Track 1 runs QC/outlier characterization then DESeq2 differential expression (treated vs control) on the full raw count matrix. Track 2 takes the DESeq2 output (ranked gene list) and runs hallmark gene set enrichment (GSEA-style, pre-ranked) against the MSigDB human hallmark collection (50 sets, HGNC symbols) confirmed present in the reference store, appropriate for the human skin RNA-seq design. A final synthesis step cross-checks whether the DE gene list and pathway calls are stable to the sample_01 exclusion.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and outlier characterization",
+              "track": "1",
+              "step_type": "qc",
+              "question": "Does sample_01's low library size (about 4x below median) distort normalization or clustering relative to the other 5 AD-lesional and 6 control samples, and should it be flagged, downweighted, or excluded from the primary DESeq2 model?",
+              "acceptance_criteria": [
+                "Library size distribution reported for all 12 samples with sample_01 explicitly flagged",
+                "PCA/sample-distance clustering computed on variance-stabilized counts to check whether sample_01 is an outlier in expression space, not just depth",
+                "A documented recommendation (keep with covariate, keep as-is, or exclude with sensitivity check) based on the clustering result"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Low library size alone does not justify exclusion — check whether sample_01 also separates on PCA/sample-distance before deciding",
+                "12000 x 13 counts.csv includes a gene-symbol column; verify it is dropped from the numeric matrix before any computation"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, AD-lesional vs control",
+              "track": "1",
+              "step_type": "differential_expression",
+              "question": "Which genes are significantly differentially expressed between AD-lesional (n=6) and control (n=6) skin samples using raw Salmon gene-level counts?",
+              "acceptance_criteria": [
+                "DESeq2 run with condition (AD-lesional vs control) as the sole factor, unpaired two-group design, using raw integer counts",
+                "Full results table (log2FC, p-value, BH-adjusted p-value) exported for all ~12000 genes",
+                "Significant gene list defined at padj < 0.05 (report count) with independent filtering applied",
+                "A parallel DESeq2 run excluding sample_01 is produced as a sensitivity check, and the two significant-gene lists are compared for overlap"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=6 vs 6 is modest power for a 12000-gene test; note this when interpreting borderline padj genes",
+                "Do not drop sample_01 outright without reporting the sensitivity comparison from T1S1's clustering result",
+                "Use raw counts as input to DESeq2, not pre-normalized values"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark pathway enrichment on DE results",
+              "track": "2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark gene sets are enriched among genes changed between AD-lesional and control skin, using the DESeq2-ranked gene list?",
+              "acceptance_criteria": [
+                "Pre-ranked GSEA (or equivalent rank-based enrichment) run using a rank metric derived from DESeq2 log2FC and p-value, against the MSigDB human hallmark gene set collection (50 sets, HGNC symbols)",
+                "Report normalized enrichment score, p-value, and BH-adjusted p-value per hallmark set",
+                "Significant hallmark pathways (padj < 0.05) listed with leading-edge genes",
+                "Sensitivity: note whether top hallmark pathways change when using the sample_01-excluded DE ranking from T1S2"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Confirm the hallmark GMT (HGNC symbols) is present in the reference store before running; if absent, report the gap rather than substituting an unrelated collection",
+                "Gene symbol matching between DESeq2 output and the hallmark GMT must be exact HGNC symbols; check for version/case mismatches before scoring"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

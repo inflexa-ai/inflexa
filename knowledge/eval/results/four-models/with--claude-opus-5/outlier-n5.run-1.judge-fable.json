@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: it characterizes sample_03 with library size, detected genes, PCA and distance-heatmap position, writes down a numeric removal criterion before any test, and then fits DESeq2 Wald on all 10 samples with Cook's flagging as primary, plus a without-sample_03 refit, voomWithQualityWeights (reporting the sample weights) and edgeR QL robust as sensitivity fits, with the primary named by the pre-stated criterion rather than by gene count. Filter (>=10 in >=5), in-model median-of-ratios/TMM normalization, explicit reference level and contrast with sign convention, BH at 0.05 with apeglm shrinkage and lfcThreshold-not-post-hoc are all stated correctly. Enrichment is preranked fgsea on the full tested list with the Wald statistic as the stated metric, tested-gene universe, 15-500 window after intersection, two named collections reported separately with release and seed; the Hallmark release is deferred to runtime rather than named, a minor gap. QC does not mention checking mapping or duplication metrics if available, otherwise the QC and the report (versions, design, thresholds, tested/significant counts, with/without-sample_03 table, limits) are complete."
+}

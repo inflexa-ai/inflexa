@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 2,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly refrains from refitting DESeq2, defines the foreground as padj<0.05 with a stated |log2FC|>1 cutoff, uses the tested non-NA-padj genes as the universe rather than the whole genome, names GO BP with a versioned MSigDB cross-check, and reduces redundancy with simplify, reporting term, ratios, adjusted p and member genes. It falls short by not stating a gene-set size window, by pooling up- and down-regulated genes without saying so (only the counts are reported separately), and by never mentioning whether the table's fold changes are shrunken. The shallow sample_01 concern is entirely ignored: there is no sample-level QC or caveat, and package versions and design caveats are absent from the report specification."
+}

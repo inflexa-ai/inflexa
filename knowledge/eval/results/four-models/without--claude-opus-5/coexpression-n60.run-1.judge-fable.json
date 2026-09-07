@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: low-count filter on raw counts before DESeq2 VST, sample clustering and PCA with an explicit balance-aware outlier policy, a signed-hybrid bicor WGCNA with the lowest power at R^2>=0.80 justified from the reported fit table, signed TOM, minModuleSize 30, mergeCutHeight 0.25, BH across modules, kME/GS hub genes, and Hallmark/GO ORA with the retained network genes as universe. Deviations are minor: it builds the network on all ~12,000 retained genes rather than the top ~5000 variable genes, gene-set versions and size windows are not stated, package versions are not requested in the report, and the post-hoc |LFC|>0.5 count is applied after testing rather than inside it. The DESeq2 cross-check and composition caveats are sensible additions rather than errors."
+}

@@ -1,0 +1,888 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "python-two-group-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T22:43:49.689Z",
+  "elapsedMs": 129728,
+  "outcome": "plan_submitted",
+  "planId": "pln-53acddd9",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and low-depth sample assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A low library size alone is not a reason to drop a sample; the size factor accounts for depth and the sample simply carries less information and wider intervals",
+          "With 12 samples the PCA is easily dominated by one sample; read the distance heatmap alongside it rather than the PCA alone",
+          "If sample_01 also separates on the distance heatmap and sits away from both condition groups, that is a stronger case for exclusion than depth alone — say which evidence drives the recommendation"
+        ],
+        "context": "Data profile flags: 'Sample sample_01 has a library size about 4x below the median'. The count models down-weight a low-depth sample through its size factor, so removal is a judgement and not a default. Single batch, so the only annotation on the plots is condition and library size.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn",
+          "scikit-learn"
+        ],
+        "question": "Do the 12 skin samples separate by condition (AD lesional vs control), and does sample_01 — whose library size is ~4x below the median — behave as an outlier that must be dropped, or as a low-information but usable sample?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Raw counts before a model: blind VST, PCA on top 500 variable genes, sample distance heatmap (R-0033); the flagged low-depth sample_01 is kept, inspected and reported rather than deleted (R-0008). Implemented in PyDESeq2 because the user requires Python.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-python@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Python only — use PyDESeq2 for the variance-stabilizing transform and size factors, not R",
+          "transform = vst_blind (blind to the design)",
+          "n_top_genes = 500 for the PCA",
+          "low_depth_policy = keep_inspect_report: keep sample_01 through QC, inspect it on the PCA and the distance heatmap, report its library size and detected genes beside the others, and remove it only with a stated reason",
+          "Do not scale, transform, or normalize the counts before the model — the VST here is for visualisation only"
+        ],
+        "description": "Load /eval-four-models-with-python-two-group-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbol in the first column) and /eval-four-models-with-python-two-group-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample ids match between the two files and in what order. Produce: (1) a per-sample table of library size, number of detected genes (count>0), and median-of-ratios size factor, with sample_01 explicitly marked; (2) a blind variance-stabilizing transform of the counts, a PCA on the 500 most variable genes coloured by condition with every point labelled by sample id, and a Euclidean sample-distance heatmap; (3) a stated recommendation — keep or drop sample_01 — with the reason written out. Do not delete any sample silently. Emit the VST matrix and the QC table as artifacts for downstream steps.",
+        "acceptance_criteria": [
+          "Per-sample table reports library size, detected gene count, and size factor for all 12 samples, with sample_01 identified",
+          "PCA on the top 500 variable genes of the blind VST matrix is produced with every sample labelled and coloured by condition",
+          "Sample-distance heatmap over all 12 samples is produced",
+          "An explicit keep-or-drop recommendation for sample_01 is written with its stated reason; no sample is removed without one",
+          "Sample identifiers are confirmed to match between counts.csv and metadata.csv, and the match is reported"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "PyDESeq2 Wald test, lesional vs control, with apeglm shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The low-depth sample_01 is retained in the primary model on the QC recommendation; if T1S1 recommended dropping it, run the primary model per that recommendation and keep the other configuration as the sensitivity analysis — state which is which",
+          "n=6 per group is adequate but not generous; genes near the threshold are unstable",
+          "apeglm shrinkage changes the reported effect size, not the p-value — do not re-rank the p-values after shrinkage"
+        ],
+        "context": "6 lesional vs 6 control, unpaired, single batch, human skin. With fewer than seven replicates per condition cell, DESeq2 flags a Cook's-distance count outlier and sets its p-value to NA rather than replacing the count — keep that behaviour on and count those genes separately.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "scipy"
+        ],
+        "question": "Which genes are differentially expressed in atopic dermatitis lesional skin versus control skin, at BH-adjusted p < 0.05?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "Raw counts, fixed-effects two-group design with 6 replicates per group: DESeq2 Wald with apeglm shrinkage (R-0001, R-0009), minimal pre-filter then independent filtering (R-0029, R-0002), size factors inside the model (R-0026, R-0030), explicit reference level and named contrast (R-0036), BH at alpha 0.05 with the p-value histogram inspected first (R-0010, R-0083, R-0043), Cook's outliers flagged as NA at n<7 (R-0039). R-0018 (tximport length offsets) cannot be satisfied because only a gene-level matrix was supplied — the step states this. PyDESeq2 substitutes for R DESeq2 under the user's Python-only constraint.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-pydeseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Python only — PyDESeq2, not R DESeq2",
+          "min_count = 10, min_samples = 6 (the smallest group size); keep the pre-filter minimal and let independent filtering do the rest",
+          "Set the reference level explicitly; do not rely on alphabetical ordering of condition labels",
+          "test = Wald; independent_filtering = true; adjustment = BH; alpha = 0.05 passed to the results call so the filter threshold matches the reporting cutoff",
+          "lfc_shrink = apeglm on the condition coefficient; keep the unshrunken estimate beside the shrunken one",
+          "Select significant genes by adjusted p-value only — never by unadjusted p-value and never by fold change alone",
+          "Do not pre-normalize or transform the counts before the model; median-of-ratios size factors are computed inside PyDESeq2",
+          "count_outlier_policy = flag_and_report_na: keep the Cook's-distance flagging on and report the flagged genes separately",
+          "State in the output that the counts are Salmon-derived but supplied only as a gene-level integer matrix, so tximport average-transcript-length offsets could not be applied; a change in isoform usage therefore cannot be separated from a change in gene expression"
+        ],
+        "description": "Fit PyDESeq2 on the raw counts with design ~condition. Pre-filter minimally: keep a gene with at least 10 counts in at least 6 samples (the smallest group size). Set the control condition explicitly as the reference level so a positive log2FoldChange means higher in lesional; name the contrast as (condition, lesional, control) in the output. Run the Wald test with independent filtering and BH adjustment at alpha=0.05. Plot the histogram of unadjusted p-values BEFORE reading the adjusted values and describe its shape. Apply apeglm shrinkage to the condition coefficient and keep BOTH the unshrunken log2FoldChange, its lfcSE, and the shrunken log2FoldChange in the results table. Report the number of genes tested after filtering, the number with padj<0.05, and the number of NA p-values split by cause (Cook's-distance outlier flag vs independent filtering). Then re-run the identical model excluding sample_01 as a sensitivity analysis and report the overlap of the two significant gene sets and any gene whose call changes. Write the full results table (all tested genes, with the Wald stat column) to disk for the enrichment step.",
+        "acceptance_criteria": [
+          "Results table contains every tested gene with baseMean, unshrunken log2FoldChange, lfcSE, shrunken (apeglm) log2FoldChange, the Wald stat, pvalue and padj",
+          "The reference level is control and the contrast direction (lesional over control) is stated in the output",
+          "Number of genes retained by the pre-filter, number with padj<0.05, and the NA count split by outlier-flag vs independent-filtering are all reported",
+          "A p-value histogram is produced and its shape described before the adjusted p-values are interpreted",
+          "Sensitivity re-run without sample_01 is reported with the overlap of significant gene sets against the full-cohort run",
+          "Full ranked results table with the stat column is written to disk for downstream enrichment"
+        ]
+      },
+      {
+        "id": "T1S2b",
+        "name": "Second-method robustness check on the same contrast",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Method disagreement grows at low counts and low replicate numbers; expect the discordant genes to sit near the detection floor",
+          "A gene called by only one method is a weaker finding, not a discovery of that method"
+        ],
+        "context": "The knowledge procedure asks for a two-method robustness overlap, with edgeR quasi-likelihood as the second method beside DESeq2. edgeR is R-only and the user requires Python for every script, so the second method must be a Python-native equivalent — its non-identity with edgeR QL must be stated plainly in the output rather than glossed over.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "statsmodels",
+          "scipy",
+          "matplotlib"
+        ],
+        "question": "Which of the lesional-vs-control differentially expressed genes are called by a second, independent testing method, and which are called by only one?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0001@9a17"
+          ],
+          "reason": "R-0042 asks for the DESeq2/edgeR-QL overlap as the robustness check; edgeR is R-only and the user constrains every script to Python, so a Python-native second test substitutes and the step must state the substitution rather than claim an edgeR result.",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Python only — no R, no rpy2 bridge to edgeR",
+          "Use the same pre-filtered count matrix, the same design, the same reference level, and the same BH alpha=0.05 as T1S2",
+          "State explicitly that this is a Python substitute for the edgeR quasi-likelihood F-test and that the two are not the same test"
+        ],
+        "description": "Run a second differential test on the same filtered counts and the same ~condition design, using a Python implementation independent of PyDESeq2: a limma-voom-style workflow (log-CPM with precision weights and a moderated linear model) or a per-gene negative-binomial GLM via statsmodels, whichever the agent can implement cleanly with the installed packages. Apply the same BH alpha=0.05 cutoff. Report the number of significant genes from each method, the size of the intersection, and the genes that only one method calls, labelled with that method's name. Treat the intersection as the high-confidence set. Do not report the union as the result.",
+        "acceptance_criteria": [
+          "Second method is named exactly, with the package and the model it fits, and its difference from edgeR quasi-likelihood is stated",
+          "Significant gene counts from PyDESeq2 and from the second method are reported side by side with the intersection size",
+          "Method-specific genes are listed and labelled with the method that called them",
+          "The intersection is presented as the high-confidence set; the union is not presented as the result"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA on the Wald statistic: hallmark then GO",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Gene length and expression level bias enrichment on count data; the tested-gene universe removes the detection part of that bias but not all of it — state the caveat",
+          "Enrichment results depend on the method: a set is a hypothesis for follow-up, not a proven finding",
+          "If fewer than about 50 genes pass padj<0.05, an over-representation test on that list has no power — the ranked test on the full list is the result",
+          "Hallmark sets overlap; two sets driven by the same leading-edge genes are one finding"
+        ],
+        "context": "The reference store holds the MSigDB human hallmark collection (2026.1) and human GO BP/CC/MF (2026.1) and human WikiPathways (2026.07.10) as symbol GMTs. Reactome — the procedure's preferred second collection — is NOT in the store; GO BP or WikiPathways stands in as the follow-up and the substitution must be stated. If the hallmark collection is absent at run time, this step cannot answer the pathway half of the research question and must report that plainly rather than substituting a different collection silently.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which MSigDB hallmark pathways are coordinately up- or down-regulated in atopic dermatitis lesional skin versus control skin, and which specific GO biological processes do the hallmark hits resolve to?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77",
+            "R-0108@409f",
+            "R-0103@93aa",
+            "R-0101@06c8",
+            "R-0165@e456",
+            "R-0098@d01b"
+          ],
+          "reason": "Enrichment after a DE test on a human dataset: preranked GSEA on the full tested list against MSigDB hallmark first (R-0107, R-0048, R-0045), size window 15-500 on the tested-gene universe (R-0047, R-0046), redundant sets collapsed (R-0052). Disputed metric R-0108: the Wald statistic is chosen, because it scales the effect by its uncertainty and avoids the tie problem of a signed p-value (R-0099). R-0098 asks for Reactome second; the reference store holds no Reactome collection, so GO BP or WikiPathways from the store stands in per R-0165 with the substitution stated. gseapy substitutes for fgsea under the Python-only constraint.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-gseapy-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Python only — gseapy prerank, not R fgsea",
+          "rank_metric = the Wald stat column; do NOT rank by the unshrunken log2 fold change alone and do NOT rank by a signed p-value with ties",
+          "gsea_input = full_ranked_list; universe = the tested genes from T1S2",
+          "min_size = 15, max_size = 500, applied after intersecting each set with the tested genes",
+          "Do not merge the hallmark and the follow-up collection into one set list — a pathway present in both is one finding tested twice",
+          "Resolve the gene set collections from the environment's reference store by what they are (human MSigDB hallmark sets; a human GO biological process or WikiPathways collection), matching the human organism of the data — never a mouse or rat collection",
+          "collapse_redundant = true",
+          "Set and record a random seed for the permutation test"
+        ],
+        "description": "Take the full T1S2 results table — every tested gene, not a thresholded subset — and rank it by the DESeq2 Wald statistic (the `stat` column), descending. Run gseapy preranked GSEA against the human MSigDB hallmark gene sets from the reference store, with a set size window of 15 to 500 genes computed after intersecting each set with the tested genes, BH adjustment, and a fixed random seed recorded in the output. Then repeat the identical procedure against a second human collection from the reference store as the follow-up — GO biological process, or human WikiPathways — reported as a separate table, never merged with hallmark. Gene symbols in counts.csv are HGNC and the staged GMTs are symbol-based, so no Entrez remapping should be needed; still report the share of tested genes that matched no gene set and the share of set members absent from the tested list. Collapse significant sets that share most of their leading-edge genes into groups and report one representative per group, keeping the full table as a supplement. For each significant set report the leading-edge genes with their gene-level Wald statistic, and mark leading-edge overlap between reported sets. Record the release version of each collection.",
+        "acceptance_criteria": [
+          "GSEA is run on the FULL ranked list of tested genes, not on a thresholded subset",
+          "Ranking metric is the DESeq2 Wald statistic and this choice is stated in the output",
+          "Hallmark results table reports NES, nominal p, BH-adjusted p, set size after intersection, and leading-edge genes per set",
+          "A second collection (GO BP or WikiPathways) is run with the same size window and the same universe and reported as a SEPARATE table, with the substitution for the absent Reactome collection stated",
+          "The release version of every gene set collection used is recorded",
+          "Redundant significant sets are collapsed by leading-edge overlap with one representative reported per group, and the full table kept as a supplement",
+          "The number of genes with padj<0.05 from T1S2 is stated; if it is below ~50, no over-representation test is run and this is said explicitly",
+          "The random seed used for the permutations is recorded"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Consolidated report: genes, pathways, diagnostics, reproducibility",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 per group, absence of a significant hit for a gene is not evidence that the gene does not change",
+          "The tissue is bulk skin: a differential gene may reflect a shift in cell composition (immune infiltrate in lesional skin) rather than a cell-intrinsic change — say so rather than asserting regulation"
+        ],
+        "context": "The report is the deliverable that answers both halves of the research question. It must not overstate: n=6 per group, one sample at ~1/4 the median depth, no batch structure to correct, and gene-level counts without transcript length offsets.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn",
+          "session-info"
+        ],
+        "question": "What is the combined answer — which genes and which hallmark pathways change between AD lesional and control skin — and how confident should a reader be, given n=6 per group and one low-depth sample?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf",
+            "R-0042@54e1"
+          ],
+          "reason": "Report contents follow the procedure's report step: method/versions/design/thresholds/counts before the tables (R-0041), shrunken and unshrunken effects with lfcSE and ranking on the shrunken value (R-0085), MA and dispersion diagnostics (R-0087), enrichment provenance and method-dependence caveat (R-0051, R-0055), leading edge per set (R-0105), reproducibility record with the seed (R-0086), two-method overlap as the high-confidence set (R-0042).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S2b",
+          "T2S1"
+        ],
+        "constraints": [
+          "Python only for any figure or table generation",
+          "Rank genes and draw plots on the shrunken log2 fold change; keep the p-values from the unshrunken fit",
+          "Do not present the union of the two DE methods as the result",
+          "State the enrichment collection version, ranking metric, universe and size window beside the enrichment results",
+          "Do not claim a mechanism or a treatment implication that the two-group contrast does not support"
+        ],
+        "description": "Assemble a single markdown report. Before the gene tables, state: the method and the version of every package used, the design formula and the contrast (condition, lesional over control), the thresholds (padj<0.05, BH, independent filtering), the number of genes tested after filtering, and the number of DE genes. Include the two fit diagnostics — the MA plot with significant genes marked, and the dispersion plot with per-gene estimates, the fitted trend and the shrunken values — and say what each shows. Give the gene table with the unshrunken log2FoldChange, the shrunken (apeglm) log2FoldChange, the lfcSE and padj for each gene, ranked by the shrunken value, with the shrinkage estimator named in the header. Report the two-method overlap from T1S2b as the high-confidence set. Report the hallmark GSEA results with the collection name and release, the ranking metric, the universe, the size window, and the leading-edge genes per significant set, marking leading-edge overlap between sets; then the follow-up collection separately. State that enrichment results are method-dependent and that a set is a hypothesis. State the sample_01 decision and the outcome of the sensitivity re-run. Close with a reproducibility record: session info, package versions, the random seed of the permutation test, and the version of each gene set collection.",
+        "acceptance_criteria": [
+          "Report states method, package versions, design formula, contrast direction, thresholds, number of genes tested, and number of DE genes before any gene table",
+          "MA plot and dispersion plot are both included with a stated interpretation of each",
+          "Gene table carries unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE and padj, ranked by the shrunken value, with the shrinkage estimator named",
+          "Two-method overlap is reported as the high-confidence set, with method-specific genes as a labelled secondary set",
+          "Hallmark GSEA results are reported with collection release, ranking metric, universe, size window, and leading-edge genes per significant set",
+          "Enrichment method-dependence caveat is stated explicitly",
+          "The sample_01 keep/drop decision and the result of the sensitivity re-run are stated",
+          "Reproducibility record includes session info, package versions, the permutation seed, and every gene set collection version"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark GSEA (Python)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a 12,000 x 12 raw integer gene-level count matrix from Salmon (counts.csv, gene symbols in the first column) with a 12-row metadata table giving one condition per sample: 6 atopic-dermatitis lesional skin vs 6 control skin, unpaired, single batch, Homo sapiens. The research question is two-part — which genes change, and which hallmark pathways change — so the plan is a linear DE track (T1) feeding an enrichment track (T2) and a consolidated report.\n\nThe stated caveat that sample_01 has a library size about 4x below the median drives the QC step (T1S1) rather than a deletion. Per the knowledge procedure (R-0008, R-0030), a low-depth sample is kept, inspected on the blind-VST PCA and the sample-distance heatmap, and its library size and detected-gene count reported beside the others; DESeq2 median-of-ratios size factors already down-weight depth inside the model, so removal would be a judgement requiring a stated reason. T1S1 therefore ends with an explicit, evidence-based keep/drop recommendation, and T1S2 runs the primary model on all 12 samples with a sensitivity re-run excluding sample_01 so the reader sees whether any conclusion depends on it.\n\nT1S2 fits PyDESeq2: minimal pre-filter (>=10 counts in >=6 samples, the smallest group size), median-of-ratios normalization inside the model, design ~condition with control set explicitly as the reference so a positive log2FC means higher in lesional, Wald test, apeglm shrinkage for reporting/ranking, BH with independent filtering at alpha 0.05, and a p-value histogram inspected before adjustment. With n=6 per group DESeq2 flags Cook's-distance count outliers as NA rather than replacing them; those NAs are counted separately from independent-filtering NAs. Note on provenance: the counts are Salmon-derived but only the gene-level integer matrix exists, so the tximport length-offset route (R-0018) is not available — the step must state this limitation, as a change in isoform usage cannot be distinguished from a change in gene expression. T1S2b adds an edgeR-style quasi-likelihood second method in Python for the robustness overlap the procedure asks for; because edgeR is R-only and the user requires Python, this is implemented as a statsmodels negative-binomial / limma-voom-style linear-model check and its non-identity with edgeR QL is stated.\n\nT2S1 runs preranked GSEA (gseapy) on the full tested list — never a thresholded list — ranked by the DESeq2 Wald statistic (the disputed-metric choice is stated: the Wald stat scales the effect by its uncertainty and avoids p-value ties), against the human MSigDB hallmark collection with a 15-500 set size window, then GO BP as the second collection reported separately with its own release. Reactome is not in the reference store; GO BP and human WikiPathways are, and one is used as the follow-up collection with its release stated. Leading-edge genes are reported per significant set. If fewer than ~50 genes reach padj<0.05, no over-representation test is run — the ranked method carries the enrichment on its own.\n\nEvery script is Python, per the user constraint: PyDESeq2 replaces DESeq2/R, gseapy replaces fgsea. This is a small dataset (12,000 x 12, a few MB), so resources are modest throughout."
+  },
+  "usage": {
+    "inputTokens": 243845,
+    "outputTokens": 11093,
+    "cacheCreationInputTokens": 165098,
+    "cacheReadInputTokens": 78711,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "ranked_list",
+        "preferred_language": "python"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "ranked_list",
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "VST(blind) PCA, sample distance heatmap, library size and detected gene table",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with at least 10 counts in at least 6 samples",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors inside the model",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              },
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~condition with control as explicit reference level; contrast condition lesional vs control",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test (PyDESeq2)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage (PyDESeq2 lfc_shrink)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "gseapy preranked GSEA on the DESeq2 Wald statistic against MSigDB Hallmark, then GO BP as the second collection",
+            "package": "gseapy",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "gsea_input",
+                "value": "full_ranked_list"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "second_collection",
+                "value": "msigdb_go_bp_human"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Consolidated markdown report with fit diagnostics, gene tables, leading edge, reproducibility record",
+            "package": "matplotlib",
+            "parameters": [
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot, dispersion_plot"
+              },
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange, shrunken_log2FoldChange, lfcSE"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              },
+              {
+                "name": "robustness",
+                "value": "overlap_of_two_methods"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark GSEA (Python)",
+          "analytical_narrative": "The input is a 12,000 x 12 raw integer gene-level count matrix from Salmon (counts.csv, gene symbols in the first column) with a 12-row metadata table giving one condition per sample: 6 atopic-dermatitis lesional skin vs 6 control skin, unpaired, single batch, Homo sapiens. The research question is two-part — which genes change, and which hallmark pathways change — so the plan is a linear DE track (T1) feeding an enrichment track (T2) and a consolidated report.\n\nThe stated caveat that sample_01 has a library size about 4x below the median drives the QC step (T1S1) rather than a deletion. Per the knowledge procedure (R-0008, R-0030), a low-depth sample is kept, inspected on the blind-VST PCA and the sample-distance heatmap, and its library size and detected-gene count reported beside the others; DESeq2 median-of-ratios size factors already down-weight depth inside the model, so removal would be a judgement requiring a stated reason. T1S1 therefore ends with an explicit, evidence-based keep/drop recommendation, and T1S2 runs the primary model on all 12 samples with a sensitivity re-run excluding sample_01 so the reader sees whether any conclusion depends on it.\n\nT1S2 fits PyDESeq2: minimal pre-filter (>=10 counts in >=6 samples, the smallest group size), median-of-ratios normalization inside the model, design ~condition with control set explicitly as the reference so a positive log2FC means higher in lesional, Wald test, apeglm shrinkage for reporting/ranking, BH with independent filtering at alpha 0.05, and a p-value histogram inspected before adjustment. With n=6 per group DESeq2 flags Cook's-distance count outliers as NA rather than replacing them; those NAs are counted separately from independent-filtering NAs. Note on provenance: the counts are Salmon-derived but only the gene-level integer matrix exists, so the tximport length-offset route (R-0018) is not available — the step must state this limitation, as a change in isoform usage cannot be distinguished from a change in gene expression. T1S2b adds an edgeR-style quasi-likelihood second method in Python for the robustness overlap the procedure asks for; because edgeR is R-only and the user requires Python, this is implemented as a statsmodels negative-binomial / limma-voom-style linear-model check and its non-identity with edgeR QL is stated.\n\nT2S1 runs preranked GSEA (gseapy) on the full tested list — never a thresholded list — ranked by the DESeq2 Wald statistic (the disputed-metric choice is stated: the Wald stat scales the effect by its uncertainty and avoids p-value ties), against the human MSigDB hallmark collection with a 15-500 set size window, then GO BP as the second collection reported separately with its own release. Reactome is not in the reference store; GO BP and human WikiPathways are, and one is used as the follow-up collection with its release stated. Leading-edge genes are reported per significant set. If fewer than ~50 genes reach padj<0.05, no over-representation test is run — the ranked method carries the enrichment on its own.\n\nEvery script is Python, per the user constraint: PyDESeq2 replaces DESeq2/R, gseapy replaces fgsea. This is a small dataset (12,000 x 12, a few MB), so resources are modest throughout.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and low-depth sample assessment",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 skin samples separate by condition (AD lesional vs control), and does sample_01 — whose library size is ~4x below the median — behave as an outlier that must be dropped, or as a low-information but usable sample?",
+              "description": "Load /eval-four-models-with-python-two-group-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbol in the first column) and /eval-four-models-with-python-two-group-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample ids match between the two files and in what order. Produce: (1) a per-sample table of library size, number of detected genes (count>0), and median-of-ratios size factor, with sample_01 explicitly marked; (2) a blind variance-stabilizing transform of the counts, a PCA on the 500 most variable genes coloured by condition with every point labelled by sample id, and a Euclidean sample-distance heatmap; (3) a stated recommendation — keep or drop sample_01 — with the reason written out. Do not delete any sample silently. Emit the VST matrix and the QC table as artifacts for downstream steps.",
+              "context": "Data profile flags: 'Sample sample_01 has a library size about 4x below the median'. The count models down-weight a low-depth sample through its size factor, so removal is a judgement and not a default. Single batch, so the only annotation on the plots is condition and library size.",
+              "acceptance_criteria": [
+                "Per-sample table reports library size, detected gene count, and size factor for all 12 samples, with sample_01 identified",
+                "PCA on the top 500 variable genes of the blind VST matrix is produced with every sample labelled and coloured by condition",
+                "Sample-distance heatmap over all 12 samples is produced",
+                "An explicit keep-or-drop recommendation for sample_01 is written with its stated reason; no sample is removed without one",
+                "Sample identifiers are confirmed to match between counts.csv and metadata.csv, and the match is reported"
+              ],
+              "constraints": [
+                "Python only — use PyDESeq2 for the variance-stabilizing transform and size factors, not R",
+                "transform = vst_blind (blind to the design)",
+                "n_top_genes = 500 for the PCA",
+                "low_depth_policy = keep_inspect_report: keep sample_01 through QC, inspect it on the PCA and the distance heatmap, report its library size and detected genes beside the others, and remove it only with a stated reason",
+                "Do not scale, transform, or normalize the counts before the model — the VST here is for visualisation only"
+              ],
+              "caveats": [
+                "A low library size alone is not a reason to drop a sample; the size factor accounts for depth and the sample simply carries less information and wider intervals",
+                "With 12 samples the PCA is easily dominated by one sample; read the distance heatmap alongside it rather than the PCA alone",
+                "If sample_01 also separates on the distance heatmap and sits away from both condition groups, that is a stronger case for exclusion than depth alone — say which evidence drives the recommendation"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn",
+                "scikit-learn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-python@1.0.0",
+                "reason": "Raw counts before a model: blind VST, PCA on top 500 variable genes, sample distance heatmap (R-0033); the flagged low-depth sample_01 is kept, inspected and reported rather than deleted (R-0008). Implemented in PyDESeq2 because the user requires Python."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "PyDESeq2 Wald test, lesional vs control, with apeglm shrinkage",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed in atopic dermatitis lesional skin versus control skin, at BH-adjusted p < 0.05?",
+              "description": "Fit PyDESeq2 on the raw counts with design ~condition. Pre-filter minimally: keep a gene with at least 10 counts in at least 6 samples (the smallest group size). Set the control condition explicitly as the reference level so a positive log2FoldChange means higher in lesional; name the contrast as (condition, lesional, control) in the output. Run the Wald test with independent filtering and BH adjustment at alpha=0.05. Plot the histogram of unadjusted p-values BEFORE reading the adjusted values and describe its shape. Apply apeglm shrinkage to the condition coefficient and keep BOTH the unshrunken log2FoldChange, its lfcSE, and the shrunken log2FoldChange in the results table. Report the number of genes tested after filtering, the number with padj<0.05, and the number of NA p-values split by cause (Cook's-distance outlier flag vs independent filtering). Then re-run the identical model excluding sample_01 as a sensitivity analysis and report the overlap of the two significant gene sets and any gene whose call changes. Write the full results table (all tested genes, with the Wald stat column) to disk for the enrichment step.",
+              "context": "6 lesional vs 6 control, unpaired, single batch, human skin. With fewer than seven replicates per condition cell, DESeq2 flags a Cook's-distance count outlier and sets its p-value to NA rather than replacing the count — keep that behaviour on and count those genes separately.",
+              "acceptance_criteria": [
+                "Results table contains every tested gene with baseMean, unshrunken log2FoldChange, lfcSE, shrunken (apeglm) log2FoldChange, the Wald stat, pvalue and padj",
+                "The reference level is control and the contrast direction (lesional over control) is stated in the output",
+                "Number of genes retained by the pre-filter, number with padj<0.05, and the NA count split by outlier-flag vs independent-filtering are all reported",
+                "A p-value histogram is produced and its shape described before the adjusted p-values are interpreted",
+                "Sensitivity re-run without sample_01 is reported with the overlap of significant gene sets against the full-cohort run",
+                "Full ranked results table with the stat column is written to disk for downstream enrichment"
+              ],
+              "constraints": [
+                "Python only — PyDESeq2, not R DESeq2",
+                "min_count = 10, min_samples = 6 (the smallest group size); keep the pre-filter minimal and let independent filtering do the rest",
+                "Set the reference level explicitly; do not rely on alphabetical ordering of condition labels",
+                "test = Wald; independent_filtering = true; adjustment = BH; alpha = 0.05 passed to the results call so the filter threshold matches the reporting cutoff",
+                "lfc_shrink = apeglm on the condition coefficient; keep the unshrunken estimate beside the shrunken one",
+                "Select significant genes by adjusted p-value only — never by unadjusted p-value and never by fold change alone",
+                "Do not pre-normalize or transform the counts before the model; median-of-ratios size factors are computed inside PyDESeq2",
+                "count_outlier_policy = flag_and_report_na: keep the Cook's-distance flagging on and report the flagged genes separately",
+                "State in the output that the counts are Salmon-derived but supplied only as a gene-level integer matrix, so tximport average-transcript-length offsets could not be applied; a change in isoform usage therefore cannot be separated from a change in gene expression"
+              ],
+              "caveats": [
+                "The low-depth sample_01 is retained in the primary model on the QC recommendation; if T1S1 recommended dropping it, run the primary model per that recommendation and keep the other configuration as the sensitivity analysis — state which is which",
+                "n=6 per group is adequate but not generous; genes near the threshold are unstable",
+                "apeglm shrinkage changes the reported effect size, not the p-value — do not re-rank the p-values after shrinkage"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "scipy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0030@2248",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-pydeseq2-two-group@1.0.0",
+                "reason": "Raw counts, fixed-effects two-group design with 6 replicates per group: DESeq2 Wald with apeglm shrinkage (R-0001, R-0009), minimal pre-filter then independent filtering (R-0029, R-0002), size factors inside the model (R-0026, R-0030), explicit reference level and named contrast (R-0036), BH at alpha 0.05 with the p-value histogram inspected first (R-0010, R-0083, R-0043), Cook's outliers flagged as NA at n<7 (R-0039). R-0018 (tximport length offsets) cannot be satisfied because only a gene-level matrix was supplied — the step states this. PyDESeq2 substitutes for R DESeq2 under the user's Python-only constraint."
+              }
+            },
+            {
+              "id": "T1S2b",
+              "name": "Second-method robustness check on the same contrast",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the lesional-vs-control differentially expressed genes are called by a second, independent testing method, and which are called by only one?",
+              "description": "Run a second differential test on the same filtered counts and the same ~condition design, using a Python implementation independent of PyDESeq2: a limma-voom-style workflow (log-CPM with precision weights and a moderated linear model) or a per-gene negative-binomial GLM via statsmodels, whichever the agent can implement cleanly with the installed packages. Apply the same BH alpha=0.05 cutoff. Report the number of significant genes from each method, the size of the intersection, and the genes that only one method calls, labelled with that method's name. Treat the intersection as the high-confidence set. Do not report the union as the result.",
+              "context": "The knowledge procedure asks for a two-method robustness overlap, with edgeR quasi-likelihood as the second method beside DESeq2. edgeR is R-only and the user requires Python for every script, so the second method must be a Python-native equivalent — its non-identity with edgeR QL must be stated plainly in the output rather than glossed over.",
+              "acceptance_criteria": [
+                "Second method is named exactly, with the package and the model it fits, and its difference from edgeR quasi-likelihood is stated",
+                "Significant gene counts from PyDESeq2 and from the second method are reported side by side with the intersection size",
+                "Method-specific genes are listed and labelled with the method that called them",
+                "The intersection is presented as the high-confidence set; the union is not presented as the result"
+              ],
+              "constraints": [
+                "Python only — no R, no rpy2 bridge to edgeR",
+                "Use the same pre-filtered count matrix, the same design, the same reference level, and the same BH alpha=0.05 as T1S2",
+                "State explicitly that this is a Python substitute for the edgeR quasi-likelihood F-test and that the two are not the same test"
+              ],
+              "caveats": [
+                "Method disagreement grows at low counts and low replicate numbers; expect the discordant genes to sit near the detection floor",
+                "A gene called by only one method is a weaker finding, not a discovery of that method"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "statsmodels",
+                "scipy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0001@9a17"
+                ],
+                "reason": "R-0042 asks for the DESeq2/edgeR-QL overlap as the robustness check; edgeR is R-only and the user constrains every script to Python, so a Python-native second test substitutes and the step must state the substitution rather than claim an edgeR result."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA on the Wald statistic: hallmark then GO",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB hallmark pathways are coordinately up- or down-regulated in atopic dermatitis lesional skin versus control skin, and which specific GO biological processes do the hallmark hits resolve to?",
+              "description": "Take the full T1S2 results table — every tested gene, not a thresholded subset — and rank it by the DESeq2 Wald statistic (the `stat` column), descending. Run gseapy preranked GSEA against the human MSigDB hallmark gene sets from the reference store, with a set size window of 15 to 500 genes computed after intersecting each set with the tested genes, BH adjustment, and a fixed random seed recorded in the output. Then repeat the identical procedure against a second human collection from the reference store as the follow-up — GO biological process, or human WikiPathways — reported as a separate table, never merged with hallmark. Gene symbols in counts.csv are HGNC and the staged GMTs are symbol-based, so no Entrez remapping should be needed; still report the share of tested genes that matched no gene set and the share of set members absent from the tested list. Collapse significant sets that share most of their leading-edge genes into groups and report one representative per group, keeping the full table as a supplement. For each significant set report the leading-edge genes with their gene-level Wald statistic, and mark leading-edge overlap between reported sets. Record the release version of each collection.",
+              "context": "The reference store holds the MSigDB human hallmark collection (2026.1) and human GO BP/CC/MF (2026.1) and human WikiPathways (2026.07.10) as symbol GMTs. Reactome — the procedure's preferred second collection — is NOT in the store; GO BP or WikiPathways stands in as the follow-up and the substitution must be stated. If the hallmark collection is absent at run time, this step cannot answer the pathway half of the research question and must report that plainly rather than substituting a different collection silently.",
+              "acceptance_criteria": [
+                "GSEA is run on the FULL ranked list of tested genes, not on a thresholded subset",
+                "Ranking metric is the DESeq2 Wald statistic and this choice is stated in the output",
+                "Hallmark results table reports NES, nominal p, BH-adjusted p, set size after intersection, and leading-edge genes per set",
+                "A second collection (GO BP or WikiPathways) is run with the same size window and the same universe and reported as a SEPARATE table, with the substitution for the absent Reactome collection stated",
+                "The release version of every gene set collection used is recorded",
+                "Redundant significant sets are collapsed by leading-edge overlap with one representative reported per group, and the full table kept as a supplement",
+                "The number of genes with padj<0.05 from T1S2 is stated; if it is below ~50, no over-representation test is run and this is said explicitly",
+                "The random seed used for the permutations is recorded"
+              ],
+              "constraints": [
+                "Python only — gseapy prerank, not R fgsea",
+                "rank_metric = the Wald stat column; do NOT rank by the unshrunken log2 fold change alone and do NOT rank by a signed p-value with ties",
+                "gsea_input = full_ranked_list; universe = the tested genes from T1S2",
+                "min_size = 15, max_size = 500, applied after intersecting each set with the tested genes",
+                "Do not merge the hallmark and the follow-up collection into one set list — a pathway present in both is one finding tested twice",
+                "Resolve the gene set collections from the environment's reference store by what they are (human MSigDB hallmark sets; a human GO biological process or WikiPathways collection), matching the human organism of the data — never a mouse or rat collection",
+                "collapse_redundant = true",
+                "Set and record a random seed for the permutation test"
+              ],
+              "caveats": [
+                "Gene length and expression level bias enrichment on count data; the tested-gene universe removes the detection part of that bias but not all of it — state the caveat",
+                "Enrichment results depend on the method: a set is a hypothesis for follow-up, not a proven finding",
+                "If fewer than about 50 genes pass padj<0.05, an over-representation test on that list has no power — the ranked test on the full list is the result",
+                "Hallmark sets overlap; two sets driven by the same leading-edge genes are one finding"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77",
+                  "R-0108@409f",
+                  "R-0103@93aa",
+                  "R-0101@06c8",
+                  "R-0165@e456",
+                  "R-0098@d01b"
+                ],
+                "template": "tpl-gseapy-preranked@1.0.0",
+                "reason": "Enrichment after a DE test on a human dataset: preranked GSEA on the full tested list against MSigDB hallmark first (R-0107, R-0048, R-0045), size window 15-500 on the tested-gene universe (R-0047, R-0046), redundant sets collapsed (R-0052). Disputed metric R-0108: the Wald statistic is chosen, because it scales the effect by its uncertainty and avoids the tie problem of a signed p-value (R-0099). R-0098 asks for Reactome second; the reference store holds no Reactome collection, so GO BP or WikiPathways from the store stands in per R-0165 with the substitution stated. gseapy substitutes for fgsea under the Python-only constraint."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Consolidated report: genes, pathways, diagnostics, reproducibility",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the combined answer — which genes and which hallmark pathways change between AD lesional and control skin — and how confident should a reader be, given n=6 per group and one low-depth sample?",
+              "description": "Assemble a single markdown report. Before the gene tables, state: the method and the version of every package used, the design formula and the contrast (condition, lesional over control), the thresholds (padj<0.05, BH, independent filtering), the number of genes tested after filtering, and the number of DE genes. Include the two fit diagnostics — the MA plot with significant genes marked, and the dispersion plot with per-gene estimates, the fitted trend and the shrunken values — and say what each shows. Give the gene table with the unshrunken log2FoldChange, the shrunken (apeglm) log2FoldChange, the lfcSE and padj for each gene, ranked by the shrunken value, with the shrinkage estimator named in the header. Report the two-method overlap from T1S2b as the high-confidence set. Report the hallmark GSEA results with the collection name and release, the ranking metric, the universe, the size window, and the leading-edge genes per significant set, marking leading-edge overlap between sets; then the follow-up collection separately. State that enrichment results are method-dependent and that a set is a hypothesis. State the sample_01 decision and the outcome of the sensitivity re-run. Close with a reproducibility record: session info, package versions, the random seed of the permutation test, and the version of each gene set collection.",
+              "context": "The report is the deliverable that answers both halves of the research question. It must not overstate: n=6 per group, one sample at ~1/4 the median depth, no batch structure to correct, and gene-level counts without transcript length offsets.",
+              "acceptance_criteria": [
+                "Report states method, package versions, design formula, contrast direction, thresholds, number of genes tested, and number of DE genes before any gene table",
+                "MA plot and dispersion plot are both included with a stated interpretation of each",
+                "Gene table carries unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE and padj, ranked by the shrunken value, with the shrinkage estimator named",
+                "Two-method overlap is reported as the high-confidence set, with method-specific genes as a labelled secondary set",
+                "Hallmark GSEA results are reported with collection release, ranking metric, universe, size window, and leading-edge genes per significant set",
+                "Enrichment method-dependence caveat is stated explicitly",
+                "The sample_01 keep/drop decision and the result of the sensitivity re-run are stated",
+                "Reproducibility record includes session info, package versions, the permutation seed, and every gene set collection version"
+              ],
+              "constraints": [
+                "Python only for any figure or table generation",
+                "Rank genes and draw plots on the shrunken log2 fold change; keep the p-values from the unshrunken fit",
+                "Do not present the union of the two DE methods as the result",
+                "State the enrichment collection version, ranking metric, universe and size window beside the enrichment results",
+                "Do not claim a mechanism or a treatment implication that the two-group contrast does not support"
+              ],
+              "caveats": [
+                "With 6 per group, absence of a significant hit for a gene is not evidence that the gene does not change",
+                "The tissue is bulk skin: a differential gene may reflect a shift in cell composition (immune infiltrate in lesional skin) rather than a cell-intrinsic change — say so rather than asserting regulation"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn",
+                "session-info"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S2b",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf",
+                  "R-0042@54e1"
+                ],
+                "reason": "Report contents follow the procedure's report step: method/versions/design/thresholds/counts before the tables (R-0041), shrunken and unshrunken effects with lfcSE and ranking on the shrunken value (R-0085), MA and dispersion diagnostics (R-0087), enrichment provenance and method-dependence caveat (R-0051, R-0055), leading edge per set (R-0105), reproducibility record with the seed (R-0086), two-method overlap as the high-confidence set (R-0042)."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

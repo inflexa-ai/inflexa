@@ -1,0 +1,30 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "transcript-usage-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T04:23:19.237Z",
+  "elapsedMs": 16964,
+  "outcome": "clarification_needed",
+  "question": "The input contains only gene-level Salmon counts (12000 genes x 12 samples). Detecting genes whose dominant isoform switches between treated and control requires transcript- or isoform-level quantifications (e.g., Salmon quant.sf per transcript, or a transcript x sample count/TPM matrix). Can transcript-level quantifications be provided for these 12 samples?",
+  "usage": {
+    "inputTokens": 34999,
+    "outputTokens": 312,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 136
+  },
+  "toolCalls": [
+    {
+      "name": "request_clarification",
+      "input": {
+        "question": "The input contains only gene-level Salmon counts (12000 genes x 12 samples). Detecting genes whose dominant isoform switches between treated and control requires transcript- or isoform-level quantifications (e.g., Salmon quant.sf per transcript, or a transcript x sample count/TPM matrix). Can transcript-level quantifications be provided for these 12 samples?",
+        "questionContext": "Research question: which genes switch their dominant isoform between AD lesional (treated) and control skin. Gene-level counts cannot answer isoform-usage questions: collapsing to gene symbols discards the transcript dimension, and no transcript-to-gene mapping is staged. Without isoform-level counts, the closest possible analyses are gene-level differential expression and differential transcript-usage proxies, which do not identify dominant-isoform switches."
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

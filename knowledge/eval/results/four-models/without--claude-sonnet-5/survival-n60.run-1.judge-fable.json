@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 2,
+    "low_count_filter": 0,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly fits a Cox model with the score as a continuous term plus condition, checks Schoenfeld residuals, and adds an interaction sensitivity model, but it never counts the events or reports median follow-up, does not standardize the score to report an HR per SD, and states no remedy (stratification or time-dependent term) for a PH violation. There is no sample-level QC (PCA, library sizes, outlier policy) and no low-count filter at all; normalization and the model formula are stated explicitly, though the reference level and the LR test are not named. Enrichment is correctly and explicitly omitted. Reporting lacks package versions, an alpha, and the events-per-term power caveat."
+}

@@ -1,0 +1,231 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "qc-only-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T00:15:46.430Z",
+  "elapsedMs": 57357,
+  "outcome": "plan_submitted",
+  "planId": "pln-a06c4afb",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Library size and count-distribution QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon output rounded to integers can carry zero-inflation from multi-mapping resolution; do not interpret low detected-gene counts as necessarily degraded RNA.",
+          "A 12,000-gene matrix is already pre-filtered relative to a full transcriptome — do not report the detected-gene fraction as if it were genome-wide.",
+          "Depth differences between conditions, if any, are a design concern; check whether low-depth samples cluster in one condition."
+        ],
+        "context": "Bulk RNA-seq, Homo sapiens skin, 6 atopic dermatitis lesional vs 6 control, unpaired, single batch, raw integer counts from Salmon. The data profile already flags that sample_01 has a library size about 4x below the median; this step must confirm and characterise that rather than assume it. Group sizes are small (n=6), so losing a sample is costly and the decision needs evidence.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "What is the per-sample library size, detected-gene count, and count distribution across the 12 atopic dermatitis lesional vs control skin samples, and how far does sample_01 deviate from the cohort?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Read counts from /eval-four-models-without-qc-only-n6-1/data/inputs/counts/counts.csv treating the first column as gene symbols (row names) and every remaining column as a sample.",
+          "Read the sample table from /eval-four-models-without-qc-only-n6-1/data/inputs/metadata/metadata.csv and assert that its sample identifiers match the count matrix column names exactly, as a set and after reordering; abort with a clear message if they do not.",
+          "Compute all statistics on the RAW counts — do not normalise, filter, or transform before computing library size and detection counts.",
+          "Report per-sample statistics for all 12 samples in a written table, with condition labels attached, not just for the flagged sample.",
+          "Express library size and detected genes as a ratio to the cohort median so the magnitude of the sample_01 deviation is explicit.",
+          "Do not drop any sample in this step; this step characterises, it does not filter."
+        ],
+        "description": "Load the raw Salmon gene-level count matrix (12,000 gene symbols x 12 samples) and the 12-row sample table, verify their sample identifiers match one-to-one, and produce per-sample counting statistics: total mapped counts (library size), number of genes with non-zero counts, number of genes above a low-expression floor (e.g. >=10 counts), median and mean non-zero count, and the fraction of the total library contributed by the top 10/50/500 genes. Report each statistic as a ratio to the cohort median and flag samples outside a stated deviation band. Produce a barplot of library size coloured by condition, a boxplot of per-sample log2(count+1) distributions, and a table written to disk. Explicitly quantify sample_01: its library size, its ratio to the cohort median, its detected-gene count relative to the cohort, and whether its low depth is accompanied by reduced library complexity (top-gene domination) or is a clean uniform down-scaling — those two cases have different consequences downstream.",
+        "acceptance_criteria": [
+          "A per-sample table for all 12 samples with library size, detected genes (>0 and >=10 counts), median/mean count, top-10/50/500 gene library fraction, condition label, and ratio-to-median columns.",
+          "An explicit statement of sample_01's library size and its ratio to the cohort median, with confirmation or refutation of the ~4x-below-median flag from the data profile.",
+          "A statement of whether sample_01's complexity (detected genes, top-gene fraction) is degraded beyond what uniform depth reduction alone would predict.",
+          "Barplot of library sizes by sample coloured by condition and boxplot of per-sample log2(count+1) distributions saved to disk.",
+          "Confirmation that the 12 metadata sample IDs and 12 count-matrix column names correspond one-to-one."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "VST PCA, sample distances, sample_01 verdict",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group, one excluded sample costs meaningful power; do not recommend exclusion on depth alone.",
+          "A sample can be shallow and still perfectly well-behaved after VST — low depth is not itself evidence of an outlier.",
+          "Conversely, VST can partially mask a genuinely degraded library; cross-check the verdict against the complexity statistics from T1S1 rather than relying on the embedding alone.",
+          "Clustering by condition in a single-batch 6v6 design is expected but not guaranteed; absence of clean separation in unsupervised PCA does not by itself mean there is no differential signal.",
+          "Do not interpret the PCA as a test of the disease hypothesis — no p-values or effect sizes should be reported from this step."
+        ],
+        "context": "Continues the QC from T1S1 on the same 12-sample atopic dermatitis lesional vs control skin count matrix. VST is preferred over naive log-CPM here precisely because one library is ~4x shallow: a plain log transform inflates the variance of low-count genes in that sample and can manufacture an apparent outlier. The verdict must distinguish a technical depth artefact from genuine biological or sample-swap outlyingness. No differential expression is to be run — this is pre-test QC only.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats",
+          "RColorBrewer"
+        ],
+        "question": "On a variance-stabilised matrix, do the 12 samples separate by atopic dermatitis lesional vs control, and is sample_01 an outlier in the PCA and distance structure because of its low depth or for another reason?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "quality_control",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the raw counts and the condition column from the metadata to construct the DESeq2 object; do not run differential expression, results(), or any hypothesis test in this step.",
+          "Use DESeq2's variance-stabilising transform with blind=TRUE for all PCA and distance computations, so the design does not shape the QC view.",
+          "Apply a minimal low-count pre-filter before VST (e.g. genes with non-zero counts in at least 3 samples) and report how many genes were retained.",
+          "Retain all 12 samples in the PCA and distance computation — the verdict is an output of this step, not an input to it.",
+          "Report percent variance explained for at least PC1 and PC2 on the PCA axes.",
+          "Correlate PC scores against the per-sample library sizes computed in T1S1 and report the coefficients, so a depth-driven principal component is identifiable rather than assumed.",
+          "State the sample_01 verdict in plain language with the evidence it rests on, and state explicitly what a future differential-expression run should do about it (including the n=5 consequence of exclusion).",
+          "Additionally re-run the PCA once with sample_01 removed and report whether the condition separation and the leading-PC variance structure change materially."
+        ],
+        "description": "Build a DESeq2 dataset from the raw counts with ~condition (lesional vs control as given in the metadata), apply the variance-stabilising transform (VST, blind to design), and use it for all multivariate views. Produce: (1) PCA on the most variable genes with PC1/PC2 percent variance explained, points coloured by condition and labelled by sample ID; (2) a scree/variance-explained summary for the leading PCs; (3) a sample-to-sample Euclidean distance matrix on the VST values, rendered as a clustered heatmap with condition annotation; (4) a hierarchical clustering dendrogram of those distances. Then quantify whether depth drives structure: correlate (Spearman) each of the first 3–4 PCs with the per-sample library sizes from T1S1, and compute each sample's mean distance to all others to give an objective outlyingness score. Finish with an explicit written verdict on sample_01 — keep, keep with caveats, or exclude — that cites (a) its depth ratio, (b) its PCA position relative to its own condition group, (c) its mean sample-to-sample distance versus the cohort, and (d) whether PC loadings correlate with library size. State the downstream consequence of each option, including that excluding it leaves n=5 in its group.",
+        "acceptance_criteria": [
+          "PCA plot of all 12 VST-transformed samples coloured by condition, labelled by sample ID, with PC1 and PC2 percent variance explained on the axes.",
+          "Clustered sample-to-sample Euclidean distance heatmap on VST values with condition annotation, plus a dendrogram.",
+          "A table of per-sample mean distance to all other samples, identifying the most outlying sample(s) numerically rather than by eye.",
+          "Spearman correlations of PC1–PC3 (or PC1–PC4) scores with library size, reported with values.",
+          "A leave-sample_01-out PCA showing whether the condition separation is preserved.",
+          "An explicit written verdict on sample_01 (keep / keep with caveat / exclude) citing depth ratio, PCA position, mean distance, and PC-vs-depth correlation, together with the downstream consequence for a future 6v6 comparison.",
+          "A statement of how many genes passed the pre-filter and entered the VST."
+        ]
+      }
+    ],
+    "title": "AD skin RNA-seq QC: library size, PCA, distances",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The request is pre-hypothesis QC only: no differential expression is planned. The input is a single raw gene-level count matrix from Salmon (/eval-four-models-without-qc-only-n6-1/data/inputs/counts/counts.csv, 12,000 genes x 12 samples, gene symbols in the first column) with a 12 x 2 sample table (/eval-four-models-without-qc-only-n6-1/data/inputs/metadata/metadata.csv) giving condition for the 6 atopic dermatitis lesional vs 6 control samples, unpaired, single batch. The profile already flags one caveat that the analysis must adjudicate: sample_01 has a library size roughly 4x below the median.\n\nThe plan is deliberately small — two steps, both on the count matrix, both routed to the bulk-transcriptomics agent. T1S1 establishes the per-sample counting facts that everything else is read against: mapped library size, detected-gene count, mean/median counts, the fraction of the library taken by the top genes, and where sample_01 sits on each, plus a check that the metadata sample IDs and the count column names align exactly. T1S2 does the multivariate work on a variance-stabilised matrix (DESeq2 VST, which is the right transform here because it is not distorted by the depth imbalance the way a naive log-CPM of a 4x-shallow library is): PCA coloured by condition with PC1/PC2 variance explained, a sample-to-sample Euclidean distance heatmap on the same VST matrix, and correlation of each PC with library size to separate a depth artefact from a biological signal. The verdict on sample_01 is the explicit deliverable of T1S2 and must be argued from evidence — depth alone does not disqualify a sample; what matters is whether it is an outlier in the embedding *and* whether that outlying position tracks library size rather than condition.\n\nSplitting into two steps rather than one keeps each script well under the length limit and makes the depth facts from T1S1 available as the reference frame for interpreting the PCA in T1S2. No enrichment, no reference gene sets, and no external data are needed — this is entirely self-contained on the two input CSVs. n=6 per group with a single flagged sample means the verdict should be stated with its consequence for a future DE analysis (keep, keep-with-caveat, or drop and run at n=5), not as a bare pass/fail."
+  },
+  "usage": {
+    "inputTokens": 43208,
+    "outputTokens": 4097,
+    "cacheCreationInputTokens": 34122,
+    "cacheReadInputTokens": 9074,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD skin RNA-seq QC: library size, PCA, distances",
+          "analytical_narrative": "The request is pre-hypothesis QC only: no differential expression is planned. The input is a single raw gene-level count matrix from Salmon (/eval-four-models-without-qc-only-n6-1/data/inputs/counts/counts.csv, 12,000 genes x 12 samples, gene symbols in the first column) with a 12 x 2 sample table (/eval-four-models-without-qc-only-n6-1/data/inputs/metadata/metadata.csv) giving condition for the 6 atopic dermatitis lesional vs 6 control samples, unpaired, single batch. The profile already flags one caveat that the analysis must adjudicate: sample_01 has a library size roughly 4x below the median.\n\nThe plan is deliberately small — two steps, both on the count matrix, both routed to the bulk-transcriptomics agent. T1S1 establishes the per-sample counting facts that everything else is read against: mapped library size, detected-gene count, mean/median counts, the fraction of the library taken by the top genes, and where sample_01 sits on each, plus a check that the metadata sample IDs and the count column names align exactly. T1S2 does the multivariate work on a variance-stabilised matrix (DESeq2 VST, which is the right transform here because it is not distorted by the depth imbalance the way a naive log-CPM of a 4x-shallow library is): PCA coloured by condition with PC1/PC2 variance explained, a sample-to-sample Euclidean distance heatmap on the same VST matrix, and correlation of each PC with library size to separate a depth artefact from a biological signal. The verdict on sample_01 is the explicit deliverable of T1S2 and must be argued from evidence — depth alone does not disqualify a sample; what matters is whether it is an outlier in the embedding *and* whether that outlying position tracks library size rather than condition.\n\nSplitting into two steps rather than one keeps each script well under the length limit and makes the depth facts from T1S1 available as the reference frame for interpreting the PCA in T1S2. No enrichment, no reference gene sets, and no external data are needed — this is entirely self-contained on the two input CSVs. n=6 per group with a single flagged sample means the verdict should be stated with its consequence for a future DE analysis (keep, keep-with-caveat, or drop and run at n=5), not as a bare pass/fail.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Library size and count-distribution QC",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "What is the per-sample library size, detected-gene count, and count distribution across the 12 atopic dermatitis lesional vs control skin samples, and how far does sample_01 deviate from the cohort?",
+              "description": "Load the raw Salmon gene-level count matrix (12,000 gene symbols x 12 samples) and the 12-row sample table, verify their sample identifiers match one-to-one, and produce per-sample counting statistics: total mapped counts (library size), number of genes with non-zero counts, number of genes above a low-expression floor (e.g. >=10 counts), median and mean non-zero count, and the fraction of the total library contributed by the top 10/50/500 genes. Report each statistic as a ratio to the cohort median and flag samples outside a stated deviation band. Produce a barplot of library size coloured by condition, a boxplot of per-sample log2(count+1) distributions, and a table written to disk. Explicitly quantify sample_01: its library size, its ratio to the cohort median, its detected-gene count relative to the cohort, and whether its low depth is accompanied by reduced library complexity (top-gene domination) or is a clean uniform down-scaling — those two cases have different consequences downstream.",
+              "context": "Bulk RNA-seq, Homo sapiens skin, 6 atopic dermatitis lesional vs 6 control, unpaired, single batch, raw integer counts from Salmon. The data profile already flags that sample_01 has a library size about 4x below the median; this step must confirm and characterise that rather than assume it. Group sizes are small (n=6), so losing a sample is costly and the decision needs evidence.",
+              "constraints": [
+                "Read counts from /eval-four-models-without-qc-only-n6-1/data/inputs/counts/counts.csv treating the first column as gene symbols (row names) and every remaining column as a sample.",
+                "Read the sample table from /eval-four-models-without-qc-only-n6-1/data/inputs/metadata/metadata.csv and assert that its sample identifiers match the count matrix column names exactly, as a set and after reordering; abort with a clear message if they do not.",
+                "Compute all statistics on the RAW counts — do not normalise, filter, or transform before computing library size and detection counts.",
+                "Report per-sample statistics for all 12 samples in a written table, with condition labels attached, not just for the flagged sample.",
+                "Express library size and detected genes as a ratio to the cohort median so the magnitude of the sample_01 deviation is explicit.",
+                "Do not drop any sample in this step; this step characterises, it does not filter."
+              ],
+              "acceptance_criteria": [
+                "A per-sample table for all 12 samples with library size, detected genes (>0 and >=10 counts), median/mean count, top-10/50/500 gene library fraction, condition label, and ratio-to-median columns.",
+                "An explicit statement of sample_01's library size and its ratio to the cohort median, with confirmation or refutation of the ~4x-below-median flag from the data profile.",
+                "A statement of whether sample_01's complexity (detected genes, top-gene fraction) is degraded beyond what uniform depth reduction alone would predict.",
+                "Barplot of library sizes by sample coloured by condition and boxplot of per-sample log2(count+1) distributions saved to disk.",
+                "Confirmation that the 12 metadata sample IDs and 12 count-matrix column names correspond one-to-one."
+              ],
+              "caveats": [
+                "Salmon output rounded to integers can carry zero-inflation from multi-mapping resolution; do not interpret low detected-gene counts as necessarily degraded RNA.",
+                "A 12,000-gene matrix is already pre-filtered relative to a full transcriptome — do not report the detected-gene fraction as if it were genome-wide.",
+                "Depth differences between conditions, if any, are a design concern; check whether low-depth samples cluster in one condition."
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "VST PCA, sample distances, sample_01 verdict",
+              "question": "On a variance-stabilised matrix, do the 12 samples separate by atopic dermatitis lesional vs control, and is sample_01 an outlier in the PCA and distance structure because of its low depth or for another reason?",
+              "description": "Build a DESeq2 dataset from the raw counts with ~condition (lesional vs control as given in the metadata), apply the variance-stabilising transform (VST, blind to design), and use it for all multivariate views. Produce: (1) PCA on the most variable genes with PC1/PC2 percent variance explained, points coloured by condition and labelled by sample ID; (2) a scree/variance-explained summary for the leading PCs; (3) a sample-to-sample Euclidean distance matrix on the VST values, rendered as a clustered heatmap with condition annotation; (4) a hierarchical clustering dendrogram of those distances. Then quantify whether depth drives structure: correlate (Spearman) each of the first 3–4 PCs with the per-sample library sizes from T1S1, and compute each sample's mean distance to all others to give an objective outlyingness score. Finish with an explicit written verdict on sample_01 — keep, keep with caveats, or exclude — that cites (a) its depth ratio, (b) its PCA position relative to its own condition group, (c) its mean sample-to-sample distance versus the cohort, and (d) whether PC loadings correlate with library size. State the downstream consequence of each option, including that excluding it leaves n=5 in its group.",
+              "context": "Continues the QC from T1S1 on the same 12-sample atopic dermatitis lesional vs control skin count matrix. VST is preferred over naive log-CPM here precisely because one library is ~4x shallow: a plain log transform inflates the variance of low-count genes in that sample and can manufacture an apparent outlier. The verdict must distinguish a technical depth artefact from genuine biological or sample-swap outlyingness. No differential expression is to be run — this is pre-test QC only.",
+              "constraints": [
+                "Use the raw counts and the condition column from the metadata to construct the DESeq2 object; do not run differential expression, results(), or any hypothesis test in this step.",
+                "Use DESeq2's variance-stabilising transform with blind=TRUE for all PCA and distance computations, so the design does not shape the QC view.",
+                "Apply a minimal low-count pre-filter before VST (e.g. genes with non-zero counts in at least 3 samples) and report how many genes were retained.",
+                "Retain all 12 samples in the PCA and distance computation — the verdict is an output of this step, not an input to it.",
+                "Report percent variance explained for at least PC1 and PC2 on the PCA axes.",
+                "Correlate PC scores against the per-sample library sizes computed in T1S1 and report the coefficients, so a depth-driven principal component is identifiable rather than assumed.",
+                "State the sample_01 verdict in plain language with the evidence it rests on, and state explicitly what a future differential-expression run should do about it (including the n=5 consequence of exclusion).",
+                "Additionally re-run the PCA once with sample_01 removed and report whether the condition separation and the leading-PC variance structure change materially."
+              ],
+              "acceptance_criteria": [
+                "PCA plot of all 12 VST-transformed samples coloured by condition, labelled by sample ID, with PC1 and PC2 percent variance explained on the axes.",
+                "Clustered sample-to-sample Euclidean distance heatmap on VST values with condition annotation, plus a dendrogram.",
+                "A table of per-sample mean distance to all other samples, identifying the most outlying sample(s) numerically rather than by eye.",
+                "Spearman correlations of PC1–PC3 (or PC1–PC4) scores with library size, reported with values.",
+                "A leave-sample_01-out PCA showing whether the condition separation is preserved.",
+                "An explicit written verdict on sample_01 (keep / keep with caveat / exclude) citing depth ratio, PCA position, mean distance, and PC-vs-depth correlation, together with the downstream consequence for a future 6v6 comparison.",
+                "A statement of how many genes passed the pre-filter and entered the VST."
+              ],
+              "caveats": [
+                "With n=6 per group, one excluded sample costs meaningful power; do not recommend exclusion on depth alone.",
+                "A sample can be shallow and still perfectly well-behaved after VST — low depth is not itself evidence of an outlier.",
+                "Conversely, VST can partially mask a genuinely degraded library; cross-check the verdict against the complexity statistics from T1S1 rather than relying on the embedding alone.",
+                "Clustering by condition in a single-batch 6v6 design is expected but not guaranteed; absence of clean separation in unsupervised PCA does not by itself mean there is no differential signal.",
+                "Do not interpret the PCA as a test of the disease hypothesis — no p-values or effect sizes should be reported from this step."
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats",
+                "RColorBrewer"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "track": "T1",
+              "step_type": "quality_control"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

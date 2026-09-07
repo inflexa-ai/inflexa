@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: it recognises a per-sample signature question, filters minimally (>=10 counts in >=6 samples, justified by the smallest group), normalizes with median-of-ratios size factors and vst inside DESeq2, scores all 50 human Hallmark sets with UCell and singscore on the log matrix, and tests scores with limma (~condition, control as explicit reference, inflamed-vs-control contrast) with BH across 50 signatures at a stated alpha, reporting effect sizes and CIs. QC is complete and design-specific: library sizes, detected genes, PCA and distance heatmap coloured by condition, with an explicit keep-inspect-report policy for the shallow sample_01 plus a leave-one-out sensitivity fit labelled as secondary. Minor gaps: the limma fit does not state whether eBayes trend is used on the score matrix, the Hallmark version is promised rather than named, and one boilerplate constraint about training folds is irrelevant though acknowledged as such. The report section covers methods, versions, collection version, per-set gene coverage, sample_01 handling, and the composition-vs-regulation and set-overlap caveats."
+}

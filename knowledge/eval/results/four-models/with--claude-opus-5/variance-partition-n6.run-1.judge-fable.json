@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: variancePartition on voom log-CPM with condition and sex as random effects and centered age fixed, framed as descriptive with n=12, with sex/age balance tabulated by group in the QC step and canCorPairs for collinearity; then DESeq2 Wald with ~ sex + age_centered + condition, explicit control reference, apeglm on the coefficient, BH at 0.05 passed to results(), plus an edgeR QL robustness check on the identical filter and design. Size factors and TMM are estimated inside the models and covariates are never regressed out of counts. The filter (>=10 counts in >=6 samples) is minimal and justified by the smallest group rather than filterByExpr, and the outlier policy in QC is stated but light. Enrichment was not asked for and the reference omits it; the plan adds it, though correctly specified (full Wald-ranked list, tested-gene universe, named collections with releases, 15-500 window, seed), so it loses a little for being unwarranted rather than for being wrong. The report names method, versions, design, thresholds, tested/significant counts, NA causes, and the n=12 and imbalance caveats."
+}

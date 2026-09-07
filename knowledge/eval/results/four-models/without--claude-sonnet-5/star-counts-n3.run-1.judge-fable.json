@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly routes raw featureCounts integers straight into DESeq2 with ~condition, control as reference, Wald test, apeglm/ashr shrinkage, padj<0.05, a justified minimal filter (>=10 in >=3 samples), explicit refusal to pre-normalize, and a stated low-power caveat, matching the reference well. QC covers library sizes, PCA on VST, and sample distances with an outlier policy, though PCA is placed within the DE step rather than clearly preceding it and coloring by condition is not stated. Enrichment was not asked for and is added anyway; when added it omits an explicit ORA universe, gene-set versions, and a set-size window, and leaves the GSEA ranking metric ambiguous. Reporting is fairly complete on method, design, thresholds, and gene counts but does not commit to reporting package versions."
+}

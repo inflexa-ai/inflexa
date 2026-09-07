@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the core path: DESeq2 Wald with control as reference, a justified >=10-in-6 filter, median-of-ratios inside the model, apeglm shrinkage, BH at 0.05, and decoupleR mlm on the Wald statistic of all tested genes against PROGENy with top 500 responsive genes, explicitly read as a footprint rather than member expression. QC keeps sample_01 with library sizes, blind-VST PCA and a distance heatmap and a stated removal policy. It omits the reference's per-sample activity matrix (mlm/ulm on VST scores with limma) that would show replicate consistency and let sample_01 be inspected on the score matrix, and it does not state BH across the 14 PROGENy pathways. The added CollecTRI and multi-collection fgsea are well specified (stat ranking, versions, 15-500 window, tested-gene universe) and correctly labelled as secondary membership-based checks, though they add length the question did not ask for; the odd 'STRING-derived' phrasing for the PROGENy version is a minor slip."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "DESeq2 Wald with ~condition, explicit control reference, raw counts and median-of-ratios inside the model fit the 6 vs 6 unpaired single-batch design, and the shallow-sample QC is thorough with an evidence-based keep/flag policy plus a with/without sensitivity run. The filter (>=10 in >=6 samples) is a sensible smallest-group rule but is not justified beyond a sentence and does not consider that a raw count threshold penalizes the shallow library. BH at 0.05 with apeglm is correct, though the |LFC|>1 count is applied post hoc rather than via lfcThreshold in the test. GSEA is preranked on the full list with the metric stated and Hallmark named, but there is no upper set-size bound and no MSigDB version; the report also never commits to naming package versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 0,
+    "low_count_filter": 4,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 4
+  },
+  "rationale": "The core is right: PyDESeq2 Wald on the unpaired 6v6 design, the Wald statistic (not a cutoff list or shrunken LFC) fed to decoupler ulm on the local CollecTRI CSV with a five-target minimum. It is then diluted by a DoRothEA branch that pulls an R object through rpy2, an unsigned GTRD gene-set enrichment, and a STRING hub-centrality step that is not TF activity inference at all, all rank-aggregated into a consensus that blurs the answer; no per-sample activity matrix tests replicate consistency. No sample QC (PCA, distances, library sizes, outlier policy) is stated; the only count filter is all-zero removal; size-factor normalization and BH alpha are implied rather than named. The report omits network version, number of regulators tested, tested/significant gene counts, and the caution that activity is inferred from targets."
+}

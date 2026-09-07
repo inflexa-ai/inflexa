@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: a full factorial DESeq2 model with explicit WT/vehicle reference levels, a Wald test on the named interaction coefficient, simple effects extracted as contrasts from the same fit, ashr shrinkage justified for summed coefficients, BH at a stated alpha passed into results(), and an edgeR QL check isolated from the primary track. QC is blind-VST PCA plus distances and library sizes coloured by both factors, with an explicit flag-only policy; the low-count filter is tied to the smallest cell size and normalization stays inside both models. Enrichment is preranked on the full Wald-statistic list with named human collections, releases, size window, seed and universe stated; the only minor points are a thin policy for what a shallow or outlying sample changes downstream and a GSEA layer that the question did not require. The report step names design, thresholds, tested and significant counts, NA breakdown by cause, versions and the power caveat."
+}

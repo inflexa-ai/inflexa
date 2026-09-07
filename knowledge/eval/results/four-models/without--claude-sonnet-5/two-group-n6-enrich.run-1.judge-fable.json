@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 3,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 5
+  },
+  "rationale": "DESeq2 on raw counts with a single condition factor fits the unpaired 6v6 single-batch design, and the QC step handles the shallow sample well: library sizes reported, VST PCA and distance clustering, keep-by-default with a sensitivity re-run rather than silent removal. Weaknesses: no low-count pre-filter is stated (only independent filtering), no fold-change shrinkage (apeglm) is mentioned, and the design formula and reference level are only implied rather than written out. Enrichment uses the full pre-ranked list against MSigDB Hallmark, but the ranking metric is vaguely 'derived from log2FC and p-value', and no set-size window or collection version is given. The report lacks package versions, though thresholds, gene counts, and power caveats are covered."
+}

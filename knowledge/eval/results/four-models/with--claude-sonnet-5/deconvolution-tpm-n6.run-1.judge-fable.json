@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly follows the TPM branch: EPIC and quanTIseq on linear-scale TPM for absolute fractions, MCP-counter/xCell on log2(TPM+1) as within-population scores explicitly not treated as proportions, and an unpaired t-test per cell type with BH across cell types and reference level control stated. QC covers PCA, distances, detected genes, and a keep-by-default policy for sample_01, but does not report the share of signature genes present in the matrix, and the TPM>=1 in >=6 samples filter applied before deconvolution risks dropping signature genes without that check. The BH alpha is not stated, and the report omits an explicit stacked-bar of fractions, though it does name methods, versions, reference sets, the tissue-reference caveat, and the n=6 and TPM-only limitations."
+}

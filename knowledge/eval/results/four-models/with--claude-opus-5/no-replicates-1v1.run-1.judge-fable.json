@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: it recognizes that n=1 per group permits no dispersion estimate, forbids DESeq()/edgeR/limma tests, lfcShrink and any p-value or significance flag, and delivers only median-of-ratios normalized counts with descriptive log2 fold changes (pseudocount stated), an explicit control reference level and named contrast. QC is appropriately adapted to two samples (library sizes, detection, blind VST distance/correlation/scatter, explicit >2x depth check, PCA correctly declined with reasoning); the filter (>=10 in >=1 sample) is minimal and tied to group size; enrichment is correctly omitted with justification. The report leads with the design limitation, records sessionInfo/versions, gene counts before and after filtering, states that a DEG count is undefined, and names the replication needed (>=3, ideally 5-6 per group). The only minor gap is that the QC lacks a stated action if a shallow sample were found, though with n=2 there is little to do beyond flagging it, which the plan does."
+}

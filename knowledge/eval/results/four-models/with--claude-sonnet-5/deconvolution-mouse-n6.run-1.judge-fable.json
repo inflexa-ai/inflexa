@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan uses the species-matched mMCP-counter on linear CPM with a Wilcoxon/limma test per population and BH across populations, keeps sample_01 with explicit depth reporting on PCA and in the score table, and names tool versions and marker sources. It loses some credit for adding a ConsensusTME symbol-overlap cross-check on human gene sets, which the reference flags as invalid even when caveated, and for not stating the share of mMCP-counter markers present. The optional DESeq2 arm is correctly specified (explicit reference level, apeglm, BH at 0.05, minimal filter, size factors inside the model) but is not what the question asked, and the PanglaoDB/UCell scoring is signature scoring that is stated with sources and versions but is not strictly warranted."
+}

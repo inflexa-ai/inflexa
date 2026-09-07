@@ -1,0 +1,497 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "python-enrichment-only",
+  "run": 1,
+  "startedAt": "2026-09-07T06:20:09.869Z",
+  "elapsedMs": 435354,
+  "outcome": "plan_submitted",
+  "planId": "pln-1e90e0c4",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Prerank GSEA against MSigDB Hallmark",
+        "agent": "enrichment-agent",
+        "track": "gsea",
+        "status": "pending",
+        "caveats": [
+          "DESeq2 results contain NA p-value/p_adj rows (independent filtering) — ranking values must be handled before gseapy.prerank, which errors on NaN",
+          "DE results are keyed by gene symbol; the Hallmark GMT is HGNC symbols — check match rate and warn if below ~90% of ranked genes map",
+          "With 1000 permutations, FDR granularity is coarse; report exact q-values rather than rounding to <0.05"
+        ],
+        "context": "Dataset: bulk RNA-seq, human skin, 6 treated vs 6 control, unpaired, single batch, Salmon gene-level counts, DESeq2 results already provided. Data caveat: sample_01 has library size ~4x below the median (DESeq2 size factors should absorb this; Track 3 tests it). User constraint: Python only, no R.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "gseapy",
+          "matplotlib"
+        ],
+        "question": "Which MSigDB Hallmark pathways are enriched in treated vs control skin (AD lesional vs control) according to GSEA on the full DESeq2 ranking, and in which direction?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Read /eval-four-models-without-python-enrichment-only-1/data/inputs/results/de_results.csv (12,000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change_error/standard error, stat, p_value, p_adj — verify exact column names on load). Build the prerank from the signed Wald statistic column (stat); if the statistic column is absent or all-NA, fall back to sign(log2_fold_change) * -log10(p_value). Drop genes with NA ranking values and duplicate symbols (keep max |value|), sort descending. Reference data needed: the MSigDB Hallmark gene sets for Homo sapiens (50 sets, HGNC gene symbols, 2026.1 release) — staged in the reference store. Match DE gene symbols to GMT symbols case-insensitively, uppercase both sides, and report per-set coverage (number of set members present in the ranked list). Run gseapy.prerank(rnk, gene_sets=<hallmark GMT>, min_size=15, max_size=500, permutation_num=1000, weight=1, threads=4, seed=<fixed>, outdir=None). Save: (a) the full results table for all 50 sets (ES, NES, p-value, FDR q-val, leading-edge genes via res2d Lead_genes), (b) enrichment plots for the top up- and down-NES sets (pre_res.plot), (c) the exact prerank DataFrame and parameters used (seed, sizes) to a small JSON for reproducibility. Report the number of sets passing size filters and any sets excluded.",
+        "acceptance_criteria": [
+          "All 50 Hallmark sets are evaluated or their exclusion by the size filter is explicitly reported with reasons",
+          "Every evaluated set has ES, NES, nominal p-value and FDR q-val in the output table",
+          "Direction is interpretable: positive NES means enriched among genes up in treated, and this convention is stated in the output",
+          "Per-set gene coverage (set members found in the ranked list) is reported",
+          "Fixed seed recorded; rerunning the script reproduces identical NES values",
+          "Leading-edge gene lists are saved for every evaluated set"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark ORA on significant DE genes",
+        "agent": "enrichment-agent",
+        "track": "ora",
+        "status": "pending",
+        "caveats": [
+          "With 6 vs 6 samples the DE tail may be small; if a direction has fewer than 5 significant genes the ORA for that direction is underpowered — say so rather than over-reading single overlaps",
+          "Do not use the whole genome as background; the correct universe is the genes that DESeq2 actually tested (non-NA padj), otherwise ORs are inflated"
+        ],
+        "context": "Same dataset as T1S1. ORA complements the ranking-based GSEA: it tests only the significant tail, so it can miss coordinated moderate shifts that GSEA catches, and vice versa. User constraint: Python only, no R.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels"
+        ],
+        "question": "Which Hallmark pathways are over-represented among significantly up-regulated genes and among significantly down-regulated genes in treated vs control skin?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Read de_results.csv and define two gene lists: UP = padj < 0.05 AND log2_fold_change > 1; DOWN = padj < 0.05 AND log2_fold_change < -1. Background = all genes with a non-NA padj in the table (the tested universe). Reference data needed: the MSigDB Hallmark gene sets for Homo sapiens (50 sets, HGNC symbols, 2026.1 release) from the reference store, restricted to sets with >=10 members present in the background. For each direction, run one-sided Fisher's exact test (scipy.stats.fisher_exact) on the 2x2 contingency (list members in set vs not) against the background, and correct p-values within each direction across the 50 sets with Benjamini-Hochberg (statsmodels.stats.multitest.multipletests). Report per set: overlap count, set size in background, odds ratio, Fisher p, BH-FDR, and the overlapping gene symbols. Save both direction tables and print the UP/DOWN list sizes and background size.",
+        "acceptance_criteria": [
+          "UP and DOWN gene lists and the background universe are saved with sizes, and the thresholds used are stated in the output",
+          "Both directions tested against the same 50 Hallmark sets with the same background",
+          "Fisher exact p-values and BH-adjusted FDR present for every tested set in each direction",
+          "Overlapping gene symbols reported per significant set",
+          "Results are consistent with the DE table: re-deriving the UP list from de_results.csv gives identical gene counts"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Sensitivity: DE refit and sample_01-out GSEA",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "sensitivity",
+        "status": "pending",
+        "caveats": [
+          "Check metadata.csv column names and the treated/control label spelling before designing the model; the profile says condition but does not show its levels",
+          "Counts are Salmon gene-level integers — pydeseq2 expects raw integer counts, which these are; do not normalise first",
+          "If sample_01 is the only sample of its arm with some property (e.g. it drops an arm to 5), note the reduced power in the comparison"
+        ],
+        "context": "Data caveat from profiling: sample_01 library size ~4x below median. With 6-vs-6 a single outlier can move a contrast; this step quantifies that rather than assuming size-factor normalisation absorbed it. The DESeq2 reference implementation and pydeseq2 agree closely in general but can differ at low counts; the correlation check distinguishes 'different tool' from 'different result'.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "pydeseq2",
+          "gseapy",
+          "scipy"
+        ],
+        "question": "Are the DE results and the resulting Hallmark enrichment calls stable to (a) re-deriving the contrast from the raw counts with pydeseq2 and (b) removing sample_01, the low-library-size sample?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Read /eval-four-models-without-python-enrichment-only-1/data/inputs/counts/counts.csv (12,000 x 13, first column gene symbol) and metadata.csv (12 x 2, condition column, treated/control). Step 1: refit the treated-vs-control contrast with pydeseq2 (DeseqDataSet with design ~ condition, then DeseqStats) and compare against the provided DESeq2 table: Spearman correlation of the ranking statistic and of log2FC across shared genes, and agreement of the significant-gene set (padj < 0.05). Step 2: rebuild the prerank from the refit statistics, exclude sample_01 from its condition arm (leaving a 5-vs-6 or 6-vs-5 contrast), refit, and rerun gseapy.prerank with the same Hallmark GMT, parameters and seed as T1S1. Step 3: compare per-set NES between the T1S1 main run and this sensitivity run: sign concordance and absolute NES difference; classify each set significant in T1S1 as stable, weakened (loses significance) or flipped (direction change). Save the per-set comparison table and the refit-vs-provided DE correlation summary.",
+        "acceptance_criteria": [
+          "pydeseq2 refit vs provided DESeq2 table: Spearman correlation of ranking statistic reported (expected >0.95; lower values must be flagged, not hidden)",
+          "Sensitivity GSEA run on the sample_01-excluded contrast completes with the same parameters/seed as T1S1",
+          "Every Hallmark set significant in T1S1 is labelled stable / weakened / flipped with its NES in both runs and the NES difference",
+          "Refit significant-gene overlap with the provided table is quantified",
+          "All outputs are CSV/JSON readable without rerunning anything"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Integrate Hallmark results and report",
+        "agent": "enrichment-agent",
+        "track": "report",
+        "status": "pending",
+        "caveats": [
+          "Set names in the merged table must match across tracks (strip any suffixes gseapy adds; verify by count = 50)",
+          "Do not merge GO or other collections in — the question is Hallmark only"
+        ],
+        "context": "Final synthesis over the outputs of the three analysis tracks. The user asked specifically for hallmark pathways in treated vs control, starting from the existing DESeq2 results — the report should answer exactly that, with direction and robustness.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Taken together, which Hallmark pathways are confidently enriched up in treated skin, which down, and which calls are not robust?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T2S1",
+          "T3S1"
+        ],
+        "description": "Merge, on the 50 Hallmark set names: T1S1 GSEA results (NES, FDR, leading edge), T2S1 ORA results per direction (odds ratio, FDR, overlaps), and T3S1 stability labels. Classify each set: UP-in-treated, DOWN-in-treated, or not significant (primary evidence: GSEA FDR < 0.05; ORA FDR < 0.05 in the matching direction is recorded as supporting evidence; discordance between GSEA and ORA is annotated explicitly rather than resolved silently). Attach stability from T3S1. Produce (1) a merged per-pathway CSV covering all 50 sets, (2) a ranked top-findings table (sets with FDR < 0.05, sorted by |NES|) with 3-5 leading-edge/core genes each, and (3) a short markdown summary stating: the enriched hallmark pathways by direction, whether sample_01 and the DE refit change any conclusion, and the study-level caveats (n=6 per arm, single batch, 1000-permutation FDR). No mechanistic claims beyond what the enrichment statistics support.",
+        "acceptance_criteria": [
+          "Merged table covers all 50 Hallmark sets with GSEA and ORA columns and the stability label populated",
+          "Every top finding states its direction (up in treated / down in treated) and its evidence line (GSEA FDR, ORA FDR)",
+          "GSEA-vs-ORA discordant sets are explicitly listed as discordant",
+          "Summary states which conclusions survive the sample_01-excluded refit and which do not",
+          "No pathway is reported as enriched without an FDR value attached"
+        ]
+      }
+    ],
+    "title": "AD treated vs control: Hallmark GSEA + ORA",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The differential expression (DESeq2, 6 treated vs 6 control skin biopsies) is already computed in de_results.csv, so the plan starts from those results and answers the question in two complementary ways. Track 1 runs gene-set enrichment analysis (GSEA prerank, gseapy) on the full 12,000-gene DE ranking against the 50 MSigDB Hallmark sets (HGNC symbols), which uses the complete ranking and captures coordinated small shifts. Track 2 runs a threshold-based over-representation analysis (Fisher exact on significantly up- and down-regulated genes) on the same Hallmark sets, which answers the question from the extreme of the distribution and is robust to ranking-metric choice. Track 3 addresses the data caveat — sample_01's library size ~4x below median — by refitting the DE contrast from the raw Salmon counts with pydeseq2, verifying the provided DESeq2 table reproduces, and re-running the prerank GSEA with sample_01 removed to test stability of the hallmark calls. Track 4 merges GSEA, ORA and sensitivity results into one direction-labelled per-pathway table with leading-edge genes and an explicit statement of which calls are stable. All scripts are Python; gseapy, scipy, statsmodels, pydeseq2 and pandas are all installed in the sandbox and the MSigDB Hallmark 2026.1 human GMT is staged under /mnt/refs, so no step depends on network access."
+  },
+  "usage": {
+    "inputTokens": 240327,
+    "outputTokens": 11039,
+    "cacheReadInputTokens": 8192,
+    "reasoningTokens": 4828
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "gseapy",
+        "query": "prerank GSEA API parameters"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/zqfang/gseapy",
+        "query": "prerank function signature and parameters: rnk input format, gene_sets, permutation_num, min_size, max_size, outdir, threads, seed, accessing res2d results and leading edge"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD treated vs control: Hallmark GSEA + ORA",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The differential expression (DESeq2, 6 treated vs 6 control skin biopsies) is already computed in de_results.csv, so the plan starts from those results and answers the question in two complementary ways. Track 1 runs gene-set enrichment analysis (GSEA prerank, gseapy) on the full 12,000-gene DE ranking against the 50 MSigDB Hallmark sets (HGNC symbols), which uses the complete ranking and captures coordinated small shifts. Track 2 runs a threshold-based over-representation analysis (Fisher exact on significantly up- and down-regulated genes) on the same Hallmark sets, which answers the question from the extreme of the distribution and is robust to ranking-metric choice. Track 3 addresses the data caveat — sample_01's library size ~4x below median — by refitting the DE contrast from the raw Salmon counts with pydeseq2, verifying the provided DESeq2 table reproduces, and re-running the prerank GSEA with sample_01 removed to test stability of the hallmark calls. Track 4 merges GSEA, ORA and sensitivity results into one direction-labelled per-pathway table with leading-edge genes and an explicit statement of which calls are stable. All scripts are Python; gseapy, scipy, statsmodels, pydeseq2 and pandas are all installed in the sandbox and the MSigDB Hallmark 2026.1 human GMT is staged under /mnt/refs, so no step depends on network access.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Prerank GSEA against MSigDB Hallmark",
+              "track": "gsea",
+              "step_type": "analysis",
+              "question": "Which MSigDB Hallmark pathways are enriched in treated vs control skin (AD lesional vs control) according to GSEA on the full DESeq2 ranking, and in which direction?",
+              "description": "Read /eval-four-models-without-python-enrichment-only-1/data/inputs/results/de_results.csv (12,000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change_error/standard error, stat, p_value, p_adj — verify exact column names on load). Build the prerank from the signed Wald statistic column (stat); if the statistic column is absent or all-NA, fall back to sign(log2_fold_change) * -log10(p_value). Drop genes with NA ranking values and duplicate symbols (keep max |value|), sort descending. Reference data needed: the MSigDB Hallmark gene sets for Homo sapiens (50 sets, HGNC gene symbols, 2026.1 release) — staged in the reference store. Match DE gene symbols to GMT symbols case-insensitively, uppercase both sides, and report per-set coverage (number of set members present in the ranked list). Run gseapy.prerank(rnk, gene_sets=<hallmark GMT>, min_size=15, max_size=500, permutation_num=1000, weight=1, threads=4, seed=<fixed>, outdir=None). Save: (a) the full results table for all 50 sets (ES, NES, p-value, FDR q-val, leading-edge genes via res2d Lead_genes), (b) enrichment plots for the top up- and down-NES sets (pre_res.plot), (c) the exact prerank DataFrame and parameters used (seed, sizes) to a small JSON for reproducibility. Report the number of sets passing size filters and any sets excluded.",
+              "acceptance_criteria": [
+                "All 50 Hallmark sets are evaluated or their exclusion by the size filter is explicitly reported with reasons",
+                "Every evaluated set has ES, NES, nominal p-value and FDR q-val in the output table",
+                "Direction is interpretable: positive NES means enriched among genes up in treated, and this convention is stated in the output",
+                "Per-set gene coverage (set members found in the ranked list) is reported",
+                "Fixed seed recorded; rerunning the script reproduces identical NES values",
+                "Leading-edge gene lists are saved for every evaluated set"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "gseapy",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Dataset: bulk RNA-seq, human skin, 6 treated vs 6 control, unpaired, single batch, Salmon gene-level counts, DESeq2 results already provided. Data caveat: sample_01 has library size ~4x below the median (DESeq2 size factors should absorb this; Track 3 tests it). User constraint: Python only, no R.",
+              "caveats": [
+                "DESeq2 results contain NA p-value/p_adj rows (independent filtering) — ranking values must be handled before gseapy.prerank, which errors on NaN",
+                "DE results are keyed by gene symbol; the Hallmark GMT is HGNC symbols — check match rate and warn if below ~90% of ranked genes map",
+                "With 1000 permutations, FDR granularity is coarse; report exact q-values rather than rounding to <0.05"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark ORA on significant DE genes",
+              "track": "ora",
+              "step_type": "analysis",
+              "question": "Which Hallmark pathways are over-represented among significantly up-regulated genes and among significantly down-regulated genes in treated vs control skin?",
+              "description": "Read de_results.csv and define two gene lists: UP = padj < 0.05 AND log2_fold_change > 1; DOWN = padj < 0.05 AND log2_fold_change < -1. Background = all genes with a non-NA padj in the table (the tested universe). Reference data needed: the MSigDB Hallmark gene sets for Homo sapiens (50 sets, HGNC symbols, 2026.1 release) from the reference store, restricted to sets with >=10 members present in the background. For each direction, run one-sided Fisher's exact test (scipy.stats.fisher_exact) on the 2x2 contingency (list members in set vs not) against the background, and correct p-values within each direction across the 50 sets with Benjamini-Hochberg (statsmodels.stats.multitest.multipletests). Report per set: overlap count, set size in background, odds ratio, Fisher p, BH-FDR, and the overlapping gene symbols. Save both direction tables and print the UP/DOWN list sizes and background size.",
+              "acceptance_criteria": [
+                "UP and DOWN gene lists and the background universe are saved with sizes, and the thresholds used are stated in the output",
+                "Both directions tested against the same 50 Hallmark sets with the same background",
+                "Fisher exact p-values and BH-adjusted FDR present for every tested set in each direction",
+                "Overlapping gene symbols reported per significant set",
+                "Results are consistent with the DE table: re-deriving the UP list from de_results.csv gives identical gene counts"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "statsmodels"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Same dataset as T1S1. ORA complements the ranking-based GSEA: it tests only the significant tail, so it can miss coordinated moderate shifts that GSEA catches, and vice versa. User constraint: Python only, no R.",
+              "caveats": [
+                "With 6 vs 6 samples the DE tail may be small; if a direction has fewer than 5 significant genes the ORA for that direction is underpowered — say so rather than over-reading single overlaps",
+                "Do not use the whole genome as background; the correct universe is the genes that DESeq2 actually tested (non-NA padj), otherwise ORs are inflated"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Sensitivity: DE refit and sample_01-out GSEA",
+              "track": "sensitivity",
+              "step_type": "analysis",
+              "question": "Are the DE results and the resulting Hallmark enrichment calls stable to (a) re-deriving the contrast from the raw counts with pydeseq2 and (b) removing sample_01, the low-library-size sample?",
+              "description": "Read /eval-four-models-without-python-enrichment-only-1/data/inputs/counts/counts.csv (12,000 x 13, first column gene symbol) and metadata.csv (12 x 2, condition column, treated/control). Step 1: refit the treated-vs-control contrast with pydeseq2 (DeseqDataSet with design ~ condition, then DeseqStats) and compare against the provided DESeq2 table: Spearman correlation of the ranking statistic and of log2FC across shared genes, and agreement of the significant-gene set (padj < 0.05). Step 2: rebuild the prerank from the refit statistics, exclude sample_01 from its condition arm (leaving a 5-vs-6 or 6-vs-5 contrast), refit, and rerun gseapy.prerank with the same Hallmark GMT, parameters and seed as T1S1. Step 3: compare per-set NES between the T1S1 main run and this sensitivity run: sign concordance and absolute NES difference; classify each set significant in T1S1 as stable, weakened (loses significance) or flipped (direction change). Save the per-set comparison table and the refit-vs-provided DE correlation summary.",
+              "acceptance_criteria": [
+                "pydeseq2 refit vs provided DESeq2 table: Spearman correlation of ranking statistic reported (expected >0.95; lower values must be flagged, not hidden)",
+                "Sensitivity GSEA run on the sample_01-excluded contrast completes with the same parameters/seed as T1S1",
+                "Every Hallmark set significant in T1S1 is labelled stable / weakened / flipped with its NES in both runs and the NES difference",
+                "Refit significant-gene overlap with the provided table is quantified",
+                "All outputs are CSV/JSON readable without rerunning anything"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "pydeseq2",
+                "gseapy",
+                "scipy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data caveat from profiling: sample_01 library size ~4x below median. With 6-vs-6 a single outlier can move a contrast; this step quantifies that rather than assuming size-factor normalisation absorbed it. The DESeq2 reference implementation and pydeseq2 agree closely in general but can differ at low counts; the correlation check distinguishes 'different tool' from 'different result'.",
+              "caveats": [
+                "Check metadata.csv column names and the treated/control label spelling before designing the model; the profile says condition but does not show its levels",
+                "Counts are Salmon gene-level integers — pydeseq2 expects raw integer counts, which these are; do not normalise first",
+                "If sample_01 is the only sample of its arm with some property (e.g. it drops an arm to 5), note the reduced power in the comparison"
+              ]
+            },
+            {
+              "id": "T4S1",
+              "name": "Integrate Hallmark results and report",
+              "track": "report",
+              "step_type": "analysis",
+              "question": "Taken together, which Hallmark pathways are confidently enriched up in treated skin, which down, and which calls are not robust?",
+              "description": "Merge, on the 50 Hallmark set names: T1S1 GSEA results (NES, FDR, leading edge), T2S1 ORA results per direction (odds ratio, FDR, overlaps), and T3S1 stability labels. Classify each set: UP-in-treated, DOWN-in-treated, or not significant (primary evidence: GSEA FDR < 0.05; ORA FDR < 0.05 in the matching direction is recorded as supporting evidence; discordance between GSEA and ORA is annotated explicitly rather than resolved silently). Attach stability from T3S1. Produce (1) a merged per-pathway CSV covering all 50 sets, (2) a ranked top-findings table (sets with FDR < 0.05, sorted by |NES|) with 3-5 leading-edge/core genes each, and (3) a short markdown summary stating: the enriched hallmark pathways by direction, whether sample_01 and the DE refit change any conclusion, and the study-level caveats (n=6 per arm, single batch, 1000-permutation FDR). No mechanistic claims beyond what the enrichment statistics support.",
+              "acceptance_criteria": [
+                "Merged table covers all 50 Hallmark sets with GSEA and ORA columns and the stability label populated",
+                "Every top finding states its direction (up in treated / down in treated) and its evidence line (GSEA FDR, ORA FDR)",
+                "GSEA-vs-ORA discordant sets are explicitly listed as discordant",
+                "Summary states which conclusions survive the sample_01-excluded refit and which do not",
+                "No pathway is reported as enriched without an FDR value attached"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Final synthesis over the outputs of the three analysis tracks. The user asked specifically for hallmark pathways in treated vs control, starting from the existing DESeq2 results — the report should answer exactly that, with direction and robustness.",
+              "caveats": [
+                "Set names in the merged table must match across tracks (strip any suffixes gseapy adds; verify by count = 50)",
+                "Do not merge GO or other collections in — the question is Hallmark only"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-22T12:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The differential expression (DESeq2, 6 treated vs 6 control skin biopsies) is already computed in de_results.csv, so the plan starts from those results and answers the question in two complementary ways. Track 1 runs gene-set enrichment analysis (GSEA prerank, gseapy) on the full 12,000-gene DE ranking against the 50 MSigDB Hallmark sets (HGNC symbols), which uses the complete ranking and captures coordinated small shifts. Track 2 runs a threshold-based over-representation analysis (Fisher exact on significantly up- and down-regulated genes) on the same Hallmark sets, which answers the question from the extreme of the distribution and is robust to ranking-metric choice. Track 3 addresses the data caveat — sample_01's library size ~4x below median — by refitting the DE contrast from the raw Salmon counts with pydeseq2, verifying the provided DESeq2 table reproduces, and re-running the prerank GSEA with sample_01 removed to test stability of the hallmark calls. Track 4 merges GSEA, ORA and sensitivity results into one direction-labelled per-pathway table with leading-edge genes and an explicit statement of which calls are stable. All scripts are Python; gseapy, scipy, statsmodels, pydeseq2 and pandas are all installed in the sandbox and the MSigDB Hallmark 2026.1 human GMT is staged under /mnt/refs, so no step depends on network access.",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "All 50 Hallmark sets are evaluated or their exclusion by the size filter is explicitly reported with reasons",
+                "Every evaluated set has ES, NES, nominal p-value and FDR q-val in the output table",
+                "Direction is interpretable: positive NES means enriched among genes up in treated, and this convention is stated in the output",
+                "Per-set gene coverage (set members found in the ranked list) is reported",
+                "Fixed seed recorded; rerunning the script reproduces identical NES values",
+                "Leading-edge gene lists are saved for every evaluated set"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Dataset: bulk RNA-seq, human skin, 6 treated vs 6 control, unpaired, single batch, Salmon gene-level counts, DESeq2 results already provided. Data caveat: sample_01 has library size ~4x below the median (DESeq2 size factors should absorb this; Track 3 tests it). User constraint: Python only, no R.",
+              "caveats": [
+                "DESeq2 results contain NA p-value/p_adj rows (independent filtering) — ranking values must be handled before gseapy.prerank, which errors on NaN",
+                "DE results are keyed by gene symbol; the Hallmark GMT is HGNC symbols — check match rate and warn if below ~90% of ranked genes map",
+                "With 1000 permutations, FDR granularity is coarse; report exact q-values rather than rounding to <0.05"
+              ],
+              "depends_on": [],
+              "description": "Read /eval-four-models-without-python-enrichment-only-1/data/inputs/results/de_results.csv (12,000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change_error/standard error, stat, p_value, p_adj — verify exact column names on load). Build the prerank from the signed Wald statistic column (stat); if the statistic column is absent or all-NA, fall back to sign(log2_fold_change) * -log10(p_value). Drop genes with NA ranking values and duplicate symbols (keep max |value|), sort descending. Reference data needed: the MSigDB Hallmark gene sets for Homo sapiens (50 sets, HGNC gene symbols, 2026.1 release) — staged in the reference store. Match DE gene symbols to GMT symbols case-insensitively, uppercase both sides, and report per-set coverage (number of set members present in the ranked list). Run gseapy.prerank(rnk, gene_sets=<hallmark GMT>, min_size=15, max_size=500, permutation_num=1000, weight=1, threads=4, seed=<fixed>, outdir=None). Save: (a) the full results table for all 50 sets (ES, NES, p-value, FDR q-val, leading-edge genes via res2d Lead_genes), (b) enrichment plots for the top up- and down-NES sets (pre_res.plot), (c) the exact prerank DataFrame and parameters used (seed, sizes) to a small JSON for reproducibility. Report the number of sets passing size filters and any sets excluded.",
+              "id": "T1S1",
+              "name": "Prerank GSEA against MSigDB Hallmark",
+              "packages": [
+                "pandas",
+                "numpy",
+                "gseapy",
+                "matplotlib"
+              ],
+              "question": "Which MSigDB Hallmark pathways are enriched in treated vs control skin (AD lesional vs control) according to GSEA on the full DESeq2 ranking, and in which direction?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "gsea"
+            },
+            {
+              "acceptance_criteria": [
+                "UP and DOWN gene lists and the background universe are saved with sizes, and the thresholds used are stated in the output",
+                "Both directions tested against the same 50 Hallmark sets with the same background",
+                "Fisher exact p-values and BH-adjusted FDR present for every tested set in each direction",
+                "Overlapping gene symbols reported per significant set",
+                "Results are consistent with the DE table: re-deriving the UP list from de_results.csv gives identical gene counts"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Same dataset as T1S1. ORA complements the ranking-based GSEA: it tests only the significant tail, so it can miss coordinated moderate shifts that GSEA catches, and vice versa. User constraint: Python only, no R.",
+              "caveats": [
+                "With 6 vs 6 samples the DE tail may be small; if a direction has fewer than 5 significant genes the ORA for that direction is underpowered — say so rather than over-reading single overlaps",
+                "Do not use the whole genome as background; the correct universe is the genes that DESeq2 actually tested (non-NA padj), otherwise ORs are inflated"
+              ],
+              "depends_on": [],
+              "description": "Read de_results.csv and define two gene lists: UP = padj < 0.05 AND log2_fold_change > 1; DOWN = padj < 0.05 AND log2_fold_change < -1. Background = all genes with a non-NA padj in the table (the tested universe). Reference data needed: the MSigDB Hallmark gene sets for Homo sapiens (50 sets, HGNC symbols, 2026.1 release) from the reference store, restricted to sets with >=10 members present in the background. For each direction, run one-sided Fisher's exact test (scipy.stats.fisher_exact) on the 2x2 contingency (list members in set vs not) against the background, and correct p-values within each direction across the 50 sets with Benjamini-Hochberg (statsmodels.stats.multitest.multipletests). Report per set: overlap count, set size in background, odds ratio, Fisher p, BH-FDR, and the overlapping gene symbols. Save both direction tables and print the UP/DOWN list sizes and background size.",
+              "id": "T2S1",
+              "name": "Hallmark ORA on significant DE genes",
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "statsmodels"
+              ],
+              "question": "Which Hallmark pathways are over-represented among significantly up-regulated genes and among significantly down-regulated genes in treated vs control skin?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "ora"
+            },
+            {
+              "acceptance_criteria": [
+                "pydeseq2 refit vs provided DESeq2 table: Spearman correlation of ranking statistic reported (expected >0.95; lower values must be flagged, not hidden)",
+                "Sensitivity GSEA run on the sample_01-excluded contrast completes with the same parameters/seed as T1S1",
+                "Every Hallmark set significant in T1S1 is labelled stable / weakened / flipped with its NES in both runs and the NES difference",
+                "Refit significant-gene overlap with the provided table is quantified",
+                "All outputs are CSV/JSON readable without rerunning anything"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data caveat from profiling: sample_01 library size ~4x below median. With 6-vs-6 a single outlier can move a contrast; this step quantifies that rather than assuming size-factor normalisation absorbed it. The DESeq2 reference implementation and pydeseq2 agree closely in general but can differ at low counts; the correlation check distinguishes 'different tool' from 'different result'.",
+              "caveats": [
+                "Check metadata.csv column names and the treated/control label spelling before designing the model; the profile says condition but does not show its levels",
+                "Counts are Salmon gene-level integers — pydeseq2 expects raw integer counts, which these are; do not normalise first",
+                "If sample_01 is the only sample of its arm with some property (e.g. it drops an arm to 5), note the reduced power in the comparison"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Read /eval-four-models-without-python-enrichment-only-1/data/inputs/counts/counts.csv (12,000 x 13, first column gene symbol) and metadata.csv (12 x 2, condition column, treated/control). Step 1: refit the treated-vs-control contrast with pydeseq2 (DeseqDataSet with design ~ condition, then DeseqStats) and compare against the provided DESeq2 table: Spearman correlation of the ranking statistic and of log2FC across shared genes, and agreement of the significant-gene set (padj < 0.05). Step 2: rebuild the prerank from the refit statistics, exclude sample_01 from its condition arm (leaving a 5-vs-6 or 6-vs-5 contrast), refit, and rerun gseapy.prerank with the same Hallmark GMT, parameters and seed as T1S1. Step 3: compare per-set NES between the T1S1 main run and this sensitivity run: sign concordance and absolute NES difference; classify each set significant in T1S1 as stable, weakened (loses significance) or flipped (direction change). Save the per-set comparison table and the refit-vs-provided DE correlation summary.",
+              "id": "T3S1",
+              "name": "Sensitivity: DE refit and sample_01-out GSEA",
+              "packages": [
+                "pandas",
+                "numpy",
+                "pydeseq2",
+                "gseapy",
+                "scipy"
+              ],
+              "question": "Are the DE results and the resulting Hallmark enrichment calls stable to (a) re-deriving the contrast from the raw counts with pydeseq2 and (b) removing sample_01, the low-library-size sample?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "sensitivity"
+            },
+            {
+              "acceptance_criteria": [
+                "Merged table covers all 50 Hallmark sets with GSEA and ORA columns and the stability label populated",
+                "Every top finding states its direction (up in treated / down in treated) and its evidence line (GSEA FDR, ORA FDR)",
+                "GSEA-vs-ORA discordant sets are explicitly listed as discordant",
+                "Summary states which conclusions survive the sample_01-excluded refit and which do not",
+                "No pathway is reported as enriched without an FDR value attached"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Final synthesis over the outputs of the three analysis tracks. The user asked specifically for hallmark pathways in treated vs control, starting from the existing DESeq2 results — the report should answer exactly that, with direction and robustness.",
+              "caveats": [
+                "Set names in the merged table must match across tracks (strip any suffixes gseapy adds; verify by count = 50)",
+                "Do not merge GO or other collections in — the question is Hallmark only"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1",
+                "T3S1"
+              ],
+              "description": "Merge, on the 50 Hallmark set names: T1S1 GSEA results (NES, FDR, leading edge), T2S1 ORA results per direction (odds ratio, FDR, overlaps), and T3S1 stability labels. Classify each set: UP-in-treated, DOWN-in-treated, or not significant (primary evidence: GSEA FDR < 0.05; ORA FDR < 0.05 in the matching direction is recorded as supporting evidence; discordance between GSEA and ORA is annotated explicitly rather than resolved silently). Attach stability from T3S1. Produce (1) a merged per-pathway CSV covering all 50 sets, (2) a ranked top-findings table (sets with FDR < 0.05, sorted by |NES|) with 3-5 leading-edge/core genes each, and (3) a short markdown summary stating: the enriched hallmark pathways by direction, whether sample_01 and the DE refit change any conclusion, and the study-level caveats (n=6 per arm, single batch, 1000-permutation FDR). No mechanistic claims beyond what the enrichment statistics support.",
+              "id": "T4S1",
+              "name": "Integrate Hallmark results and report",
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "question": "Taken together, which Hallmark pathways are confidently enriched up in treated skin, which down, and which calls are not robust?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "report"
+            }
+          ],
+          "title": "AD treated vs control: Hallmark GSEA + ORA"
+        }
+      }
+    }
+  ]
+}

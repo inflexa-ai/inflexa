@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly recognizes the TPM-only, 6v6 unpaired design and routes it to TPM-native absolute (quanTIseq TIL10, EPIC with tumor=TRUE) and score-based (MCP-counter, explicitly not summed to one) methods with non-log input, Wilcoxon per cell type with BH, a stated exploratory alpha, sample_01 retained with a sensitivity re-run, and stacked bars of fractions. Gaps against the reference: the QC never reports the share of signature genes present in the 12000-gene matrix and lacks any sample-structure view (PCA/distances); the group comparison reports only direction and adjusted p, not the difference of group means beside it; method versions are not named; and the caution that a fraction is an estimate contingent on the reference is only implicit. Running six methods adds bulk without adding rigor, but nothing planned is wrong (no log matrix into EPIC/quanTIseq, no cross-population MCP comparison, no CIBERSORT portal)."
+}

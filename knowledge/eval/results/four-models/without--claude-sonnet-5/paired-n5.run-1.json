@@ -1,0 +1,635 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "paired-n5",
+  "run": 1,
+  "startedAt": "2026-09-06T21:02:19.954Z",
+  "elapsedMs": 177367,
+  "outcome": "plan_submitted",
+  "planId": "pln-7418cd90",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and paired DESeq2 differential expression (subject-blocked)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 5 subjects the paired design has limited power for small effect sizes; report this explicitly rather than overstating significance",
+          "Verify metadata subject/condition columns align positionally with count matrix columns before building the DESeq2 object — do not assume file row order matches"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which genes in blood show significant treatment vs control differential expression across the 5 paired subjects, using DESeq2 with subject as a blocking factor (design ~ subject + condition)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts.csv (12000 genes x 10 samples) and metadata.csv (10 rows: subject, condition) are loaded and sample order/names are matched between the two files",
+          "DESeq2 dataset built with design ~ subject + condition, confirming condition is a factor with control as reference level",
+          "Standard DESeq2 QC produced: library size barplot, PCA on rlog/vst-transformed counts colored by subject and by condition, and a sample-sample distance heatmap to confirm no mislabeling or outlier sample",
+          "DESeq2 results table for the condition (treated vs control) contrast reported with log2FoldChange, shrunk LFC (apeglm or ashr), p-value, and BH-adjusted p-value for all ~12000 genes",
+          "Output table and summary counts of genes at padj < 0.05 and |log2FC| > 1 saved for downstream steps"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Per-subject paired log2 fold-change and directional concordance across subjects",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Do not report per-subject per-gene p-values from n=1 pairs — there is no statistical basis for a p-value with zero degrees of freedom at the single-gene, single-subject level",
+          "Use DESeq2 size factors (from T1S1) rather than raw counts, since library sizes can differ between control/treated samples within a subject"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "matrixStats",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "For each of the 5 subjects individually, which genes show the largest treated-vs-control log2 fold change from that subject's single control-treated pair, and how many of the 5 subjects show each gene moving in the same direction (concordance)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "For each subject, paired log2 fold-change computed per gene as log2((treated_count+1)/(control_count+1)) using size-factor-normalized counts (reuse DESeq2 size factors from T1S1) to correct for sequencing depth differences between the paired samples",
+          "A subject x gene matrix of normalized paired log2FC values is produced (5 subjects x ~12000 genes)",
+          "For each gene, a concordance score is computed: number/fraction of the 5 subjects with log2FC in the same direction (sign) and above a minimal magnitude threshold (e.g., |log2FC| > 1), distinguishing genes with uniform within-subject response from genes with subject-specific or discordant response",
+          "Top genes ranked by concordance and mean magnitude are reported in a table, explicitly separating 'consistent across subjects' genes from 'discordant/heterogeneous' genes",
+          "Caveat stated in the output that per-subject single-pair log2FC has no within-subject replicate to estimate technical/biological noise, so these are descriptive effect-size rankings, not gene-level hypothesis tests"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Per-subject pathway-level deregulation (N-of-1-style) using WikiPathways human gene sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If WikiPathways gene symbol coverage against the 12000-gene panel is low (e.g., <50% of pathway genes matched), report the coverage explicitly rather than silently proceeding",
+          "fgsea nominal p-values from single-subject rankings are noisier than cohort-level GSEA; do not apply the same significance threshold conventions without flagging this"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase"
+        ],
+        "question": "Which WikiPathways human pathways show coherent up- or down-regulation within each individual subject's single control-treated pair, and do these per-subject deregulated pathways converge across subjects more than the individual genes do?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "WikiPathways human gene sets (GMT, HGNC symbols) loaded and matched to the ~12000 gene symbols in the count matrix, reporting the fraction of pathway genes found in the dataset",
+          "For each subject, the per-subject paired log2FC vector from T2S1 is used to rank genes and run a pre-ranked gene set enrichment analysis (fgsea) per subject-pathway pair (mirrors N-of-1-pathways framework of Gardeux et al. 2014 JAMIA and Schissler et al. 2018 Stat Methods Med Res, which uses paired single-subject transcriptomes with gene set structure to gain statistical traction that individual genes lack)",
+          "A subject x pathway matrix of normalized enrichment scores (NES) and per-subject BH-adjusted p-values is produced",
+          "Pathways ranked by how many of the 5 subjects reach nominal significance (e.g., padj<0.25 per fgsea convention for single-sample-derived rankings) are reported, separating pathways deregulated consistently across most/all subjects from those private to one or two subjects",
+          "Report explicitly states that per-subject NES from a single pair is a descriptive/exploratory signal, not a population-level inferential claim, consistent with the N-of-1-pathways literature's own limitations"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Pathway enrichment of the population-level paired DE genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If very few genes pass padj<0.05 given n=5, fall back to reporting the pre-ranked fgsea result on the full gene list rather than an empty over-representation test"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes significantly differentially expressed between treated and control across the 5-subject paired cohort (from T1S1)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T2S2"
+        ],
+        "acceptance_criteria": [
+          "WikiPathways human GMT loaded and gene universe restricted to the ~12000 genes tested in T1S1",
+          "Over-representation analysis (or fgsea pre-ranked on the full DESeq2 stat/LFC) run on the T1S1 significant gene set (padj<0.05) against WikiPathways pathways",
+          "Enriched pathways reported with adjusted p-values and the leading-edge/member gene overlap with the DE gene list",
+          "Result cross-referenced against the per-subject pathway concordance table from T2S2 to note whether population-significant pathways are also the ones showing multi-subject concordance, or whether they diverge"
+        ]
+      }
+    ],
+    "title": "Paired within-subject treatment DE analysis (n=5)",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The data are raw STAR/featureCounts gene-level counts (12000 genes x 10 samples) from 5 subjects, each contributing a matched control and treated blood sample — a fully paired design. The research question ('which genes respond to treatment within each subject') has two legitimate readings that the plan addresses in sequence: (1) the standard cohort-level paired DE test, which uses subject as a blocking factor in DESeq2 to find genes that respond to treatment consistently across the 5 subjects while removing inter-subject variance, and (2) genuine per-subject (N-of-1 style) DE, since the design gives exactly one control-treated pair per subject and the question explicitly asks 'within each subject'. Standard per-gene hypothesis testing from a single pair has essentially no power (df=0 per subject at the gene level), so subject-level differential signal is instead assessed at the pathway/gene-set level using paired log-fold-change ranking per subject against WikiPathways human gene sets — the approach validated in the N-of-1-pathways literature (Gardeux et al. 2014 JAMIA; Schissler et al. 2018 Stat Methods Med Res) for exactly this two-sample-per-patient setting. Track 1 produces the population-level paired DESeq2 result (genes responding to treatment on average, adjusting for subject). Track 2 produces per-subject deregulated gene lists (simple paired log2FC ranking per subject, since no replicate exists within a subject to estimate per-gene variance) and per-subject pathway enrichment, plus a concordance analysis (how many of the 5 subjects show each gene/pathway moving in the same direction) to distinguish uniform responders from heterogeneous ones. This concordance step is the direct, defensible answer to 'which genes respond within each subject' beyond the population-average model."
+  },
+  "usage": {
+    "inputTokens": 2244905,
+    "outputTokens": 7059,
+    "cacheCreationInputTokens": 131558,
+    "cacheReadInputTokens": 2112879,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human",
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways-human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "pydeseq2",
+          "edgeR",
+          "limma",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "paired RNA-seq design DESeq2 subject blocking factor differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 paired sample design",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression per-subject individual response paired design blocking factor n5",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "27280887"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "personalized differential expression individual patient RNA-seq treatment response heterogeneity paired samples",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "N-of-1 transcriptomics individual variability treatment response",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "29272327"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "single subject transcriptome analysis N-of-1 pathways method interpretable effect size Schissler",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "N-of-1-pathways single subject differential expression individual patient method",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "N-of-1-pathways single subject differential expression individual patient method",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "n1pas"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "ora"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "singscore",
+          "GSVA",
+          "gseapy",
+          "blitzgsea",
+          "decoupler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/eval-four-models-without-paired-n5-1/data/inputs/metadata"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "N-of-1-pathways method single subject transcriptome individual differential gene expression",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "N.of.1.pathways",
+          "iDEG",
+          "NOISeq"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "MetaOmics MixEnrich single subject pathway differential expression case control validation",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25301808"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "28552011"
+        ],
+        "maxAuthors": 4,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "fulltext",
+        "pmcId": "PMC5554097"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "42093161"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 3
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DEP",
+          "MetaVolcanoR",
+          "sva",
+          "SmartSVA"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR",
+          "GSEABase",
+          "singscore"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "UpSetR",
+          "ComplexUpset"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "singscore",
+          "GSVA",
+          "stringr",
+          "matrixStats"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ggplot2",
+          "ggrepel",
+          "pheatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "IHW",
+          "BiocParallel"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "edgeR",
+          "limma",
+          "variancePartition"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathway-activity"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathway-activity"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "interaction-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "interaction-networks string"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string-ppi"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "geneid symbol mapping human hgnc ensembl"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Paired within-subject treatment DE analysis (n=5)",
+          "analytical_narrative": "The data are raw STAR/featureCounts gene-level counts (12000 genes x 10 samples) from 5 subjects, each contributing a matched control and treated blood sample — a fully paired design. The research question ('which genes respond to treatment within each subject') has two legitimate readings that the plan addresses in sequence: (1) the standard cohort-level paired DE test, which uses subject as a blocking factor in DESeq2 to find genes that respond to treatment consistently across the 5 subjects while removing inter-subject variance, and (2) genuine per-subject (N-of-1 style) DE, since the design gives exactly one control-treated pair per subject and the question explicitly asks 'within each subject'. Standard per-gene hypothesis testing from a single pair has essentially no power (df=0 per subject at the gene level), so subject-level differential signal is instead assessed at the pathway/gene-set level using paired log-fold-change ranking per subject against WikiPathways human gene sets — the approach validated in the N-of-1-pathways literature (Gardeux et al. 2014 JAMIA; Schissler et al. 2018 Stat Methods Med Res) for exactly this two-sample-per-patient setting. Track 1 produces the population-level paired DESeq2 result (genes responding to treatment on average, adjusting for subject). Track 2 produces per-subject deregulated gene lists (simple paired log2FC ranking per subject, since no replicate exists within a subject to estimate per-gene variance) and per-subject pathway enrichment, plus a concordance analysis (how many of the 5 subjects show each gene/pathway moving in the same direction) to distinguish uniform responders from heterogeneous ones. This concordance step is the direct, defensible answer to 'which genes respond within each subject' beyond the population-average model.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and paired DESeq2 differential expression (subject-blocked)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes in blood show significant treatment vs control differential expression across the 5 paired subjects, using DESeq2 with subject as a blocking factor (design ~ subject + condition)?",
+              "acceptance_criteria": [
+                "Counts.csv (12000 genes x 10 samples) and metadata.csv (10 rows: subject, condition) are loaded and sample order/names are matched between the two files",
+                "DESeq2 dataset built with design ~ subject + condition, confirming condition is a factor with control as reference level",
+                "Standard DESeq2 QC produced: library size barplot, PCA on rlog/vst-transformed counts colored by subject and by condition, and a sample-sample distance heatmap to confirm no mislabeling or outlier sample",
+                "DESeq2 results table for the condition (treated vs control) contrast reported with log2FoldChange, shrunk LFC (apeglm or ashr), p-value, and BH-adjusted p-value for all ~12000 genes",
+                "Output table and summary counts of genes at padj < 0.05 and |log2FC| > 1 saved for downstream steps"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With only 5 subjects the paired design has limited power for small effect sizes; report this explicitly rather than overstating significance",
+                "Verify metadata subject/condition columns align positionally with count matrix columns before building the DESeq2 object — do not assume file row order matches"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Per-subject paired log2 fold-change and directional concordance across subjects",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "For each of the 5 subjects individually, which genes show the largest treated-vs-control log2 fold change from that subject's single control-treated pair, and how many of the 5 subjects show each gene moving in the same direction (concordance)?",
+              "acceptance_criteria": [
+                "For each subject, paired log2 fold-change computed per gene as log2((treated_count+1)/(control_count+1)) using size-factor-normalized counts (reuse DESeq2 size factors from T1S1) to correct for sequencing depth differences between the paired samples",
+                "A subject x gene matrix of normalized paired log2FC values is produced (5 subjects x ~12000 genes)",
+                "For each gene, a concordance score is computed: number/fraction of the 5 subjects with log2FC in the same direction (sign) and above a minimal magnitude threshold (e.g., |log2FC| > 1), distinguishing genes with uniform within-subject response from genes with subject-specific or discordant response",
+                "Top genes ranked by concordance and mean magnitude are reported in a table, explicitly separating 'consistent across subjects' genes from 'discordant/heterogeneous' genes",
+                "Caveat stated in the output that per-subject single-pair log2FC has no within-subject replicate to estimate technical/biological noise, so these are descriptive effect-size rankings, not gene-level hypothesis tests"
+              ],
+              "packages": [
+                "DESeq2",
+                "matrixStats",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do not report per-subject per-gene p-values from n=1 pairs — there is no statistical basis for a p-value with zero degrees of freedom at the single-gene, single-subject level",
+                "Use DESeq2 size factors (from T1S1) rather than raw counts, since library sizes can differ between control/treated samples within a subject"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "Per-subject pathway-level deregulation (N-of-1-style) using WikiPathways human gene sets",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which WikiPathways human pathways show coherent up- or down-regulation within each individual subject's single control-treated pair, and do these per-subject deregulated pathways converge across subjects more than the individual genes do?",
+              "acceptance_criteria": [
+                "WikiPathways human gene sets (GMT, HGNC symbols) loaded and matched to the ~12000 gene symbols in the count matrix, reporting the fraction of pathway genes found in the dataset",
+                "For each subject, the per-subject paired log2FC vector from T2S1 is used to rank genes and run a pre-ranked gene set enrichment analysis (fgsea) per subject-pathway pair (mirrors N-of-1-pathways framework of Gardeux et al. 2014 JAMIA and Schissler et al. 2018 Stat Methods Med Res, which uses paired single-subject transcriptomes with gene set structure to gain statistical traction that individual genes lack)",
+                "A subject x pathway matrix of normalized enrichment scores (NES) and per-subject BH-adjusted p-values is produced",
+                "Pathways ranked by how many of the 5 subjects reach nominal significance (e.g., padj<0.25 per fgsea convention for single-sample-derived rankings) are reported, separating pathways deregulated consistently across most/all subjects from those private to one or two subjects",
+                "Report explicitly states that per-subject NES from a single pair is a descriptive/exploratory signal, not a population-level inferential claim, consistent with the N-of-1-pathways literature's own limitations"
+              ],
+              "packages": [
+                "fgsea",
+                "GSEABase"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "If WikiPathways gene symbol coverage against the 12000-gene panel is low (e.g., <50% of pathway genes matched), report the coverage explicitly rather than silently proceeding",
+                "fgsea nominal p-values from single-subject rankings are noisier than cohort-level GSEA; do not apply the same significance threshold conventions without flagging this"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Pathway enrichment of the population-level paired DE genes",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which WikiPathways human pathways are enriched among genes significantly differentially expressed between treated and control across the 5-subject paired cohort (from T1S1)?",
+              "acceptance_criteria": [
+                "WikiPathways human GMT loaded and gene universe restricted to the ~12000 genes tested in T1S1",
+                "Over-representation analysis (or fgsea pre-ranked on the full DESeq2 stat/LFC) run on the T1S1 significant gene set (padj<0.05) against WikiPathways pathways",
+                "Enriched pathways reported with adjusted p-values and the leading-edge/member gene overlap with the DE gene list",
+                "Result cross-referenced against the per-subject pathway concordance table from T2S2 to note whether population-significant pathways are also the ones showing multi-subject concordance, or whether they diverge"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "If very few genes pass padj<0.05 given n=5, fall back to reporting the pre-ranked fgsea result on the full gene list rather than an empty over-representation test"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 3,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly diagnoses the perfect confound, refuses a batch term and any ComBat/SVA repair, fits ~condition only with DESeq2 size factors on raw counts, and labels every result as batch-confounded, matching the reference. QC covers library sizes, PCA and sample correlation with condition/batch labels, though no explicit policy for handling an outlier or shallow sample is stated. Weaknesses: no low-count pre-filter is described (only DESeq2 independent filtering), no log2FC shrinkage is specified and the |log2FC|>1 cutoff is applied post hoc, and the enrichment step lacks an explicit ORA universe, collection version, size window, and a committed ranking metric while arguably not being warranted at all on a confounded list. Report elements are strong on caveats and thresholds but omit package versions."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 4,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses to refit the count model, takes padj<0.05 genes as foreground against the tested-gene universe, names GO BP via a pinned MSigDB GOBP 2026.1 collection with a 15-500 size window, BH correction, rrvgo redundancy reduction, and explicitly states that direction is pooled. QC is specific to the design (PCA, distance heatmap, library sizes, an explicit keep/inspect policy for sample_01). The GSEA step is framed as a robustness check with the ranking metric and tie-break stated, though the wording that it may become 'the primary' answer under a small gene list slightly blurs the ORA question. No low-count filter is stated for the QC transform, the model formula for the QC dataset is unspecified (acceptable given blind VST), and the ORA report does not explicitly promise gene ratio and per-term gene lists, only a 'full supporting table'."
+}

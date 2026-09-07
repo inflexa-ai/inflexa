@@ -1,0 +1,343 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "variance-partition-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T01:00:59.638Z",
+  "elapsedMs": 69742,
+  "outcome": "plan_submitted",
+  "planId": "pln-13e3676c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Variance partition: condition, sex, age",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 12 samples the per-gene variance fractions have wide sampling error; a covariate with zero true effect will still show a non-zero median fraction",
+          "Sex-linked genes (XIST, RPS4Y1, DDX3Y, UTY and similar) will dominate the sex fraction and should be named rather than treated as a general sex effect",
+          "If sex is unbalanced across condition, condition and sex fractions are partly non-identifiable — report the sex-by-condition cross-tabulation",
+          "Do not interpret a large condition fraction in a handful of genes as evidence of a global treatment effect"
+        ],
+        "context": "This step answers the first half of the research question and must run before the differential-expression test. Design: 6 treated vs 6 control, unpaired, single batch, human adipose. Sex and age are recorded per sample and are candidate confounders; the point of this step is to quantify them descriptively rather than to test them.",
+        "maxSteps": 200,
+        "packages": [
+          "variancePartition",
+          "limma",
+          "edgeR",
+          "ggplot2",
+          "pheatmap",
+          "BiocParallel"
+        ],
+        "question": "In the 12-sample adipose bulk RNA-seq dataset, what fraction of per-gene expression variance is attributable to condition (treated vs control), sex (F/M) and age (years), and how much is residual?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use the exact file paths given in the data context; do not download anything",
+          "Fit ~ condition + sex + age in one model — do not fit each variable separately, since the fractions must be mutually adjusted",
+          "Treat age as continuous and condition/sex as factors; state the factor reference levels used",
+          "Pass voom observation weights into fitExtractVarPartModel",
+          "Do not use the variance fractions to select or drop covariates for the downstream DE model — the DE design is fixed in advance in T1S2"
+        ],
+        "description": "Load /eval-four-models-without-variance-partition-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, first column gene symbol, raw integer Salmon counts) and /eval-four-models-without-variance-partition-n6-1/data/inputs/metadata/metadata.csv (12 rows: sample, condition, sex, age). Verify sample-name concordance between the two files and align column order. Filter low-count genes with edgeR::filterByExpr using group=condition, TMM-normalize, and compute voom log2-CPM with observation weights. Run variancePartition::fitExtractVarPartModel with formula ~ condition + sex + age (condition and sex as factors, age as a continuous fixed effect; no random effects are warranted at n=12) and the voom weights. Produce: (1) a per-gene variance-fraction table written to CSV; (2) median and IQR of the variance fraction for each of condition, sex, age and Residuals across genes; (3) a violin plot of the fractions; (4) the top 20 genes by variance explained for each of condition, sex and age. Separately, compute PCA on the voom log-CPM matrix and regress PC1-PC4 scores on condition, sex and age to report which covariate associates with global structure, plus a sample correlation heatmap. Write all artifacts (tables, plots) to the step output directory.",
+        "acceptance_criteria": [
+          "Per-gene variance-fraction table covering condition, sex, age and Residuals is written for all genes passing filterByExpr, and the four fractions sum to 1 per gene (within numerical tolerance)",
+          "Median and IQR of variance explained is reported for each of condition, sex, age and Residuals",
+          "Violin plot of variance fractions and the top-20 gene lists per variable are saved",
+          "PCA on voom log-CPM with PC1-PC4 association tests against condition, sex and age is reported",
+          "Report explicitly states that with n=12 and 4 model degrees of freedom the fractions are noisy descriptive quantities, not hypothesis tests, and reports the residual fraction alongside every covariate fraction",
+          "Number of genes retained after filterByExpr is reported against the 12,000 input genes"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 treated vs control, sex+age adjusted",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "6 vs 6 with two covariates leaves 8 residual degrees of freedom; power is modest and a null or near-null DE list is a legitimate outcome that must be reported as such rather than rescued by relaxing thresholds",
+          "If sex is strongly unbalanced across condition, the condition coefficient will be partly collinear with sex — check the model matrix rank and report the cross-tabulation",
+          "A flat or anti-conservative p-value histogram indicates a model problem and must be reported, not ignored",
+          "Do not report nominal p<0.05 gene counts as the headline if FDR<0.05 yields few or no genes; report both and label which is which"
+        ],
+        "context": "Second half of the research question. 6 treated vs 6 control, unpaired, single batch, human adipose, raw Salmon counts. The adjusted model is the primary result; the unadjusted model exists only to quantify the impact of covariate adjustment, since T1S1 will have shown how much variance sex and age carry.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between treated and control adipose samples when the model is adjusted for sex and age, and how does that result differ from an unadjusted condition-only model?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Primary result must come from design ~ sex + age + condition; do not substitute the unadjusted model as primary",
+          "Use the raw integer counts directly — do not feed DESeq2 normalized, CPM or log-transformed values",
+          "Use apeglm for LFC shrinkage on the condition coefficient; if apeglm cannot be applied to the coefficient, use ashr and say which was used",
+          "Report results for all tested genes, not just significant ones",
+          "Do not perform any batch correction — the design is single batch"
+        ],
+        "description": "Build a DESeqDataSet from the same raw integer counts and metadata. Pre-filter genes with low counts (retain genes with counts >= 10 in at least 6 samples). Primary model: design ~ sex + age + condition, extracting the treated-vs-control contrast on condition with control as the reference level; age entered as a continuous covariate (centered/scaled if the fitting warns about convergence). Report the full results table with Wald p-values, BH-adjusted FDR, base mean and both raw and apeglm-shrunken log2 fold changes, sorted by FDR. Count DE genes at FDR<0.05 and at FDR<0.05 with |shrunken LFC|>1. Produce an MA plot, a volcano plot labelled with the top genes, a heatmap of VST-transformed values for the top 50 DE genes annotated by condition/sex/age, dispersion-estimate and p-value-histogram diagnostic plots, and a PCA of VST values. Secondary model, for comparison only: design ~ condition. Report the overlap of the two DE gene sets, the Spearman correlation of their LFCs, and how many genes gain or lose significance under adjustment. Write the full results tables for both models to CSV.",
+        "acceptance_criteria": [
+          "Full DESeq2 results table for design ~ sex + age + condition written to CSV with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj and apeglm-shrunken LFC for every tested gene",
+          "Number of DE genes at FDR<0.05 reported, and separately at FDR<0.05 and |shrunken LFC|>1",
+          "Dispersion plot, p-value histogram, MA plot, volcano plot, VST PCA and top-50 heatmap all saved",
+          "Unadjusted ~ condition results reported alongside, with gene-set overlap and LFC concordance against the adjusted model",
+          "Contrast direction is stated explicitly (treated relative to control) and the reference level is confirmed",
+          "Independent-filtering threshold and the number of genes with padj=NA are reported"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment of the treated-vs-control signature",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Enrichment inherits every limitation of an n=6-per-group DE result; treat all sets as hypothesis-generating",
+          "The 12,000-gene input is already a subset of the transcriptome, which biases set-overlap statistics — report the universe size used",
+          "Hallmark and GO-BP overlap substantially; do not count the same biology twice across collections"
+        ],
+        "context": "Interpretive layer on the primary contrast. Human adipose tissue, treated vs control. Enrichment cannot carry the conclusion at n=12 and is included to describe the direction of the signature, not to establish it.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db",
+          "ggplot2"
+        ],
+        "question": "Which hallmark and GO biological-process gene sets are enriched among the genes changing between treated and control adipose samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use human gene-set collections only — the data is Homo sapiens adipose tissue",
+          "Use the tested-gene universe from T1S2 as the ORA background, not all annotated genes",
+          "Report unadjusted and BH-adjusted p-values; do not present nominal enrichment p-values as significant results",
+          "Do not re-run differential expression — consume the T1S2 results table"
+        ],
+        "description": "Take the adjusted (~ sex + age + condition) DESeq2 results from T1S2. Run (a) over-representation analysis on the FDR<0.05 gene set, split into up- and down-regulated, against the universe of all tested genes; and (b) GSEA on the full gene ranking by the apeglm-shrunken log2 fold change (or by the Wald statistic if shrinkage compresses the ranking), using the human hallmark gene sets and the human GO biological-process gene sets available as reference gene-set collections for Homo sapiens in this environment. Gene identifiers in the counts matrix are HGNC symbols and the reference collections are symbol-based, so join directly on symbol and report the match rate. Output enrichment tables with set size, overlap, NES, p-value and BH-adjusted q-value, plus dot plots for the top sets from each collection. Because GO-BP sets are hierarchically nested, collapse redundant parent/child hits before reporting a headline count.",
+        "acceptance_criteria": [
+          "ORA results for up- and down-regulated FDR<0.05 genes against the tested-gene universe, and GSEA results on the full ranking, are written to CSV with adjusted p-values",
+          "Both the hallmark and GO-BP human collections are used, and the symbol match rate against each is reported",
+          "Redundant nested GO-BP hits are collapsed before reporting a headline number of enriched sets",
+          "Dot plots for the leading sets from each collection are saved",
+          "If the FDR<0.05 DE list from T1S2 has fewer than 15 genes, the step reports ORA as uninformative and relies on the ranked GSEA, stating this explicitly",
+          "If a required human gene-set collection is not resolvable in the environment, the step reports the missing collection by name and proceeds with whichever human collections are available"
+        ]
+      }
+    ],
+    "title": "Adipose treated vs control: variance partition + DE",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment in human adipose tissue: raw Salmon gene-level integer counts (12,000 genes x 12 samples, gene symbols in column 1) with a 12-row metadata table carrying condition (6 treated vs 6 control, unpaired), sex (F/M) and age (years). The research question has two parts in a fixed order, so the plan follows that order.\n\nPart 1 (T1S1) asks how much expression variance condition, sex and age each explain. That is a variance-components question, not a testing question, and it is answered per gene with variancePartition::fitExtractVarPartModel on log2-CPM values (voom-weighted), fitting ~ condition + sex + age with condition and sex as categorical and age as a continuous fixed effect. With n=12 and 3 explanatory variables (4 model df, 8 residual df) the fractions are estimable but noisy; the step must report the distribution of the per-gene fractions (median and IQR per variable, violin plot, top genes by each variable) and explicitly note that residual variance will dominate and that the fractions are descriptive, not tests. A PCA of the same log-CPM matrix with PCs regressed on condition/sex/age gives an independent, low-dimensional read of which covariate structures the data globally — useful because a variance fraction computed per gene can be large in aggregate yet invisible in the leading PCs, or vice versa.\n\nPart 2 (T1S2) is the actual contrast. Because the variance partition step precedes it and may show sex and/or age carrying non-trivial variance, the DE model is specified in advance as DESeq2 with design ~ sex + age + condition, so the treated-vs-control contrast is adjusted for the two recorded covariates; a design ~ condition only model is run alongside purely to quantify how much the adjustment changes the result (gene overlap, LFC concordance), not to choose between them post hoc. n=6 vs 6 with 8 residual df supports this design but is close to the limit — the step must report dispersion estimates, independent-filtering behaviour and the number of DE genes at FDR<0.05, and must not silently drop the covariates. apeglm shrinkage gives usable effect sizes for ranking.\n\nT1S3 puts the DE result in biological context with hallmark and GO-BP over-representation plus a GSEA on the full shrunken-LFC ranking, using the staged human MSigDB GMT files (gene symbols match the counts matrix row names directly, so no ID mapping is required). Enrichment is interpretive only; with 12 samples it cannot carry the conclusion, and the step is instructed to say so if the DE list is small. The tracks are sequential because each depends on the previous artifact."
+  },
+  "usage": {
+    "inputTokens": 92687,
+    "outputTokens": 5118,
+    "cacheCreationInputTokens": 74515,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "variancePartition",
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "apeglm",
+          "ashr",
+          "pheatmap",
+          "EnhancedVolcano",
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db",
+          "lme4",
+          "sva",
+          "ggplot2",
+          "msigdbr",
+          "BiocParallel"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Adipose treated vs control: variance partition + DE",
+          "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment in human adipose tissue: raw Salmon gene-level integer counts (12,000 genes x 12 samples, gene symbols in column 1) with a 12-row metadata table carrying condition (6 treated vs 6 control, unpaired), sex (F/M) and age (years). The research question has two parts in a fixed order, so the plan follows that order.\n\nPart 1 (T1S1) asks how much expression variance condition, sex and age each explain. That is a variance-components question, not a testing question, and it is answered per gene with variancePartition::fitExtractVarPartModel on log2-CPM values (voom-weighted), fitting ~ condition + sex + age with condition and sex as categorical and age as a continuous fixed effect. With n=12 and 3 explanatory variables (4 model df, 8 residual df) the fractions are estimable but noisy; the step must report the distribution of the per-gene fractions (median and IQR per variable, violin plot, top genes by each variable) and explicitly note that residual variance will dominate and that the fractions are descriptive, not tests. A PCA of the same log-CPM matrix with PCs regressed on condition/sex/age gives an independent, low-dimensional read of which covariate structures the data globally — useful because a variance fraction computed per gene can be large in aggregate yet invisible in the leading PCs, or vice versa.\n\nPart 2 (T1S2) is the actual contrast. Because the variance partition step precedes it and may show sex and/or age carrying non-trivial variance, the DE model is specified in advance as DESeq2 with design ~ sex + age + condition, so the treated-vs-control contrast is adjusted for the two recorded covariates; a design ~ condition only model is run alongside purely to quantify how much the adjustment changes the result (gene overlap, LFC concordance), not to choose between them post hoc. n=6 vs 6 with 8 residual df supports this design but is close to the limit — the step must report dispersion estimates, independent-filtering behaviour and the number of DE genes at FDR<0.05, and must not silently drop the covariates. apeglm shrinkage gives usable effect sizes for ranking.\n\nT1S3 puts the DE result in biological context with hallmark and GO-BP over-representation plus a GSEA on the full shrunken-LFC ranking, using the staged human MSigDB GMT files (gene symbols match the counts matrix row names directly, so no ID mapping is required). Enrichment is interpretive only; with 12 samples it cannot carry the conclusion, and the step is instructed to say so if the DE list is small. The tracks are sequential because each depends on the previous artifact.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Variance partition: condition, sex, age",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "In the 12-sample adipose bulk RNA-seq dataset, what fraction of per-gene expression variance is attributable to condition (treated vs control), sex (F/M) and age (years), and how much is residual?",
+              "description": "Load /eval-four-models-without-variance-partition-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, first column gene symbol, raw integer Salmon counts) and /eval-four-models-without-variance-partition-n6-1/data/inputs/metadata/metadata.csv (12 rows: sample, condition, sex, age). Verify sample-name concordance between the two files and align column order. Filter low-count genes with edgeR::filterByExpr using group=condition, TMM-normalize, and compute voom log2-CPM with observation weights. Run variancePartition::fitExtractVarPartModel with formula ~ condition + sex + age (condition and sex as factors, age as a continuous fixed effect; no random effects are warranted at n=12) and the voom weights. Produce: (1) a per-gene variance-fraction table written to CSV; (2) median and IQR of the variance fraction for each of condition, sex, age and Residuals across genes; (3) a violin plot of the fractions; (4) the top 20 genes by variance explained for each of condition, sex and age. Separately, compute PCA on the voom log-CPM matrix and regress PC1-PC4 scores on condition, sex and age to report which covariate associates with global structure, plus a sample correlation heatmap. Write all artifacts (tables, plots) to the step output directory.",
+              "context": "This step answers the first half of the research question and must run before the differential-expression test. Design: 6 treated vs 6 control, unpaired, single batch, human adipose. Sex and age are recorded per sample and are candidate confounders; the point of this step is to quantify them descriptively rather than to test them.",
+              "question_note": "",
+              "acceptance_criteria": [
+                "Per-gene variance-fraction table covering condition, sex, age and Residuals is written for all genes passing filterByExpr, and the four fractions sum to 1 per gene (within numerical tolerance)",
+                "Median and IQR of variance explained is reported for each of condition, sex, age and Residuals",
+                "Violin plot of variance fractions and the top-20 gene lists per variable are saved",
+                "PCA on voom log-CPM with PC1-PC4 association tests against condition, sex and age is reported",
+                "Report explicitly states that with n=12 and 4 model degrees of freedom the fractions are noisy descriptive quantities, not hypothesis tests, and reports the residual fraction alongside every covariate fraction",
+                "Number of genes retained after filterByExpr is reported against the 12,000 input genes"
+              ],
+              "constraints": [
+                "Use the exact file paths given in the data context; do not download anything",
+                "Fit ~ condition + sex + age in one model — do not fit each variable separately, since the fractions must be mutually adjusted",
+                "Treat age as continuous and condition/sex as factors; state the factor reference levels used",
+                "Pass voom observation weights into fitExtractVarPartModel",
+                "Do not use the variance fractions to select or drop covariates for the downstream DE model — the DE design is fixed in advance in T1S2"
+              ],
+              "caveats": [
+                "With 12 samples the per-gene variance fractions have wide sampling error; a covariate with zero true effect will still show a non-zero median fraction",
+                "Sex-linked genes (XIST, RPS4Y1, DDX3Y, UTY and similar) will dominate the sex fraction and should be named rather than treated as a general sex effect",
+                "If sex is unbalanced across condition, condition and sex fractions are partly non-identifiable — report the sex-by-condition cross-tabulation",
+                "Do not interpret a large condition fraction in a handful of genes as evidence of a global treatment effect"
+              ],
+              "packages": [
+                "variancePartition",
+                "limma",
+                "edgeR",
+                "ggplot2",
+                "pheatmap",
+                "BiocParallel"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 treated vs control, sex+age adjusted",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated and control adipose samples when the model is adjusted for sex and age, and how does that result differ from an unadjusted condition-only model?",
+              "description": "Build a DESeqDataSet from the same raw integer counts and metadata. Pre-filter genes with low counts (retain genes with counts >= 10 in at least 6 samples). Primary model: design ~ sex + age + condition, extracting the treated-vs-control contrast on condition with control as the reference level; age entered as a continuous covariate (centered/scaled if the fitting warns about convergence). Report the full results table with Wald p-values, BH-adjusted FDR, base mean and both raw and apeglm-shrunken log2 fold changes, sorted by FDR. Count DE genes at FDR<0.05 and at FDR<0.05 with |shrunken LFC|>1. Produce an MA plot, a volcano plot labelled with the top genes, a heatmap of VST-transformed values for the top 50 DE genes annotated by condition/sex/age, dispersion-estimate and p-value-histogram diagnostic plots, and a PCA of VST values. Secondary model, for comparison only: design ~ condition. Report the overlap of the two DE gene sets, the Spearman correlation of their LFCs, and how many genes gain or lose significance under adjustment. Write the full results tables for both models to CSV.",
+              "context": "Second half of the research question. 6 treated vs 6 control, unpaired, single batch, human adipose, raw Salmon counts. The adjusted model is the primary result; the unadjusted model exists only to quantify the impact of covariate adjustment, since T1S1 will have shown how much variance sex and age carry.",
+              "acceptance_criteria": [
+                "Full DESeq2 results table for design ~ sex + age + condition written to CSV with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj and apeglm-shrunken LFC for every tested gene",
+                "Number of DE genes at FDR<0.05 reported, and separately at FDR<0.05 and |shrunken LFC|>1",
+                "Dispersion plot, p-value histogram, MA plot, volcano plot, VST PCA and top-50 heatmap all saved",
+                "Unadjusted ~ condition results reported alongside, with gene-set overlap and LFC concordance against the adjusted model",
+                "Contrast direction is stated explicitly (treated relative to control) and the reference level is confirmed",
+                "Independent-filtering threshold and the number of genes with padj=NA are reported"
+              ],
+              "constraints": [
+                "Primary result must come from design ~ sex + age + condition; do not substitute the unadjusted model as primary",
+                "Use the raw integer counts directly — do not feed DESeq2 normalized, CPM or log-transformed values",
+                "Use apeglm for LFC shrinkage on the condition coefficient; if apeglm cannot be applied to the coefficient, use ashr and say which was used",
+                "Report results for all tested genes, not just significant ones",
+                "Do not perform any batch correction — the design is single batch"
+              ],
+              "caveats": [
+                "6 vs 6 with two covariates leaves 8 residual degrees of freedom; power is modest and a null or near-null DE list is a legitimate outcome that must be reported as such rather than rescued by relaxing thresholds",
+                "If sex is strongly unbalanced across condition, the condition coefficient will be partly collinear with sex — check the model matrix rank and report the cross-tabulation",
+                "A flat or anti-conservative p-value histogram indicates a model problem and must be reported, not ignored",
+                "Do not report nominal p<0.05 gene counts as the headline if FDR<0.05 yields few or no genes; report both and label which is which"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment of the treated-vs-control signature",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which hallmark and GO biological-process gene sets are enriched among the genes changing between treated and control adipose samples?",
+              "description": "Take the adjusted (~ sex + age + condition) DESeq2 results from T1S2. Run (a) over-representation analysis on the FDR<0.05 gene set, split into up- and down-regulated, against the universe of all tested genes; and (b) GSEA on the full gene ranking by the apeglm-shrunken log2 fold change (or by the Wald statistic if shrinkage compresses the ranking), using the human hallmark gene sets and the human GO biological-process gene sets available as reference gene-set collections for Homo sapiens in this environment. Gene identifiers in the counts matrix are HGNC symbols and the reference collections are symbol-based, so join directly on symbol and report the match rate. Output enrichment tables with set size, overlap, NES, p-value and BH-adjusted q-value, plus dot plots for the top sets from each collection. Because GO-BP sets are hierarchically nested, collapse redundant parent/child hits before reporting a headline count.",
+              "context": "Interpretive layer on the primary contrast. Human adipose tissue, treated vs control. Enrichment cannot carry the conclusion at n=12 and is included to describe the direction of the signature, not to establish it.",
+              "acceptance_criteria": [
+                "ORA results for up- and down-regulated FDR<0.05 genes against the tested-gene universe, and GSEA results on the full ranking, are written to CSV with adjusted p-values",
+                "Both the hallmark and GO-BP human collections are used, and the symbol match rate against each is reported",
+                "Redundant nested GO-BP hits are collapsed before reporting a headline number of enriched sets",
+                "Dot plots for the leading sets from each collection are saved",
+                "If the FDR<0.05 DE list from T1S2 has fewer than 15 genes, the step reports ORA as uninformative and relies on the ranked GSEA, stating this explicitly",
+                "If a required human gene-set collection is not resolvable in the environment, the step reports the missing collection by name and proceeds with whichever human collections are available"
+              ],
+              "constraints": [
+                "Use human gene-set collections only — the data is Homo sapiens adipose tissue",
+                "Use the tested-gene universe from T1S2 as the ORA background, not all annotated genes",
+                "Report unadjusted and BH-adjusted p-values; do not present nominal enrichment p-values as significant results",
+                "Do not re-run differential expression — consume the T1S2 results table"
+              ],
+              "caveats": [
+                "Enrichment inherits every limitation of an n=6-per-group DE result; treat all sets as hypothesis-generating",
+                "The 12,000-gene input is already a subset of the transcriptome, which biases set-overlap statistics — report the universe size used",
+                "Hallmark and GO-BP overlap substantially; do not count the same biology twice across collections"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 0,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 1,
+    "report_completeness": 3
+  },
+  "rationale": "No plan was submitted; the planner stopped with a blocker message. That message correctly diagnoses the core problem the reference demands — six samples cannot support a gene-gene correlation network, WGCNA needs roughly 15-20 samples, and a DESeq2 3-vs-3 test plus enrichment is the defensible substitute — which earns partial credit on method fit and on the report narrative. But it never specifies the substitute: no QC, no count filter, no normalization statement, no design formula or contrast, no BH alpha or apeglm shrinkage, and no named prior network (STRING version, confidence cutoff) or pathway collection with a universe. The reference calls for stopping the network step and then delivering the prior-network-on-DE-genes result; the planner did the first half only."
+}

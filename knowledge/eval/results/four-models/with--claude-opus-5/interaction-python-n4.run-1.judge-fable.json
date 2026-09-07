@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly treats the question as a genotype:treatment interaction, fits ~ genotype + treatment + genotype:treatment in PyDESeq2 with explicit WT/vehicle reference levels, tests the interaction term and both within-genotype simple effects, and states the sign conventions and the n=4 power caveat. QC is a blind transform, PCA, distance heatmap and library sizes with a flag-only policy; the filter is minimal and tied to the smallest group size; size factors are computed inside the model with no pre-normalization; BH at a stated alpha with independent filtering and apeglm shrinkage on single coefficients is specified, with the non-coefficient contrast case acknowledged. Minor gaps: no explicit fallback if the installed PyDESeq2 cannot express the KO simple-effect contrast, and collection versions are resolved at run time rather than named. Enrichment was not required but is specified well (full ranked list, Wald stat, per-contrast runs, 15-500 window, universe stated), and the report enumerates versions, design, thresholds, tested/significant counts and design caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on every substantive point: events and censoring counted with median follow-up before the model, filterByExpr then DESeq2 size factors with a VST/log input to a rank-based UCell score, the number and identity of the 20 signature genes present reported, a Cox model with the standardized score as a continuous term plus condition, HR per SD with CI, a cox.zph Schoenfeld check with a stratified or time-varying remedy, and KM tertiles explicitly demoted to display. QC is design-aware (blind VST PCA, distance heatmap, library sizes, and it catches the 121-vs-120 column discrepancy), though the shallow-sample policy is only 'flag' rather than a stated action. The Cox formula and the reference level for condition are not written out explicitly, and the p-value is not specified as likelihood-ratio; multiple testing is correctly not needed for a single pre-specified test and enrichment is rightly omitted. Reporting includes versions, seed, thresholds, gene counts, signature provenance, and the single-cohort/event-count caveats."
+}

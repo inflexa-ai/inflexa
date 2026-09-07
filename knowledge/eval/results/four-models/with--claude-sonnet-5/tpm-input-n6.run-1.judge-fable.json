@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly rejects DESeq2/edgeR/voom for a TPM table and fits limma lmFit/eBayes with trend=TRUE on log2(TPM+1), with control as reference, a named lesional-control contrast, no batch term for a single batch, BH at 0.05 and any fold-change threshold via treat rather than post hoc; it does not, however, explicitly ask the core for the raw counts or quantification directories. QC is specific (top-500 PCA/MDS, distance heatmap, detected genes per sample, outliers flagged not dropped) and the filter (TPM>=1 in at least 6 samples) is tied to the smallest group size. Normalization is handled exactly as the reference requires: log2(TPM+1) only, no TMM, no size factors, no rounding to counts. Enrichment was not requested; the ORA that is added is well specified (tested-gene universe, MSigDB Hallmark 2026.1, 15-500 window) but the stated reason for rejecting preranked GSEA is spurious, and the PROGENy step is scope beyond the question. The report specification is complete on method, versions, design, thresholds, tested/DE counts and the TPM-only caveat."
+}

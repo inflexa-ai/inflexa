@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: nested repeated stratified 5-fold CV with glmnet elastic net, inner-CV lambda selection, all filtering and scaling fitted inside the outer training fold, out-of-fold AUC with bootstrap CI, Brier score and calibration, a permutation null as a leakage diagnostic, a full-data refit labeled as unvalidated with selection frequencies, and explicit caveats on external validation, PPV under artificial balance, and depth-condition confounding. QC is a blind VST PCA and distance heatmap colored by condition with a flag-only outlier policy and a stated depth threshold; filterByExpr with TMM and raw counts into voom is minimal and justified, and the design and contrast name control as reference. The weakest area is the interpretive DE step: BH at 0.05 with CIs is stated, but no fold-change shrinkage or in-test threshold (treat) is used, and the fold-change count is applied post hoc. Enrichment is correctly omitted and the report includes seeds, versions, thresholds, counts and limitations."
+}

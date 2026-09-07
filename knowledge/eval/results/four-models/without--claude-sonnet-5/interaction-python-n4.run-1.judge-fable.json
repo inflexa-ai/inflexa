@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly frames the question as the genotype:treatment interaction in a single PyDESeq2 GLM (~ genotype + treatment + genotype:treatment), tests the interaction coefficient with a Wald test, and follows with within-genotype simple effects, explicitly warning against the difference-of-significance fallacy; it stays entirely in Python. QC is present with PCA/clustering colored by both factors and an explicit outlier-reporting rule, and normalization is median-of-ratios inside the model with apeglm-style shrinkage and padj<0.05 stated. Weaknesses: the low-count filter is only loosely specified ('near-zero across all samples'), the reference levels (WT, vehicle) are implied rather than stated, and there is no concrete fallback (e.g., combined group factor) if the installed PyDESeq2 cannot express the interaction or contrast. Enrichment sets an explicit tested-gene universe and names collections but gives no version or gene-set size window, and the report does not commit to stating package versions."
+}

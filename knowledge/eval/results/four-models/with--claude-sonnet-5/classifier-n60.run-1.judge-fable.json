@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The classifier step matches the reference well: glmnet elastic net with nested CV, gene filtering and scaling refit inside each outer training fold, out-of-fold ROC/AUC with a CI, per-fold gene instability, seeds recorded. It falls short on class-stratified folds, a final refit on all 120 samples with coefficients and selection frequencies, a secondary metric (balanced accuracy or Brier), and the required caveats that the estimate is internal, needs an external cohort with the same library type and quantifier, and would be inflated by a depth or technical signal that tracks the classes; TMM factors are also computed on all samples before the folds. The large DE and enrichment block is not asked for by the question; it is competently specified (limma-voom, BH 0.05, camera on Hallmark with stated version, universe and size window) but the apeglm shrinkage borrowed from a parallel DESeq2 fit that the plan itself deems invalid at this n is incoherent, and the Wilcoxon control adds scope without value. QC is adequate with PCA, distances and library sizes but only flags rather than sets a policy for outliers or shallow samples."
+}

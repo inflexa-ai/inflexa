@@ -1,0 +1,769 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "interaction-python-n4",
+  "run": 1,
+  "startedAt": "2026-09-06T23:23:05.427Z",
+  "elapsedMs": 115288,
+  "outcome": "plan_submitted",
+  "planId": "pln-0f913075",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "12,000 genes is a pre-reduced matrix, not a whole transcriptome — do not describe it as transcriptome-wide",
+          "With 4 samples per cell, a single outlier can dominate a PC"
+        ],
+        "context": "Raw integer Salmon gene-level counts, human heart, 2x2 factorial. QC precedes the model because an outlier in one cell of four distorts the interaction term more than any main effect.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn",
+          "scikit-learn"
+        ],
+        "question": "Do the 16 heart samples separate by genotype (WT/KO) and treatment (vehicle/drug), and is any of the four cells of four replicates driven by an outlier or by library size?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Raw counts before a model: rule R-0033 prescribes blind vst, PCA on the top 500 variable genes and a sample-distance heatmap; template rendered in Python per the user constraint.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-python@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Python only — no R, no rpy2",
+          "n_top_genes = 500 for the PCA",
+          "Blind transform: the design must not inform the variance stabilization",
+          "Do not remove any sample at this step; flag only"
+        ],
+        "description": "Load counts.csv (12,000 genes x 16 samples, gene symbol first column) and metadata.csv (16 rows: sample, genotype, treatment, condition). Verify sample IDs match between the two files and that the design is the stated balanced 2x2 with 4 replicates per cell. Report per-sample library sizes and detected-gene counts. Apply a blind variance-stabilizing transform (PyDESeq2 vst, or log2(normalized counts + 1) with median-of-ratios size factors if vst is unavailable — state which was used). PCA on the 500 most variable genes, coloured separately by genotype, by treatment and by the four-level condition, with PC1/PC2 variance explained. Euclidean sample-distance heatmap. Flag any sample that does not group with its cell.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv and metadata.csv are confirmed to match; the 4-per-cell balance of genotype x treatment is verified and reported",
+          "Library size and detected-gene count reported per sample for all 16 samples",
+          "PCA on the top 500 variable genes of the blind-transformed matrix, plotted coloured by genotype, treatment and condition, with percent variance on PC1 and PC2",
+          "Sample-to-sample distance heatmap produced",
+          "Any sample not clustering with its genotype x treatment cell is named explicitly, or the report states that none was found; no sample is dropped without stating the reason"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "PyDESeq2 interaction model and Wald tests",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The counts are an already gene-summarized Salmon matrix, so no tximport average-transcript-length offsets are available; state this rather than implying the length correction was applied. A gene whose apparent change comes from a shift in isoform usage cannot be distinguished here.",
+          "Alphabetical level ordering would make KO and drug the references — an inverted sign convention produces no error, only wrong direction calls",
+          "A significant simple effect in one genotype and a non-significant one in the other is NOT evidence of an interaction; only the interaction contrast tests that"
+        ],
+        "context": "16 samples, 4 per cell. The interaction coefficient is a difference of differences and carries roughly twice the standard error of a simple effect, so power at n=4 per cell is low.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scipy"
+        ],
+        "question": "Which genes show a drug effect (drug vs vehicle) that differs between KO and WT — i.e. a non-zero genotype:treatment interaction — and what are the drug effects within WT and within KO separately?",
+        "grounding": {
+          "claims": [
+            "R-0013@2639",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0060@0ff9",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0061@bcab",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "Interaction question on raw counts with 4 replicates per cell: R-0013 prescribes the two factors plus their interaction with a Wald test on the interaction coefficient and the simple effects reported after; R-0018's tximport offsets cannot be applied because the input is already gene-summarized, and the step is required to say so.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-pydeseq2-interaction@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Python only — PyDESeq2, no R, no rpy2",
+          "Design formula must include both main effects and the genotype:treatment interaction",
+          "Set reference levels explicitly: genotype WT, treatment vehicle",
+          "Do not pre-normalize or log-transform the counts before the model",
+          "alpha = 0.05 passed to the results call so the independent filter is optimized for the reporting cutoff",
+          "Select DE genes by adjusted p-value, never by raw p-value or fold change alone",
+          "Keep Cook's-distance outlier flagging at its default behaviour (p-value set to NA in cells with fewer than 7 replicates)"
+        ],
+        "description": "Pre-filter minimally: keep a gene with at least 10 counts in at least 4 samples (the smallest group size), and report how many of the 12,000 genes remain. Build a PyDESeq2 DeseqDataSet from the raw counts with design ~ genotype + treatment + genotype:treatment, setting genotype reference = WT and treatment reference = vehicle explicitly (do not rely on alphabetical ordering — alphabetically KO precedes WT and drug precedes vehicle, which would silently invert every sign). Let PyDESeq2 compute median-of-ratios size factors inside the model; do not pre-normalize, scale or transform the counts. Fit dispersions and run Wald tests to produce three result tables, each labelled with its contrast: (1) drug vs vehicle within WT, (2) drug vs vehicle within KO, (3) the genotype:treatment interaction — the difference of those two drug effects. Use alpha = 0.05 with independent filtering on, and BH adjustment computed within each contrast. Save all three tables with log2FoldChange, lfcSE, stat, pvalue, padj, baseMean. Report per contrast: number of genes tested, number with padj < 0.05, and — separately — the number of genes whose p-value is NA because Cook's-distance outlier flagging set it to NA versus the number filtered out by independent filtering.",
+        "acceptance_criteria": [
+          "Reference levels reported as genotype=WT, treatment=vehicle, and the sign convention of each contrast stated in words (positive = higher in drug relative to vehicle; positive interaction = drug effect larger in KO than in WT)",
+          "Pre-filter applied at min 10 counts in at least 4 samples, with the number of genes retained out of 12,000 reported",
+          "Size factors computed inside the model by median-of-ratios; no externally normalized or transformed matrix is fed to the model",
+          "Three result tables written, each carrying its contrast label: drug_vs_vehicle_in_WT, drug_vs_vehicle_in_KO, interaction_genotypeKO_treatmentdrug",
+          "BH adjustment applied within each contrast at alpha = 0.05 with independent filtering enabled; the report states FDR holds per contrast, not across the three",
+          "Counts of NA p-values reported separately for Cook's outlier flagging and for independent filtering",
+          "The report states explicitly that the interaction test at 4 replicates per cell is low-powered, and that few or zero significant interaction genes is not evidence that the drug acts identically in KO and WT"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "LFC shrinkage, diagnostics and interaction report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A shrunken fold change does not change the test — do not recompute significance from it",
+          "Interaction plots of a handful of top genes are illustrative; they are selected on the same data that tested them, so they cannot serve as independent confirmation"
+        ],
+        "context": "This step turns three coefficient tables into the answer to the research question. The interaction coefficient alone does not say whether the drug does anything in either genotype; a simple effect alone does not say whether the genotypes differ.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Ranked by shrunken effect size, which genes best support a genotype-dependent drug response, and do the fit diagnostics justify trusting the adjusted p-values?",
+        "grounding": {
+          "claims": [
+            "R-0009@f54e",
+            "R-0040@8061",
+            "R-0083@12de",
+            "R-0092@bb58",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "R-0040 defaults to ashr for a multi-level design, but ashr is an R package and the user requires Python; PyDESeq2 offers apeglm, which R-0040 lists as permitted and which applies exactly here because the interaction term IS a single model coefficient. Choice stated: apeglm, with the estimator named in the report.",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Python only",
+          "Report simple effect in WT, simple effect in KO and the interaction contrast side by side, with the reference level of each factor named beside the table",
+          "Never rank genes by the unshrunken log2 fold change alone",
+          "Do not present the union of contrasts as one gene list"
+        ],
+        "description": "Shrink the log2 fold changes of each of the three contrasts with PyDESeq2 lfc_shrink (apeglm on the interaction coefficient, which is a single model coefficient; where a contrast is not a single coefficient, state that and use the available shrinkage estimator, naming it). Assemble the interaction report: one merged table with, per gene, the drug effect in WT, the drug effect in KO, and the interaction contrast side by side — each with unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue and padj. Rank genes and draw plots on the shrunken value; keep the p-values from the unshrunken fit. Produce fit diagnostics: an MA plot per contrast with significant genes marked, the dispersion-estimate plot (gene-wise, fitted trend, final shrunken), and a histogram of the unadjusted p-values per contrast, with its shape described (flat, right-skewed, or irregular) before the adjusted p-values are trusted. Add a per-gene interaction plot (mean normalized expression across the four cells, with replicate points) for the top interaction genes. Write a reproducibility record: package versions, random seed, and the design and thresholds used.",
+        "acceptance_criteria": [
+          "Shrunken and unshrunken log2 fold changes plus lfcSE present in the merged table for all three contrasts; the shrinkage estimator is named in the table header or legend",
+          "Gene ranking and all effect-size plots use the shrunken value; p-values come from the unshrunken fit",
+          "MA plot per contrast and one dispersion plot produced, placed before the gene tables",
+          "Unadjusted p-value histogram per contrast produced and its shape described in words; an irregular shape is called out as casting doubt on the BH-adjusted values",
+          "Per-gene four-cell expression plots for the top interaction genes, with the 4 replicate points per cell visible",
+          "Reproducibility record with package versions, seed, design formula, reference levels and thresholds",
+          "The report states the number of significant interaction genes at padj < 0.05 and, if that number is small, says plainly that the design has 4 replicates per cell and the interaction test is underpowered — no claim of equivalence from a null result"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA per contrast",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The tested universe is the ~12,000-gene input matrix after low-count filtering, not a full transcriptome; enrichment results are conditional on that universe and this must be stated",
+          "Enrichment results depend on the method — present a set as a hypothesis for follow-up, not as a proven finding",
+          "If a collection is absent from the reference store at run time, report which one and continue with the collections that are present rather than substituting a different species' sets — mouse or rat symbol sets against human data fail silently as an empty result",
+          "GSEA on the interaction ranking asks which pathways show a genotype-dependent drug response; it does not say the pathway is active in either genotype on its own"
+        ],
+        "context": "Ranked GSEA on the full tested list, not an over-representation test: with 4 replicates per cell the interaction gene list is likely too short for a hypergeometric test to have power, and a ranked method finds coordinated small changes that no single gene shows.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which pathways show coordinated change in the drug effect specific to the KO (the interaction ranking), and how do those compare with the pathways moved by the drug within WT and within KO separately?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0045@f652",
+            "R-0099@0a77",
+            "R-0108@409f",
+            "R-0104@34a4",
+            "R-0048@500d",
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0103@93aa",
+            "R-0051@01ca",
+            "R-0105@c4a8",
+            "R-0055@107a"
+          ],
+          "reason": "Preranked GSEA on the full tested list per R-0107, once per contrast per R-0104, Hallmark then Reactome and WikiPathways per R-0048/R-0098/R-0165; disputed rule R-0108 resolved in favour of the Wald statistic and stated. fgsea replaced by gseapy because the user requires Python.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-gseapy-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Python only — gseapy prerank, no R fgsea, no rpy2",
+          "Reference data needed: human hallmark gene sets, a human-filtered Reactome pathway collection, and the human WikiPathways collection, all as gene-symbol gene sets from the environment's reference store; resolve them at run time and report the release of each. The Reactome file covers all species in one file and must be filtered to Homo sapiens via its pathway index before use.",
+          "Set a random seed for the permutation test and report it",
+          "The universe is the genes tested by the differential expression step, not the genome and not the full 12,000-row input"
+        ],
+        "description": "Run gseapy preranked GSEA once per contrast — drug vs vehicle in WT, drug vs vehicle in KO, and the genotype:treatment interaction — never pooling the contrasts. Rank every tested gene by the DESeq2 Wald statistic (the stat column); this is the stated choice for the disputed ranking metric, taken because it scales the effect by its uncertainty and does not saturate into ties the way a signed p-value does. Do not threshold the list before ranking. Gene identifiers are HGNC symbols in both the counts matrix and the staged human GMT collections, so match on symbols directly and report the share of tested genes that match nothing in each collection. Test against, in order: the human MSigDB Hallmark collection, the Reactome pathway collection filtered to Homo sapiens, and the human WikiPathways collection — each as a separate run with its own BH adjustment, never merged into one set list. Restrict each collection to sets with 15 to 500 members after intersecting with the tested genes. Collapse redundant significant sets that share most of their leading-edge genes and report one representative per group, keeping the full table as a supplement. For each significant set report NES, adjusted p-value, set size and its leading-edge genes with their Wald statistics.",
+        "acceptance_criteria": [
+          "Three separate GSEA runs, one per contrast, each labelled; results are never pooled across contrasts",
+          "Ranking metric is the Wald statistic and this choice is stated explicitly in the output alongside the alternatives not chosen",
+          "Full ranked list of every tested gene used as input — no significance or fold-change cutoff applied before ranking",
+          "Gene set size window 15-500 applied after intersection with the tested genes; the window is reported",
+          "Each collection tested separately with its own BH adjustment; the release/version of each collection is reported beside its results",
+          "Share of tested genes not matching any set in each collection is reported",
+          "Redundant significant sets collapsed to representatives, with the full table retained as a supplement",
+          "Leading-edge genes listed per significant set, with each gene's Wald statistic",
+          "If the ranked test is supplemented by an over-representation test, the report states the size of the significant gene list and, when it is under ~50 genes, does not draw conclusions from the ORA"
+        ]
+      }
+    ],
+    "title": "KO vs WT drug response: 2x2 interaction DE + GSEA",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question — does the drug act differently in the knockout than in the wild type — is a genotype x treatment interaction on a balanced 2x2 design: 16 samples in /eval-four-models-with-interaction-python-n4-1/data/inputs/metadata/metadata.csv (genotype WT/KO x treatment vehicle/drug, 4 replicates per cell) against a 12,000 x 16 raw Salmon gene-level count matrix (gene symbol in the first column of counts.csv; the file is 12000 x 17 because the symbol column counts as one). Human heart tissue.\n\nThe analysis runs in Python only, per the user constraint. PyDESeq2 0.5.4 is installed and implements the DESeq2 negative binomial model, median-of-ratios size factors, the Wald test, independent filtering, Cook's-distance outlier handling and apeglm shrinkage — so no R is needed anywhere.\n\nT1S1 does sample-structure QC before any test: blind variance-stabilizing-style transform, PCA on the 500 most variable genes coloured by genotype, treatment and the four-level condition, a sample-distance heatmap and library sizes. With four cells of four this is the only chance to see an outlier or a cell that does not separate before the model runs. T1S2 fits ~ genotype + treatment + genotype:treatment with WT and vehicle set explicitly as reference levels, and extracts three result tables per gene: the drug effect in WT (the treatment main effect at the reference genotype), the drug effect in KO (main effect + interaction), and the interaction contrast itself — the direct answer to the question. The interaction coefficient is a difference of differences; with n=4 per cell its standard error is roughly twice that of a simple effect, so the step is required to state the low power explicitly and to report the count of genes with NA p-values from Cook's outlier flagging separately from those removed by independent filtering. T1S3 shrinks the log2 fold changes and assembles the interaction report with the two simple effects and the interaction side by side, MA and dispersion diagnostics, and the p-value histogram. T2S1 runs preranked GSEA (gseapy) on the Wald statistic, once per contrast, against the human Hallmark, Reactome and WikiPathways collections staged in the reference store — never pooled across contrasts, because a set up in WT and down in KO would cancel.\n\nCaveat carried throughout: 12,000 genes is a pre-reduced matrix, not a full transcriptome, so the tested universe is what this file contains and enrichment is interpreted against it. The counts arrive as an already-summarized gene-level matrix, so no tximport length offsets are available; the step must say so rather than imply the length correction was applied."
+  },
+  "usage": {
+    "inputTokens": 477446,
+    "outputTokens": 9107,
+    "cacheCreationInputTokens": 196235,
+    "cacheReadInputTokens": 281151,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 4,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "preferred_language": "python"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "decoupler",
+          "gseapy",
+          "statsmodels",
+          "formulaic",
+          "anndata",
+          "scanpy"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb",
+        "limit": 30
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome",
+        "limit": 10
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 4,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "VST-like blind transform, PCA on top 500 variable genes, sample distance heatmap, library sizes",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Minimal pre-filter: at least 10 counts in at least 4 samples",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 4
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors inside the model",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ genotype + treatment + genotype:treatment with explicit reference levels WT and vehicle",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "genotype=WT, treatment=vehicle"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "contrast_plan",
+                "value": "one_named_contrast_per_comparison"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "PyDESeq2 Wald test on the genotype:treatment interaction coefficient plus the two simple treatment effects",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "interaction"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage of the coefficient (PyDESeq2 lfc_shrink)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, within contrast",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "adjustment_scope",
+                "value": "within_contrast"
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "gseapy preranked GSEA on the Wald statistic against MSigDB Hallmark human, then Reactome and WikiPathways human",
+            "package": "gseapy",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "enrichment_per_contrast",
+                "value": true
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Interaction report: simple effects and interaction contrast side by side, MA and dispersion plots, reproducibility record",
+            "package": "matplotlib",
+            "parameters": [
+              {
+                "name": "interaction_report",
+                "value": "simple_effect_reference, simple_effect_other, interaction_contrast"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "KO vs WT drug response: 2x2 interaction DE + GSEA",
+          "analytical_narrative": "The question — does the drug act differently in the knockout than in the wild type — is a genotype x treatment interaction on a balanced 2x2 design: 16 samples in /eval-four-models-with-interaction-python-n4-1/data/inputs/metadata/metadata.csv (genotype WT/KO x treatment vehicle/drug, 4 replicates per cell) against a 12,000 x 16 raw Salmon gene-level count matrix (gene symbol in the first column of counts.csv; the file is 12000 x 17 because the symbol column counts as one). Human heart tissue.\n\nThe analysis runs in Python only, per the user constraint. PyDESeq2 0.5.4 is installed and implements the DESeq2 negative binomial model, median-of-ratios size factors, the Wald test, independent filtering, Cook's-distance outlier handling and apeglm shrinkage — so no R is needed anywhere.\n\nT1S1 does sample-structure QC before any test: blind variance-stabilizing-style transform, PCA on the 500 most variable genes coloured by genotype, treatment and the four-level condition, a sample-distance heatmap and library sizes. With four cells of four this is the only chance to see an outlier or a cell that does not separate before the model runs. T1S2 fits ~ genotype + treatment + genotype:treatment with WT and vehicle set explicitly as reference levels, and extracts three result tables per gene: the drug effect in WT (the treatment main effect at the reference genotype), the drug effect in KO (main effect + interaction), and the interaction contrast itself — the direct answer to the question. The interaction coefficient is a difference of differences; with n=4 per cell its standard error is roughly twice that of a simple effect, so the step is required to state the low power explicitly and to report the count of genes with NA p-values from Cook's outlier flagging separately from those removed by independent filtering. T1S3 shrinks the log2 fold changes and assembles the interaction report with the two simple effects and the interaction side by side, MA and dispersion diagnostics, and the p-value histogram. T2S1 runs preranked GSEA (gseapy) on the Wald statistic, once per contrast, against the human Hallmark, Reactome and WikiPathways collections staged in the reference store — never pooled across contrasts, because a set up in WT and down in KO would cancel.\n\nCaveat carried throughout: 12,000 genes is a pre-reduced matrix, not a full transcriptome, so the tested universe is what this file contains and enrichment is interpreted against it. The counts arrive as an already-summarized gene-level matrix, so no tximport length offsets are available; the step must say so rather than imply the length correction was applied.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 16 heart samples separate by genotype (WT/KO) and treatment (vehicle/drug), and is any of the four cells of four replicates driven by an outlier or by library size?",
+              "description": "Load counts.csv (12,000 genes x 16 samples, gene symbol first column) and metadata.csv (16 rows: sample, genotype, treatment, condition). Verify sample IDs match between the two files and that the design is the stated balanced 2x2 with 4 replicates per cell. Report per-sample library sizes and detected-gene counts. Apply a blind variance-stabilizing transform (PyDESeq2 vst, or log2(normalized counts + 1) with median-of-ratios size factors if vst is unavailable — state which was used). PCA on the 500 most variable genes, coloured separately by genotype, by treatment and by the four-level condition, with PC1/PC2 variance explained. Euclidean sample-distance heatmap. Flag any sample that does not group with its cell.",
+              "context": "Raw integer Salmon gene-level counts, human heart, 2x2 factorial. QC precedes the model because an outlier in one cell of four distorts the interaction term more than any main effect.",
+              "question_note": null,
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv and metadata.csv are confirmed to match; the 4-per-cell balance of genotype x treatment is verified and reported",
+                "Library size and detected-gene count reported per sample for all 16 samples",
+                "PCA on the top 500 variable genes of the blind-transformed matrix, plotted coloured by genotype, treatment and condition, with percent variance on PC1 and PC2",
+                "Sample-to-sample distance heatmap produced",
+                "Any sample not clustering with its genotype x treatment cell is named explicitly, or the report states that none was found; no sample is dropped without stating the reason"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn",
+                "scikit-learn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Python only — no R, no rpy2",
+                "n_top_genes = 500 for the PCA",
+                "Blind transform: the design must not inform the variance stabilization",
+                "Do not remove any sample at this step; flag only"
+              ],
+              "caveats": [
+                "12,000 genes is a pre-reduced matrix, not a whole transcriptome — do not describe it as transcriptome-wide",
+                "With 4 samples per cell, a single outlier can dominate a PC"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-python@1.0.0",
+                "reason": "Raw counts before a model: rule R-0033 prescribes blind vst, PCA on the top 500 variable genes and a sample-distance heatmap; template rendered in Python per the user constraint."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "PyDESeq2 interaction model and Wald tests",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes show a drug effect (drug vs vehicle) that differs between KO and WT — i.e. a non-zero genotype:treatment interaction — and what are the drug effects within WT and within KO separately?",
+              "description": "Pre-filter minimally: keep a gene with at least 10 counts in at least 4 samples (the smallest group size), and report how many of the 12,000 genes remain. Build a PyDESeq2 DeseqDataSet from the raw counts with design ~ genotype + treatment + genotype:treatment, setting genotype reference = WT and treatment reference = vehicle explicitly (do not rely on alphabetical ordering — alphabetically KO precedes WT and drug precedes vehicle, which would silently invert every sign). Let PyDESeq2 compute median-of-ratios size factors inside the model; do not pre-normalize, scale or transform the counts. Fit dispersions and run Wald tests to produce three result tables, each labelled with its contrast: (1) drug vs vehicle within WT, (2) drug vs vehicle within KO, (3) the genotype:treatment interaction — the difference of those two drug effects. Use alpha = 0.05 with independent filtering on, and BH adjustment computed within each contrast. Save all three tables with log2FoldChange, lfcSE, stat, pvalue, padj, baseMean. Report per contrast: number of genes tested, number with padj < 0.05, and — separately — the number of genes whose p-value is NA because Cook's-distance outlier flagging set it to NA versus the number filtered out by independent filtering.",
+              "context": "16 samples, 4 per cell. The interaction coefficient is a difference of differences and carries roughly twice the standard error of a simple effect, so power at n=4 per cell is low.",
+              "acceptance_criteria": [
+                "Reference levels reported as genotype=WT, treatment=vehicle, and the sign convention of each contrast stated in words (positive = higher in drug relative to vehicle; positive interaction = drug effect larger in KO than in WT)",
+                "Pre-filter applied at min 10 counts in at least 4 samples, with the number of genes retained out of 12,000 reported",
+                "Size factors computed inside the model by median-of-ratios; no externally normalized or transformed matrix is fed to the model",
+                "Three result tables written, each carrying its contrast label: drug_vs_vehicle_in_WT, drug_vs_vehicle_in_KO, interaction_genotypeKO_treatmentdrug",
+                "BH adjustment applied within each contrast at alpha = 0.05 with independent filtering enabled; the report states FDR holds per contrast, not across the three",
+                "Counts of NA p-values reported separately for Cook's outlier flagging and for independent filtering",
+                "The report states explicitly that the interaction test at 4 replicates per cell is low-powered, and that few or zero significant interaction genes is not evidence that the drug acts identically in KO and WT"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scipy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Python only — PyDESeq2, no R, no rpy2",
+                "Design formula must include both main effects and the genotype:treatment interaction",
+                "Set reference levels explicitly: genotype WT, treatment vehicle",
+                "Do not pre-normalize or log-transform the counts before the model",
+                "alpha = 0.05 passed to the results call so the independent filter is optimized for the reporting cutoff",
+                "Select DE genes by adjusted p-value, never by raw p-value or fold change alone",
+                "Keep Cook's-distance outlier flagging at its default behaviour (p-value set to NA in cells with fewer than 7 replicates)"
+              ],
+              "caveats": [
+                "The counts are an already gene-summarized Salmon matrix, so no tximport average-transcript-length offsets are available; state this rather than implying the length correction was applied. A gene whose apparent change comes from a shift in isoform usage cannot be distinguished here.",
+                "Alphabetical level ordering would make KO and drug the references — an inverted sign convention produces no error, only wrong direction calls",
+                "A significant simple effect in one genotype and a non-significant one in the other is NOT evidence of an interaction; only the interaction contrast tests that"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0013@2639",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0060@0ff9",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0061@bcab",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-pydeseq2-interaction@1.0.0",
+                "reason": "Interaction question on raw counts with 4 replicates per cell: R-0013 prescribes the two factors plus their interaction with a Wald test on the interaction coefficient and the simple effects reported after; R-0018's tximport offsets cannot be applied because the input is already gene-summarized, and the step is required to say so."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "LFC shrinkage, diagnostics and interaction report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "Ranked by shrunken effect size, which genes best support a genotype-dependent drug response, and do the fit diagnostics justify trusting the adjusted p-values?",
+              "description": "Shrink the log2 fold changes of each of the three contrasts with PyDESeq2 lfc_shrink (apeglm on the interaction coefficient, which is a single model coefficient; where a contrast is not a single coefficient, state that and use the available shrinkage estimator, naming it). Assemble the interaction report: one merged table with, per gene, the drug effect in WT, the drug effect in KO, and the interaction contrast side by side — each with unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue and padj. Rank genes and draw plots on the shrunken value; keep the p-values from the unshrunken fit. Produce fit diagnostics: an MA plot per contrast with significant genes marked, the dispersion-estimate plot (gene-wise, fitted trend, final shrunken), and a histogram of the unadjusted p-values per contrast, with its shape described (flat, right-skewed, or irregular) before the adjusted p-values are trusted. Add a per-gene interaction plot (mean normalized expression across the four cells, with replicate points) for the top interaction genes. Write a reproducibility record: package versions, random seed, and the design and thresholds used.",
+              "context": "This step turns three coefficient tables into the answer to the research question. The interaction coefficient alone does not say whether the drug does anything in either genotype; a simple effect alone does not say whether the genotypes differ.",
+              "acceptance_criteria": [
+                "Shrunken and unshrunken log2 fold changes plus lfcSE present in the merged table for all three contrasts; the shrinkage estimator is named in the table header or legend",
+                "Gene ranking and all effect-size plots use the shrunken value; p-values come from the unshrunken fit",
+                "MA plot per contrast and one dispersion plot produced, placed before the gene tables",
+                "Unadjusted p-value histogram per contrast produced and its shape described in words; an irregular shape is called out as casting doubt on the BH-adjusted values",
+                "Per-gene four-cell expression plots for the top interaction genes, with the 4 replicate points per cell visible",
+                "Reproducibility record with package versions, seed, design formula, reference levels and thresholds",
+                "The report states the number of significant interaction genes at padj < 0.05 and, if that number is small, says plainly that the design has 4 replicates per cell and the interaction test is underpowered — no claim of equivalence from a null result"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Python only",
+                "Report simple effect in WT, simple effect in KO and the interaction contrast side by side, with the reference level of each factor named beside the table",
+                "Never rank genes by the unshrunken log2 fold change alone",
+                "Do not present the union of contrasts as one gene list"
+              ],
+              "caveats": [
+                "A shrunken fold change does not change the test — do not recompute significance from it",
+                "Interaction plots of a handful of top genes are illustrative; they are selected on the same data that tested them, so they cannot serve as independent confirmation"
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0009@f54e",
+                  "R-0040@8061",
+                  "R-0083@12de",
+                  "R-0092@bb58",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "R-0040 defaults to ashr for a multi-level design, but ashr is an R package and the user requires Python; PyDESeq2 offers apeglm, which R-0040 lists as permitted and which applies exactly here because the interaction term IS a single model coefficient. Choice stated: apeglm, with the estimator named in the report."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA per contrast",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which pathways show coordinated change in the drug effect specific to the KO (the interaction ranking), and how do those compare with the pathways moved by the drug within WT and within KO separately?",
+              "description": "Run gseapy preranked GSEA once per contrast — drug vs vehicle in WT, drug vs vehicle in KO, and the genotype:treatment interaction — never pooling the contrasts. Rank every tested gene by the DESeq2 Wald statistic (the stat column); this is the stated choice for the disputed ranking metric, taken because it scales the effect by its uncertainty and does not saturate into ties the way a signed p-value does. Do not threshold the list before ranking. Gene identifiers are HGNC symbols in both the counts matrix and the staged human GMT collections, so match on symbols directly and report the share of tested genes that match nothing in each collection. Test against, in order: the human MSigDB Hallmark collection, the Reactome pathway collection filtered to Homo sapiens, and the human WikiPathways collection — each as a separate run with its own BH adjustment, never merged into one set list. Restrict each collection to sets with 15 to 500 members after intersecting with the tested genes. Collapse redundant significant sets that share most of their leading-edge genes and report one representative per group, keeping the full table as a supplement. For each significant set report NES, adjusted p-value, set size and its leading-edge genes with their Wald statistics.",
+              "context": "Ranked GSEA on the full tested list, not an over-representation test: with 4 replicates per cell the interaction gene list is likely too short for a hypergeometric test to have power, and a ranked method finds coordinated small changes that no single gene shows.",
+              "acceptance_criteria": [
+                "Three separate GSEA runs, one per contrast, each labelled; results are never pooled across contrasts",
+                "Ranking metric is the Wald statistic and this choice is stated explicitly in the output alongside the alternatives not chosen",
+                "Full ranked list of every tested gene used as input — no significance or fold-change cutoff applied before ranking",
+                "Gene set size window 15-500 applied after intersection with the tested genes; the window is reported",
+                "Each collection tested separately with its own BH adjustment; the release/version of each collection is reported beside its results",
+                "Share of tested genes not matching any set in each collection is reported",
+                "Redundant significant sets collapsed to representatives, with the full table retained as a supplement",
+                "Leading-edge genes listed per significant set, with each gene's Wald statistic",
+                "If the ranked test is supplemented by an over-representation test, the report states the size of the significant gene list and, when it is under ~50 genes, does not draw conclusions from the ORA"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "constraints": [
+                "Python only — gseapy prerank, no R fgsea, no rpy2",
+                "Reference data needed: human hallmark gene sets, a human-filtered Reactome pathway collection, and the human WikiPathways collection, all as gene-symbol gene sets from the environment's reference store; resolve them at run time and report the release of each. The Reactome file covers all species in one file and must be filtered to Homo sapiens via its pathway index before use.",
+                "Set a random seed for the permutation test and report it",
+                "The universe is the genes tested by the differential expression step, not the genome and not the full 12,000-row input"
+              ],
+              "caveats": [
+                "The tested universe is the ~12,000-gene input matrix after low-count filtering, not a full transcriptome; enrichment results are conditional on that universe and this must be stated",
+                "Enrichment results depend on the method — present a set as a hypothesis for follow-up, not as a proven finding",
+                "If a collection is absent from the reference store at run time, report which one and continue with the collections that are present rather than substituting a different species' sets — mouse or rat symbol sets against human data fail silently as an empty result",
+                "GSEA on the interaction ranking asks which pathways show a genotype-dependent drug response; it does not say the pathway is active in either genotype on its own"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0045@f652",
+                  "R-0099@0a77",
+                  "R-0108@409f",
+                  "R-0104@34a4",
+                  "R-0048@500d",
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0103@93aa",
+                  "R-0051@01ca",
+                  "R-0105@c4a8",
+                  "R-0055@107a"
+                ],
+                "template": "tpl-gseapy-preranked@1.0.0",
+                "reason": "Preranked GSEA on the full tested list per R-0107, once per contrast per R-0104, Hallmark then Reactome and WikiPathways per R-0048/R-0098/R-0165; disputed rule R-0108 resolved in favour of the Wald statistic and stated. fgsea replaced by gseapy because the user requires Python."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

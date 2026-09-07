@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 5,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly starts from the existing DESeq2 table without refitting, ranks the full list (no padj pre-cutoff) with a stated signed -log10(p) metric and Wald-stat fallback, runs gseapy prerank against a locally staged, version-named Hallmark GMT, and reports NES, p, FDR, and leading edge with a missing-value and duplicate-symbol rule. It falls short of the reference by leaving the set size window as 'default or documented' rather than stating 15-500, and by omitting the permutation count, a fixed seed, and a tie rule, all of which affect reproducibility of prerank results. The shallow sample_01 is acknowledged only as already absorbed into the DE stats, with no check of the upstream QC decision, and the report lacks package versions and run parameters; the count-level criteria (filter, normalization, formula) are largely moot here and scored on whether the plan states the right non-action, which it mostly does."
+}

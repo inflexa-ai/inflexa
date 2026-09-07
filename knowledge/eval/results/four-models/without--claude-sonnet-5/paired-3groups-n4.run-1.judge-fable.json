@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 1,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly specifies a single DESeq2 fit with ~subject + condition, an LRT against ~subject for the any-condition effect, and the three pairwise Wald contrasts from the same model, matching the reference design. QC is reasonable (PCA by subject and condition, library sizes, correlation heatmap) but states no policy for handling an outlier or shallow sample. No low count filter is mentioned anywhere, and no fold change shrinkage (ashr or otherwise) is specified for the reported effects, though BH at 0.05 is stated. Enrichment is not warranted here and the plan runs it anyway, with no universe, version, ranking metric, or size window, and only an ambiguous ORA-or-GSEA choice; the report elements omit package versions."
+}

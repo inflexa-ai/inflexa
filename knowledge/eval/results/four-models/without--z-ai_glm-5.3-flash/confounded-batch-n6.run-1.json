@@ -1,0 +1,417 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "confounded-batch-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T05:49:46.741Z",
+  "elapsedMs": 571720,
+  "outcome": "plan_submitted",
+  "planId": "pln-734354d0",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Normalization and confounding diagnostics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do NOT run ComBat, removeBatchEffect-based correction, RUV, or SVA and then test on corrected values: with one batch per condition there are zero residual degrees of freedom to identify batch, so any 'corrected' result is an artifact",
+          "removeBatchEffect(..., design=~condition) would remove exactly the contrast of interest; do not do it even for heatmaps",
+          "The sample count is 12 — do not fit anything beyond a two-group comparison"
+        ],
+        "context": "Files: /eval-four-models-without-confounded-batch-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbols in first column, raw salmon counts) and /eval-four-models-without-confounded-batch-n6-1/data/inputs/metadata/metadata.csv (12 rows: condition, batch). DESeq2 1.52.0, apeglm, pheatmap, EnhancedVolcano, ggplot2 are installed in the R track.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "What is the global expression structure of the 12 lung samples, and to what extent do the treated-vs-control (6 vs 6) differences coincide with the B2-vs-B1 batch differences?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do NOT attempt to fit or estimate batch: design ~ condition + batch is rank-deficient in this data (batch == condition) and DESeq2 will refuse it",
+          "Do NOT apply any batch-correction method (ComBat, SVA/RUV, removeBatchEffect) as a preprocessing fix and then test corrected values — with batch perfectly confounded with condition, batch cannot be estimated and such a correction would erase or invent the signal of interest",
+          "Batch-correction-free visualization only: color PCA and heatmaps by condition/batch and label the axes accordingly"
+        ],
+        "description": "DESeq2 size factors and VST transformation of the 12,000 x 12 count matrix, plus PCA, sample-distance clustering, and an explicit quantification of the condition-batch confounding.",
+        "acceptance_criteria": [
+          "Matrix of VST-transformed expression for filtered genes written as CSV",
+          "PCA scatter colored by condition/batch with PC1 and PC2 variance-explained percentages labeled; PNG + numeric table",
+          "Sample-to-sample distance heatmap ordered by condition/batch",
+          "Table of the top 20 PC1 loading genes with their signed loadings",
+          "Report explicitly states that condition and batch are perfectly collinear (all 6 treated in B2, all 6 control in B1) and that no statistical correction can separate them"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group and raw salmon counts, dispersion estimates will be noisy for low-count genes; the prefilter and BH correction are the safeguards",
+          "Any gene in the significant list may be responding to the B2 processing conditions rather than the treatment — the analysis has no power to tell these apart",
+          "LFC shrinkage (apeglm) affects point estimates, not p-values; never report shrunk LFC alongside unshrunk p-values as if they were one coherent model without saying so"
+        ],
+        "context": "Uses the size factors and VST matrix from T1S1. The contrast tested is treated vs control and is statistically identical to B2 vs B1; no design in any software can split it. DESeq2 1.52.0 and apeglm 1.34.0 are installed.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "ggplot2"
+        ],
+        "question": "Which genes change between treated and control samples, quantified as the combined treated-vs-control and B2-vs-B1 effect, with FDR control and shrunk effect sizes?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Run DESeq2 with design = ~ condition and contrast = treated vs control; never add batch to the design (it is collinear and the model matrix is rank-deficient)",
+          "Prefilter low-count genes (e.g., require a minimal normalized count in a minimal number of samples) and report how many of the 12,000 genes survive",
+          "Apply BH multiple-testing correction and apeglm log2FC shrinkage for reporting effect sizes; report the number of genes at FDR < 0.05 and < 0.1",
+          "Title every output table and figure so that the contrast is labeled 'treatment + batch (confounded)' rather than 'treatment effect'"
+        ],
+        "description": "DESeq2 differential expression on the raw counts with the only identifiable design (~ condition), contrast treated vs control, with effect-size shrinkage and explicit labeling of the estimate as the combined treatment+batch effect.",
+        "acceptance_criteria": [
+          "Full DE results table (gene symbol, baseMean, log2FC shrunk, lfcSE, stat, pvalue, padj) written as CSV, with a header/README line stating the design was ~ condition and that effects are confounded with batch",
+          "Summary counts of significant genes (padj < 0.05 and padj < 0.1) and of genes with |log2FC| > 1",
+          "MA plot and volcano plot saved as PNGs with the confounding caveat in the caption/title",
+          "Number of genes dropped by prefiltering and number entering the test reported"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the shifted genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The ranked list carries the batch+condition confounding, so pathway hits may reflect a B2 processing artifact rather than drug/treatment biology; this limitation must appear in the output, not just in the analyst's head",
+          "Gene symbols may contain version suffixes or whitespace — normalize both sides before matching",
+          "If the mapping rate is very low (<50% of tested genes matched), report it prominently rather than interpreting the enrichment"
+        ],
+        "context": "The DE step (T1S2) produces a full ranked list over ~12,000 gene symbols. A human pathway gene set collection in HGNC gene-symbol GMT format (WikiPathways) is available in the reference store; the executing agent resolves it against the environment. fgsea 1.38.0 is installed in the R track.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "GSEABase"
+        ],
+        "question": "Which human pathways are coordinately shifted among the genes ranked by the treated-vs-control (batch+condition combined) statistic?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use a preranked test (fgsea) on the full ranked list rather than an over-representation test on a cutoff-derived list, so the result does not depend on an arbitrary FDR threshold",
+          "Report both NES and BH-adjusted q-value; do not interpret pathways with q >= 0.25 as hits",
+          "Match on HGNC symbols; report the fraction of ranked genes that map to any gene set",
+          "State in the output that enriched pathways reflect the joint treatment+batch signal and cannot be attributed to the treatment alone"
+        ],
+        "description": "Preranked GSEA (fgsea) of the DE-ranked gene list against human WikiPathways gene sets in HGNC symbols, characterizing the biology of the shifted genes with the confounding caveat carried through.",
+        "acceptance_criteria": [
+          "Ranked gene list (gene symbol, signed Wald statistic from T1S2) written to file",
+          "GSEA results table (pathway name, WikiPathways ID, size, NES, pval, padj/BH q) for all tested pathways with nonzero size",
+          "Report of how many of the 12,000 input genes mapped to the GMT and how many pathways passed the minimum set-size filter",
+          "Interpretation text labels the hits as characterizing the combined treated/B2-vs-control/B1 signal, not treatment-specific biology"
+        ]
+      }
+    ],
+    "title": "Treated-vs-control DE under confounded batch",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are raw salmon gene-level counts (12,000 genes x 12 samples, gene symbols) from human lung, 6 treated vs 6 control. The profile states the critical design fact: every treated sample was processed in batch B2 and every control in batch B1, so condition and batch are perfectly confounded. No statistical model can estimate a treatment effect separate from a batch effect here — a design with both terms is rank-deficient. The plan therefore (1) normalizes with DESeq2 size factors and characterizes the global structure (PCA, sample distances) to make the confounding visible in the output; (2) runs differential expression with DESeq2 using the only identifiable design, ~ condition, contrasting treated vs control, and reports every result explicitly as the combined treatment+batch effect, with BH FDR and apeglm-shrunk log2FC; (3) characterizes the shifted genes with preranked fgsea against human WikiPathways gene sets (HGNC symbols, matching the gene-symbol row names directly), again framed as the combined signal. No step attempts batch correction, because with one batch per condition there is nothing to estimate it from; that limitation is stated in every output rather than papered over."
+  },
+  "usage": {
+    "inputTokens": 100283,
+    "outputTokens": 7035,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 2746
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": "created_at</arg_key><arg_value>2026-07-10T00:00:00Z"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "additionalProperties": false,
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "Matrix of VST-transformed expression for filtered genes written as CSV",
+                "PCA scatter colored by condition/batch with PC1 and PC2 variance-explained percentages labeled; PNG + numeric table",
+                "Sample-to-sample distance heatmap ordered by condition/batch",
+                "Table of the top 20 PC1 loading genes with their signed loadings",
+                "Report explicitly states that condition and batch are perfectly collinear (all 6 treated in B2, all 6 control in B1) and that no statistical correction can separate them"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do NOT run ComBat, removeBatchEffect-based correction, RUV, or SVA and then test on corrected values: with one batch per condition there are zero residual degrees of freedom to identify batch, so any 'corrected' result is an artifact",
+                "removeBatchEffect(..., design=~condition) would remove exactly the contrast of interest; do not do it even for heatmaps",
+                "The sample count is 12 — do not fit anything beyond a two-group comparison"
+              ],
+              "constraints": [
+                "Do NOT attempt to fit or estimate batch: design ~ condition + batch is rank-deficient in this data (batch == condition) and DESeq2 will refuse it",
+                "Do NOT apply any batch-correction method (ComBat, SVA/RUV, removeBatchEffect) as a preprocessing fix and then test corrected values — with batch perfectly confounded with condition, batch cannot be estimated and such a correction would erase or invent the signal of interest",
+                "Batch-correction-free visualization only: color PCA and heatmaps by condition/batch and label the axes accordingly"
+              ],
+              "context": "Files: /eval-four-models-without-confounded-batch-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbols in first column, raw salmon counts) and /eval-four-models-without-confounded-batch-n6-1/data/inputs/metadata/metadata.csv (12 rows: condition, batch). DESeq2 1.52.0, apeglm, pheatmap, EnhancedVolcano, ggplot2 are installed in the R track.",
+              "depends_on": [],
+              "description": "DESeq2 size factors and VST transformation of the 12,000 x 12 count matrix, plus PCA, sample-distance clustering, and an explicit quantification of the condition-batch confounding.",
+              "id": "T1S1",
+              "name": "Normalization and confounding diagnostics",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "question": "What is the global expression structure of the 12 lung samples, and to what extent do the treated-vs-control (6 vs 6) differences coincide with the B2-vs-B1 batch differences?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Full DE results table (gene symbol, baseMean, log2FC shrunk, lfcSE, stat, pvalue, padj) written as CSV, with a header/README line stating the design was ~ condition and that effects are confounded with batch",
+                "Summary counts of significant genes (padj < 0.05 and padj < 0.1) and of genes with |log2FC| > 1",
+                "MA plot and volcano plot saved as PNGs with the confounding caveat in the caption/title",
+                "Number of genes dropped by prefiltering and number entering the test reported"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=6 per group and raw salmon counts, dispersion estimates will be noisy for low-count genes; the prefilter and BH correction are the safeguards",
+                "Any gene in the significant list may be responding to the B2 processing conditions rather than the treatment — the analysis has no power to tell these apart",
+                "LFC shrinkage (apeglm) affects point estimates, not p-values; report both is unnecessary, but never report shrunk LFC alongside unshrunk p-values as if they were one model"
+              ],
+              "constraints": [
+                "Run DESeq2 with design = ~ condition and contrast = treated vs control; never add batch to the design (it is collinear and the model matrix is rank-deficient)",
+                "Prefilter low-count genes (e.g., require a minimal normalized count in a minimal number of samples) and report how many of the 12,000 genes survive",
+                "Apply BH multiple-testing correction and an apeglm log2FC shrinkage for reporting effect sizes; report the number of genes at FDR < 0.05 and < 0.1",
+                "Title every output table and figure so that the contrast is labeled 'treatment + batch (confounded)' rather than 'treatment effect'"
+              ],
+              "context": "Uses the size factors and VST matrix from T1S1. The contrast tested is treated vs control and is statistically identical to B2 vs B1; no design in any software can split it. DESeq2 1.52.0 and apeglm 1.34.0 are installed.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "DESeq2 differential expression on the raw counts with the only identifiable design (~ condition), contrast treated vs control, with effect-size shrinkage and explicit labeling of the estimate as the combined treatment+batch effect.",
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "ggplot2"
+              ],
+              "question": "Which genes change between treated and control samples, quantified as the combined treated-vs-control and B2-vs-B1 effect, with FDR control and shrunk effect sizes?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Ranked gene list (gene symbol, signed Wald statistic from T1S2) written to file",
+                "GSEA results table (pathway name, WikiPathways ID, size, NES, pval, padj/BH q) for all tested pathways with nonzero size",
+                "Report of how many of the 12,000 input genes mapped to the GMT and how many pathways passed the minimum set-size filter",
+                "Interpretation text labels the hits as characterizing the combined treated/B2-vs-control/B1 signal, not treatment-specific biology"
+              ],
+              "agent": "enrichment-agent",
+              "caveats": [
+                "The ranked list carries the batch+condition confounding, so pathway hits may reflect a B2 processing artifact rather than drug/treatment biology; this limitation must appear in the output, not just in the analyst's head",
+                "Gene symbols may contain version suffixes or whitespace — normalize both sides before matching",
+                "If mapping rate is very low (<50% of tested genes matched), report it prominently rather than interpreting the enrichment"
+              ],
+              "constraints": [
+                "Use a preranked test (fgsea) on the full ranked list rather than an over-representation test on a cutoff-derived list, so the result does not depend on an arbitrary FDR threshold",
+                "Report both NES and BH-adjusted q-value; do not interpret pathways with q >= 0.25 as hits",
+                "Match on HGNC symbols; report the fraction of ranked genes that map to any gene set",
+                "State in the output that enriched pathways reflect the joint treatment+batch signal and cannot be attributed to the treatment alone"
+              ],
+              "context": "The DE step (T1S2) produces a full ranked list over ~12,000 gene symbols. A human pathway gene set collection in HGNC gene-symbol GMT format (WikiPathways) is available in the reference store; the executing agent resolves it against the environment. fgsea 1.38.0 is installed in the R track.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Preranked GSEA (fgsea) of the DE-ranked gene list against human WikiPathways gene sets in HGNC symbols, characterizing the biology of the shifted genes with the confounding caveat carried through.",
+              "id": "T2S1",
+              "name": "Pathway enrichment of the shifted genes",
+              "packages": [
+                "fgsea",
+                "data.table",
+                "GSEABase"
+              ],
+              "question": "Which human pathways are coordinately shifted among the genes ranked by the treated-vs-control (batch+condition combined) statistic?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2"
+            }
+          ],
+          "title": "Treated-vs-control DE under confounded batch",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "analytical_narrative": "The data are raw salmon gene-level counts (12,000 genes x 12 samples, gene symbols) from human lung, 6 treated vs 6 control. The profile states the critical design fact: every treated sample was processed in batch B2 and every control in batch B1, so condition and batch are perfectly confounded. No statistical model can estimate a treatment effect separate from a batch effect here — a design with both terms is rank-deficient. The plan therefore (1) normalizes with DESeq2 size factors and characterizes the global structure (PCA, sample distances) to make the confounding visible in the output; (2) runs differential expression with DESeq2 using the only identifiable design, ~ condition, contrasting treated vs control, and reports every result explicitly as the combined treatment+batch effect, with BH FDR and apeglm-shrunk log2FC; (3) characterizes the shifted genes with preranked fgsea against human WikiPathways gene sets (HGNC symbols, matching the gene-symbol row names directly), again framed as the combined signal. No step attempts batch correction, because with one batch per condition there is nothing to estimate it from; that limitation is stated in every output rather than papered over."
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "additionalProperties": false,
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "Matrix of VST-transformed expression for filtered genes written as CSV",
+                "PCA scatter colored by condition/batch with PC1 and PC2 variance-explained percentages labeled; PNG + numeric table",
+                "Sample-to-sample distance heatmap ordered by condition/batch",
+                "Table of the top 20 PC1 loading genes with their signed loadings",
+                "Report explicitly states that condition and batch are perfectly collinear (all 6 treated in B2, all 6 control in B1) and that no statistical correction can separate them"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do NOT run ComBat, removeBatchEffect-based correction, RUV, or SVA and then test on corrected values: with one batch per condition there are zero residual degrees of freedom to identify batch, so any 'corrected' result is an artifact",
+                "removeBatchEffect(..., design=~condition) would remove exactly the contrast of interest; do not do it even for heatmaps",
+                "The sample count is 12 — do not fit anything beyond a two-group comparison"
+              ],
+              "constraints": [
+                "Do NOT attempt to fit or estimate batch: design ~ condition + batch is rank-deficient in this data (batch == condition) and DESeq2 will refuse it",
+                "Do NOT apply any batch-correction method (ComBat, SVA/RUV, removeBatchEffect) as a preprocessing fix and then test corrected values — with batch perfectly confounded with condition, batch cannot be estimated and such a correction would erase or invent the signal of interest",
+                "Batch-correction-free visualization only: color PCA and heatmaps by condition/batch and label the axes accordingly"
+              ],
+              "context": "Files: /eval-four-models-without-confounded-batch-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbols in first column, raw salmon counts) and /eval-four-models-without-confounded-batch-n6-1/data/inputs/metadata/metadata.csv (12 rows: condition, batch). DESeq2 1.52.0, apeglm, pheatmap, EnhancedVolcano, ggplot2 are installed in the R track.",
+              "depends_on": [],
+              "description": "DESeq2 size factors and VST transformation of the 12,000 x 12 count matrix, plus PCA, sample-distance clustering, and an explicit quantification of the condition-batch confounding.",
+              "id": "T1S1",
+              "name": "Normalization and confounding diagnostics",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "question": "What is the global expression structure of the 12 lung samples, and to what extent do the treated-vs-control (6 vs 6) differences coincide with the B2-vs-B1 batch differences?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Full DE results table (gene symbol, baseMean, log2FC shrunk, lfcSE, stat, pvalue, padj) written as CSV, with a header/README line stating the design was ~ condition and that effects are confounded with batch",
+                "Summary counts of significant genes (padj < 0.05 and padj < 0.1) and of genes with |log2FC| > 1",
+                "MA plot and volcano plot saved as PNGs with the confounding caveat in the caption/title",
+                "Number of genes dropped by prefiltering and number entering the test reported"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=6 per group and raw salmon counts, dispersion estimates will be noisy for low-count genes; the prefilter and BH correction are the safeguards",
+                "Any gene in the significant list may be responding to the B2 processing conditions rather than the treatment — the analysis has no power to tell these apart",
+                "LFC shrinkage (apeglm) affects point estimates, not p-values; never report shrunk LFC alongside unshrunk p-values as if they were one coherent model without saying so"
+              ],
+              "constraints": [
+                "Run DESeq2 with design = ~ condition and contrast = treated vs control; never add batch to the design (it is collinear and the model matrix is rank-deficient)",
+                "Prefilter low-count genes (e.g., require a minimal normalized count in a minimal number of samples) and report how many of the 12,000 genes survive",
+                "Apply BH multiple-testing correction and apeglm log2FC shrinkage for reporting effect sizes; report the number of genes at FDR < 0.05 and < 0.1",
+                "Title every output table and figure so that the contrast is labeled 'treatment + batch (confounded)' rather than 'treatment effect'"
+              ],
+              "context": "Uses the size factors and VST matrix from T1S1. The contrast tested is treated vs control and is statistically identical to B2 vs B1; no design in any software can split it. DESeq2 1.52.0 and apeglm 1.34.0 are installed.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "DESeq2 differential expression on the raw counts with the only identifiable design (~ condition), contrast treated vs control, with effect-size shrinkage and explicit labeling of the estimate as the combined treatment+batch effect.",
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "ggplot2"
+              ],
+              "question": "Which genes change between treated and control samples, quantified as the combined treated-vs-control and B2-vs-B1 effect, with FDR control and shrunk effect sizes?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Ranked gene list (gene symbol, signed Wald statistic from T1S2) written to file",
+                "GSEA results table (pathway name, WikiPathways ID, size, NES, pval, padj/BH q) for all tested pathways with nonzero size",
+                "Report of how many of the 12,000 input genes mapped to the GMT and how many pathways passed the minimum set-size filter",
+                "Interpretation text labels the hits as characterizing the combined treated/B2-vs-control/B1 signal, not treatment-specific biology"
+              ],
+              "agent": "enrichment-agent",
+              "caveats": [
+                "The ranked list carries the batch+condition confounding, so pathway hits may reflect a B2 processing artifact rather than drug/treatment biology; this limitation must appear in the output, not just in the analyst's head",
+                "Gene symbols may contain version suffixes or whitespace — normalize both sides before matching",
+                "If the mapping rate is very low (<50% of tested genes matched), report it prominently rather than interpreting the enrichment"
+              ],
+              "constraints": [
+                "Use a preranked test (fgsea) on the full ranked list rather than an over-representation test on a cutoff-derived list, so the result does not depend on an arbitrary FDR threshold",
+                "Report both NES and BH-adjusted q-value; do not interpret pathways with q >= 0.25 as hits",
+                "Match on HGNC symbols; report the fraction of ranked genes that map to any gene set",
+                "State in the output that enriched pathways reflect the joint treatment+batch signal and cannot be attributed to the treatment alone"
+              ],
+              "context": "The DE step (T1S2) produces a full ranked list over ~12,000 gene symbols. A human pathway gene set collection in HGNC gene-symbol GMT format (WikiPathways) is available in the reference store; the executing agent resolves it against the environment. fgsea 1.38.0 is installed in the R track.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Preranked GSEA (fgsea) of the DE-ranked gene list against human WikiPathways gene sets in HGNC symbols, characterizing the biology of the shifted genes with the confounding caveat carried through.",
+              "id": "T2S1",
+              "name": "Pathway enrichment of the shifted genes",
+              "packages": [
+                "fgsea",
+                "data.table",
+                "GSEABase"
+              ],
+              "question": "Which human pathways are coordinately shifted among the genes ranked by the treated-vs-control (batch+condition combined) statistic?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2"
+            }
+          ],
+          "title": "Treated-vs-control DE under confounded batch",
+          "created_at": "2026-07-10T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "analytical_narrative": "The data are raw salmon gene-level counts (12,000 genes x 12 samples, gene symbols) from human lung, 6 treated vs 6 control. The profile states the critical design fact: every treated sample was processed in batch B2 and every control in batch B1, so condition and batch are perfectly confounded. No statistical model can estimate a treatment effect separate from a batch effect here — a design with both terms is rank-deficient. The plan therefore (1) normalizes with DESeq2 size factors and characterizes the global structure (PCA, sample distances) to make the confounding visible in the output; (2) runs differential expression with DESeq2 using the only identifiable design, ~ condition, contrasting treated vs control, and reports every result explicitly as the combined treatment+batch effect, with BH FDR and apeglm-shrunk log2FC; (3) characterizes the shifted genes with preranked fgsea against human WikiPathways gene sets (HGNC symbols, matching the gene-symbol row names directly), again framed as the combined signal. No step attempts batch correction, because with one batch per condition there is nothing to estimate it from; that limitation is stated in every output rather than papered over."
+        }
+      }
+    }
+  ]
+}

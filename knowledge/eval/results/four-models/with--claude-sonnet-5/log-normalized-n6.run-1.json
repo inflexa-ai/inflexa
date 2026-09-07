@@ -1,0 +1,693 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "log-normalized-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T20:30:55.205Z",
+  "elapsedMs": 189542,
+  "outcome": "plan_submitted",
+  "planId": "pln-70d43963",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on log2 expression values",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A protocol or handling difference among the 12 samples would appear as structure on the PCA/MDS plot and must be named before modeling, not silently absorbed into the contrast"
+        ],
+        "context": "log_expr.csv holds log2(TPM+1) values for 12000 genes x 12 samples as delivered by the core facility; metadata.csv holds one row per sample with a condition column (6 treated, 6 control, unpaired, single batch). No counts were delivered.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats",
+          "ggplot2"
+        ],
+        "question": "Do the 12 muscle samples (6 treated, 6 control) in log_expr.csv show any outliers, batch-like structure, or a mismatch with metadata.csv that would compromise a treated-vs-control comparison?",
+        "grounding": {
+          "claims": [
+            "R-0071@e4e2"
+          ],
+          "reason": "Log2-scale input: sample structure QC on the log values with PCA/MDS and sample distances, per R-0071@e4e2, before any modeling.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not re-normalize or re-log-transform the matrix — treat the values as already on log2 scale",
+          "Do not apply a variance-stabilizing transform meant for raw counts"
+        ],
+        "acceptance_criteria": [
+          "Confirms sample IDs in log_expr.csv columns match metadata.csv rows one-to-one and reports the 6 vs 6 group sizes",
+          "Reports the value range of the matrix and confirms it is consistent with an already log2-scale, non-count table (no re-normalization applied)",
+          "Produces a PCA or MDS plot on the top 500 most variable genes and a sample-distance heatmap, both colored by condition (treated/control)",
+          "Reports the number of detected genes per sample at a stated detection floor",
+          "Flags any sample whose position on the PCA/MDS or detected-gene count is an outlier relative to its group"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma-trend differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 6 per group, effect-size estimates for weakly expressed genes will be noisy even after filtering; report this alongside the DE table rather than implying every hit is equally reliable"
+        ],
+        "context": "Design: 6 treated vs 6 control, unpaired, single batch, log2(TPM+1) values from the core facility, no counts. DESeq2/edgeR/voom expect raw counts and must not be used on this matrix; limma-trend on the log values is the correct tool.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats"
+        ],
+        "question": "Which of the 12000 genes differ in expression between the 6 treated and 6 control muscle samples, given log2(TPM+1) values and no counts?",
+        "grounding": {
+          "claims": [
+            "R-0075@4d16",
+            "R-0074@06b0",
+            "R-0036@9786",
+            "R-0093@4fa4",
+            "R-0019@251d",
+            "R-0043@4f55",
+            "R-0044@1777"
+          ],
+          "reason": "Log2-normalized values, not counts: limma linear model with trend=TRUE and robust=TRUE empirical Bayes, explicit reference level, BH-adjusted topTable — never a count-based model (R-0019@251d, R-0074@06b0, R-0093@4fa4).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-limma-trend-logvalues@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Fit the low-expression filter on the mean log expression alone, never on the group labels",
+          "Name the contrast explicitly as condition, numerator (treated), denominator (control) so a positive logFC means higher expression in treated",
+          "Select the differentially expressed set by BH-adjusted p-value, not the raw p-value"
+        ],
+        "acceptance_criteria": [
+          "Filters out genes whose mean log2 expression across all 12 samples is below a stated floor, or that are above the floor in fewer than 6 samples (the smallest group size), independent of the condition labels",
+          "Sets an explicit reference level for the condition factor (control) and fits limma with design ~0 + condition, makeContrasts(treated - control)",
+          "Calls eBayes with trend=TRUE and robust=TRUE, appropriate for log-normalized values (not a count model)",
+          "Extracts topTable results with BH-adjusted p-values (adj.P.Val) for every tested gene: logFC, t, P.Value, adj.P.Val",
+          "Reports the number of genes tested after the filter and the number of DE genes at adj.P.Val < 0.05",
+          "Does not select genes by unadjusted p-value or by fold-change alone"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Gene identifier annotation and tissue-identity check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A gene symbol is not stable across annotation releases and can map to more than one Ensembl ID; state the org.Hs.eg.db version used"
+        ],
+        "context": "Organism is Homo sapiens (taxon 9606), tissue is muscle. The DE table from T1S2 needs a stable, non-ambiguous identifier space for downstream enrichment and reporting.",
+        "maxSteps": 200,
+        "packages": [
+          "AnnotationDbi",
+          "org.Hs.eg.db"
+        ],
+        "question": "What stable gene identifiers (Ensembl/Entrez) and symbols correspond to the identifiers in log_expr.csv, and do the top-expressed genes in these muscle samples look like muscle tissue?",
+        "grounding": {
+          "claims": [
+            "R-0161@cdaf",
+            "R-0160@d858"
+          ],
+          "reason": "Gene identifier annotation with org.Hs.eg.db and a tissue-expression reference to confirm tissue identity, per R-0160@d858 and R-0161@cdaf; tissue reference availability is checked, not assumed.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-annotation-map@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "annotation",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Keep one identifier space per column; never mix Ensembl and Entrez IDs in the same column",
+          "Report the unmapped and one-to-many shares explicitly rather than silently dropping genes"
+        ],
+        "acceptance_criteria": [
+          "Confirms whether the first column of log_expr.csv holds HGNC symbols, Ensembl IDs, or another identifier space before mapping",
+          "Maps every tested gene from the DE table to Ensembl gene ID, Entrez gene ID, and HGNC symbol using org.Hs.eg.db, keeping the Ensembl or Entrez ID as the join key and the symbol as a label",
+          "Reports the share of tested genes that did not map and the share that mapped to more than one target, with the rule applied to a one-to-many map stated",
+          "Attempts a tissue-identity sanity check of the top-expressed genes against a muscle-tissue expression reference if one is available in the environment (e.g., HPA or GTEx tissue tables); if none is available, states plainly that this check was skipped"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway context via preranked GSEA (Hallmark, Reactome, WikiPathways)",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "KEGG legacy sets are not available; only the MSigDB KEGG_MEDICUS redistributable subset exists in this environment and is not directly comparable to legacy KEGG results if that comparison is ever wanted",
+          "A hallmark or pathway hit is a coordinated-signal hypothesis, not a mechanistic claim about the treatment"
+        ],
+        "context": "Reference gene sets available in the environment: MSigDB human Hallmark (50 sets, 2026.1), Reactome pathways (current, filtered to Homo sapiens via the Reactome pathway index), and WikiPathways human (2026.07.10, HGNC symbols). All are gene-symbol GMTs suited to a ranked-list preranked GSEA on the limma contrast statistic.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table"
+        ],
+        "question": "Which biological pathways or processes are enriched among genes ranked by their treated-vs-control effect in muscle, using the full ranked gene list rather than a thresholded subset?",
+        "grounding": {
+          "claims": [
+            "R-0045@f652",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0048@500d"
+          ],
+          "reason": "Ranked-list GSEA on the full tested-gene list against Hallmark first, then Reactome/WikiPathways, with the 15-500 gene-set-size window and redundant-set collapse (R-0045@f652, R-0047@fd9d, R-0052@620a, R-0048@500d); KEGG legacy not served here, KEGG_MEDICUS substitute noted as a caveat rather than substituted silently.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Test the full ranked list, never a p-value- or fold-change-thresholded subset",
+          "Filter each gene set collection to the 15-500 member window after intersecting with the tested genes",
+          "Adjust p-values with BH within each collection separately, not pooled across collections"
+        ],
+        "acceptance_criteria": [
+          "Runs fgsea (preranked) on the full ranked list of every gene tested in T1S2, ranked by the moderated t-statistic, without pre-cutting by p-value or fold change",
+          "Uses the MSigDB Hallmark human gene sets (50 sets) as the primary collection, and Reactome and WikiPathways human gene sets as secondary collections",
+          "Restricts each collection to gene sets with 15-500 members among the tested genes",
+          "Reports BH-adjusted p-values separately per collection, with NES and adj p-value for each pathway",
+          "Reports the share of the ranked gene list that matched each collection's identifier space (symbols)",
+          "Collapses redundant overlapping significant pathways into representative groups and keeps the full table as a supplement"
+        ]
+      },
+      {
+        "id": "T1S5",
+        "name": "Consolidated DE report with reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A published-looking DE table without the reproducibility record above is not reproducible; do not truncate the report to the gene table alone"
+        ],
+        "context": "Final consolidation step; no new computation beyond assembling and stating results from prior steps.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the final, reproducible answer to which genes differ between treated and control muscle samples, with all methods, thresholds, and caveats stated?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "Report names method, package versions, design, thresholds, n tested/DE, and session info per R-0041@059a; reproducibility record (session info, seed, versions, collection versions) per R-0086@becf.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T1S4"
+        ],
+        "constraints": [
+          "Do not omit any of: method, package versions, design, contrast, thresholds, n tested, n DE, session info"
+        ],
+        "acceptance_criteria": [
+          "States the dataset (12000 genes x 12 samples, human skeletal muscle, 6 treated vs 6 control, unpaired, single batch, log2(TPM+1) core-facility-normalized values, no counts delivered)",
+          "States the method (limma-trend with robust empirical Bayes) and explicitly states why a count-based model (DESeq2/edgeR/voom) was not used",
+          "States the design formula, the named contrast (treated vs control, control as reference), and the DE threshold (adj.P.Val < 0.05, no separate fold-change threshold applied)",
+          "Reports the number of genes tested after the low-expression filter and the number of DE genes at the stated threshold",
+          "Reports the gene-identifier unmapped and one-to-many shares from T1S3 and any tissue-identity flag",
+          "Reports the top pathway hits per collection from T1S4 with the collapsed representative sets",
+          "Attaches session info, package versions, and the version/date of every reference gene set collection used"
+        ]
+      }
+    ],
+    "title": "Muscle treated vs control DE with limma-trend on log2 data",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The core facility delivered only log2(TPM+1) normalized values for 12000 genes across 12 human skeletal-muscle samples (6 treated, 6 control, unpaired, single batch) — no counts. Per the log-normalized-input rule, a count-based model (DESeq2/edgeR/voom) is inapplicable; the correct tool is a limma linear model with trend=TRUE and robust=TRUE empirical Bayes moderation on the log-scale values directly, with no re-normalization. The plan starts with a QC step to confirm the data is already on a sane log2 scale, check sample-metadata concordance, and look for outliers or batch-like structure. It then filters low-expressed genes (independent of group labels), fits the limma model with an explicit reference level and a named contrast (treated vs control), and selects DE genes by BH-adjusted p-value. A gene identifier mapping step follows to give stable Ensembl/Entrez keys alongside symbols and to sanity-check tissue identity against muscle-specific expression. Because the research question is bounded to 'which genes differ,' pathway context is added only as a secondary, non-thresholded GSEA pass against the Hallmark, Reactome, and WikiPathways human gene sets available in the reference store, using the full ranked gene list so genes with small but coordinated changes are not discarded. A final report step consolidates the design, thresholds, gene counts, and a full reproducibility record. Given only 6 samples per group, no co-expression network or unsupervised subgroup discovery is attempted — correlations from this few samples would be noise, per the small-cohort caveat."
+  },
+  "usage": {
+    "inputTokens": 1859802,
+    "outputTokens": 12804,
+    "cacheCreationInputTokens": 337011,
+    "cacheReadInputTokens": 1522549,
+    "reasoningTokens": 5430
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "log_normalized",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "count_source": "unknown",
+        "enrichment_input": "ranked_list",
+        "extra_analyses": [
+          "annotation"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db ncbi gene info human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "HPA GTEx tissue expression human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene ontology GO gmt human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression",
+        "query": "human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "c5 go gmt"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "tissue",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene info entrez ncbi human GENCODE gtf"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "limma",
+          "matrixStats",
+          "fgsea",
+          "clusterProfiler",
+          "AnnotationDbi",
+          "decoupleR",
+          "GSEABase"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR"
+        ],
+        "language": "r"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "decoupler"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri dorothea regulon human"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "CollecTRI regulon reference dataset decoupleR",
+        "limit": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulatory-networks",
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "decoupler"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "omnipath"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "TF regulon"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Muscle treated vs control DE with limma-trend on log2 data",
+          "analytical_narrative": "The core facility delivered only log2(TPM+1) normalized values for 12000 genes across 12 human skeletal-muscle samples (6 treated, 6 control, unpaired, single batch) — no counts. Per the log-normalized-input rule, a count-based model (DESeq2/edgeR/voom) is inapplicable; the correct tool is a limma linear model with trend=TRUE and robust=TRUE empirical Bayes moderation on the log-scale values directly, with no re-normalization. The plan starts with a QC step to confirm the data is already on a sane log2 scale, check sample-metadata concordance, and look for outliers or batch-like structure. It then filters low-expressed genes (independent of group labels), fits the limma model with an explicit reference level and a named contrast (treated vs control), and selects DE genes by BH-adjusted p-value. A gene identifier mapping step follows to give stable Ensembl/Entrez keys alongside symbols and to sanity-check tissue identity against muscle-specific expression. Because the research question is bounded to 'which genes differ,' pathway context is added only as a secondary, non-thresholded GSEA pass against the Hallmark, Reactome, and WikiPathways human gene sets available in the reference store, using the full ranked gene list so genes with small but coordinated changes are not discarded. A final report step consolidates the design, thresholds, gene counts, and a full reproducibility record. Given only 6 samples per group, no co-expression network or unsupervised subgroup discovery is attempted — correlations from this few samples would be noise, per the small-cohort caveat.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on log2 expression values",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 muscle samples (6 treated, 6 control) in log_expr.csv show any outliers, batch-like structure, or a mismatch with metadata.csv that would compromise a treated-vs-control comparison?",
+              "acceptance_criteria": [
+                "Confirms sample IDs in log_expr.csv columns match metadata.csv rows one-to-one and reports the 6 vs 6 group sizes",
+                "Reports the value range of the matrix and confirms it is consistent with an already log2-scale, non-count table (no re-normalization applied)",
+                "Produces a PCA or MDS plot on the top 500 most variable genes and a sample-distance heatmap, both colored by condition (treated/control)",
+                "Reports the number of detected genes per sample at a stated detection floor",
+                "Flags any sample whose position on the PCA/MDS or detected-gene count is an outlier relative to its group"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "log_expr.csv holds log2(TPM+1) values for 12000 genes x 12 samples as delivered by the core facility; metadata.csv holds one row per sample with a condition column (6 treated, 6 control, unpaired, single batch). No counts were delivered.",
+              "constraints": [
+                "Do not re-normalize or re-log-transform the matrix — treat the values as already on log2 scale",
+                "Do not apply a variance-stabilizing transform meant for raw counts"
+              ],
+              "caveats": [
+                "A protocol or handling difference among the 12 samples would appear as structure on the PCA/MDS plot and must be named before modeling, not silently absorbed into the contrast"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0071@e4e2"
+                ],
+                "template": "tpl-qc-log-abundance@1.0.0",
+                "reason": "Log2-scale input: sample structure QC on the log values with PCA/MDS and sample distances, per R-0071@e4e2, before any modeling."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "limma-trend differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes differ in expression between the 6 treated and 6 control muscle samples, given log2(TPM+1) values and no counts?",
+              "acceptance_criteria": [
+                "Filters out genes whose mean log2 expression across all 12 samples is below a stated floor, or that are above the floor in fewer than 6 samples (the smallest group size), independent of the condition labels",
+                "Sets an explicit reference level for the condition factor (control) and fits limma with design ~0 + condition, makeContrasts(treated - control)",
+                "Calls eBayes with trend=TRUE and robust=TRUE, appropriate for log-normalized values (not a count model)",
+                "Extracts topTable results with BH-adjusted p-values (adj.P.Val) for every tested gene: logFC, t, P.Value, adj.P.Val",
+                "Reports the number of genes tested after the filter and the number of DE genes at adj.P.Val < 0.05",
+                "Does not select genes by unadjusted p-value or by fold-change alone"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Design: 6 treated vs 6 control, unpaired, single batch, log2(TPM+1) values from the core facility, no counts. DESeq2/edgeR/voom expect raw counts and must not be used on this matrix; limma-trend on the log values is the correct tool.",
+              "constraints": [
+                "Fit the low-expression filter on the mean log expression alone, never on the group labels",
+                "Name the contrast explicitly as condition, numerator (treated), denominator (control) so a positive logFC means higher expression in treated",
+                "Select the differentially expressed set by BH-adjusted p-value, not the raw p-value"
+              ],
+              "caveats": [
+                "With only 6 per group, effect-size estimates for weakly expressed genes will be noisy even after filtering; report this alongside the DE table rather than implying every hit is equally reliable"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0075@4d16",
+                  "R-0074@06b0",
+                  "R-0036@9786",
+                  "R-0093@4fa4",
+                  "R-0019@251d",
+                  "R-0043@4f55",
+                  "R-0044@1777"
+                ],
+                "template": "tpl-limma-trend-logvalues@1.0.0",
+                "reason": "Log2-normalized values, not counts: limma linear model with trend=TRUE and robust=TRUE empirical Bayes, explicit reference level, BH-adjusted topTable — never a count-based model (R-0019@251d, R-0074@06b0, R-0093@4fa4)."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Gene identifier annotation and tissue-identity check",
+              "track": "T1",
+              "step_type": "annotation",
+              "question": "What stable gene identifiers (Ensembl/Entrez) and symbols correspond to the identifiers in log_expr.csv, and do the top-expressed genes in these muscle samples look like muscle tissue?",
+              "acceptance_criteria": [
+                "Confirms whether the first column of log_expr.csv holds HGNC symbols, Ensembl IDs, or another identifier space before mapping",
+                "Maps every tested gene from the DE table to Ensembl gene ID, Entrez gene ID, and HGNC symbol using org.Hs.eg.db, keeping the Ensembl or Entrez ID as the join key and the symbol as a label",
+                "Reports the share of tested genes that did not map and the share that mapped to more than one target, with the rule applied to a one-to-many map stated",
+                "Attempts a tissue-identity sanity check of the top-expressed genes against a muscle-tissue expression reference if one is available in the environment (e.g., HPA or GTEx tissue tables); if none is available, states plainly that this check was skipped"
+              ],
+              "packages": [
+                "AnnotationDbi",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Organism is Homo sapiens (taxon 9606), tissue is muscle. The DE table from T1S2 needs a stable, non-ambiguous identifier space for downstream enrichment and reporting.",
+              "constraints": [
+                "Keep one identifier space per column; never mix Ensembl and Entrez IDs in the same column",
+                "Report the unmapped and one-to-many shares explicitly rather than silently dropping genes"
+              ],
+              "caveats": [
+                "A gene symbol is not stable across annotation releases and can map to more than one Ensembl ID; state the org.Hs.eg.db version used"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0161@cdaf",
+                  "R-0160@d858"
+                ],
+                "template": "tpl-annotation-map@1.0.0",
+                "reason": "Gene identifier annotation with org.Hs.eg.db and a tissue-expression reference to confirm tissue identity, per R-0160@d858 and R-0161@cdaf; tissue reference availability is checked, not assumed."
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Pathway context via preranked GSEA (Hallmark, Reactome, WikiPathways)",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological pathways or processes are enriched among genes ranked by their treated-vs-control effect in muscle, using the full ranked gene list rather than a thresholded subset?",
+              "acceptance_criteria": [
+                "Runs fgsea (preranked) on the full ranked list of every gene tested in T1S2, ranked by the moderated t-statistic, without pre-cutting by p-value or fold change",
+                "Uses the MSigDB Hallmark human gene sets (50 sets) as the primary collection, and Reactome and WikiPathways human gene sets as secondary collections",
+                "Restricts each collection to gene sets with 15-500 members among the tested genes",
+                "Reports BH-adjusted p-values separately per collection, with NES and adj p-value for each pathway",
+                "Reports the share of the ranked gene list that matched each collection's identifier space (symbols)",
+                "Collapses redundant overlapping significant pathways into representative groups and keeps the full table as a supplement"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Reference gene sets available in the environment: MSigDB human Hallmark (50 sets, 2026.1), Reactome pathways (current, filtered to Homo sapiens via the Reactome pathway index), and WikiPathways human (2026.07.10, HGNC symbols). All are gene-symbol GMTs suited to a ranked-list preranked GSEA on the limma contrast statistic.",
+              "constraints": [
+                "Test the full ranked list, never a p-value- or fold-change-thresholded subset",
+                "Filter each gene set collection to the 15-500 member window after intersecting with the tested genes",
+                "Adjust p-values with BH within each collection separately, not pooled across collections"
+              ],
+              "caveats": [
+                "KEGG legacy sets are not available; only the MSigDB KEGG_MEDICUS redistributable subset exists in this environment and is not directly comparable to legacy KEGG results if that comparison is ever wanted",
+                "A hallmark or pathway hit is a coordinated-signal hypothesis, not a mechanistic claim about the treatment"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0045@f652",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0048@500d"
+                ],
+                "reason": "Ranked-list GSEA on the full tested-gene list against Hallmark first, then Reactome/WikiPathways, with the 15-500 gene-set-size window and redundant-set collapse (R-0045@f652, R-0047@fd9d, R-0052@620a, R-0048@500d); KEGG legacy not served here, KEGG_MEDICUS substitute noted as a caveat rather than substituted silently."
+              }
+            },
+            {
+              "id": "T1S5",
+              "name": "Consolidated DE report with reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the final, reproducible answer to which genes differ between treated and control muscle samples, with all methods, thresholds, and caveats stated?",
+              "acceptance_criteria": [
+                "States the dataset (12000 genes x 12 samples, human skeletal muscle, 6 treated vs 6 control, unpaired, single batch, log2(TPM+1) core-facility-normalized values, no counts delivered)",
+                "States the method (limma-trend with robust empirical Bayes) and explicitly states why a count-based model (DESeq2/edgeR/voom) was not used",
+                "States the design formula, the named contrast (treated vs control, control as reference), and the DE threshold (adj.P.Val < 0.05, no separate fold-change threshold applied)",
+                "Reports the number of genes tested after the low-expression filter and the number of DE genes at the stated threshold",
+                "Reports the gene-identifier unmapped and one-to-many shares from T1S3 and any tissue-identity flag",
+                "Reports the top pathway hits per collection from T1S4 with the collapsed representative sets",
+                "Attaches session info, package versions, and the version/date of every reference gene set collection used"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Final consolidation step; no new computation beyond assembling and stating results from prior steps.",
+              "constraints": [
+                "Do not omit any of: method, package versions, design, contrast, thresholds, n tested, n DE, session info"
+              ],
+              "caveats": [
+                "A published-looking DE table without the reproducibility record above is not reproducible; do not truncate the report to the gene table alone"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "Report names method, package versions, design, thresholds, n tested/DE, and session info per R-0041@059a; reproducibility record (session info, seed, versions, collection versions) per R-0086@becf."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

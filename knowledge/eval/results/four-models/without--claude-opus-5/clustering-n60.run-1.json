@@ -1,0 +1,765 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "clustering-n60",
+  "run": 1,
+  "startedAt": "2026-09-07T00:55:59.986Z",
+  "elapsedMs": 189029,
+  "outcome": "plan_submitted",
+  "planId": "pln-6a252e6d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "VST matrix and global structure diagnostics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A strong PC1 correlated with library size or globin fraction means subsequent 'subgroups' may be technical; this must be carried forward as a caveat.",
+          "12,000 rows is already a reduced gene universe (not the full transcriptome), so filtering will remove relatively few genes — do not over-interpret that."
+        ],
+        "context": "Homo sapiens whole blood, bulk RNA-seq, raw integer gene-level counts from Salmon, single batch, unpaired 60 cases vs 60 controls. Whole blood expression is dominated by leukocyte composition and by residual globin, both of which produce strong PCs that are not disease subtypes. This step exists to name those axes before any clustering is interpreted.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "SummarizedExperiment",
+          "matrixStats",
+          "ggplot2",
+          "pheatmap",
+          "data.table"
+        ],
+        "question": "After filtering and variance-stabilising the 12,000-gene x 120-sample Salmon count matrix, what are the dominant axes of variation in whole blood, and how much of them is explained by the known case/control label versus technical depth?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Use the exact input paths given; do not download anything.",
+          "Use VST from DESeq2 with blind=TRUE for the clustering matrix — do not cluster on raw counts, on unnormalised CPM, or on a supervised (blind=FALSE) transform.",
+          "Do not remove any sample; outliers are reported with their statistics only.",
+          "Persist the VST matrix, filtered counts, and aligned metadata to disk for downstream steps.",
+          "Report the exact number of genes retained after filterByExpr and the number of duplicate symbols collapsed."
+        ],
+        "description": "Load /eval-four-models-without-clustering-n60-1/data/inputs/counts/counts.csv (first column gene symbol, 120 sample columns) and /eval-four-models-without-clustering-n60-1/data/inputs/metadata/metadata.csv (120 rows, condition column). Verify sample IDs match one-to-one and align order; report any mismatch rather than silently intersecting. Collapse duplicate gene symbols by summing counts. Filter with edgeR::filterByExpr using the condition design (60 cases vs 60 controls). Build a DESeq2 DESeqDataSet with design ~condition and compute the variance-stabilising transform (vst, blind=TRUE — blind is required here because the downstream use is unsupervised clustering). Save the VST matrix, the filtered count matrix, and the aligned metadata as the inputs for all later steps. Diagnostics: PCA on the top 2000 most variable VST genes, variance explained per PC (PC1-PC10); Spearman correlation of PC1-PC5 with library size (column sums of the raw counts) and with number of detected genes; ANOVA/point-biserial of each of PC1-PC5 against the condition label; a sample-sample Spearman correlation heatmap; and flag any sample whose median correlation to all others is a clear outlier (report, do not drop). Also compute per-sample fractions of haemoglobin (HBB/HBA1/HBA2) reads as a whole-blood quality axis.",
+        "acceptance_criteria": [
+          "A VST matrix with 120 columns is written to disk together with the aligned metadata.",
+          "Gene counts before and after filtering are reported explicitly.",
+          "PC1-PC10 variance explained is reported, plus the correlation of PC1-PC5 with library size, detected-gene count, globin fraction, and the condition label.",
+          "Any technical or compositional axis found among the leading PCs is stated in plain terms."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Consensus clustering with null calibration",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Gene-wise permutation preserves marginal distributions but removes gene-gene correlation, so it is a conservative null for structure and an anti-conservative one for correlated noise; say so when reporting.",
+          "Delta-area is known to be a poor k selector on its own — PAC and the null comparison carry the decision."
+        ],
+        "context": "n=120 with 2000 features is a regime where consensus clustering almost always returns visually convincing clusters even from pure noise. The null calibration is what makes the k call interpretable, and it is the reason this step is heavier than a plain ConsensusClusterPlus run.",
+        "maxSteps": 200,
+        "packages": [
+          "ConsensusClusterPlus",
+          "ComplexHeatmap",
+          "matrixStats",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Does the 120-sample VST matrix support more than one cluster, and if so how many — judged against what the same consensus procedure yields on data with no true cluster structure?",
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "ConsensusClusterPlus is present at 1.76.0 — use it; M3C, NbClust, fpc and the CRAN 'cluster' package are NOT installed, so do not import them.",
+          "Run the null permutation calibration; a k reported without it does not satisfy this step.",
+          "Report PAC explicitly per k for both real and null data.",
+          "Save the consensus matrices and the per-k cluster assignments for k=2..8 to disk.",
+          "State clearly if the null-calibrated result is 'k=1, no structure'."
+        ],
+        "description": "Run ConsensusClusterPlus on the VST matrix restricted to the top 2000 most variable genes (median-centre genes; use Pearson-correlation distance for hierarchical linkage and Euclidean for k-means), reps=1000, pItem=0.8, pFeature=1, for k=2..8, with both 'hc' (Ward.D2) and 'km' inner algorithms. Report for each k: the consensus CDF, the delta-area under CDF, the PAC (proportion of ambiguous clustering, computed on the 0.1-0.9 consensus interval), mean cluster consensus, and cluster sizes. CRITICAL null calibration: repeat the identical pipeline on at least 20 null datasets built by independently permuting each gene's values across samples (which destroys inter-sample structure while preserving each gene's marginal distribution), and report the null distribution of PAC and delta-area per k. Declare a k only if the real-data PAC at that k falls outside the null range; if it does not, the explicit conclusion is that no subgroup structure beyond the case/control label is supported. Also report a second opinion on cluster number from the gap statistic and from silhouette maxima over k=2..8 on the same matrix.",
+        "acceptance_criteria": [
+          "Consensus matrices, CDF/delta-area plots, and PAC values for k=2..8 are produced for both hc and km.",
+          "A null distribution of PAC and delta-area from >=20 gene-permuted datasets is reported per k.",
+          "A single k (or an explicit k=1 / no-structure verdict) is stated with the null comparison as its justification.",
+          "Per-k cluster assignment tables for all 120 samples are written to disk."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Cluster stability and cross-method agreement",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "High ARI between k-means and Ward on the same features is partly expected from shared geometry — it is weaker evidence than bootstrap Jaccard.",
+          "If T1S2 concluded k=1, this step should still run at k=2 and k=3 to quantify how unstable the forced partitions are, which is the quantitative form of the negative answer."
+        ],
+        "context": "Stability is the second half of the research question and is where an over-eager clustering result is most often falsified. With no external validation cohort available, resampling stability plus cross-algorithm agreement is the strongest evidence obtainable from these 120 samples.",
+        "maxSteps": 200,
+        "packages": [
+          "scikit-learn",
+          "scipy",
+          "numpy",
+          "pandas",
+          "matplotlib",
+          "seaborn",
+          "mclust"
+        ],
+        "question": "For the k chosen in T1S2, is each cluster stable under resampling, and do independent algorithms recover the same partition of the 120 samples?",
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "fpc, the CRAN 'cluster' package and NbClust are NOT installed — implement Jaccard bootstrap stability and silhouette directly with scikit-learn/scipy rather than importing them.",
+          "Report per-cluster mean Jaccard with the interpretive thresholds stated, not just an overall average.",
+          "Report the mclust BIC-selected component count as an independent estimate of k, even when it disagrees with T1S2.",
+          "Use a fixed random seed and report it."
+        ],
+        "description": "Take the selected k (and k-1, k+1 as sensitivity) and the VST/top-2000 matrix. (1) Bootstrap/subsample stability: 500 iterations at 80% subsampling, re-cluster, map each resampled cluster to the reference partition by maximum Jaccard, and report the per-cluster mean Jaccard with its distribution — apply the standard reading that mean Jaccard < 0.5 means the cluster is dissolved/not meaningful, 0.6-0.75 indicates a pattern in the data but not a well-separated cluster, > 0.85 is highly stable. Implement this directly (fpc::clusterboot is NOT installed) using scikit-learn or base resampling. (2) Silhouette widths on the consensus-derived distance and on Euclidean VST distance, per sample and per cluster. (3) Cross-method agreement: partition the same matrix with hierarchical Ward.D2 on correlation distance, k-means, PAM-style medoid assignment, and a Gaussian mixture on the leading PCs via mclust (mclust 6.1.2 is installed; report its BIC-selected number of components as an independent k estimate); compute pairwise adjusted Rand index and normalised mutual information between all partitions. (4) Report a final stability verdict per cluster: stable / weak / dissolved.",
+        "acceptance_criteria": [
+          "Per-cluster bootstrap Jaccard means over 500 resamples are reported for the selected k and for k-1 and k+1.",
+          "Adjusted Rand index between at least four independent partitioning methods is reported as a matrix.",
+          "Per-sample and per-cluster silhouette widths are reported.",
+          "Each cluster receives an explicit stable / weak / dissolved verdict."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Clusters vs known label and blood cell composition",
+        "agent": "immune-profiling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Deconvolution signatures were largely trained on tumour or PBMC contexts; whole-blood neutrophil estimates in particular are approximate.",
+          "If clusters align with condition at high ARI, the honest conclusion is that no structure beyond the known split was found, not that clustering 'worked'."
+        ],
+        "context": "Whole blood bulk expression is largely a readout of cell-type proportions; a two-cluster split of whole blood is very commonly a neutrophil-high vs lymphocyte-high axis rather than a disease subtype. Deconvolution is the direct test of that alternative explanation. Deconvolution methods carry tumour-microenvironment training assumptions — treat the fractions as relative scores, and note that MCPcounter and xCell scores are not comparable across cell types.",
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "quantiseqr",
+          "MCPcounter",
+          "xCell",
+          "edgeR",
+          "ConsensusClusterPlus",
+          "rstatix",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Do the recovered clusters simply recapitulate the 60-case/60-control split or leukocyte composition, or do they mark structure orthogonal to both — including substructure within cases and within controls?",
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Use installed deconvolution tooling (immunedeconv 2.1.4, quantiseqr, MCPcounter, xCell, EPIC) — do not attempt CIBERSORTx or any method requiring a network call or a licensed signature file.",
+          "Report ARI between cluster labels and the condition label explicitly — this is the direct answer to 'beyond the known case/control split'.",
+          "Correct all cell-fraction comparisons for multiple testing (BH).",
+          "Within-arm re-clustering must use the same PAC/null-calibrated criterion as T1S2 and must state that n=60 per arm limits detectable structure."
+        ],
+        "description": "Using the cluster assignments from T1S2/T1S3 and the aligned metadata: (1) cross-tabulate cluster x condition and test association (Fisher exact or chi-square, plus Cramer's V and adjusted Rand index between cluster labels and the condition label) — an ARI near 1 means the clusters are the known split, near 0 means they are orthogonal. (2) Deconvolve leukocyte composition from the filtered counts converted to CPM/TPM-like scale (whole blood, human): run at least two independent methods from the installed immunedeconv suite (e.g. quanTIseq plus MCPcounter or xCell) and report neutrophil, monocyte, CD4/CD8 T, B, and NK estimates per sample. (3) Test each cell fraction across clusters (Kruskal-Wallis with BH correction) and fit a multinomial/logistic model predicting cluster from cell fractions to report the fraction of cluster assignment explained by composition alone; also regress the leading PCs from T1S1 on cell fractions. (4) Re-run the consensus clustering decision separately within the 60 cases and within the 60 controls (same PAC + null-calibrated criterion, reduced reps acceptable) to test whether either arm contains internal substructure. Report the within-arm sample size (n=60) as a power limitation.",
+        "acceptance_criteria": [
+          "A cluster x condition contingency table with a test statistic, Cramer's V, and ARI is reported.",
+          "Per-sample leukocyte fractions from at least two independent deconvolution methods are produced and compared across clusters with BH-adjusted p-values.",
+          "The share of cluster assignment explained by composition alone is quantified.",
+          "Within-case and within-control clustering results are reported with their own stability evidence."
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Molecular signature of stable clusters",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Cluster labels were derived from the same expression data used for DE, so the DE p-values are anticonservative by construction (double dipping) — state this in the output; the gene lists are descriptive, not inferential.",
+          "Cluster sizes may be very unbalanced, which reduces power for small clusters."
+        ],
+        "context": "This step converts a partition into biology, but only for partitions that survived stability testing. The condition covariate in the design is what prevents the cluster signature from being a laundered version of the case/control DE result. Whole-blood cluster signatures are frequently pure cell-composition signatures, which is why the cross-reference to T2S1 is mandatory.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "data.table",
+          "ggplot2",
+          "ComplexHeatmap"
+        ],
+        "question": "What genes and pathways distinguish each cluster that survived the stability verdict, after adjusting for the known case/control label?",
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3",
+          "T2S1"
+        ],
+        "constraints": [
+          "Include condition as a covariate in every cluster-vs-rest DESeq2 design.",
+          "Only characterise clusters that T1S3 rated stable or weak; explicitly label anything else as exploratory and non-validated.",
+          "Use the human (not mouse or rat) hallmark and GO gene sets; match on HGNC gene symbols.",
+          "If the hallmark or GO reference is unavailable at run time, report the DE gene lists and skip enrichment with an explicit note rather than substituting a different-organism gene set.",
+          "Report the fraction of each cluster signature that overlaps canonical leukocyte marker genes."
+        ],
+        "description": "Conditional on T1S3 declaring at least one stable or weak cluster: for each such cluster, run DESeq2 on the filtered count matrix with design ~condition + cluster_indicator (cluster k vs all others), so that the known 60/60 case-control effect is adjusted out and the reported signature is cluster-specific rather than a restatement of the disease contrast. Apply apeglm/ashr LFC shrinkage, report genes at BH FDR < 0.05 with |log2FC| > 0.5, and give the count per cluster. Then run enrichment on each cluster's ranked signature: GSEA (fgsea preranked, shrunken LFC as the ranking statistic) against the staged human hallmark gene sets and the human GO Biological Process sets — reference data needed: hallmark gene sets and GO BP gene sets for Homo sapiens, gene-symbol keyed, matching the HGNC symbols in the count matrix. Report normalised enrichment scores with BH-adjusted p-values and the leading-edge genes. Cross-reference the top signatures against the leukocyte-composition results from T2S1 and state plainly for each cluster whether its signature is a cell-composition signature (neutrophil or lymphocyte marker dominated) or something else. If T1S3 dissolved every cluster, this step must report that no cluster met the stability bar and characterise the k=2 partition only as a descriptive, explicitly non-validated exploratory contrast.",
+        "acceptance_criteria": [
+          "Per-cluster DE tables (adjusted for condition) with shrunken LFCs and BH-adjusted p-values are written to disk, with significant-gene counts reported.",
+          "GSEA results against human hallmark and GO BP sets are reported per cluster with NES, BH-adjusted p, and leading-edge genes.",
+          "Each cluster is explicitly classified as composition-driven or not, using the T2S1 deconvolution output.",
+          "If no cluster was stable, the step reports that as its primary result rather than presenting an exploratory partition as a finding."
+        ]
+      }
+    ],
+    "title": "Whole-blood cohort subgroup discovery & stability (n=120)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is unsupervised: do the 120 whole-blood samples (12,000 genes x 121 columns in counts.csv, first column gene symbol; metadata.csv 120 rows with a condition column, 60 cases vs 60 controls, single batch, Salmon gene-level counts) contain structure beyond the case/control label, how many subgroups, and how stable are they. The plan is built so that the answer can legitimately be 'no reproducible subgroups' — the null must be reachable, otherwise clustering always returns clusters.\n\nT1S1 builds the analysis matrix: filter low-count genes with edgeR::filterByExpr on the 60/60 design, VST-transform with DESeq2 (variance-stabilised data is what distance-based clustering needs, not raw or naively log-CPM counts), and diagnose the global structure — PCA, library-size and detected-gene correlation with the leading PCs, and how much of PC1-PC5 the known case/control split explains. Whole blood is dominated by cell composition, so a PC that tracks library depth or a neutrophil/lymphocyte axis is a technical or compositional explanation for apparent 'subgroups' and must be identified before it is named a subtype.\n\nT1S2 is the core: consensus clustering (ConsensusClusterPlus, 1000 resamples, 80% subsampling, k=2..8, on the top ~2000 most variable genes after VST) plus a null calibration — the same procedure run on gene-permuted data — so that the consensus CDF, PAC score and delta-area of the real data are read against what the same pipeline produces when no cluster structure exists. Reporting k without that comparison is the standard failure mode of this analysis.\n\nT1S3 tests stability of the chosen k directly: repeated bootstrap/subsample resampling with Jaccard co-assignment per cluster (a cluster with mean Jaccard below ~0.6 is dissolved, not a subtype), silhouette on the consensus distance, and cross-method agreement (adjusted Rand index between consensus k-means, hierarchical Ward on VST correlation distance, and Gaussian mixture via mclust). Agreement across independent algorithms is the strongest available evidence at n=120 with no external cohort.\n\nT2S1 asks whether any cluster is anything more than the known label or a composition artifact: cross-tabulate clusters against condition (chi-square/Fisher, Cramer's V, ARI), test clusters within cases and within controls separately, and quantify how much of the cluster assignment is predicted by deconvolved leukocyte fractions. Whole blood makes this mandatory rather than optional.\n\nT2S2 characterises whatever survives — DE of each stable cluster versus the rest (adjusting for condition), then hallmark/GO enrichment on those signatures, with the explicit instruction to report a null result if T1S3 dissolved every cluster. Enrichment runs on gene symbols against the staged human hallmark and GO BP sets."
+  },
+  "usage": {
+    "inputTokens": 248905,
+    "outputTokens": 15168,
+    "cacheCreationInputTokens": 94092,
+    "cacheReadInputTokens": 154753,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ConsensusClusterPlus",
+          "consensusclustering",
+          "scikit-learn",
+          "DESeq2",
+          "pydeseq2",
+          "sva",
+          "M3C",
+          "NbClust",
+          "cluster",
+          "fpc",
+          "mclust",
+          "umap-learn",
+          "limma",
+          "edgeR",
+          "clusterProfiler",
+          "pheatmap",
+          "ComplexHeatmap",
+          "statsmodels"
+        ]
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "unsupervised subgroup discovery bulk RNA-seq consensus clustering stability assessment whole blood",
+        "limit": 8
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "xCell",
+          "quantiseqr",
+          "MCPcounter",
+          "EPIC",
+          "ConsensusTME",
+          "gseapy",
+          "decoupler",
+          "scipy",
+          "seaborn",
+          "matplotlib",
+          "pandas",
+          "numpy",
+          "rnanorm",
+          "kneed",
+          "consensusclustering",
+          "GSVA",
+          "singscore",
+          "UCell",
+          "sva"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "limit": 30
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood cohort subgroup discovery & stability (n=120)",
+          "analytical_narrative": "The question is unsupervised: do the 120 whole-blood samples (12,000 genes x 121 columns in counts.csv, first column gene symbol; metadata.csv 120 rows with a condition column, 60 cases vs 60 controls, single batch, Salmon gene-level counts) contain structure beyond the case/control label, how many subgroups, and how stable are they. The plan is built so that the answer can legitimately be 'no reproducible subgroups' — the null must be reachable, otherwise clustering always returns clusters.\n\nT1S1 builds the analysis matrix: filter low-count genes with edgeR::filterByExpr on the 60/60 design, VST-transform with DESeq2 (variance-stabilised data is what distance-based clustering needs, not raw or naively log-CPM counts), and diagnose the global structure — PCA, library-size and detected-gene correlation with the leading PCs, and how much of PC1-PC5 the known case/control split explains. Whole blood is dominated by cell composition, so a PC that tracks library depth or a neutrophil/lymphocyte axis is a technical or compositional explanation for apparent 'subgroups' and must be identified before it is named a subtype.\n\nT1S2 is the core: consensus clustering (ConsensusClusterPlus, 1000 resamples, 80% subsampling, k=2..8, on the top ~2000 most variable genes after VST) plus a null calibration — the same procedure run on permuted/rotated data or a matched Gaussian reference — so that the consensus CDF, PAC score and delta-area of the real data are read against what the same pipeline produces when no cluster structure exists. Reporting k without that comparison is the standard failure mode of this analysis.\n\nT1S3 tests stability of the chosen k directly: repeated bootstrap/subsample resampling with Jaccard co-assignment per cluster (a cluster with mean Jaccard below ~0.6 is dissolved, not a subtype), silhouette on the consensus distance, and cross-method agreement (adjusted Rand index between consensus k-means, hierarchical Ward on VST correlation distance, and Gaussian mixture via mclust). Agreement across independent algorithms is the strongest available evidence at n=120 with no external cohort.\n\nT2S1 asks whether any cluster is anything more than the known label or a composition artifact: cross-tabulate clusters against condition (chi-square/Fisher, Cramer's V), test clusters within cases and within controls separately, and quantify how much of the cluster assignment is predicted by deconvolved leukocyte fractions. Whole blood makes this mandatory rather than optional.\n\nT2S2 characterises whatever survives — DE of each stable cluster versus the rest (adjusting for condition), then hallmark/GO enrichment on those signatures, with the explicit instruction to report a null result if T1S3 dissolved every cluster. Enrichment runs on gene symbols against the staged human hallmark and GO BP sets.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "VST matrix and global structure diagnostics",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "After filtering and variance-stabilising the 12,000-gene x 120-sample Salmon count matrix, what are the dominant axes of variation in whole blood, and how much of them is explained by the known case/control label versus technical depth?",
+              "description": "Load /eval-four-models-without-clustering-n60-1/data/inputs/counts/counts.csv (first column gene symbol, 120 sample columns) and /eval-four-models-without-clustering-n60-1/data/inputs/metadata/metadata.csv (120 rows, condition column). Verify sample IDs match one-to-one and align order; report any mismatch rather than silently intersecting. Collapse duplicate gene symbols by summing counts. Filter with edgeR::filterByExpr using the condition design (60 cases vs 60 controls). Build a DESeq2 DESeqDataSet with design ~condition and compute the variance-stabilising transform (vst, blind=TRUE — blind is required here because the downstream use is unsupervised clustering). Save the VST matrix, the filtered count matrix, and the aligned metadata as the inputs for all later steps. Diagnostics: PCA on the top 2000 most variable VST genes, variance explained per PC (PC1-PC10); Spearman correlation of PC1-PC5 with library size (column sums of the raw counts) and with number of detected genes; ANOVA/point-biserial of each of PC1-PC5 against the condition label; a sample-sample Spearman correlation heatmap; and flag any sample whose median correlation to all others is a clear outlier (report, do not drop). Also compute per-sample fractions of haemoglobin (HBB/HBA1/HBA2) and globin-adjacent reads as a whole-blood quality axis.",
+              "context": "Homo sapiens whole blood, bulk RNA-seq, raw integer gene-level counts from Salmon, single batch, unpaired 60 cases vs 60 controls. Whole blood expression is dominated by leukocyte composition and by residual globin, both of which produce strong PCs that are not disease subtypes. This step exists to name those axes before any clustering is interpreted.",
+              "constraints": [
+                "Use the exact input paths given; do not download anything.",
+                "Use VST from DESeq2 with blind=TRUE for the clustering matrix — do not cluster on raw counts, on unnormalised CPM, or on a supervised (blind=FALSE) transform.",
+                "Do not remove any sample; outliers are reported with their statistics only.",
+                "Persist the VST matrix, filtered counts, and aligned metadata to disk for downstream steps.",
+                "Report the exact number of genes retained after filterByExpr and the number of duplicate symbols collapsed."
+              ],
+              "acceptance_criteria": [
+                "A VST matrix with 120 columns is written to disk together with the aligned metadata.",
+                "Gene counts before and after filtering are reported explicitly.",
+                "PC1-PC10 variance explained is reported, plus the correlation of PC1-PC5 with library size, detected-gene count, globin fraction, and the condition label.",
+                "Any technical or compositional axis found among the leading PCs is stated in plain terms."
+              ],
+              "caveats": [
+                "A strong PC1 correlated with library size or globin fraction means subsequent 'subgroups' may be technical; this must be carried forward as a caveat.",
+                "12,000 rows is already a reduced gene universe (not the full transcriptome), so filtering will remove relatively few genes — do not over-interpret that."
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "SummarizedExperiment",
+                "matrixStats",
+                "ggplot2",
+                "pheatmap",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Consensus clustering with null calibration",
+              "question": "Does the 120-sample VST matrix support more than one cluster, and if so how many — judged against what the same consensus procedure yields on data with no true cluster structure?",
+              "description": "Run ConsensusClusterPlus on the VST matrix restricted to the top 2000 most variable genes (median-centre genes; use Pearson-correlation distance for hierarchical linkage and Euclidean for k-means), reps=1000, pItem=0.8, pFeature=1, for k=2..8, with both 'hc' (Ward.D2) and 'km' inner algorithms. Report for each k: the consensus CDF, the delta-area under CDF, the PAC (proportion of ambiguous clustering, computed on the 0.1-0.9 consensus interval), mean cluster consensus, and cluster sizes. CRITICAL null calibration: repeat the identical pipeline on at least 20 null datasets built by independently permuting each gene's values across samples (which destroys inter-sample structure while preserving each gene's marginal distribution), and report the null distribution of PAC and delta-area per k. Declare a k only if the real-data PAC at that k falls outside the null range; if it does not, the explicit conclusion is that no subgroup structure beyond the case/control label is supported. Also report a second opinion on cluster number from the gap statistic and from silhouette maxima over k=2..8 on the same matrix.",
+              "context": "n=120 with 2000 features is a regime where consensus clustering almost always returns visually convincing clusters even from pure noise. The null calibration is what makes the k call interpretable, and it is the reason this step is heavier than a plain ConsensusClusterPlus run.",
+              "constraints": [
+                "ConsensusClusterPlus is present at 1.76.0 — use it; M3C, NbClust, fpc and cluster are NOT installed, so do not import them.",
+                "Run the null permutation calibration; a k reported without it does not satisfy this step.",
+                "Report PAC explicitly per k for both real and null data.",
+                "Save the consensus matrices and the per-k cluster assignments for k=2..8 to disk.",
+                "State clearly if the null-calibrated result is 'k=1, no structure'."
+              ],
+              "acceptance_criteria": [
+                "Consensus matrices, CDF/delta-area plots, and PAC values for k=2..8 are produced for both hc and km.",
+                "A null distribution of PAC and delta-area from >=20 gene-permuted datasets is reported per k.",
+                "A single k (or an explicit k=1 / no-structure verdict) is stated with the null comparison as its justification.",
+                "Per-k cluster assignment tables for all 120 samples are written to disk."
+              ],
+              "caveats": [
+                "Gene-wise permutation preserves marginal distributions but removes gene-gene correlation, so it is a conservative null for structure and an anti-conservative one for correlated noise; say so when reporting.",
+                "Delta-area is known to be a poor k selector on its own — PAC and the null comparison carry the decision."
+              ],
+              "packages": [
+                "ConsensusClusterPlus",
+                "cluster",
+                "ComplexHeatmap",
+                "matrixStats",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Cluster stability and cross-method agreement",
+              "question": "For the k chosen in T1S2, is each cluster stable under resampling, and do independent algorithms recover the same partition of the 120 samples?",
+              "description": "Take the selected k (and k-1, k+1 as sensitivity) and the VST/top-2000 matrix. (1) Bootstrap/subsample stability: 500 iterations at 80% subsampling, re-cluster, map each resampled cluster to the reference partition by maximum Jaccard, and report the per-cluster mean Jaccard with its distribution — apply the standard reading that mean Jaccard < 0.5 means the cluster is dissolved/not meaningful, 0.6-0.75 indicates a pattern in the data but not a well-separated cluster, > 0.85 is highly stable. Implement this directly (fpc::clusterboot is NOT installed) using scikit-learn or base R resampling. (2) Silhouette widths on the consensus-derived distance and on Euclidean VST distance, per sample and per cluster. (3) Cross-method agreement: partition the same matrix with hierarchical Ward.D2 on correlation distance, k-means, PAM-style medoid assignment, and a Gaussian mixture on the leading PCs via mclust (mclust 6.1.2 is installed; report its BIC-selected number of components as an independent k estimate); compute pairwise adjusted Rand index and normalised mutual information between all partitions. (4) Report a final stability verdict per cluster: stable / weak / dissolved.",
+              "context": "Stability is the second half of the research question and is where an over-eager clustering result is most often falsified. With no external validation cohort available, resampling stability plus cross-algorithm agreement is the strongest evidence obtainable from these 120 samples.",
+              "constraints": [
+                "fpc, cluster::clusterboot and NbClust are NOT installed — implement Jaccard bootstrap stability directly rather than importing them.",
+                "Report per-cluster mean Jaccard with the interpretive thresholds stated, not just an overall average.",
+                "Report the mclust BIC-selected component count as an independent estimate of k, even when it disagrees with T1S2.",
+                "Use a fixed random seed and report it."
+              ],
+              "acceptance_criteria": [
+                "Per-cluster bootstrap Jaccard means over 500 resamples are reported for the selected k and for k-1 and k+1.",
+                "Adjusted Rand index between at least four independent partitioning methods is reported as a matrix.",
+                "Per-sample and per-cluster silhouette widths are reported.",
+                "Each cluster receives an explicit stable / weak / dissolved verdict."
+              ],
+              "caveats": [
+                "High ARI between k-means and Ward on the same features is partly expected from shared geometry — it is weaker evidence than bootstrap Jaccard.",
+                "If T1S2 concluded k=1, this step should still run at k=2 and k=3 to quantify how unstable the forced partitions are, which is the quantitative form of the negative answer."
+              ],
+              "packages": [
+                "scikit-learn",
+                "scipy",
+                "numpy",
+                "pandas",
+                "matplotlib",
+                "seaborn",
+                "mclust"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Clusters vs known label and blood cell composition",
+              "question": "Do the recovered clusters simply recapitulate the 60-case/60-control split or leukocyte composition, or do they mark structure orthogonal to both — including substructure within cases and within controls?",
+              "description": "Using the cluster assignments from T1S2/T1S3 and the aligned metadata: (1) cross-tabulate cluster x condition and test association (Fisher exact or chi-square, plus Cramer's V and adjusted Rand index between cluster labels and the condition label) — an ARI near 1 means the clusters are the known split, near 0 means they are orthogonal. (2) Deconvolve leukocyte composition from the filtered counts converted to TPM-like CPM (whole blood, human): run at least two independent methods from the installed immunedeconv suite (e.g. quanTIseq and MCPcounter or xCell) and report neutrophil, monocyte, CD4/CD8 T, B, and NK estimates per sample. (3) Test each cell fraction across clusters (Kruskal-Wallis with BH correction) and fit a multinomial/logistic model predicting cluster from cell fractions to report the fraction of cluster assignment explained by composition alone; also regress the leading PCs from T1S1 on cell fractions. (4) Re-run the consensus clustering decision separately within the 60 cases and within the 60 controls (same PAC + null-calibrated criterion, reduced reps acceptable) to test whether either arm contains internal substructure. Report the within-arm sample size (n=60) as a power limitation.",
+              "context": "Whole blood bulk expression is largely a readout of cell-type proportions; a two-cluster split of whole blood is very commonly a neutrophil-high vs lymphocyte-high axis rather than a disease subtype. Deconvolution is the direct test of that alternative explanation. Deconvolution methods carry tumour-microenvironment training assumptions — treat the fractions as relative scores, and note that MCPcounter and xCell scores are not comparable across cell types.",
+              "constraints": [
+                "Use installed deconvolution tooling (immunedeconv 2.1.4, quantiseqr, MCPcounter, xCell, EPIC) — do not attempt CIBERSORTx or any method requiring a network call or a licensed signature file.",
+                "Report ARI between cluster labels and the condition label explicitly — this is the direct answer to 'beyond the known case/control split'.",
+                "Correct all cell-fraction comparisons for multiple testing (BH).",
+                "Within-arm re-clustering must use the same PAC/null-calibrated criterion as T1S2 and must state that n=60 per arm limits detectable structure."
+              ],
+              "acceptance_criteria": [
+                "A cluster x condition contingency table with a test statistic, Cramer's V, and ARI is reported.",
+                "Per-sample leukocyte fractions from at least two independent deconvolution methods are produced and compared across clusters with BH-adjusted p-values.",
+                "The share of cluster assignment explained by composition alone is quantified.",
+                "Within-case and within-control clustering results are reported with their own stability evidence."
+              ],
+              "caveats": [
+                "Deconvolution signatures were largely trained on tumour or PBMC contexts; whole-blood neutrophil estimates in particular are approximate.",
+                "If clusters align with condition at high ARI, the honest conclusion is that no structure beyond the known split was found, not that clustering 'worked'."
+              ],
+              "packages": [
+                "immunedeconv",
+                "quantiseqr",
+                "MCPcounter",
+                "xCell",
+                "edgeR",
+                "ConsensusClusterPlus",
+                "rstatix",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "immune-profiling-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Molecular signature of stable clusters",
+              "question": "What genes and pathways distinguish each cluster that survived the stability verdict, after adjusting for the known case/control label?",
+              "description": "Conditional on T1S3 declaring at least one stable or weak cluster: for each such cluster, run DESeq2 on the filtered count matrix with design ~condition + cluster_indicator (cluster k vs all others), so that the known 60/60 case-control effect is adjusted out and the reported signature is cluster-specific rather than a restatement of the disease contrast. Apply apeglm/ashr LFC shrinkage, report genes at BH FDR < 0.05 with |log2FC| > 0.5, and give the count per cluster. Then run enrichment on each cluster's ranked signature: GSEA (fgsea or gseapy preranked, shrunken LFC as the ranking statistic) against the staged human hallmark gene sets and the human GO Biological Process sets — reference data needed: hallmark gene sets and GO BP gene sets for Homo sapiens, gene-symbol keyed, matching the HGNC symbols in the count matrix. Report normalised enrichment scores with BH-adjusted p-values and the leading-edge genes. Cross-reference the top signatures against the leukocyte-composition results from T2S1 and state plainly for each cluster whether its signature is a cell-composition signature (e.g. neutrophil or lymphocyte marker dominated) or something else. If T1S3 dissolved every cluster, this step must report that no cluster met the stability bar and characterise the k=2 partition only as a descriptive, explicitly non-validated exploratory contrast.",
+              "context": "This step converts a partition into biology, but only for partitions that survived stability testing. The condition covariate in the design is what prevents the cluster signature from being a laundered version of the case/control DE result. Whole-blood cluster signatures are frequently pure cell-composition signatures, which is why the cross-reference to T2S1 is mandatory.",
+              "constraints": [
+                "Include condition as a covariate in every cluster-vs-rest DESeq2 design.",
+                "Only characterise clusters that T1S3 rated stable or weak; explicitly label anything else as exploratory and non-validated.",
+                "Use the human (not mouse or rat) hallmark and GO gene sets; match on HGNC gene symbols.",
+                "If the hallmark or GO reference is unavailable at run time, report the DE gene lists and skip enrichment with an explicit note rather than substituting a different-organism gene set.",
+                "Report the fraction of each cluster signature that overlaps canonical leukocyte marker genes."
+              ],
+              "acceptance_criteria": [
+                "Per-cluster DE tables (adjusted for condition) with shrunken LFCs and BH-adjusted p-values are written to disk, with significant-gene counts reported.",
+                "GSEA results against human hallmark and GO BP sets are reported per cluster with NES, BH-adjusted p, and leading-edge genes.",
+                "Each cluster is explicitly classified as composition-driven or not, using the T2S1 deconvolution output.",
+                "If no cluster was stable, the step reports that as its primary result rather than presenting an exploratory partition as a finding."
+              ],
+              "caveats": [
+                "Cluster labels were derived from the same expression data used for DE, so the DE p-values are anticonservative by construction (double dipping) — state this in the output; the gene lists are descriptive, not inferential.",
+                "Cluster sizes may be very unbalanced, which reduces power for small clusters."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "fgsea",
+                "clusterProfiler",
+                "data.table",
+                "ggplot2",
+                "ComplexHeatmap"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "bulk-transcriptomics-agent"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood cohort subgroup discovery & stability (n=120)",
+          "analytical_narrative": "The question is unsupervised: do the 120 whole-blood samples (12,000 genes x 121 columns in counts.csv, first column gene symbol; metadata.csv 120 rows with a condition column, 60 cases vs 60 controls, single batch, Salmon gene-level counts) contain structure beyond the case/control label, how many subgroups, and how stable are they. The plan is built so that the answer can legitimately be 'no reproducible subgroups' — the null must be reachable, otherwise clustering always returns clusters.\n\nT1S1 builds the analysis matrix: filter low-count genes with edgeR::filterByExpr on the 60/60 design, VST-transform with DESeq2 (variance-stabilised data is what distance-based clustering needs, not raw or naively log-CPM counts), and diagnose the global structure — PCA, library-size and detected-gene correlation with the leading PCs, and how much of PC1-PC5 the known case/control split explains. Whole blood is dominated by cell composition, so a PC that tracks library depth or a neutrophil/lymphocyte axis is a technical or compositional explanation for apparent 'subgroups' and must be identified before it is named a subtype.\n\nT1S2 is the core: consensus clustering (ConsensusClusterPlus, 1000 resamples, 80% subsampling, k=2..8, on the top ~2000 most variable genes after VST) plus a null calibration — the same procedure run on gene-permuted data — so that the consensus CDF, PAC score and delta-area of the real data are read against what the same pipeline produces when no cluster structure exists. Reporting k without that comparison is the standard failure mode of this analysis.\n\nT1S3 tests stability of the chosen k directly: repeated bootstrap/subsample resampling with Jaccard co-assignment per cluster (a cluster with mean Jaccard below ~0.6 is dissolved, not a subtype), silhouette on the consensus distance, and cross-method agreement (adjusted Rand index between consensus k-means, hierarchical Ward on VST correlation distance, and Gaussian mixture via mclust). Agreement across independent algorithms is the strongest available evidence at n=120 with no external cohort.\n\nT2S1 asks whether any cluster is anything more than the known label or a composition artifact: cross-tabulate clusters against condition (chi-square/Fisher, Cramer's V, ARI), test clusters within cases and within controls separately, and quantify how much of the cluster assignment is predicted by deconvolved leukocyte fractions. Whole blood makes this mandatory rather than optional.\n\nT2S2 characterises whatever survives — DE of each stable cluster versus the rest (adjusting for condition), then hallmark/GO enrichment on those signatures, with the explicit instruction to report a null result if T1S3 dissolved every cluster. Enrichment runs on gene symbols against the staged human hallmark and GO BP sets.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "VST matrix and global structure diagnostics",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "After filtering and variance-stabilising the 12,000-gene x 120-sample Salmon count matrix, what are the dominant axes of variation in whole blood, and how much of them is explained by the known case/control label versus technical depth?",
+              "description": "Load /eval-four-models-without-clustering-n60-1/data/inputs/counts/counts.csv (first column gene symbol, 120 sample columns) and /eval-four-models-without-clustering-n60-1/data/inputs/metadata/metadata.csv (120 rows, condition column). Verify sample IDs match one-to-one and align order; report any mismatch rather than silently intersecting. Collapse duplicate gene symbols by summing counts. Filter with edgeR::filterByExpr using the condition design (60 cases vs 60 controls). Build a DESeq2 DESeqDataSet with design ~condition and compute the variance-stabilising transform (vst, blind=TRUE — blind is required here because the downstream use is unsupervised clustering). Save the VST matrix, the filtered count matrix, and the aligned metadata as the inputs for all later steps. Diagnostics: PCA on the top 2000 most variable VST genes, variance explained per PC (PC1-PC10); Spearman correlation of PC1-PC5 with library size (column sums of the raw counts) and with number of detected genes; ANOVA/point-biserial of each of PC1-PC5 against the condition label; a sample-sample Spearman correlation heatmap; and flag any sample whose median correlation to all others is a clear outlier (report, do not drop). Also compute per-sample fractions of haemoglobin (HBB/HBA1/HBA2) reads as a whole-blood quality axis.",
+              "context": "Homo sapiens whole blood, bulk RNA-seq, raw integer gene-level counts from Salmon, single batch, unpaired 60 cases vs 60 controls. Whole blood expression is dominated by leukocyte composition and by residual globin, both of which produce strong PCs that are not disease subtypes. This step exists to name those axes before any clustering is interpreted.",
+              "constraints": [
+                "Use the exact input paths given; do not download anything.",
+                "Use VST from DESeq2 with blind=TRUE for the clustering matrix — do not cluster on raw counts, on unnormalised CPM, or on a supervised (blind=FALSE) transform.",
+                "Do not remove any sample; outliers are reported with their statistics only.",
+                "Persist the VST matrix, filtered counts, and aligned metadata to disk for downstream steps.",
+                "Report the exact number of genes retained after filterByExpr and the number of duplicate symbols collapsed."
+              ],
+              "acceptance_criteria": [
+                "A VST matrix with 120 columns is written to disk together with the aligned metadata.",
+                "Gene counts before and after filtering are reported explicitly.",
+                "PC1-PC10 variance explained is reported, plus the correlation of PC1-PC5 with library size, detected-gene count, globin fraction, and the condition label.",
+                "Any technical or compositional axis found among the leading PCs is stated in plain terms."
+              ],
+              "caveats": [
+                "A strong PC1 correlated with library size or globin fraction means subsequent 'subgroups' may be technical; this must be carried forward as a caveat.",
+                "12,000 rows is already a reduced gene universe (not the full transcriptome), so filtering will remove relatively few genes — do not over-interpret that."
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "SummarizedExperiment",
+                "matrixStats",
+                "ggplot2",
+                "pheatmap",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Consensus clustering with null calibration",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Does the 120-sample VST matrix support more than one cluster, and if so how many — judged against what the same consensus procedure yields on data with no true cluster structure?",
+              "description": "Run ConsensusClusterPlus on the VST matrix restricted to the top 2000 most variable genes (median-centre genes; use Pearson-correlation distance for hierarchical linkage and Euclidean for k-means), reps=1000, pItem=0.8, pFeature=1, for k=2..8, with both 'hc' (Ward.D2) and 'km' inner algorithms. Report for each k: the consensus CDF, the delta-area under CDF, the PAC (proportion of ambiguous clustering, computed on the 0.1-0.9 consensus interval), mean cluster consensus, and cluster sizes. CRITICAL null calibration: repeat the identical pipeline on at least 20 null datasets built by independently permuting each gene's values across samples (which destroys inter-sample structure while preserving each gene's marginal distribution), and report the null distribution of PAC and delta-area per k. Declare a k only if the real-data PAC at that k falls outside the null range; if it does not, the explicit conclusion is that no subgroup structure beyond the case/control label is supported. Also report a second opinion on cluster number from the gap statistic and from silhouette maxima over k=2..8 on the same matrix.",
+              "context": "n=120 with 2000 features is a regime where consensus clustering almost always returns visually convincing clusters even from pure noise. The null calibration is what makes the k call interpretable, and it is the reason this step is heavier than a plain ConsensusClusterPlus run.",
+              "constraints": [
+                "ConsensusClusterPlus is present at 1.76.0 — use it; M3C, NbClust, fpc and the CRAN 'cluster' package are NOT installed, so do not import them.",
+                "Run the null permutation calibration; a k reported without it does not satisfy this step.",
+                "Report PAC explicitly per k for both real and null data.",
+                "Save the consensus matrices and the per-k cluster assignments for k=2..8 to disk.",
+                "State clearly if the null-calibrated result is 'k=1, no structure'."
+              ],
+              "acceptance_criteria": [
+                "Consensus matrices, CDF/delta-area plots, and PAC values for k=2..8 are produced for both hc and km.",
+                "A null distribution of PAC and delta-area from >=20 gene-permuted datasets is reported per k.",
+                "A single k (or an explicit k=1 / no-structure verdict) is stated with the null comparison as its justification.",
+                "Per-k cluster assignment tables for all 120 samples are written to disk."
+              ],
+              "caveats": [
+                "Gene-wise permutation preserves marginal distributions but removes gene-gene correlation, so it is a conservative null for structure and an anti-conservative one for correlated noise; say so when reporting.",
+                "Delta-area is known to be a poor k selector on its own — PAC and the null comparison carry the decision."
+              ],
+              "packages": [
+                "ConsensusClusterPlus",
+                "ComplexHeatmap",
+                "matrixStats",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Cluster stability and cross-method agreement",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "For the k chosen in T1S2, is each cluster stable under resampling, and do independent algorithms recover the same partition of the 120 samples?",
+              "description": "Take the selected k (and k-1, k+1 as sensitivity) and the VST/top-2000 matrix. (1) Bootstrap/subsample stability: 500 iterations at 80% subsampling, re-cluster, map each resampled cluster to the reference partition by maximum Jaccard, and report the per-cluster mean Jaccard with its distribution — apply the standard reading that mean Jaccard < 0.5 means the cluster is dissolved/not meaningful, 0.6-0.75 indicates a pattern in the data but not a well-separated cluster, > 0.85 is highly stable. Implement this directly (fpc::clusterboot is NOT installed) using scikit-learn or base resampling. (2) Silhouette widths on the consensus-derived distance and on Euclidean VST distance, per sample and per cluster. (3) Cross-method agreement: partition the same matrix with hierarchical Ward.D2 on correlation distance, k-means, PAM-style medoid assignment, and a Gaussian mixture on the leading PCs via mclust (mclust 6.1.2 is installed; report its BIC-selected number of components as an independent k estimate); compute pairwise adjusted Rand index and normalised mutual information between all partitions. (4) Report a final stability verdict per cluster: stable / weak / dissolved.",
+              "context": "Stability is the second half of the research question and is where an over-eager clustering result is most often falsified. With no external validation cohort available, resampling stability plus cross-algorithm agreement is the strongest evidence obtainable from these 120 samples.",
+              "constraints": [
+                "fpc, the CRAN 'cluster' package and NbClust are NOT installed — implement Jaccard bootstrap stability and silhouette directly with scikit-learn/scipy rather than importing them.",
+                "Report per-cluster mean Jaccard with the interpretive thresholds stated, not just an overall average.",
+                "Report the mclust BIC-selected component count as an independent estimate of k, even when it disagrees with T1S2.",
+                "Use a fixed random seed and report it."
+              ],
+              "acceptance_criteria": [
+                "Per-cluster bootstrap Jaccard means over 500 resamples are reported for the selected k and for k-1 and k+1.",
+                "Adjusted Rand index between at least four independent partitioning methods is reported as a matrix.",
+                "Per-sample and per-cluster silhouette widths are reported.",
+                "Each cluster receives an explicit stable / weak / dissolved verdict."
+              ],
+              "caveats": [
+                "High ARI between k-means and Ward on the same features is partly expected from shared geometry — it is weaker evidence than bootstrap Jaccard.",
+                "If T1S2 concluded k=1, this step should still run at k=2 and k=3 to quantify how unstable the forced partitions are, which is the quantitative form of the negative answer."
+              ],
+              "packages": [
+                "scikit-learn",
+                "scipy",
+                "numpy",
+                "pandas",
+                "matplotlib",
+                "seaborn",
+                "mclust"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Clusters vs known label and blood cell composition",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do the recovered clusters simply recapitulate the 60-case/60-control split or leukocyte composition, or do they mark structure orthogonal to both — including substructure within cases and within controls?",
+              "description": "Using the cluster assignments from T1S2/T1S3 and the aligned metadata: (1) cross-tabulate cluster x condition and test association (Fisher exact or chi-square, plus Cramer's V and adjusted Rand index between cluster labels and the condition label) — an ARI near 1 means the clusters are the known split, near 0 means they are orthogonal. (2) Deconvolve leukocyte composition from the filtered counts converted to CPM/TPM-like scale (whole blood, human): run at least two independent methods from the installed immunedeconv suite (e.g. quanTIseq plus MCPcounter or xCell) and report neutrophil, monocyte, CD4/CD8 T, B, and NK estimates per sample. (3) Test each cell fraction across clusters (Kruskal-Wallis with BH correction) and fit a multinomial/logistic model predicting cluster from cell fractions to report the fraction of cluster assignment explained by composition alone; also regress the leading PCs from T1S1 on cell fractions. (4) Re-run the consensus clustering decision separately within the 60 cases and within the 60 controls (same PAC + null-calibrated criterion, reduced reps acceptable) to test whether either arm contains internal substructure. Report the within-arm sample size (n=60) as a power limitation.",
+              "context": "Whole blood bulk expression is largely a readout of cell-type proportions; a two-cluster split of whole blood is very commonly a neutrophil-high vs lymphocyte-high axis rather than a disease subtype. Deconvolution is the direct test of that alternative explanation. Deconvolution methods carry tumour-microenvironment training assumptions — treat the fractions as relative scores, and note that MCPcounter and xCell scores are not comparable across cell types.",
+              "constraints": [
+                "Use installed deconvolution tooling (immunedeconv 2.1.4, quantiseqr, MCPcounter, xCell, EPIC) — do not attempt CIBERSORTx or any method requiring a network call or a licensed signature file.",
+                "Report ARI between cluster labels and the condition label explicitly — this is the direct answer to 'beyond the known case/control split'.",
+                "Correct all cell-fraction comparisons for multiple testing (BH).",
+                "Within-arm re-clustering must use the same PAC/null-calibrated criterion as T1S2 and must state that n=60 per arm limits detectable structure."
+              ],
+              "acceptance_criteria": [
+                "A cluster x condition contingency table with a test statistic, Cramer's V, and ARI is reported.",
+                "Per-sample leukocyte fractions from at least two independent deconvolution methods are produced and compared across clusters with BH-adjusted p-values.",
+                "The share of cluster assignment explained by composition alone is quantified.",
+                "Within-case and within-control clustering results are reported with their own stability evidence."
+              ],
+              "caveats": [
+                "Deconvolution signatures were largely trained on tumour or PBMC contexts; whole-blood neutrophil estimates in particular are approximate.",
+                "If clusters align with condition at high ARI, the honest conclusion is that no structure beyond the known split was found, not that clustering 'worked'."
+              ],
+              "packages": [
+                "immunedeconv",
+                "quantiseqr",
+                "MCPcounter",
+                "xCell",
+                "edgeR",
+                "ConsensusClusterPlus",
+                "rstatix",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "immune-profiling-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Molecular signature of stable clusters",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "What genes and pathways distinguish each cluster that survived the stability verdict, after adjusting for the known case/control label?",
+              "description": "Conditional on T1S3 declaring at least one stable or weak cluster: for each such cluster, run DESeq2 on the filtered count matrix with design ~condition + cluster_indicator (cluster k vs all others), so that the known 60/60 case-control effect is adjusted out and the reported signature is cluster-specific rather than a restatement of the disease contrast. Apply apeglm/ashr LFC shrinkage, report genes at BH FDR < 0.05 with |log2FC| > 0.5, and give the count per cluster. Then run enrichment on each cluster's ranked signature: GSEA (fgsea preranked, shrunken LFC as the ranking statistic) against the staged human hallmark gene sets and the human GO Biological Process sets — reference data needed: hallmark gene sets and GO BP gene sets for Homo sapiens, gene-symbol keyed, matching the HGNC symbols in the count matrix. Report normalised enrichment scores with BH-adjusted p-values and the leading-edge genes. Cross-reference the top signatures against the leukocyte-composition results from T2S1 and state plainly for each cluster whether its signature is a cell-composition signature (neutrophil or lymphocyte marker dominated) or something else. If T1S3 dissolved every cluster, this step must report that no cluster met the stability bar and characterise the k=2 partition only as a descriptive, explicitly non-validated exploratory contrast.",
+              "context": "This step converts a partition into biology, but only for partitions that survived stability testing. The condition covariate in the design is what prevents the cluster signature from being a laundered version of the case/control DE result. Whole-blood cluster signatures are frequently pure cell-composition signatures, which is why the cross-reference to T2S1 is mandatory.",
+              "constraints": [
+                "Include condition as a covariate in every cluster-vs-rest DESeq2 design.",
+                "Only characterise clusters that T1S3 rated stable or weak; explicitly label anything else as exploratory and non-validated.",
+                "Use the human (not mouse or rat) hallmark and GO gene sets; match on HGNC gene symbols.",
+                "If the hallmark or GO reference is unavailable at run time, report the DE gene lists and skip enrichment with an explicit note rather than substituting a different-organism gene set.",
+                "Report the fraction of each cluster signature that overlaps canonical leukocyte marker genes."
+              ],
+              "acceptance_criteria": [
+                "Per-cluster DE tables (adjusted for condition) with shrunken LFCs and BH-adjusted p-values are written to disk, with significant-gene counts reported.",
+                "GSEA results against human hallmark and GO BP sets are reported per cluster with NES, BH-adjusted p, and leading-edge genes.",
+                "Each cluster is explicitly classified as composition-driven or not, using the T2S1 deconvolution output.",
+                "If no cluster was stable, the step reports that as its primary result rather than presenting an exploratory partition as a finding."
+              ],
+              "caveats": [
+                "Cluster labels were derived from the same expression data used for DE, so the DE p-values are anticonservative by construction (double dipping) — state this in the output; the gene lists are descriptive, not inferential.",
+                "Cluster sizes may be very unbalanced, which reduces power for small clusters."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "fgsea",
+                "clusterProfiler",
+                "data.table",
+                "ggplot2",
+                "ComplexHeatmap"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "bulk-transcriptomics-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

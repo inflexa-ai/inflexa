@@ -1,0 +1,54 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "tf-activity-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T04:26:28.964Z",
+  "elapsedMs": 92242,
+  "outcome": "error",
+  "error": "Plan generation failed: Provider call failed for analysis:eval-four-models-with-tf-activity-n6-1: Upstream error from NextBit: upstream model did not return a valid tool call for the requested tool_choice",
+  "usage": {
+    "inputTokens": 94225,
+    "outputTokens": 337,
+    "cacheReadInputTokens": 34944,
+    "reasoningTokens": 204
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "tf_activity"
+        ],
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon dorothea"
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan selects limma-voom with a fixed-effects ~0+condition design, explicit control reference and case-control contrast, eBayes and a TREAT test against |log2FC|>=1, matching the reference for a 60 vs 60 single-batch cohort, and it pairs every p-value with an effect size, SE and CI while sorting by effect size. filterByExpr with TMM inside the model, BH at 0.05, and thresholds set in the test rather than post hoc are all explicit; requiring 60 samples in filterByExpr is slightly stricter than the default but justified by group size. Enrichment uses camera on the voom fit with inter-gene correlation and fgsea preranked on the moderated t, with named collections, versions, a 15-500 size window and per-collection BH, correctly declining ORA. QC has PCA, distances and library sizes colored by condition, but omits the sex check (XIST/Y-linked) and only asserts single batch rather than searching for hidden structure with candidate factors reported, and the outlier policy is 'flag' without a stated action. The report step is thorough with counts, thresholds, caveats and a reproducibility record."
+}

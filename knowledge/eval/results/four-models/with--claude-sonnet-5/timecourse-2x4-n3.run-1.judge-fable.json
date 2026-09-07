@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly frames the question as a condition:time interaction with time as a categorical factor and a full ~condition + time + condition:time design, but it replaces the natural omnibus test (LRT of full vs reduced ~condition + time) with three per-coefficient Wald tests whose padj<0.05 calls are unioned, which does not control FDR for the joint interaction question and deviates from the reference; the stated reason (a 'knowledge service' disallowing LRT) is not a statistical justification. QC (blind VST, top-500 PCA colored by condition/time, distance heatmap, library sizes, flag-not-drop policy), the >=10-in->=3 filter tied to the smallest cell, in-model median-of-ratios normalization, apeglm shrinkage, explicit reference levels, and the reproducibility/caveat reporting are all well specified. The plan describes 25 samples for a 2x4x3 design that should yield 24, an inconsistency it does not address. Enrichment was not required, but the ORA is done defensibly with an explicit tested-gene universe, named collections with versions, a 15-500 size window, and per-collection BH."
+}

@@ -1,0 +1,524 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "coexpression-too-few-n3",
+  "run": 1,
+  "startedAt": "2026-09-07T00:53:59.839Z",
+  "elapsedMs": 120137,
+  "outcome": "plan_submitted",
+  "planId": "pln-299aa775",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Filter, normalize, variance decomposition",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 samples, PCA components beyond PC5 are undefined; do not report more than 5 PCs",
+          "Gene symbols may contain duplicates from the Salmon-to-symbol collapse — check for and report duplicate row names, aggregating by sum or keeping the highest-expressed, and state which was done"
+        ],
+        "context": "Homo sapiens liver, bulk RNA-seq, raw integer gene-level counts from Salmon. Design: 3 treated vs 3 control, unpaired, single batch. 12,000 genes x 6 samples. This step produces the single normalized matrix that both the co-expression and the differential-expression tracks consume, so that module and DE results are on comparable footing. The eta-squared distribution is the diagnostic that tells downstream steps how much of the correlation structure is simply the two-group split.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "matrixStats",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "After low-count filtering and variance-stabilizing transformation of the 12,000-gene x 6-sample Salmon count matrix, how many genes remain, and what fraction of total expression variance is attributable to the treated-vs-control axis versus residual within-group variance?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Use the raw integer counts as given — do not re-normalize Salmon output or apply TPM/FPKM",
+          "Use vst() from DESeq2 with blind=TRUE for the unsupervised matrix that feeds module detection, so that transformation does not bake in the treatment contrast",
+          "Do not remove any sample as an outlier at n=3 per group; report outlier diagnostics but retain all 6 samples",
+          "State the residual degrees of freedom (4) explicitly in the step output"
+        ],
+        "description": "Load /eval-four-models-without-coexpression-too-few-n3-1/data/inputs/counts/counts.csv (gene symbol in column 1, one column per sample) and /eval-four-models-without-coexpression-too-few-n3-1/data/inputs/metadata/metadata.csv (sample, condition). Verify the 6 metadata sample IDs match the 6 count columns exactly and reorder to match. Drop genes with near-zero counts (e.g. require count >= 10 in at least 3 samples, the size of the smaller group). Apply DESeq2 variance-stabilizing transformation (vst, blind=TRUE) to produce a normalized expression matrix; also emit log2-CPM from edgeR as a cross-check. Run PCA on the top-variance genes and report the variance explained by each PC and whether PC1 separates treated from control. For each gene compute the proportion of variance explained by condition (one-way ANOVA eta-squared with 1 and 4 df) and report the distribution. Save the VST matrix, the sample-aligned metadata, and the variance summary as artifacts for downstream steps.",
+        "acceptance_criteria": [
+          "Sample IDs in metadata.csv are confirmed to match the count matrix columns 1:1; any mismatch is reported and halts the step rather than being silently reordered",
+          "Number of genes retained after filtering is reported alongside the 12,000 input genes",
+          "VST matrix saved with genes x 6 samples, no NA values",
+          "PCA variance-explained per PC reported, with the treated/control label of each sample on PC1/PC2",
+          "Per-gene condition eta-squared distribution reported (median and quartiles), explicitly framed as 1 vs 4 degrees of freedom"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Co-expression module detection",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "cor() on 6 samples has 4 df; a Pearson r of ~0.81 is nominally p<0.05, which is reached by chance often across dozens of modules",
+          "With 6 samples the eigengene of any module is nearly a linear function of the group split, so high module-trait correlation is close to guaranteed for any module with coherent between-group shift — this is circularity, not evidence",
+          "enableWGCNAThreads or allowWGCNAThreads may need to be called; blockwise functions are unnecessary at this matrix size"
+        ],
+        "context": "This is the step that directly answers the research question. The dataset has 6 samples, which is far below the ~15-sample minimum the WGCNA authors state and the ~20+ samples conventionally used; the module structure recovered here is expected to be dominated by the single treated-vs-control contrast plus noise. The step's job is to produce the modules faithfully AND to surface the parameters that were forced rather than fitted, so that T1S3 can quantify how much of the result is real.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "dynamicTreeCut",
+          "flashClust",
+          "ComplexHeatmap",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which co-expression modules do the ~12,000 filtered liver genes form across the 6 samples, and do the module eigengenes correlate with the treated-vs-control assignment?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use a signed network (signed or signed hybrid), not unsigned — sign-agnostic correlation is even less identifiable at this n",
+          "Set minModuleSize to at least 30 genes; do not lower it to manufacture more modules",
+          "Do NOT report a module as 'treatment-associated' in this step on the basis of the nominal correlation p-value alone — that determination is deferred to T1S3",
+          "Report the grey module size prominently; a large grey fraction is the honest signal that the network did not resolve"
+        ],
+        "description": "Using the VST matrix from T1S1, construct a signed gene-gene co-expression network with WGCNA and detect modules. Run pickSoftThreshold across a beta grid and REPORT the scale-free topology fit R-squared curve verbatim; with 6 samples the fit is expected to be unstable or to never reach the conventional 0.8 criterion, in which case fall back to the WGCNA-recommended default beta for signed networks on small sample counts (beta=12 for signed) and state explicitly that beta was chosen by convention, not by fit. Build the topological overlap matrix, cluster with average linkage, and cut with cutreeDynamic (deepSplit=2, minModuleSize=30). Merge modules whose eigengenes correlate above 0.75. Compute module eigengenes (first PC of each module) and, for each module, the correlation between its eigengene and the binary treated/control indicator, with the corresponding p-value. Output: gene-to-module assignment table, module sizes, module eigengene matrix (modules x 6 samples), module-trait correlation table, an eigengene heatmap across the 6 samples, and the intramodular connectivity (kME) of each gene in its own module. Consider restricting to the top ~5,000 most variable genes if the full TOM is unstable, and state the gene set used.",
+        "acceptance_criteria": [
+          "Soft-threshold power selection is reported as a table of beta vs scale-free R-squared vs mean connectivity, with an explicit statement of whether the 0.8 R-squared criterion was met and what beta was ultimately used and why",
+          "Gene-to-module assignment table written for every gene entering the network, including the grey (unassigned) module with its size",
+          "Module eigengene matrix (modules x 6 samples) written",
+          "Module-trait correlation table reports, per module, Pearson r with the treated/control indicator, the nominal p-value, and the number of genes",
+          "The output explicitly states that module-trait p-values from 6 samples have 4 residual degrees of freedom and are not multiple-testing-survivable"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Module stability and permutation null",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "ARI between partitions that both contain a dominant grey module is inflated; report ARI computed both including and excluding grey-assigned genes",
+          "At n=5 the soft-threshold fit is even worse than at n=6; this is expected and is itself part of the stability finding"
+        ],
+        "context": "This step is the honest counterweight to T1S2. Co-expression module detection at n=6 is well below any published reliability floor, and the standard failure mode is that arbitrary modules are reported as treatment-tracking on a nominal p-value that the design cannot support. Enumerating all 10 label permutations rather than sampling them is exact and cheap, and it makes the power ceiling of the design a concrete number rather than a caveat.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "dynamicTreeCut",
+          "mclust",
+          "igraph",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "How much of the module structure detected in T1S2 survives dropping a single sample, and does any module's correlation with the treated/control split exceed what the 10 possible 3-vs-3 label permutations produce by chance?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 16
+        },
+        "step_type": "validation",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Enumerate permutations exhaustively — do not run a random permutation sampler and report a p-value smaller than 0.1",
+          "Use the same soft-threshold beta, minModuleSize and merge cut height in every LOO rerun as in T1S2; do not re-tune per rerun",
+          "If a LOO rerun fails to converge or produces a single module, report that outcome as a stability result rather than discarding the rerun",
+          "The verdict vocabulary is restricted to 'unstable' and 'stable-but-underpowered'"
+        ],
+        "description": "Two diagnostics on the T1S2 result. (1) Leave-one-sample-out stability: rerun the full T1S2 module detection pipeline six times, each time omitting one sample (n=5), using identical parameters. For each rerun compute the adjusted Rand index and the Jaccard index of the gene-to-module partition against the full-data partition, and report per-module the fraction of its genes that stay together across the six reruns. (2) Permutation null for module-trait association: the 3-vs-3 design admits exactly C(6,3)/2 = 10 distinct label assignments, so enumerate ALL of them, recompute the module-eigengene-to-label correlation for each module under every permutation, and report each module's observed correlation's rank within its own 10-value null. State plainly that the minimum attainable permutation p-value is 0.1 and that NO module can reach conventional significance by permutation at this design. Produce a final table: module, size, observed r with treatment, permutation rank, LOO stability (mean ARI contribution and gene-retention fraction), and a verdict column of 'unstable' / 'stable-but-underpowered' — with no module allowed a 'validated' verdict.",
+        "acceptance_criteria": [
+          "Six leave-one-out reruns completed with identical parameters to T1S2, each reporting its module count and partition agreement (ARI and Jaccard) with the full-data partition",
+          "Per-module gene-retention fraction across the six LOO reruns is reported",
+          "All 10 distinct 3-vs-3 label permutations are enumerated exhaustively (not sampled) and each module's observed correlation is ranked within its own null",
+          "The report states explicitly that the minimum attainable permutation p-value for this design is 0.1, so no module can be declared significant by permutation",
+          "Final per-module verdict table contains no module labelled 'validated' or 'significant'"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "DESeq2 treated vs control differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With 3 vs 3 the Cook's distance outlier filter can remove genes on the basis of one sample; report how many genes were filtered by Cook's and by independent filtering",
+          "An empty significant set at n=3 per group is a plausible and reportable outcome, not a pipeline failure"
+        ],
+        "context": "Homo sapiens liver, drug treatment, 3 treated vs 3 control, unpaired, single batch, raw Salmon gene-level counts. n=3 per group is the minimum DESeq2 will operate on and is adequate for detecting large, consistent effects but has low power for moderate ones. Running this alongside the co-expression track gives a gene-level answer whose statistical properties are far better understood at this n than any network result.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which individual genes are differentially expressed between the 3 treated and 3 control human liver samples, and how many survive FDR control?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Feed DESeq2 the raw integer counts, never the VST matrix",
+          "Do not drop to unadjusted p-value thresholds as the primary criterion; if the adjusted result is empty, say so and present the nominal-p ranking only as exploratory",
+          "Do not add a batch term — the design is single-batch and there are no covariates to model"
+        ],
+        "description": "Run DESeq2 on the raw counts from counts.csv with the design ~ condition, treated versus control, using the sample-aligned metadata and the same low-count gene filter established in T1S1. Use the Wald test with apeglm log-fold-change shrinkage for ranking. Report the full results table (baseMean, log2FoldChange, shrunk LFC, lfcSE, stat, pvalue, padj), the number of genes at padj < 0.05 and at padj < 0.1, an MA plot, a volcano plot, and the dispersion-fit plot. Report the estimated within-group dispersion and note that with 2 residual degrees of freedom the dispersion estimate leans heavily on the fitted trend rather than the per-gene estimate. Also emit the ranked gene list (by shrunk LFC and by Wald stat) as an artifact for downstream enrichment. This step is the properly-specified test of 'what tracks treatment' at the gene level and is the reference against which module-level claims are checked.",
+        "acceptance_criteria": [
+          "DESeq2 run with design ~ condition on raw integer counts, with the contrast direction (treated vs control) stated explicitly",
+          "Full results table written for all tested genes, with padj computed by BH",
+          "Counts of genes at padj < 0.05 and padj < 0.1 reported; if zero genes pass, that is reported as the result and not worked around by switching to nominal p-values as the headline",
+          "Dispersion-fit plot produced and the reliance on the fitted dispersion trend at 2 residual df stated",
+          "Ranked gene list artifact emitted for T3S1"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Functional annotation of modules and DE ranking",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "GO BP sets are hierarchically nested, so significant terms arrive in correlated blocks — collapse redundant parent/child terms before reporting a count",
+          "Over-representation on a module that is itself a treatment-split artifact will still return terms; enriched terms do not rescue an unstable module",
+          "A module of a few hundred genes drawn from a 12,000-gene liver matrix will trend toward generic liver and metabolic terms by composition alone"
+        ],
+        "context": "Modules and DE lists are only interpretable once they carry biological labels. The seed reference census confirms human hallmark (50 sets) and human GO BP (7,538 sets) gene sets are staged as symbol-keyed GMTs for Homo sapiens, and human WikiPathways is also present as a third option. All are HGNC symbol space, matching the gene symbol row keys of counts.csv.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "GSEABase",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "What biological processes are represented by the co-expression modules from T1S2 that survived the T1S3 stability screen, and does the treated-vs-control ranked gene list from T2S1 recover the same processes?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T2S1"
+        ],
+        "constraints": [
+          "Use human gene sets only — the reference store also holds mouse and rat WikiPathways and mouse hallmark sets, which must not be used on this human liver dataset",
+          "Do not run enrichment on modules that T1S3 labelled 'unstable'; list them as skipped with the reason",
+          "Every enrichment claim must carry the module's T1S3 stability verdict alongside it, so that a term is never reported without the reliability of the module it came from",
+          "If the hallmark or GO gene sets are not resolvable at run time, fall back to human WikiPathways and state the substitution; if no human gene set collection is available, report the module gene lists unannotated rather than substituting another organism"
+        ],
+        "description": "Two complementary annotations. (1) Over-representation analysis of each module's gene set (modules from T1S2, restricted to those not verdict-'unstable' in T1S3, with the grey module excluded and modules under 30 genes skipped) against human hallmark gene sets and human GO Biological Process sets, using the filtered gene universe from T1S1 as background rather than the whole genome. (2) Rank-based gene set enrichment (fgsea or GSEApy preranked) on the T2S1 ranked list against the same collections. Report the overlap between module-level and DE-level enriched terms — concordance is weak corroboration, discordance is a signal that the modules are noise structure. Because the liver tissue and drug-treatment context makes xenobiotic metabolism, oxidative stress and bile acid processes plausible a priori, report those specific hallmark sets' statistics explicitly whether or not they pass threshold, so that a null result on them is visible. Required reference data: human hallmark gene sets and human GO Biological Process gene sets, matched to Homo sapiens with HGNC gene symbols (the counts matrix is keyed on gene symbol, so no ID mapping should be needed; if symbols fail to match, report the match rate before proceeding).",
+        "acceptance_criteria": [
+          "Enrichment run against human (not mouse or rat) gene sets, with the gene symbol match rate against the GMT reported",
+          "Background universe for over-representation is the T1S1 filtered gene list, not the full annotation",
+          "Per-module enrichment tables written for every module tested, including modules with no significant terms",
+          "Preranked GSEA results on the T2S1 ranked list written with normalized enrichment scores and BH-adjusted p-values",
+          "Explicit comparison of module-derived and DE-derived enriched terms, quantifying overlap",
+          "Xenobiotic metabolism, oxidative stress and bile-acid-related hallmark set statistics reported regardless of significance"
+        ]
+      }
+    ],
+    "title": "Liver drug-treatment co-expression modules (n=3 vs 3)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks for co-expression modules across samples and which modules track treatment. The data are raw Salmon gene-level counts, 12,000 genes x 6 samples (columns: 6 samples in metadata.csv, 7 columns in counts.csv = gene symbol + 6 sample columns), 3 treated vs 3 control liver samples, unpaired, single batch, Homo sapiens.\n\nThe central statistical fact that shapes this plan: with n=6 samples, every pairwise gene-gene correlation has 4 residual degrees of freedom, and after mean-centring within a two-group design the correlation structure collapses to essentially one degree of freedom of between-group contrast. Any 'module' recovered from 6 samples is dominated by the treated-vs-control split itself plus sampling noise; WGCNA's own authors state the method should not be applied below ~15 samples, and scale-free topology fitting is unstable at this n. So the plan does NOT pretend to deliver a trustworthy network. It runs the module detection the question asks for, but wraps it in explicit stability diagnostics so the output is reported with its true reliability rather than as a finding.\n\nT1S1 builds the analysis-ready matrix: filter low-count genes, VST/log-CPM stabilise, and quantify how much of the total variance is the treatment axis vs residual — this number determines whether module detection can be anything but a treatment-split echo. T1S2 runs the actual co-expression clustering (WGCNA correlation + dynamic tree cut, with an explicit soft-threshold report and a fallback to a fixed beta when scale-free fit fails at n=6) and computes module eigengenes. T1S3 is the reliability gate: leave-one-sample-out and label-permutation resampling to measure how much module membership survives dropping a single sample, plus a null distribution for the module-trait correlation, since with 3v3 the smallest achievable permutation p-value is 0.1 (10 distinct splits) — this bound must be stated, not hidden. T2S1 runs the conventional DESeq2 treated-vs-control differential test in parallel, both as the properly-powered answer to 'what tracks treatment' and as a reference against which module-trait claims can be sanity-checked. T3S1 annotates whichever modules survive the reliability gate against human hallmark/GO gene sets so a surviving module has a biological label rather than a colour."
+  },
+  "usage": {
+    "inputTokens": 229783,
+    "outputTokens": 7720,
+    "cacheCreationInputTokens": 78237,
+    "cacheReadInputTokens": 151486,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "WGCNA",
+          "PyWGCNA",
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "pydeseq2",
+          "decoupler",
+          "dynamicTreeCut",
+          "fgsea",
+          "clusterProfiler",
+          "gseapy",
+          "ComplexHeatmap"
+        ]
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "co-expression module detection small sample size n=3 per group WGCNA limitations",
+        "limit": 10
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "WGCNA minimum sample size recommendation co-expression network reliability",
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "weighted gene co-expression network analysis sample size requirement",
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "limit": 30
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treatment co-expression modules (n=3 vs 3)",
+          "analytical_narrative": "The question asks for co-expression modules across samples and which modules track treatment. The data are raw Salmon gene-level counts, 12,000 genes x 6 samples (columns: 6 samples in metadata.csv, 7 columns in counts.csv = gene symbol + 6 sample columns), 3 treated vs 3 control liver samples, unpaired, single batch, Homo sapiens.\n\nThe central statistical fact that shapes this plan: with n=6 samples, every pairwise gene-gene correlation has 4 residual degrees of freedom, and after mean-centring within a two-group design the correlation structure collapses to essentially one degree of freedom of between-group contrast. Any 'module' recovered from 6 samples is dominated by the treated-vs-control split itself plus sampling noise; WGCNA's own authors state the method should not be applied below ~15 samples, and scale-free topology fitting is unstable at this n. So the plan does NOT pretend to deliver a trustworthy network. It runs the module detection the question asks for, but wraps it in explicit stability diagnostics so the output is reported with its true reliability rather than as a finding.\n\nT1S1 builds the analysis-ready matrix: filter low-count genes, VST/log-CPM stabilise, and quantify how much of the total variance is the treatment axis vs residual — this number determines whether module detection can be anything but a treatment-split echo. T1S2 runs the actual co-expression clustering (WGCNA correlation + dynamic tree cut, with an explicit soft-threshold report and a fallback to a fixed beta when scale-free fit fails at n=6) and computes module eigengenes. T1S3 is the reliability gate: leave-one-sample-out and label-permutation resampling to measure how much module membership survives dropping a single sample, plus a null distribution for the module-trait correlation, since with 3v3 the smallest achievable permutation p-value is 0.1 (10 distinct splits) — this bound must be stated, not hidden. T2S1 runs the conventional DESeq2 treated-vs-control differential test in parallel, both as the properly-powered answer to 'what tracks treatment' and as a reference against which module-trait claims can be sanity-checked. T3S1 annotates whichever modules survive the reliability gate against human hallmark/GO gene sets so a surviving module has a biological label rather than a colour.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Filter, normalize, variance decomposition",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "After low-count filtering and variance-stabilizing transformation of the 12,000-gene x 6-sample Salmon count matrix, how many genes remain, and what fraction of total expression variance is attributable to the treated-vs-control axis versus residual within-group variance?",
+              "description": "Load /eval-four-models-without-coexpression-too-few-n3-1/data/inputs/counts/counts.csv (gene symbol in column 1, one column per sample) and /eval-four-models-without-coexpression-too-few-n3-1/data/inputs/metadata/metadata.csv (sample, condition). Verify the 6 metadata sample IDs match the 6 count columns exactly and reorder to match. Drop genes with near-zero counts (e.g. require count >= 10 in at least 3 samples, the size of the smaller group). Apply DESeq2 variance-stabilizing transformation (vst, blind=TRUE) to produce a normalized expression matrix; also emit log2-CPM from edgeR as a cross-check. Run PCA on the top-variance genes and report the variance explained by each PC and whether PC1 separates treated from control. For each gene compute the proportion of variance explained by condition (one-way ANOVA eta-squared with 1 and 4 df) and report the distribution. Save the VST matrix, the sample-aligned metadata, and the variance summary as artifacts for downstream steps.",
+              "context": "Homo sapiens liver, bulk RNA-seq, raw integer gene-level counts from Salmon. Design: 3 treated vs 3 control, unpaired, single batch. 12,000 genes x 6 samples. This step produces the single normalized matrix that both the co-expression and the differential-expression tracks consume, so that module and DE results are on comparable footing. The eta-squared distribution is the diagnostic that tells downstream steps how much of the correlation structure is simply the two-group split.",
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "matrixStats",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [],
+              "acceptance_criteria": [
+                "Sample IDs in metadata.csv are confirmed to match the count matrix columns 1:1; any mismatch is reported and halts the step rather than being silently reordered",
+                "Number of genes retained after filtering is reported alongside the 12,000 input genes",
+                "VST matrix saved with genes x 6 samples, no NA values",
+                "PCA variance-explained per PC reported, with the treated/control label of each sample on PC1/PC2",
+                "Per-gene condition eta-squared distribution reported (median and quartiles), explicitly framed as 1 vs 4 degrees of freedom"
+              ],
+              "constraints": [
+                "Use the raw integer counts as given — do not re-normalize Salmon output or apply TPM/FPKM",
+                "Use vst() from DESeq2 with blind=TRUE for the unsupervised matrix that feeds module detection, so that transformation does not bake in the treatment contrast",
+                "Do not remove any sample as an outlier at n=3 per group; report outlier diagnostics but retain all 6 samples",
+                "State the residual degrees of freedom (4) explicitly in the step output"
+              ],
+              "caveats": [
+                "With 6 samples, PCA components beyond PC5 are undefined; do not report more than 5 PCs",
+                "Gene symbols may contain duplicates from the Salmon-to-symbol collapse — check for and report duplicate row names, aggregating by sum or keeping the highest-expressed, and state which was done"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Co-expression module detection",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which co-expression modules do the ~12,000 filtered liver genes form across the 6 samples, and do the module eigengenes correlate with the treated-vs-control assignment?",
+              "description": "Using the VST matrix from T1S1, construct a signed gene-gene co-expression network with WGCNA and detect modules. Run pickSoftThreshold across a beta grid and REPORT the scale-free topology fit R-squared curve verbatim; with 6 samples the fit is expected to be unstable or to never reach the conventional 0.8 criterion, in which case fall back to the WGCNA-recommended default beta for signed networks on small sample counts (beta=12 for signed) and state explicitly that beta was chosen by convention, not by fit. Build the topological overlap matrix, cluster with average linkage, and cut with cutreeDynamic (deepSplit=2, minModuleSize=30). Merge modules whose eigengenes correlate above 0.75. Compute module eigengenes (first PC of each module) and, for each module, the correlation between its eigengene and the binary treated/control indicator, with the corresponding p-value. Output: gene-to-module assignment table, module sizes, module eigengene matrix (modules x 6 samples), module-trait correlation table, an eigengene heatmap across the 6 samples, and the intramodular connectivity (kME) of each gene in its own module. Consider restricting to the top ~5,000 most variable genes if the full TOM is unstable, and state the gene set used.",
+              "context": "This is the step that directly answers the research question. The dataset has 6 samples, which is far below the ~15-sample minimum the WGCNA authors state and the ~20+ samples conventionally used; the module structure recovered here is expected to be dominated by the single treated-vs-control contrast plus noise. The step's job is to produce the modules faithfully AND to surface the parameters that were forced rather than fitted, so that T1S3 can quantify how much of the result is real.",
+              "packages": [
+                "WGCNA",
+                "dynamicTreeCut",
+                "flashClust",
+                "ComplexHeatmap",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "acceptance_criteria": [
+                "Soft-threshold power selection is reported as a table of beta vs scale-free R-squared vs mean connectivity, with an explicit statement of whether the 0.8 R-squared criterion was met and what beta was ultimately used and why",
+                "Gene-to-module assignment table written for every gene entering the network, including the grey (unassigned) module with its size",
+                "Module eigengene matrix (modules x 6 samples) written",
+                "Module-trait correlation table reports, per module, Pearson r with the treated/control indicator, the nominal p-value, and the number of genes",
+                "The output explicitly states that module-trait p-values from 6 samples have 4 residual degrees of freedom and are not multiple-testing-survivable"
+              ],
+              "constraints": [
+                "Use a signed network (signed or signed hybrid), not unsigned — sign-agnostic correlation is even less identifiable at this n",
+                "Set minModuleSize to at least 30 genes; do not lower it to manufacture more modules",
+                "Do NOT report a module as 'treatment-associated' in this step on the basis of the nominal correlation p-value alone — that determination is deferred to T1S3",
+                "Report the grey module size prominently; a large grey fraction is the honest signal that the network did not resolve"
+              ],
+              "caveats": [
+                "cor() on 6 samples has 4 df; a Pearson r of ~0.81 is nominally p<0.05, which is reached by chance often across dozens of modules",
+                "With 6 samples the eigengene of any module is nearly a linear function of the group split, so high module-trait correlation is close to guaranteed for any module with coherent between-group shift — this is circularity, not evidence",
+                "enableWGCNAThreads or allowWGCNAThreads may need to be called; blockwise functions are unnecessary at this matrix size"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 16
+              },
+              "agent": "network-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Module stability and permutation null",
+              "track": "T1",
+              "step_type": "validation",
+              "question": "How much of the module structure detected in T1S2 survives dropping a single sample, and does any module's correlation with the treated/control split exceed what the 10 possible 3-vs-3 label permutations produce by chance?",
+              "description": "Two diagnostics on the T1S2 result. (1) Leave-one-sample-out stability: rerun the full T1S2 module detection pipeline six times, each time omitting one sample (n=5), using identical parameters. For each rerun compute the adjusted Rand index and the Jaccard index of the gene-to-module partition against the full-data partition, and report per-module the fraction of its genes that stay together across the six reruns. (2) Permutation null for module-trait association: the 3-vs-3 design admits exactly C(6,3)/2 = 10 distinct label assignments, so enumerate ALL of them, recompute the module-eigengene-to-label correlation for each module under every permutation, and report each module's observed correlation's rank within its own 10-value null. State plainly that the minimum attainable permutation p-value is 0.1 and that NO module can reach conventional significance by permutation at this design. Produce a final table: module, size, observed r with treatment, permutation rank, LOO stability (mean ARI contribution and gene-retention fraction), and a verdict column of 'unstable' / 'stable-but-underpowered' — with no module allowed a 'validated' verdict.",
+              "context": "This step is the honest counterweight to T1S2. Co-expression module detection at n=6 is well below any published reliability floor, and the standard failure mode is that arbitrary modules are reported as treatment-tracking on a nominal p-value that the design cannot support. Enumerating all 10 label permutations rather than sampling them is exact and cheap, and it makes the power ceiling of the design a concrete number rather than a caveat.",
+              "packages": [
+                "WGCNA",
+                "dynamicTreeCut",
+                "mclust",
+                "igraph",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "acceptance_criteria": [
+                "Six leave-one-out reruns completed with identical parameters to T1S2, each reporting its module count and partition agreement (ARI and Jaccard) with the full-data partition",
+                "Per-module gene-retention fraction across the six LOO reruns is reported",
+                "All 10 distinct 3-vs-3 label permutations are enumerated exhaustively (not sampled) and each module's observed correlation is ranked within its own null",
+                "The report states explicitly that the minimum attainable permutation p-value for this design is 0.1, so no module can be declared significant by permutation",
+                "Final per-module verdict table contains no module labelled 'validated' or 'significant'"
+              ],
+              "constraints": [
+                "Enumerate permutations exhaustively — do not run a random permutation sampler and report a p-value smaller than 0.1",
+                "Use the same soft-threshold beta, minModuleSize and merge cut height in every LOO rerun as in T1S2; do not re-tune per rerun",
+                "If a LOO rerun fails to converge or produces a single module, report that outcome as a stability result rather than discarding the rerun",
+                "The verdict vocabulary is restricted to 'unstable' and 'stable-but-underpowered'"
+              ],
+              "caveats": [
+                "ARI between partitions that both contain a dominant grey module is inflated; report ARI computed both including and excluding grey-assigned genes",
+                "At n=5 the soft-threshold fit is even worse than at n=6; this is expected and is itself part of the stability finding"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 16
+              },
+              "agent": "network-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "DESeq2 treated vs control differential expression",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which individual genes are differentially expressed between the 3 treated and 3 control human liver samples, and how many survive FDR control?",
+              "description": "Run DESeq2 on the raw counts from counts.csv with the design ~ condition, treated versus control, using the sample-aligned metadata and the same low-count gene filter established in T1S1. Use the Wald test with apeglm log-fold-change shrinkage for ranking. Report the full results table (baseMean, log2FoldChange, shrunk LFC, lfcSE, stat, pvalue, padj), the number of genes at padj < 0.05 and at padj < 0.1, an MA plot, a volcano plot, and the dispersion-fit plot. Report the estimated within-group dispersion and note that with 2 residual degrees of freedom the dispersion estimate leans heavily on the fitted trend rather than the per-gene estimate. Also emit the ranked gene list (by shrunk LFC and by Wald stat) as an artifact for downstream enrichment. This step is the properly-specified test of 'what tracks treatment' at the gene level and is the reference against which module-level claims are checked.",
+              "context": "Homo sapiens liver, drug treatment, 3 treated vs 3 control, unpaired, single batch, raw Salmon gene-level counts. n=3 per group is the minimum DESeq2 will operate on and is adequate for detecting large, consistent effects but has low power for moderate ones. Running this alongside the co-expression track gives a gene-level answer whose statistical properties are far better understood at this n than any network result.",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "acceptance_criteria": [
+                "DESeq2 run with design ~ condition on raw integer counts, with the contrast direction (treated vs control) stated explicitly",
+                "Full results table written for all tested genes, with padj computed by BH",
+                "Counts of genes at padj < 0.05 and padj < 0.1 reported; if zero genes pass, that is reported as the result and not worked around by switching to nominal p-values as the headline",
+                "Dispersion-fit plot produced and the reliance on the fitted dispersion trend at 2 residual df stated",
+                "Ranked gene list artifact emitted for T3S1"
+              ],
+              "constraints": [
+                "Feed DESeq2 the raw integer counts, never the VST matrix",
+                "Do not drop to unadjusted p-value thresholds as the primary criterion; if the adjusted result is empty, say so and present the nominal-p ranking only as exploratory",
+                "Do not add a batch term — the design is single-batch and there are no covariates to model"
+              ],
+              "caveats": [
+                "With 3 vs 3 the Cook's distance outlier filter can remove genes on the basis of one sample; report how many genes were filtered by Cook's and by independent filtering",
+                "An empty significant set at n=3 per group is a plausible and reportable outcome, not a pipeline failure"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Functional annotation of modules and DE ranking",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "What biological processes are represented by the co-expression modules from T1S2 that survived the T1S3 stability screen, and does the treated-vs-control ranked gene list from T2S1 recover the same processes?",
+              "description": "Two complementary annotations. (1) Over-representation analysis of each module's gene set (modules from T1S2, restricted to those not verdict-'unstable' in T1S3, with the grey module excluded and modules under 30 genes skipped) against human hallmark gene sets and human GO Biological Process sets, using the filtered gene universe from T1S1 as background rather than the whole genome. (2) Rank-based gene set enrichment (fgsea or GSEApy preranked) on the T2S1 ranked list against the same collections. Report the overlap between module-level and DE-level enriched terms — concordance is weak corroboration, discordance is a signal that the modules are noise structure. Because the liver tissue and drug-treatment context makes xenobiotic metabolism, oxidative stress and bile acid processes plausible a priori, report those specific hallmark sets' statistics explicitly whether or not they pass threshold, so that a null result on them is visible. Required reference data: human hallmark gene sets and human GO Biological Process gene sets, matched to Homo sapiens with HGNC gene symbols (the counts matrix is keyed on gene symbol, so no ID mapping should be needed; if symbols fail to match, report the match rate before proceeding).",
+              "context": "Modules and DE lists are only interpretable once they carry biological labels. The seed reference census confirms human hallmark (50 sets) and human GO BP (7,538 sets) gene sets are staged as symbol-keyed GMTs for Homo sapiens, and human WikiPathways is also present as a third option. All are HGNC symbol space, matching the gene symbol row keys of counts.csv.",
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "GSEABase",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T2S1"
+              ],
+              "acceptance_criteria": [
+                "Enrichment run against human (not mouse or rat) gene sets, with the gene symbol match rate against the GMT reported",
+                "Background universe for over-representation is the T1S1 filtered gene list, not the full annotation",
+                "Per-module enrichment tables written for every module tested, including modules with no significant terms",
+                "Preranked GSEA results on the T2S1 ranked list written with normalized enrichment scores and BH-adjusted p-values",
+                "Explicit comparison of module-derived and DE-derived enriched terms, quantifying overlap",
+                "Xenobiotic metabolism, oxidative stress and bile-acid-related hallmark set statistics reported regardless of significance"
+              ],
+              "constraints": [
+                "Use human gene sets only — the reference store also holds mouse and rat WikiPathways and mouse hallmark sets, which must not be used on this human liver dataset",
+                "Do not run enrichment on modules that T1S3 labelled 'unstable'; list them as skipped with the reason",
+                "Every enrichment claim must carry the module's T1S3 stability verdict alongside it, so that a term is never reported without the reliability of the module it came from",
+                "If the hallmark or GO gene sets are not resolvable at run time, fall back to human WikiPathways and state the substitution; if no human gene set collection is available, report the module gene lists unannotated rather than substituting another organism"
+              ],
+              "caveats": [
+                "GO BP sets are hierarchically nested, so significant terms arrive in correlated blocks — collapse redundant parent/child terms before reporting a count",
+                "Over-representation on a module that is itself a treatment-split artifact will still return terms; enriched terms do not rescue an unstable module",
+                "A module of a few hundred genes drawn from a 12,000-gene liver matrix will trend toward generic liver and metabolic terms by composition alone"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

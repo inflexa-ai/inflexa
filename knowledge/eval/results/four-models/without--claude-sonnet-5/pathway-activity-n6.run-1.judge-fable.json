@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 5,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 5
+  },
+  "rationale": "The core pipeline matches the reference: DESeq2 Wald with ~condition on a 6v6 unpaired single-batch design, the Wald statistic fed to decoupleR mlm with the human PROGENy model, the footprint-versus-member distinction stated explicitly, and sample_01 kept or dropped on PCA/correlation evidence rather than depth alone. Gaps against the reference: no top-500-genes-per-pathway setting, no BH across the fourteen pathways, no per-sample activity matrix with limma on the scores for replicate consistency, and the low-count filter is only described as 'mild' without a concrete rule. The claim that size-factor normalization 'down-weights' the shallow sample is a mischaracterization, the reference level is not fixed explicitly, and the ORA/GSEA track names collections but gives no versions, universe, or size window. The reporting section omits package versions and counts of tested and significant genes, though the footprint caveat is well articulated."
+}

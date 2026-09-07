@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 1,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly refuses count models and voom and fits limma lmFit+eBayes directly on the log2(TPM+1) values with BH at 0.05, and it does not re-normalize; however, trend=TRUE is only alluded to in the narrative and the reference level is never set. QC is limited to a distribution boxplot and a range/integer check with no PCA, no distance heatmap and no outlier policy, and a low-expression filter on the log values is entirely absent. Enrichment was not asked for; the added WikiPathways step does state a universe and ranking metric but omits collection version and size window. The report names the transform, design, thresholds and significant counts but not package versions."
+}

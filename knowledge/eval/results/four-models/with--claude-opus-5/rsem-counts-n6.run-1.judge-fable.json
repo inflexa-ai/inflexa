@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the matrix as RSEM expected counts, states that the tximport type='rsem' length-offset route is not executable without the genes.results files, records that the offset is lost and that supplying those files would remove the caveat, and refuses TPM substitution or fabricated lengths; it rounds for DESeq2 with the rounding stated and fits DESeq2 Wald plus an edgeR QL cross-check. The only deviation from the reference is rounding the counts for edgeR as well, which is unnecessary since edgeR accepts non-integer expected counts directly. QC is complete with PCA, distance heatmap, library sizes, and an explicit keep-and-inspect policy for sample_01 requiring a stated non-depth reason for removal. Filter (>=10 in >=6, tied to smallest group), in-model normalization (median-of-ratios / TMM), explicit relevel and contrast, BH at 0.05 with apeglm and lfcThreshold inside results(), correct omission of enrichment, and a report listing versions, design, thresholds, tested/significant counts, and the design caveats are all stated."
+}

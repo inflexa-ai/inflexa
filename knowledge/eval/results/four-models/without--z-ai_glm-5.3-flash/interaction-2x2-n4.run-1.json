@@ -1,0 +1,242 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "interaction-2x2-n4",
+  "run": 1,
+  "startedAt": "2026-09-07T05:41:30.357Z",
+  "elapsedMs": 218450,
+  "outcome": "plan_submitted",
+  "planId": "pln-e8df6e4b",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and DESeq2 2x2 interaction model",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "In the WT-vs-KO by vehicle-vs-drug factorial, which genes show a drug response in WT, which show a drug response in KO, and which show a significantly different drug response between genotypes (genotype:treatment interaction)?",
+        "grounding": {
+          "claims": [],
+          "reason": "Standard DESeq2 2x2 factorial with interaction term; no knowledge_recommend service was attached to this run.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load the salmon gene-level counts (12,000 genes x 17-column CSV, first column gene symbol) and the 16-row metadata (genotype, treatment, condition), verify sample alignment and that condition matches the genotype:treatment combination, run sample-level QC (library size, PCA on variance-stabilized counts, replicate concordance within the four 2x2 cells), then fit a single DESeq2 model with design ~ genotype + treatment + genotype:treatment and extract: (1) drug effect in WT (drug - vehicle | WT), (2) drug effect in KO (drug - vehicle | KO), (3) the interaction contrast (KO drug effect minus WT drug effect), which directly answers the research question. Apply BH correction and apeglm LFC shrinkage for effect-size reporting. Reference data: none required.",
+        "acceptance_criteria": [
+          "Counts matrix (12,000 genes x 16 samples) and metadata (16 rows: genotype, treatment, condition) load; all 16 sample names match 1:1 between files and metadata genotype/treatment values are consistent with the combined condition column",
+          "QC report: per-sample library sizes, gene detection, sample outliers flagged, PCA colored by genotype and by treatment",
+          "DESeq2 fits design ~ genotype + treatment + genotype:treatment with size-factor normalization and dispersion estimation",
+          "Three contrast tables produced: drug vs vehicle within WT, drug vs vehicle within KO, and interaction (KO drug effect minus WT drug effect), each with log2FC, shrunken log2FC (apeglm), SE, Wald p-value, BH-adjusted p-value, baseMean",
+          "Results written as TSVs; number of significant genes per contrast at padj<0.05 reported, with the caveat that n=4 per cell gives limited power for the interaction term"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Visualization of contrasts and interaction",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "pheatmap",
+          "ggrepel"
+        ],
+        "question": "How do the drug effects in WT and KO compare gene-by-gene, and which genes drive the interaction?",
+        "grounding": {
+          "claims": [],
+          "reason": "Standard DE visualization; no knowledge_recommend service was attached to this run.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "From the fitted model and VST-transformed counts of T1S1, produce: PCA colored by genotype and by treatment; volcano plots for the WT drug effect, KO drug effect, and interaction contrasts with top genes labeled; a scatter plot of the WT drug log2FC against the KO drug log2FC (deviation from the diagonal is the interaction) highlighting interaction-significant genes; and a z-scaled heatmap of the top interaction genes annotated by genotype and treatment.",
+        "acceptance_criteria": [
+          "PCA of VST counts colored by genotype and treatment saved",
+          "Volcano plots for all three contrasts saved",
+          "Scatter of WT drug log2FC vs KO drug log2FC with interaction-significant genes highlighted saved",
+          "Heatmap of top interaction genes (VST, z-scaled, annotated by genotype/treatment) saved"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of drug-response contrasts",
+        "agent": "enrichment-agent",
+        "track": "pathways",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table"
+        ],
+        "question": "Are the genes whose drug response differs between KO and WT (and the per-genotype drug responses) enriched for known biological pathways?",
+        "grounding": {
+          "claims": [],
+          "reason": "Standard fgsea preranked GSEA; no knowledge_recommend service was attached to this run.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Run fgsea preranked GSEA against the staged WikiPathways Homo sapiens GMT (HGNC gene symbols, matching the count matrix rows) on three ranked lists: the interaction Wald statistic, the WT drug-effect statistic, and the KO drug-effect statistic. Report per-pathway size after intersection with the 12,000 measured genes, NES, and BH-adjusted p-values. This step is hypothesis-generating: with n=4 per cell the underlying rankings are noisy. Reference data: a WikiPathways human pathway GMT (gene sets as HGNC symbols); if absent, report the gap and skip enrichment rather than substitute another species' gene sets.",
+        "acceptance_criteria": [
+          "Gene sets resolved from the staged human WikiPathways GMT, intersected with the 12,000 measured gene symbols; intersection sizes reported per pathway",
+          "fgsea run on three ranked lists: interaction statistic, drug effect in WT, drug effect in KO",
+          "Results tables with pathway, size, NES, p-value, padj written as TSVs; if the GMT is absent the step reports that and writes an empty result instead of failing"
+        ]
+      }
+    ],
+    "title": "Drug x genotype interaction DE in 2x2 factorial",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-13T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question 'does the drug act differently in knockout than in wild type?' is formally the genotype-by-treatment interaction in a 2x2 factorial (WT/KO x vehicle/drug, n=4 per cell, 16 human brain bulk RNA-seq samples, 12,000 genes from salmon). The analysis therefore centers on a single DESeq2 model with design ~ genotype + treatment + genotype:treatment, from which three contrasts are extracted: the drug effect within WT, the drug effect within KO, and the interaction (difference of drug effects). A separate model without the interaction term cannot answer the question, so it is not used for inference. Given only 4 replicates per cell, the interaction test is inherently low-powered, so the plan pairs p-values with effect sizes and empirical-Bayes shrunken log2FCs, and treats pathway-level results on the interaction signature as hypothesis-generating. QC (library sizes, PCA, replicate concordance) precedes modeling; volcano/MA/heatmap visualization follows; the interaction and per-genotype drug-response rankings are finally tested against WikiPathways human gene sets (staged reference, HGNC symbols matching the count matrix rows) with fgsea."
+  },
+  "usage": {
+    "inputTokens": 30853,
+    "outputTokens": 2645,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 1030
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Drug x genotype interaction DE in 2x2 factorial",
+          "analytical_narrative": "The question 'does the drug act differently in knockout than in wild type?' is formally the genotype-by-treatment interaction in a 2x2 factorial (WT/KO x vehicle/drug, n=4 per cell, 16 human brain bulk RNA-seq samples, 12,000 genes from salmon). The analysis therefore centers on a single DESeq2 model with design ~ genotype + treatment + genotype:treatment, from which three contrasts are extracted: the drug effect within WT, the drug effect within KO, and the interaction (difference of drug effects). A separate model without the interaction term cannot answer the question, so it is not used for inference. Given only 4 replicates per cell, the interaction test is inherently low-powered, so the plan pairs p-values with effect sizes and empirical-Bayes shrunken log2FCs, and treats pathway-level results on the interaction signature as hypothesis-generating. QC (library sizes, PCA, replicate concordance) precedes modeling; volcano/MA/heatmap visualization follows; the interaction and per-genotype drug-response rankings are finally tested against WikiPathways human gene sets (staged reference, HGNC symbols matching the count matrix rows) with fgsea.",
+          "created_at": "2026-07-13T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and DESeq2 2x2 interaction model",
+              "track": "differential-expression",
+              "step_type": "analysis",
+              "question": "In the WT-vs-KO by vehicle-vs-drug factorial, which genes show a drug response in WT, which show a drug response in KO, and which show a significantly different drug response between genotypes (genotype:treatment interaction)?",
+              "acceptance_criteria": [
+                "Counts matrix (12,000 genes x 16 samples) and metadata (16 rows: genotype, treatment, condition) load; all 16 sample names match 1:1 between files and metadata genotype/treatment values are consistent with the combined condition column",
+                "QC report: per-sample library sizes, gene detection, sample outliers flagged, PCA colored by genotype and by treatment",
+                "DESeq2 fits design ~ genotype + treatment + genotype:treatment with size-factor normalization and dispersion estimation",
+                "Three contrast tables produced: drug vs vehicle within WT, drug vs vehicle within KO, and interaction (KO drug effect minus WT drug effect), each with log2FC, shrunken log2FC (apeglm), SE, Wald p-value, BH-adjusted p-value, baseMean",
+                "Results written as TSVs; number of significant genes per contrast at padj<0.05 reported, with the caveat that n=4 per cell gives limited power for the interaction term"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "description": "Load the salmon gene-level counts (12,000 genes x 17-column CSV, first column gene symbol) and the 16-row metadata (genotype, treatment, condition), verify sample alignment and that condition matches the genotype:treatment combination, run sample-level QC (library size, PCA on variance-stabilized counts, replicate concordance within the four 2x2 cells), then fit a single DESeq2 model with design ~ genotype + treatment + genotype:treatment and extract: (1) drug effect in WT (drug - vehicle | WT), (2) drug effect in KO (drug - vehicle | KO), (3) the interaction contrast (KO drug effect minus WT drug effect), which directly answers the research question. Apply BH correction and apeglm LFC shrinkage for effect-size reporting. Reference data: none required.",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "Standard DESeq2 2x2 factorial with interaction term; no knowledge_recommend service was attached to this run."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Visualization of contrasts and interaction",
+              "track": "differential-expression",
+              "step_type": "analysis",
+              "question": "How do the drug effects in WT and KO compare gene-by-gene, and which genes drive the interaction?",
+              "acceptance_criteria": [
+                "PCA of VST counts colored by genotype and treatment saved",
+                "Volcano plots for all three contrasts saved",
+                "Scatter of WT drug log2FC vs KO drug log2FC with interaction-significant genes highlighted saved",
+                "Heatmap of top interaction genes (VST, z-scaled, annotated by genotype/treatment) saved"
+              ],
+              "packages": [
+                "ggplot2",
+                "pheatmap",
+                "ggrepel"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "description": "From the fitted model and VST-transformed counts of T1S1, produce: PCA colored by genotype and by treatment; volcano plots for the WT drug effect, KO drug effect, and interaction contrasts with top genes labeled; a scatter plot of the WT drug log2FC against the KO drug log2FC (deviation from the diagonal is the interaction) highlighting interaction-significant genes; and a z-scaled heatmap of the top interaction genes annotated by genotype and treatment.",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "Standard DE visualization; no knowledge_recommend service was attached to this run."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of drug-response contrasts",
+              "track": "pathways",
+              "step_type": "analysis",
+              "question": "Are the genes whose drug response differs between KO and WT (and the per-genotype drug responses) enriched for known biological pathways?",
+              "acceptance_criteria": [
+                "Gene sets resolved from the staged human WikiPathways GMT, intersected with the 12,000 measured gene symbols; intersection sizes reported per pathway",
+                "fgsea run on three ranked lists: interaction statistic, drug effect in WT, drug effect in KO",
+                "Results tables with pathway, size, NES, p-value, padj written as TSVs; if the GMT is absent the step reports that and writes an empty result instead of failing"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "description": "Run fgsea preranked GSEA against the staged WikiPathways Homo sapiens GMT (HGNC gene symbols, matching the count matrix rows) on three ranked lists: the interaction Wald statistic, the WT drug-effect statistic, and the KO drug-effect statistic. Report per-pathway size after intersection with the 12,000 measured genes, NES, and BH-adjusted p-values. This step is hypothesis-generating: with n=4 per cell the underlying rankings are noisy. Reference data: a WikiPathways human pathway GMT (gene sets as HGNC symbols); if absent, report the gap and skip enrichment rather than substitute another species' gene sets.",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "Standard fgsea preranked GSEA; no knowledge_recommend service was attached to this run."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

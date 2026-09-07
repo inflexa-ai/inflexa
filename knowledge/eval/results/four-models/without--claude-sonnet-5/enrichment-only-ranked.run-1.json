@@ -1,0 +1,145 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "enrichment-only-ranked",
+  "run": 1,
+  "startedAt": "2026-09-06T21:21:14.113Z",
+  "elapsedMs": 17091,
+  "outcome": "plan_submitted",
+  "planId": "pln-b0a15100",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Prepare ranked gene list from DESeq2 results",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Given the DESeq2 treated (psoriasis lesional) vs control contrast results (12000 genes), construct a ranking metric (e.g. sign(log2_fold_change) * -log10(p-value), or the Wald stat if present as one of the 8 columns) suitable for pre-ranked GSEA, handling duplicate/missing gene symbols and NA statistics.",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "data_preparation",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Output is a two-column table: gene symbol, ranking metric, for all genes in de_results.csv with a finite ranking value",
+          "Duplicate gene symbols are resolved (e.g. by keeping the entry with the largest |stat| or averaging) so each symbol appears once",
+          "Rows with NA p-value or NA log2_fold_change (independent-filtering artifacts) are dropped and the drop count is reported"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Hallmark pre-ranked GSEA, psoriasis lesional vs control",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 50 MSigDB hallmark pathways are significantly enriched (up or down) in psoriasis lesional vs control skin, using the ranked gene list from the DESeq2 treated-vs-control contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Pre-ranked GSEA (e.g. gseapy.prerank or fgsea) is run against the human MSigDB hallmark gene set collection (50 HALLMARK_* sets, HGNC symbols) staged in the environment",
+          "Output table reports, per hallmark pathway: normalized enrichment score (NES), nominal p-value, and BH-adjusted FDR q-value, sorted by FDR",
+          "Direction of each significant hallmark (enriched in lesional vs enriched in control) is stated explicitly based on NES sign",
+          "If the hallmark GMT reference is unavailable at run time, the step reports that explicitly rather than silently falling back to another gene set collection"
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control hallmark GSEA",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "DE has already been done (DESeq2 treated-vs-control, 12000 genes x 6 lesional vs 6 control skin samples, single batch). The only remaining question is which MSigDB hallmark pathways differ between conditions. Since a full ranked DE table (log2FC, stat, p-value) already exists, the correct approach is a single pre-ranked GSEA against the human hallmark gene sets (50 sets, HGNC symbols, staged locally) rather than re-running DESeq2 or doing a simple overrepresentation test on a fixed significance cutoff — pre-ranked GSEA uses the full ranking and is more robust to an arbitrary threshold, and is appropriate given only summary DE stats (not counts) are strictly needed for this step. One QC caveat (sample_01 low library size) is noted but does not block this step since it operates on the already-computed DE results, not raw counts."
+  },
+  "usage": {
+    "inputTokens": 90901,
+    "outputTokens": 1391,
+    "cacheCreationInputTokens": 72593,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control hallmark GSEA",
+          "analytical_narrative": "DE has already been done (DESeq2 treated-vs-control, 12000 genes x 6 lesional vs 6 control skin samples, single batch). The only remaining question is which MSigDB hallmark pathways differ between conditions. Since a full ranked DE table (log2FC, stat, p-value) already exists, the correct approach is a single pre-ranked GSEA against the human hallmark gene sets (50 sets, HGNC symbols, staged locally) rather than re-running DESeq2 or doing a simple overrepresentation test on a fixed significance cutoff — pre-ranked GSEA uses the full ranking and is more robust to an arbitrary threshold, and is appropriate given only summary DE stats (not counts) are strictly needed for this step. One QC caveat (sample_01 low library size) is noted but does not block this step since it operates on the already-computed DE results, not raw counts.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Prepare ranked gene list from DESeq2 results",
+              "track": "T1",
+              "step_type": "data_preparation",
+              "question": "Given the DESeq2 treated (psoriasis lesional) vs control contrast results (12000 genes), construct a ranking metric (e.g. sign(log2_fold_change) * -log10(p-value), or the Wald stat if present as one of the 8 columns) suitable for pre-ranked GSEA, handling duplicate/missing gene symbols and NA statistics.",
+              "acceptance_criteria": [
+                "Output is a two-column table: gene symbol, ranking metric, for all genes in de_results.csv with a finite ranking value",
+                "Duplicate gene symbols are resolved (e.g. by keeping the entry with the largest |stat| or averaging) so each symbol appears once",
+                "Rows with NA p-value or NA log2_fold_change (independent-filtering artifacts) are dropped and the drop count is reported"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Hallmark pre-ranked GSEA, psoriasis lesional vs control",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark pathways are significantly enriched (up or down) in psoriasis lesional vs control skin, using the ranked gene list from the DESeq2 treated-vs-control contrast?",
+              "acceptance_criteria": [
+                "Pre-ranked GSEA (e.g. gseapy.prerank or fgsea) is run against the human MSigDB hallmark gene set collection (50 HALLMARK_* sets, HGNC symbols) staged in the environment",
+                "Output table reports, per hallmark pathway: normalized enrichment score (NES), nominal p-value, and BH-adjusted FDR q-value, sorted by FDR",
+                "Direction of each significant hallmark (enriched in lesional vs enriched in control) is stated explicitly based on NES sign",
+                "If the hallmark GMT reference is unavailable at run time, the step reports that explicitly rather than silently falling back to another gene set collection"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

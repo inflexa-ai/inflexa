@@ -1,0 +1,228 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "mouse-two-group-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T21:24:21.915Z",
+  "elapsedMs": 23302,
+  "outcome": "plan_submitted",
+  "planId": "pln-799f192d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and library-size assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "scikit-learn"
+        ],
+        "question": "What do library size, gene detection, and sample clustering look like across the 6 HFD and 6 chow liver samples, and how does the low-depth sample_01 (library size ~4x below median) affect these metrics?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports per-sample library size (total counts) and number of genes detected for all 12 samples",
+          "Confirms sample_01's library size relative to the cohort median and flags it explicitly",
+          "Produces a sample-sample correlation or PCA plot on normalized counts showing whether sample_01 is an outlier",
+          "Outputs a QC table usable by the differential expression step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, HFD vs chow",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scipy"
+        ],
+        "question": "Which genes are differentially expressed between HFD-treated and chow-control mouse liver samples (6 vs 6, unpaired, single batch), and is the result sensitive to excluding the shallow sample_01?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Runs DESeq2 (or pyDESeq2) Wald test on raw counts with condition (HFD vs chow) as the design, using all 12 samples as primary analysis",
+          "Reports full DE table (log2FC, p-value, BH-adjusted p-value) for all ~12000 genes, sorted by adjusted p-value",
+          "Repeats the fit excluding sample_01 as a sensitivity analysis and reports how many significant genes (padj<0.05) are gained/lost/reordered versus the full-cohort result",
+          "States explicitly whether sample_01's low depth changes the significant gene list materially, rather than silently dropping or silently keeping it",
+          "Flags genes with low mean counts appropriately via independent filtering rather than reporting spurious low-count DE hits"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pre-ranked hallmark GSEA on HFD vs chow signature",
+        "agent": "enrichment-agent",
+        "track": "2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which MSigDB hallmark pathways are enriched among genes changing between HFD and chow in mouse liver, using the DESeq2 Wald statistic as the ranking metric?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the mouse-native MSigDB hallmark gene set collection (MGI symbols) staged in the reference store for Mus musculus — confirms it is present before running and reports plainly if it cannot be located rather than substituting a human gene set",
+          "Ranks all tested genes from the primary (full-cohort) DESeq2 result by Wald statistic (or signed -log10(p) x sign(log2FC)) for pre-ranked GSEA",
+          "Runs pre-ranked GSEA (fgsea or gseapy prerank) against the hallmark sets and reports normalized enrichment score, p-value, and BH-adjusted p-value per hallmark term",
+          "Reports the hallmark terms passing padj<0.05, ranked by NES, with direction (up in HFD vs up in chow) stated explicitly",
+          "Cross-checks top hallmark results against the sensitivity DE run (excluding sample_01) qualitatively and notes if any top pathway's significance depends on the shallow sample"
+        ]
+      }
+    ],
+    "title": "Mouse liver HFD vs chow DE + hallmark GSEA",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq gene-level counts from Salmon (12000 genes x 12 mouse liver samples, mouse gene symbols), 6 HFD vs 6 chow, unpaired single batch. The profile flags sample_01 with a library size ~4x below median, which threatens both normalization and the false-discovery structure of a standard DESeq2 fit, so QC and an explicit low-depth-sample sensitivity check come before the differential expression call. Track 1 runs QC, DESeq2 differential expression (Wald test, HFD vs chow, with and without sample_01 to test robustness), and reports the DE gene table. Track 2 takes the DESeq2 ranked statistic and runs pre-ranked GSEA against the MSigDB mouse hallmark gene sets (the only hallmark collection staged for this organism) to answer which hallmark pathways change. Both tracks stay in mouse gene-symbol space throughout since the reference hallmark set is already MGI-mapped for Mus musculus — no cross-species ID mapping is needed given mouse-native counts and a mouse-native hallmark file."
+  },
+  "usage": {
+    "inputTokens": 139015,
+    "outputTokens": 2110,
+    "cacheCreationInputTokens": 77440,
+    "cacheReadInputTokens": 61539,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "DESeq2",
+          "fgsea",
+          "gseapy",
+          "clusterProfiler",
+          "decoupleR"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Mouse liver HFD vs chow DE + hallmark GSEA",
+          "analytical_narrative": "The dataset is bulk RNA-seq gene-level counts from Salmon (12000 genes x 12 mouse liver samples, mouse gene symbols), 6 HFD vs 6 chow, unpaired single batch. The profile flags sample_01 with a library size ~4x below median, which threatens both normalization and the false-discovery structure of a standard DESeq2 fit, so QC and an explicit low-depth-sample sensitivity check come before the differential expression call. Track 1 runs QC, DESeq2 differential expression (Wald test, HFD vs chow, with and without sample_01 to test robustness), and reports the DE gene table. Track 2 takes the DESeq2 ranked statistic and runs pre-ranked GSEA against the MSigDB mouse hallmark gene sets (the only hallmark collection staged for this organism) to answer which hallmark pathways change. Both tracks stay in mouse gene-symbol space throughout since the reference hallmark set is already MGI-mapped for Mus musculus — no cross-species ID mapping is needed given mouse-native counts and a mouse-native hallmark file.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and library-size assessment",
+              "track": "1",
+              "step_type": "qc",
+              "question": "What do library size, gene detection, and sample clustering look like across the 6 HFD and 6 chow liver samples, and how does the low-depth sample_01 (library size ~4x below median) affect these metrics?",
+              "acceptance_criteria": [
+                "Reports per-sample library size (total counts) and number of genes detected for all 12 samples",
+                "Confirms sample_01's library size relative to the cohort median and flags it explicitly",
+                "Produces a sample-sample correlation or PCA plot on normalized counts showing whether sample_01 is an outlier",
+                "Outputs a QC table usable by the differential expression step"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "scikit-learn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, HFD vs chow",
+              "track": "1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between HFD-treated and chow-control mouse liver samples (6 vs 6, unpaired, single batch), and is the result sensitive to excluding the shallow sample_01?",
+              "acceptance_criteria": [
+                "Runs DESeq2 (or pyDESeq2) Wald test on raw counts with condition (HFD vs chow) as the design, using all 12 samples as primary analysis",
+                "Reports full DE table (log2FC, p-value, BH-adjusted p-value) for all ~12000 genes, sorted by adjusted p-value",
+                "Repeats the fit excluding sample_01 as a sensitivity analysis and reports how many significant genes (padj<0.05) are gained/lost/reordered versus the full-cohort result",
+                "States explicitly whether sample_01's low depth changes the significant gene list materially, rather than silently dropping or silently keeping it",
+                "Flags genes with low mean counts appropriately via independent filtering rather than reporting spurious low-count DE hits"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scipy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pre-ranked hallmark GSEA on HFD vs chow signature",
+              "track": "2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB hallmark pathways are enriched among genes changing between HFD and chow in mouse liver, using the DESeq2 Wald statistic as the ranking metric?",
+              "acceptance_criteria": [
+                "Uses the mouse-native MSigDB hallmark gene set collection (MGI symbols) staged in the reference store for Mus musculus — confirms it is present before running and reports plainly if it cannot be located rather than substituting a human gene set",
+                "Ranks all tested genes from the primary (full-cohort) DESeq2 result by Wald statistic (or signed -log10(p) x sign(log2FC)) for pre-ranked GSEA",
+                "Runs pre-ranked GSEA (fgsea or gseapy prerank) against the hallmark sets and reports normalized enrichment score, p-value, and BH-adjusted p-value per hallmark term",
+                "Reports the hallmark terms passing padj<0.05, ranked by NES, with direction (up in HFD vs up in chow) stated explicitly",
+                "Cross-checks top hallmark results against the sensitivity DE run (excluding sample_01) qualitatively and notes if any top pathway's significance depends on the shallow sample"
+              ],
+              "packages": [
+                "fgsea",
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

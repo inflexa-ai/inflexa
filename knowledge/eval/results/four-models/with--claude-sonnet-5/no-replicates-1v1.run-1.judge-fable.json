@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly recognizes the 1-vs-1 design, refuses DESeq()/edgeR inference, reports median-of-ratios normalized counts and descriptive log2FC with an explicit control reference, and names the replicated design needed for a valid test. QC is appropriately scaled down (library sizes, vst, sample distance) though it lacks a stated policy for a shallow sample. The main weakness is Step 3: running fgsea on a descriptive ranking produces nominal/adjusted p-values that the reference says should not exist for this design, and enrichment was neither asked for nor warranted; the disclaimers mitigate but do not remove the contradiction with the 'no p-values anywhere' stance in Step 4. The report specification is thorough, naming versions, thresholds, tested-gene counts, and caveats."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: one ~condition model on all twelve samples, an LRT against ~1 for the omnibus question, and two named Wald contrasts vs an explicitly releveled control, with BH per test and ashr shrinkage kept distinct from testing; it explicitly warns against equating LRT p-values with pairwise fold changes. QC (blind VST PCA, distance heatmap, library sizes) precedes a minimal, group-size-justified filter, and normalization is internal. Minor deductions: the outlier policy is only 'flag', the Step 3 justification for ashr over apeglm is muddled (both contrasts are single coefficients, so apeglm would work), and enrichment was not asked for and cites Reactome as 'current' rather than a pinned version, though it is otherwise well specified (stat-ranked full list, 15-500 window, named collections)."
+}

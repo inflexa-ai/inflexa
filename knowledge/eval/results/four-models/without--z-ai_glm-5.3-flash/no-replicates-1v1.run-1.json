@@ -1,0 +1,256 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "no-replicates-1v1",
+  "run": 1,
+  "startedAt": "2026-09-07T05:59:18.478Z",
+  "elapsedMs": 147836,
+  "outcome": "plan_submitted",
+  "planId": "pln-326a4e57",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load counts, QC, TMM normalization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Human liver bulk RNA-seq, raw integer salmon counts, gene symbols as identifiers. 2 samples total: 1 treated, 1 control. No replication anywhere, so no dispersion estimation is possible in this or any downstream step.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "data.table"
+        ],
+        "question": "Are the 2 liver samples (treated vs control, per metadata.csv condition column) usable as-is — library sizes, gene detection, and what TMM normalization factors and logCPM values do they yield?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do not attempt dispersion estimation or任何 model-based p-values in this step",
+          "Do not impute or fabricate a second sample per condition",
+          "Gene identifiers are HGNC-style symbols; do not re-map them in this step"
+        ],
+        "description": "Read /eval-four-models-without-no-replicates-1v1-1/data/inputs/counts/counts.csv (12000 gene symbols x 2 sample columns; the 3rd column in the profile is the gene-symbol index) and metadata.csv (2 rows, condition column). Verify sample names in the count matrix match the metadata rows exactly; stop with a clear error if not, and use the condition values as found in the file to label treated vs control. Compute per-sample library sizes, total counts, detected-gene counts (CPM > 1) and top-expressed genes as QC. Filter low-expression genes (keep genes with CPM > 1 in at least one sample — note with 2 samples this is the only sensible rule) and report how many of the 12000 genes survive. Apply edgeR TMM normalization, output the filtered DGEList-equivalent matrix, TMM factors, and a logCPM matrix.",
+        "acceptance_criteria": [
+          "Sample names in counts.csv columns match metadata.csv rows 1:1, or the mismatch is reported as a blocker",
+          "Per-sample QC table written (library size, detected genes, TMM factor, percent top-100 CPM)",
+          "Filtered gene count reported out of 12000",
+          "Normalized logCPM matrix written as CSV"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DE under assumed BCV + sensitivity grid",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 2 samples, edgeR cannot estimate a common, trended, or tagwise dispersion; dispersion must be set explicitly, not estimated",
+          "FDR over 12k genes under an assumed BCV will be anti-conservative; the consistent-hits list is the deliverable, not any single scenario's FDR column"
+        ],
+        "context": "Continues from T1S1's filtered TMM-normalized matrix. This is the dataset's central limitation: 1 treated vs 1 control means dispersion is a prior, not an estimate. The BCV sensitivity grid is the plan's honesty mechanism — calls that vanish at BCV 0.4 or 1.0 are fold-change observations, not findings.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "data.table"
+        ],
+        "question": "Which genes show the largest and most consistent treated-vs-control fold changes in the liver samples, and which of those calls survive stronger assumed biological variability (BCV 0.1 vs 0.4 vs 1.0)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Using the T1S1 filtered, TMM-normalized object, run edgeR exactTest for treated vs control three times with dispersion fixed to the edgeR case-study priors: BCV 0.1 (same tissue), 0.4 (between human tissues / strong biological heterogeneity), 1.0 (conservative). Per the edgeR framework (McCarthy, Chen & Smyth 2012, NAR) these p-values are conditional on the assumed BCV and carry no true error-rate guarantee with n=1 per group — the step must state this in its outputs, not bury it. Produce: (1) a full gene-level table — gene symbol, log2FC, logCPM, and the p/FDR under each BCV scenario; (2) a short 'consistent hits' list: genes with |log2FC| >= 1 that remain nominally significant (FDR < 0.05 under the assumed BCV) at BCV 0.1 AND 0.4, annotated with which drop out at 1.0; (3) the same ranking expressed as an ordered log2FC list (no threshold) to feed T1S3. Report counts of up- vs down-regulated genes per scenario.",
+        "acceptance_criteria": [
+          "Three BCV scenarios each produce a full 12k-gene result table",
+          "Consistent-hits list with |log2FC| >= 1 and FDR < 0.05 under both BCV 0.1 and 0.4, with survival at BCV 1.0 annotated",
+          "Ordered log2FC ranking of all filtered genes written for downstream use",
+          "Output explicitly states p-values are conditional on the assumed BCV and are not valid inference"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "WikiPathways enrichment on log2FC ranking",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "fgsea minSize/maxSize defaults will drop tiny and huge pathways — report how many of the collection's pathways entered the test",
+          "Gene sets whose members mostly failed the T1S1 expression filter are tested on shrunken rankings; report the effective set sizes"
+        ],
+        "context": "Input is a ranked gene list from T1S2, not a hit list, because with no replication a thresholded hit list is arbitrary while the full ranking carries all the data. Reference data needed: human pathway gene sets in GMT form with HGNC symbols (WikiPathways 2026.07.10 human collection is staged in the reference store).",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "GSEABase"
+        ],
+        "question": "Is the treated-vs-control liver expression shift concentrated in recognizable biological pathways, rather than scattered across genes?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Run fgsea preranked GSEA using the T1S2 all-gene log2FC ranking (decreasing |none| tie handling) against the human WikiPathways gene set collection staged in the reference store (GMT: one pathway per line, '%'-delimited descriptor, HGNC member symbols — identifier space matches this dataset's gene symbols directly; confirm overlap between ranking genes and GMT members and report the matched-set statistics). Report per-pathway NES, nominal p, and BH-adjusted p, plus leading-edge gene sets for the top pathways. If the reference GMT is absent from the environment, fall back to a plain over-representation test on the T1S2 consistent-hits list using clusterProfiler's built-in universe handling and say which analysis ran.",
+        "acceptance_criteria": [
+          "fgsea run on the full filtered log2FC ranking with GMT-overlap stats reported (pathways used / dropped for size)",
+          "Table of pathways by adjusted p with NES and direction (up in treated vs up in control)",
+          "Leading-edge genes extracted for the top 10 pathways",
+          "Output states that with n=1 per group the ranking is a fold-change ordering and enrichment is exploratory"
+        ]
+      }
+    ],
+    "title": "Treated vs control liver DE, 1v1 no-replicate design",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-14T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are raw salmon gene-level counts for 12000 human liver genes across exactly 2 samples — 1 treated and 1 control (metadata.csv is 2x2), with no biological replication. With n=1 per group, dispersion cannot be estimated and no method can produce statistically valid p-values; the honest design is (a) a standard TMM-normalized edgeR pipeline for fold changes and expression quantification, (b) an exact test run under an explicitly assumed biological coefficient of variation (BCV), repeated across a sensitivity grid (BCV 0.1 / 0.4 / 1.0 per the edgeR case-study guidance) so the user sees which genes' calls survive stronger variance assumptions, and (c) a rank-based pathway analysis (fgsea on the log2FC ranking against the human WikiPathways GMT staged in the reference store), which is the standard replication-free way to ask whether the observed shift is structured rather than gene-by-gene. All inferential outputs are labelled exploratory: the fold-change ordering is data-driven, the p-values are assumption-dependent, and nothing here supports an error-rate claim."
+  },
+  "usage": {
+    "inputTokens": 95643,
+    "outputTokens": 3532,
+    "cacheReadInputTokens": 32256,
+    "reasoningTokens": 1426
+  },
+  "toolCalls": [
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "differential expression analysis without biological replicates edgeR biological coefficient of variation exact test",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "\"differential expression\" \"no biological replicates\" edgeR dispersion",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control liver DE, 1v1 no-replicate design",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-07-14T00:00:00Z",
+          "analytical_narrative": "The data are raw salmon gene-level counts for 12000 human liver genes across exactly 2 samples — 1 treated and 1 control (metadata.csv is 2x2), with no biological replication. With n=1 per group, dispersion cannot be estimated and no method can produce statistically valid p-values; the honest design is (a) a standard TMM-normalized edgeR pipeline for fold changes and expression quantification, (b) an exact test run under an explicitly assumed biological coefficient of variation (BCV), repeated across a sensitivity grid (BCV 0.1 / 0.4 / 1.0 per the edgeR case-study guidance) so the user sees which genes' calls survive stronger variance assumptions, and (c) a rank-based pathway analysis (fgsea on the log2FC ranking against the human WikiPathways GMT staged in the reference store), which is the standard replication-free way to ask whether the observed shift is structured rather than gene-by-gene. All inferential outputs are labelled exploratory: the fold-change ordering is data-driven, the p-values are assumption-dependent, and nothing here supports an error-rate claim.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load counts, QC, TMM normalization",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Are the 2 liver samples (treated vs control, per metadata.csv condition column) usable as-is — library sizes, gene detection, and what TMM normalization factors and logCPM values do they yield?",
+              "description": "Read /eval-four-models-without-no-replicates-1v1-1/data/inputs/counts/counts.csv (12000 gene symbols x 2 sample columns; the 3rd column in the profile is the gene-symbol index) and metadata.csv (2 rows, condition column). Verify sample names in the count matrix match the metadata rows exactly; stop with a clear error if not, and use the condition values as found in the file to label treated vs control. Compute per-sample library sizes, total counts, detected-gene counts (CPM > 1) and top-expressed genes as QC. Filter low-expression genes (keep genes with CPM > 1 in at least one sample — note with 2 samples this is the only sensible rule) and report how many of the 12000 genes survive. Apply edgeR TMM normalization, output the filtered DGEList-equivalent matrix, TMM factors, and a logCPM matrix.",
+              "acceptance_criteria": [
+                "Sample names in counts.csv columns match metadata.csv rows 1:1, or the mismatch is reported as a blocker",
+                "Per-sample QC table written (library size, detected genes, TMM factor, percent top-100 CPM)",
+                "Filtered gene count reported out of 12000",
+                "Normalized logCPM matrix written as CSV"
+              ],
+              "packages": [
+                "edgeR",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Human liver bulk RNA-seq, raw integer salmon counts, gene symbols as identifiers. 2 samples total: 1 treated, 1 control. No replication anywhere, so no dispersion estimation is possible in this or any downstream step.",
+              "constraints": [
+                "Do not attempt dispersion estimation or任何 model-based p-values in this step",
+                "Do not impute or fabricate a second sample per condition",
+                "Gene identifiers are HGNC-style symbols; do not re-map them in this step"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DE under assumed BCV + sensitivity grid",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes show the largest and most consistent treated-vs-control fold changes in the liver samples, and which of those calls survive stronger assumed biological variability (BCV 0.1 vs 0.4 vs 1.0)?",
+              "description": "Using the T1S1 filtered, TMM-normalized object, run edgeR exactTest for treated vs control three times with dispersion fixed to the edgeR case-study priors: BCV 0.1 (same tissue), 0.4 (between human tissues / strong biological heterogeneity), 1.0 (conservative). Per the edgeR framework (McCarthy, Chen & Smyth 2012, NAR) these p-values are conditional on the assumed BCV and carry no true error-rate guarantee with n=1 per group — the step must state this in its outputs, not bury it. Produce: (1) a full gene-level table — gene symbol, log2FC, logCPM, and the p/FDR under each BCV scenario; (2) a short 'consistent hits' list: genes with |log2FC| >= 1 that remain nominally significant (FDR < 0.05 under the assumed BCV) at BCV 0.1 AND 0.4, annotated with which drop out at 1.0; (3) the same ranking expressed as an ordered log2FC list (no threshold) to feed T1S3. Report counts of up- vs down-regulated genes per scenario.",
+              "acceptance_criteria": [
+                "Three BCV scenarios each produce a full 12k-gene result table",
+                "Consistent-hits list with |log2FC| >= 1 and FDR < 0.05 under both BCV 0.1 and 0.4, with survival at BCV 1.0 annotated",
+                "Ordered log2FC ranking of all filtered genes written for downstream use",
+                "Output explicitly states p-values are conditional on the assumed BCV and are not valid inference"
+              ],
+              "packages": [
+                "edgeR",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Continues from T1S1's filtered TMM-normalized matrix. This is the dataset's central limitation: 1 treated vs 1 control means dispersion is a prior, not an estimate. The BCV sensitivity grid is the plan's honesty mechanism — calls that vanish at BCV 0.4 or 1.0 are fold-change observations, not findings.",
+              "caveats": [
+                "With 2 samples, edgeR cannot estimate a common, trended, or tagwise dispersion; dispersion must be set explicitly, not estimated",
+                "FDR over 12k genes under an assumed BCV will be anti-conservative; the consistent-hits list is the deliverable, not any single scenario's FDR column"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "WikiPathways enrichment on log2FC ranking",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Is the treated-vs-control liver expression shift concentrated in recognizable biological pathways, rather than scattered across genes?",
+              "description": "Run fgsea preranked GSEA using the T1S2 all-gene log2FC ranking (decreasing |none| tie handling) against the human WikiPathways gene set collection staged in the reference store (GMT: one pathway per line, '%'-delimited descriptor, HGNC member symbols — identifier space matches this dataset's gene symbols directly; confirm overlap between ranking genes and GMT members and report the matched-set statistics). Report per-pathway NES, nominal p, and BH-adjusted p, plus leading-edge gene sets for the top pathways. If the reference GMT is absent from the environment, fall back to a plain over-representation test on the T1S2 consistent-hits list using clusterProfiler's built-in universe handling and say which analysis ran.",
+              "acceptance_criteria": [
+                "fgsea run on the full filtered log2FC ranking with GMT-overlap stats reported (pathways used / dropped for size)",
+                "Table of pathways by adjusted p with NES and direction (up in treated vs up in control)",
+                "Leading-edge genes extracted for the top 10 pathways",
+                "Output states that with n=1 per group the ranking is a fold-change ordering and enrichment is exploratory"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "GSEABase"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Input is a ranked gene list from T1S2, not a hit list, because with no replication a thresholded hit list is arbitrary while the full ranking carries all the data. Reference data needed: human pathway gene sets in GMT form with HGNC symbols (WikiPathways 2026.07.10 human collection is staged in the reference store).",
+              "caveats": [
+                "fgsea minSize/maxSize defaults will drop tiny and huge pathways — report how many of the collection's pathways entered the test",
+                "Gene sets whose members mostly failed the T1S1 expression filter are tested on shrunken rankings; report the effective set sizes"
+              ]
+            }
+          ],
+          "tracks": [
+            {
+              "id": "T1",
+              "name": "No-replicate treated vs control differential expression",
+              "description": "QC/normalization, BCV-assumption-based DE with sensitivity grid, and rank-based pathway enrichment on the 2-sample liver dataset."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

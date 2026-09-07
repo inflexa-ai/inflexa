@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: it counts events per arm and states that events, not samples, set power; filters and variance-stabilises counts; scores the signature by z-score mean plus a rank-based single-sample method with the present-gene count reported; fits Cox with the standardized continuous score plus condition, reports HR per SD with CI, checks PH via scaled Schoenfeld with a time-varying remedy, and relegates KM tertile/median splits to descriptive display. QC has PCA and library sizes coloured by condition and event but no explicit outlier or shallow-sample policy beyond 'do not drop'. TMM is not named for the log-CPM path, the Cox reference level is implicit, the headline p is Wald rather than LR (though LR vs nested is reported), and the DE step leaves the shrinkage method unspecified; package versions are not requested in the report. Enrichment is correctly omitted."
+}

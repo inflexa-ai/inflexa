@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on ~condition with control as reference, a justified >=10-in-6 filter, median-of-ratios inside the model, BH at 0.05 with apeglm shrinkage, and PROGENy human with top 500 genes scored by ULM/MLM both on the Wald stat and per-sample on VST, with BH across the fourteen pathways and an explicit statement that scores are footprints not member expression. QC on sample_01 is quantitative with a retain/exclude policy and a sensitivity re-run rather than unilateral removal. The membership GSEA is correctly framed as contrast rather than as the activity answer, with ranking metric, size window and seed stated. Deductions are for not naming PROGENy/WikiPathways versions, using a Welch t-test rather than limma on the per-sample scores, and the |LFC|>1 count being post hoc rather than tested."
+}

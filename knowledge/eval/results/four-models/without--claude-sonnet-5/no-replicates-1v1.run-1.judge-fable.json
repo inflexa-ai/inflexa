@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 3,
+    "qc_present": 5,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 2,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly recognizes that n=1 per group precludes dispersion estimation, but then runs edgeR exactTest with an assumed BCV and a DESeq2 workaround, producing p-values, FDR at 0.05, and a post hoc |log2FC|>1 cutoff presented as 'significant (exploratory)'; the reference is explicit that this is wrong and that only normalized counts and descriptive log2 fold changes should be reported, with no p-values. It never names the design that would support inference (at least two, preferably three per group). QC covers library sizes and distributions but lacks sample-structure plots or an outlier policy; the CPM<1 filter and TMM/median-of-ratios normalization are stated, though the 'normalized table used downstream' is ambiguous about what enters the count model. Enrichment on an unreplicated, non-inferential gene list is not warranted, and even as specified lacks a universe, collection version, and set-size window; the report omits software versions and the supporting-design statement."
+}

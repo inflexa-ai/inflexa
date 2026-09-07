@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats subject as a blocking factor (~ subject + condition) in DESeq2 with treated-vs-control as the tested coefficient, explicitly forbids the unpaired model and per-pair tests, and adds a like-for-like limma-voom/edgeR QL sensitivity check with the same explicit blocking; the narrative's stray mention of edgeR 'paired exactTest' is a minor inconsistency since the step itself uses glmQLFit. QC (library sizes, PCA by subject and condition, correlation heatmap, outlier flagging policy), filterByExpr, TMM/size-factor normalization inside the models, BH at stated alphas with apeglm shrinkage and no post-hoc LFC cutoff are all stated explicitly. Enrichment is well specified in ranking metric and universe but omits the collection version and a set-size window. Reporting lists design, thresholds, gene counts and power caveats, but does not explicitly commit to recording package versions."
+}

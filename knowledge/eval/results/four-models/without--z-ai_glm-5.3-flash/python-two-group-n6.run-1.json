@@ -1,0 +1,286 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "python-two-group-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T06:18:04.865Z",
+  "elapsedMs": 124995,
+  "outcome": "plan_submitted",
+  "planId": "pln-3e2b9146",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and PyDESeq2 differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "Deduplicate or aggregate any repeated gene symbols before building the matrix.",
+          "sample_01 shrinks size factors toward it for all samples; report its size factor explicitly rather than silently accepting it.",
+          "12 samples is the minimum this design supports: no covariate adjustment is possible beyond the condition term."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "pydeseq2==0.5.4",
+          "matplotlib"
+        ],
+        "question": "Which genes are differentially expressed between treated and control skin biopsies, after size-factor normalization that accounts for sample_01's ~4x-shallow library?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Python only (pandas, numpy, pydeseq2, matplotlib); no R",
+          "No imputation of sample_01: keep it in the primary fit and quantify its influence in the next step",
+          "Report the number of genes dropped by filtering and keep the full unfiltered results table on disk"
+        ],
+        "description": "Load /eval-four-models-without-python-two-group-n6-1/data/inputs/counts/counts.csv (first column gene symbol, 12000 genes x 12 sample columns) and merge on sample id with /eval-four-models-without-python-two-group-n6-1/data/inputs/metadata/metadata.csv (12 rows; condition = treated or control). Quantify library sizes and confirm the shallow sample (sample_01, ~4x below median); plot pre-normalized library sizes and a PCA of log2(CPM+1) colored by condition to check whether sample_01 is also a global outlier or only shallow. Filter low-count genes (e.g. keep genes with >=10 counts in a minimal number of samples), fit PyDESeq2 with design '~condition' (treated vs control, 6v6 unpaired, single batch), run the Wald test with BH multiple-testing correction, and write the full results table (gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) plus PCA, volcano and library-size figures. DESeq2 size factors are the correct handling of a shallow library: they rescale it rather than discard it.",
+        "acceptance_criteria": [
+          "Library-size table written showing sample_01 at ~4x below median and every size factor reported",
+          "PCA labeled by condition produced; whether sample_01 clusters with its condition group is stated explicitly",
+          "DESeq2 size-factor-normalized DE table (all ~12000 genes) with log2FC, Wald stat, p-value, BH padj for treated vs control",
+          "Low-count filtering threshold documented (counts applied, genes retained reported)",
+          " volcano plot + top-gene MA/normalised-count plots written as PNG"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Sample_01 sensitivity analysis",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "With n=5 vs 6 the model has even less power; a gene significant only in the 12-sample fit is not necessarily false.",
+          "Correlate log2FC (shrunken) not raw p-values; p-values are unstable at this sample size."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "pydeseq2==0.5.4",
+          "scipy"
+        ],
+        "question": "Does the shallow sample_01 drive or mask any treated-vs-control DE calls — do the significant genes survive its exclusion?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Python only",
+          "Keep the primary result (with sample_01) as the headline; the leave-one-out fit is a sensitivity analysis, not a replacement",
+          "If sample_01 is a within-condition PCA outlier of its own group, say so and report the leave-one-out result for that group direction explicitly"
+        ],
+        "description": "Re-run the identical PyDESeq2 pipeline (same filtering, same design '~condition') on the 11 samples remaining after dropping sample_01, and compare against the full 12-sample fit: correlation of shrunken log2FC, overlap of significant genes (BH padj < 0.05 and |log2FC| >= 1), and a per-gene robustness label ('robust': significant and direction-consistent in both fits; 'sample_01-dependent': significant in only one fit). Also verify with the T1S1 PCA whether sample_01 sits apart from its condition group; if it does, report which condition it belongs to and whether its depth or its biology drives the difference. Output a sensitivity table and a short verdict on whether the shallow sample distorts the treated-vs-control answer.",
+        "acceptance_criteria": [
+          "Side-by-side table: n DE genes (FDR<0.05) full-data vs sample_01-excluded, plus correlation of log2FC between the two fits",
+          "Every DE gene classified robust (passes FDR<0.05 and |log2FC| threshold in both fits) vs shallow-sample-sensitive (passes in only one)",
+          "Shrunken LFC (apeglm) used for ranking genes in both fits",
+          "A one-paragraph verdict stating whether the treated-vs-control signal is distorted by sample_01, and which genes the answer depends on"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark GSEA with sample_01 robustness check",
+        "agent": "enrichment-agent",
+        "track": "pathway-enrichment",
+        "status": "pending",
+        "caveats": [
+          "With 12 samples, GSEA permutation is on gene sets not phenotypes (prerank); report FDR across the 50 sets, not per-gene p-values.",
+          "A shallow sample flattens its condition's ranking contribution in the full-data fit — that is exactly what the sensitivity run quantifies.",
+          "Blitzgsea (installed) is an acceptable substitute if gseapy.prerank misbehaves; do not reach for any network-backed enrichment service."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy==1.3.1",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which MSigDB hallmark pathways are enriched in treated vs control skin, and which of those calls are robust to the shallow sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Python only; use gseapy.prerank (or blitzgsea) with the local GMT — no network, no enrichr/MSigDB download calls",
+          "Rank by the shrunken Wald statistic from the 12-sample fit; use gene symbols as-is (GMT is HGNC symbols)",
+          "Run the identical analysis on the 11-sample sensitivity ranking from T1S2 and report per-pathway robustness"
+        ],
+        "description": "Rank all tested genes by the signed Wald statistic (or shrunken log2FC) from the 12-sample treated-vs-control PyDESeq2 fit and run GSEA pre-ranked (gseapy.prerank, weighted, nperm >= 1000) against the staged MSigDB human hallmark GMT (/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt, 50 HALLMARK_* sets, HGNC symbols — matches the gene symbols in counts.csv). Repeat the identical prerank on the 11-sample (sample_01-excluded) ranking from T1S2 and report per-pathway NES, nominal p, and FDR q from both runs side by side, flagging hallmark calls that depend on the shallow sample. Write the full hallmark results table with leading-edge genes.",
+        "acceptance_criteria": [
+          "Full ranked-list GSEA (nperm>=1000, gene set size 15-500) on all 50 HALLMARK_* sets with FDR q-values",
+          "Sensitivity GSEA on the sample_01-excluded ranking; per-pathway table showing which hallmark calls are robust to dropping sample_01",
+          "Leading-edge gene lists for the significant pathways written to disk",
+          "Bar/enrichment plot of significant hallmark pathways (both NES and FDR) as PNG; no gene set named a hallmark hit unless it clears FDR<0.25 (nominal p<0.05) in the full-data run and its robustness is annotated"
+        ]
+      }
+    ],
+    "title": "AD treated vs control DE and hallmark GSEA",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-16T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is a two-group contrast (6 treated vs 6 control, unpaired, single batch) on Salmon-derived gene-level integer counts (12000 genes x 12 samples, gene symbols in counts.csv). Genes are answered by a negative-binomial differential expression fit in PyDESeq2, whose median-of-ratios size factors are the statistically correct way to handle the one shallow library (sample_01 at ~4x below median) — not by discarding it. Because that sample is flagged by the profile and n is small, a leave-one-out sensitivity re-fit quantifies which DE genes depend on it. Hallmark pathways are answered by GSEA pre-ranked on the DE statistic against the staged MSigDB human hallmark GMT (50 sets, HGNC symbols, matching the gene-symbol identifier space of the counts), run twice — full-data and sample_01-excluded — so pathway calls inherit the same robustness check. All steps are Python (pandas/numpy/pydeseq2/gseapy); no R. Human hallmark GMT is confirmed present under /mnt/refs; pydeseq2 0.5.4 and gseapy 1.3.1 are installed."
+  },
+  "usage": {
+    "inputTokens": 72696,
+    "outputTokens": 3528,
+    "cacheReadInputTokens": 42752,
+    "reasoningTokens": 1338
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-16T00:00:00Z",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "Library-size table written showing sample_01 at ~4x below median and every size factor reported",
+                "PCA labeled by condition produced; whether sample_01 clusters with its condition group is stated explicitly",
+                "DESeq2 size-factor-normalized DE table (all ~12000 genes) with log2FC, Wald stat, p-value, BH padj for treated vs control",
+                "Low-count filtering threshold documented (counts applied, genes retained reported)",
+                " volcano plot + top-gene MA/normalised-count plots written as PNG"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Deduplicate or aggregate any repeated gene symbols before building the matrix.",
+                "sample_01 shrinks size factors toward it for all samples; report its size factor explicitly rather than silently accepting it.",
+                "12 samples is the minimum this design supports: no covariate adjustment is possible beyond the condition term."
+              ],
+              "constraints": [
+                "Python only (pandas, numpy, pydeseq2, matplotlib); no R",
+                "No imputation of sample_01: keep it in the primary fit and quantify its influence in the next step",
+                "Report the number of genes dropped by filtering and keep the full unfiltered results table on disk"
+              ],
+              "depends_on": [],
+              "description": "Load /eval-four-models-without-python-two-group-n6-1/data/inputs/counts/counts.csv (first column gene symbol, 12000 genes x 12 sample columns) and merge on sample id with /eval-four-models-without-python-two-group-n6-1/data/inputs/metadata/metadata.csv (12 rows; condition = treated or control). Quantify library sizes and confirm the shallow sample (sample_01, ~4x below median); plot pre-normalized library sizes and a PCA of log2(CPM+1) colored by condition to check whether sample_01 is also a global outlier or only shallow. Filter low-count genes (e.g. keep genes with >=10 counts in a minimal number of samples), fit PyDESeq2 with design '~condition' (treated vs control, 6v6 unpaired, single batch), run the Wald test with BH multiple-testing correction, and write the full results table (gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) plus PCA, volcano and library-size figures. DESeq2 size factors are the correct handling of a shallow library: they rescale it rather than discard it.",
+              "id": "T1S1",
+              "name": "QC and PyDESeq2 differential expression",
+              "packages": [
+                "pandas",
+                "numpy",
+                "pydeseq2==0.5.4",
+                "matplotlib"
+              ],
+              "question": "Which genes are differentially expressed between treated and control skin biopsies, after size-factor normalization that accounts for sample_01's ~4x-shallow library?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "differential-expression"
+            },
+            {
+              "acceptance_criteria": [
+                "Side-by-side table: n DE genes (FDR<0.05) full-data vs sample_01-excluded, plus correlation of log2FC between the two fits",
+                "Every DE gene classified robust (passes FDR<0.05 and |log2FC| threshold in both fits) vs shallow-sample-sensitive (passes in only one)",
+                "Shrunken LFC (apeglm) used for ranking genes in both fits",
+                "A one-paragraph verdict stating whether the treated-vs-control signal is distorted by sample_01, and which genes the answer depends on"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=5 vs 6 the model has even less power; a gene significant only in the 12-sample fit is not necessarily false.",
+                "Correlate log2FC (shrunken) not raw p-values; p-values are unstable at this sample size."
+              ],
+              "constraints": [
+                "Python only",
+                "Keep the primary result (with sample_01) as the headline; the leave-one-out fit is a sensitivity analysis, not a replacement",
+                "If sample_01 is a within-condition PCA outlier of its own group, say so and report the leave-one-out result for that group direction explicitly"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Re-run the identical PyDESeq2 pipeline (same filtering, same design '~condition') on the 11 samples remaining after dropping sample_01, and compare against the full 12-sample fit: correlation of shrunken log2FC, overlap of significant genes (BH padj < 0.05 and |log2FC| >= 1), and a per-gene robustness label ('robust': significant and direction-consistent in both fits; 'sample_01-dependent': significant in only one fit). Also verify with the T1S1 PCA whether sample_01 sits apart from its condition group; if it does, report which condition it belongs to and whether its depth or its biology drives the difference. Output a sensitivity table and a short verdict on whether the shallow sample distorts the treated-vs-control answer.",
+              "id": "T1S2",
+              "name": "Sample_01 sensitivity analysis",
+              "packages": [
+                "pandas",
+                "numpy",
+                "pydeseq2==0.5.4",
+                "scipy"
+              ],
+              "question": "Does the shallow sample_01 drive or mask any treated-vs-control DE calls — do the significant genes survive its exclusion?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "differential-expression"
+            },
+            {
+              "acceptance_criteria": [
+                "Full ranked-list GSEA (nperm>=1000, gene set size 15-500) on all 50 HALLMARK_* sets with FDR q-values",
+                "Sensitivity GSEA on the sample_01-excluded ranking; per-pathway table showing which hallmark calls are robust to dropping sample_01",
+                "Leading-edge gene lists for the significant pathways written to disk",
+                "Bar/enrichment plot of significant hallmark pathways (both NES and FDR) as PNG; no gene set named a hallmark hit unless it clears FDR<0.25 (nominal p<0.05) in the full-data run and its robustness is annotated"
+              ],
+              "agent": "enrichment-agent",
+              "caveats": [
+                "With 12 samples, GSEA permutation is on gene sets not phenotypes (prerank); report FDR across the 50 sets, not per-gene p-values.",
+                "A shallow sample flattens its condition's ranking contribution in the full-data fit — that is exactly what the sensitivity run quantifies.",
+                "Blitzgsea (installed) is an acceptable substitute if gseapy.prerank misbehaves; do not reach for any network-backed enrichment service."
+              ],
+              "constraints": [
+                "Python only; use gseapy.prerank (or blitzgsea) with the local GMT — no network, no enrichr/MSigDB download calls",
+                "Rank by the shrunken Wald statistic from the 12-sample fit; use gene symbols as-is (GMT is HGNC symbols)",
+                "Run the identical analysis on the 11-sample sensitivity ranking from T1S2 and report per-pathway robustness"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "description": "Rank all tested genes by the signed Wald statistic (or shrunken log2FC) from the 12-sample treated-vs-control PyDESeq2 fit and run GSEA pre-ranked (gseapy.prerank, weighted, nperm >= 1000) against the staged MSigDB human hallmark GMT (/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt, 50 HALLMARK_* sets, HGNC symbols — matches the gene symbols in counts.csv). Repeat the identical prerank on the 11-sample (sample_01-excluded) ranking from T1S2 and report per-pathway NES, nominal p, and FDR q from both runs side by side, flagging hallmark calls that depend on the shallow sample. Write the full hallmark results table with leading-edge genes.",
+              "id": "T2S1",
+              "name": "Hallmark GSEA with sample_01 robustness check",
+              "packages": [
+                "gseapy==1.3.1",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "question": "Which MSigDB hallmark pathways are enriched in treated vs control skin, and which of those calls are robust to the shallow sample_01?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "pathway-enrichment"
+            }
+          ],
+          "title": "AD treated vs control DE and hallmark GSEA",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The question is a two-group contrast (6 treated vs 6 control, unpaired, single batch) on Salmon-derived gene-level integer counts (12000 genes x 12 samples, gene symbols in counts.csv). Genes are answered by a negative-binomial differential expression fit in PyDESeq2, whose median-of-ratios size factors are the statistically correct way to handle the one shallow library (sample_01 at ~4x below median) — not by discarding it. Because that sample is flagged by the profile and n is small, a leave-one-out sensitivity re-fit quantifies which DE genes depend on it. Hallmark pathways are answered by GSEA pre-ranked on the DE statistic against the staged MSigDB human hallmark GMT (50 sets, HGNC symbols, matching the gene-symbol identifier space of the counts), run twice — full-data and sample_01-excluded — so pathway calls inherit the same robustness check. All steps are Python (pandas/numpy/pydeseq2/gseapy); no R. Human hallmark GMT is confirmed present under /mnt/refs; pydeseq2 0.5.4 and gseapy 1.3.1 are installed."
+        }
+      }
+    }
+  ]
+}

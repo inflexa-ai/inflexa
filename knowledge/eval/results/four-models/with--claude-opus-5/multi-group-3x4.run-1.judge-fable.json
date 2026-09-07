@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan fits one ~condition model on all twelve samples, answers the omnibus question with a DESeq2 LRT against ~1 and the pairwise question with named Wald contrasts against an explicitly releveled control on the same fit, exactly as the reference requires, and it keeps LRT and pairwise results in separate tables with within-contrast BH at 0.05 and ashr shrinkage. QC (blind VST PCA, distance heatmap, library sizes) precedes the model with an explicit flag-only outlier policy and a half-median shallow-sample rule; the ≥10 counts in ≥4 samples filter is tied to the smallest group; size factors and TMM stay inside the models. Enrichment was not asked for, but it is specified correctly (full Wald-stat ranked list per contrast, tested-gene universe, named human collections with version, 15-500 window, seed), so it costs little. The report step names method, versions, design, thresholds, tested and significant counts, and the design caveats."
+}

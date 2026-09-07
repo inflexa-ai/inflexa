@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: PyDESeq2 Wald test on raw counts with median-of-ratios inside the model, control set as reference with an explicit (condition, aldosterone, control) contrast, minimal >=10-in-6 pre-filter, BH at 0.05, shrinkage kept separate from the unshrunken Wald statistic that feeds decoupler ulm on signed CollecTRI with min regulon size 5, plus a per-sample log2 CPM activity view with a between-group test and BH across regulators. QC is a proper blind-VST PCA, distance heatmap, library-size check and a flag-don't-drop policy, and the report enumerates network, version, statistic, estimator, regulon size, regulator count, and the inference caveat. Minor deductions: ashr is not a Python resource and the plan only hedges toward PyDESeq2's apeglm-like shrinkage, the DoRothEA fallback via rpy2 brushes against the Python-only constraint, and the design formula is implied rather than written out."
+}

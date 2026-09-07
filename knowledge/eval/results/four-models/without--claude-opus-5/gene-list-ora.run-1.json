@@ -1,0 +1,413 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "gene-list-ora",
+  "run": 1,
+  "startedAt": "2026-09-07T00:09:37.196Z",
+  "elapsedMs": 89652,
+  "outcome": "plan_submitted",
+  "planId": "pln-d9047cb9",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Build significant gene sets and testable universe",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "DESeq2 sets padj to NA for low-count and outlier genes; treating those as 'not significant but testable' inflates the universe and biases ORA p-values",
+          "A 6 vs 6 design with 12,000 genes may yield few significant genes; if so, ORA will be underpowered and this must be stated rather than papered over",
+          "Gene-symbol tables sometimes contain duplicates or deprecated aliases that will not map to GO annotation"
+        ],
+        "context": "Bulk RNA-seq of human skin, 6 atopic-dermatitis-lesional ('treated') vs 6 control, unpaired, single batch, gene-level Salmon counts. The DESeq2 results table for the treated vs control contrast is supplied directly, so the enrichment input can be derived from it without re-running DE.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which genes are significant in the treated (AD lesional) vs control DESeq2 contrast in de_results.csv, split by direction, and what is the correct background universe of testable genes for over-representation analysis?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use the supplied de_results.csv as-is for this step; do not recompute differential expression here",
+          "The universe must be the genes with a non-NA adjusted p-value in this table — never all 12,000 rows blindly, and never a genome-wide gene list",
+          "Gene identifiers are symbols; keep them as symbols and do not silently drop rows that fail an identifier conversion without counting them",
+          "Report set sizes for both the strict (padj<0.05 & |log2FC|>=1) and relaxed (padj<0.05) definitions so downstream enrichment can be run on both"
+        ],
+        "description": "Read /eval-four-models-without-gene-list-ora-1/data/inputs/results/de_results.csv (12,000 rows x 8 columns; first column 'gene' carries HGNC-style gene symbols, plus base_mean, log2_fold_change, lfcSE, stat, pvalue, padj-type columns). Resolve the actual adjusted-p and log2FC column names from the header rather than assuming. Report: total rows, rows with non-NA adjusted p (the testable set), rows filtered out by DESeq2 independent filtering / Cook's cutoff (NA padj), and the distribution of base_mean among each. Define and write out four gene-symbol lists as plain one-column CSVs: (a) SIG_STRICT = padj < 0.05 AND |log2FC| >= 1; (b) SIG_UP = SIG_STRICT with log2FC > 0; (c) SIG_DOWN = SIG_STRICT with log2FC < 0; (d) SIG_RELAXED = padj < 0.05 with no fold-change filter. Also write UNIVERSE = all gene symbols with non-NA adjusted p. Deduplicate symbols and report how many duplicate symbols were collapsed. Produce a summary table of set sizes and a volcano plot annotating the strict cutoffs.",
+        "acceptance_criteria": [
+          "The adjusted-p and log2FC column names are resolved from the actual header of de_results.csv and stated in the output, not assumed",
+          "Counts are reported for: total genes, genes with non-NA adjusted p (universe), genes with NA adjusted p",
+          "Five gene lists are written to disk as one-column CSVs of gene symbols: SIG_STRICT, SIG_UP, SIG_DOWN, SIG_RELAXED, UNIVERSE",
+          "The size of every list is reported, and the step explicitly flags if SIG_STRICT has fewer than 15 genes or more than 2000, with a statement of what that means for ORA interpretability",
+          "Duplicate gene symbols are collapsed and the number collapsed is reported"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "GO biological process over-representation analysis",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "GO's nested hierarchy produces blocks of correlated significant terms; an uncollapsed count of significant terms overstates the number of independent findings",
+          "Symbol-to-Entrez mapping inside enrichGO drops unmapped symbols silently — count and report the mapping loss for both the query list and the universe",
+          "If the significant list is small, ORA is dominated by a handful of genes appearing across many terms; inspect the member genes of top terms for this",
+          "ORA on a fold-change-thresholded list discards ranking information; the relaxed-list run is the check on how much the |log2FC|>=1 cut drove the result"
+        ],
+        "context": "Reference data confirmed present in this environment: human GO annotation via org.Hs.eg.db + GO.db (Bioconductor), and an MSigDB human GO Biological Process symbols GMT (7,538 GOBP_* sets, HGNC symbols) under the pathways category. Both are human, matching the taxon 9606 skin dataset. clusterProfiler 4.20.0, enrichplot, GO.db, org.Hs.eg.db and gseapy are all installed.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "GO.db",
+          "enrichplot",
+          "ggplot2",
+          "dplyr",
+          "readr"
+        ],
+        "question": "Which GO Biological Process terms are over-represented among the significant genes of the AD-lesional vs control contrast, overall and separately for up- and down-regulated genes, relative to the testable-gene universe?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the human GO annotation and the human GOBP gene-set collection — never the mouse equivalents, which are also staged and will fail silently by symbol-case mismatch",
+          "Restrict to the Biological Process branch, as the question asks; CC and MF may be reported only as a clearly labelled secondary aside",
+          "Gene-set size must be bounded (min 10, max 500) so that near-root GO terms do not dominate the output",
+          "Do not report unadjusted p-values as evidence of enrichment; multiple-testing correction across all tested terms is mandatory",
+          "Do not claim causation or mechanism from an over-representation result — report the processes and their statistical support"
+        ],
+        "description": "Run over-representation analysis (hypergeometric / Fisher exact) of the gene lists from T1S1 against GO Biological Process. Primary engine: clusterProfiler::enrichGO with org.Hs.eg.db (human, ont='BP'), passing the T1S1 UNIVERSE explicitly as the `universe` argument, pAdjustMethod='BH', minGSSize=10, maxGSSize=500, and both pvalueCutoff and qvalueCutoff set permissively (e.g. 1) at the call so the full ranked table is retained and filtering to FDR<0.05 is applied afterwards in the reported output. Run three times: SIG_STRICT, SIG_UP, SIG_DOWN; and once more on SIG_RELAXED as a sensitivity analysis. Because GO is a nested hierarchy with heavily overlapping parent/child sets, apply clusterProfiler::simplify (semantic similarity cutoff 0.7) and report BOTH the raw significant term count and the collapsed count. Cross-check: repeat the ORA for SIG_STRICT against a human GO Biological Process gene-set collection in GMT form from the reference store (MSigDB C5 GOBP, HGNC symbols) using a plain hypergeometric test with the same universe, and report the overlap between the top 20 terms from the two sources. Outputs: a full results table per run (term ID, term name, gene ratio, background ratio, raw p, BH-adjusted p, odds/fold enrichment, member genes), a dot plot of the top 15 collapsed terms by adjusted p for SIG_STRICT/UP/DOWN, and a short written interpretation naming the specific processes and whether they are consistent with a type-2-inflammation / epidermal-barrier phenotype expected in atopic dermatitis lesional skin — stated as consistency, not as confirmation.",
+        "acceptance_criteria": [
+          "ORA is run with the explicit testable-gene universe from T1S1, and the universe size actually used is reported",
+          "GO Biological Process terms are reported with BH-adjusted p-values; terms at FDR < 0.05 are listed with gene ratio, fold enrichment, and the member significant genes",
+          "Separate result tables exist for the all-significant, up-regulated, and down-regulated gene lists",
+          "Redundancy is collapsed (semantic-similarity simplify) and both raw and collapsed significant-term counts are reported",
+          "The cross-check against the independent human GOBP GMT collection is run and the concordance of the top terms between the two annotation sources is stated",
+          "If no term reaches FDR < 0.05, the step reports that plainly with the top nominal terms and does not present them as significant"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Verify supplied DE table and test sample_01 sensitivity",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A 4x depth deficit is usually absorbed by size-factor normalization, but it inflates the variance of that sample's counts and can distort dispersion shrinkage in a 6 vs 6 design",
+          "Small differences from the supplied table are expected from DESeq2 version, lfc shrinkage settings, and prefiltering choices — distinguish those from substantive disagreement",
+          "With n dropping to 5 vs 6, some loss of significant genes is expected purely from power; do not read all of it as instability"
+        ],
+        "context": "The data profile flags sample_01 as having a library size about 4x below the median. In a 6 vs 6 unpaired design, one low-depth library can materially shift dispersion estimates and the resulting significant-gene list, which is the sole input to the GO enrichment. This step does not block the enrichment; it qualifies it.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "ggplot2",
+          "dplyr",
+          "readr",
+          "pheatmap"
+        ],
+        "question": "Does the supplied de_results.csv reproduce from counts.csv + metadata.csv, and how much of the significant gene set depends on sample_01, whose library size is ~4x below the median?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2 on raw integer counts; do not pre-normalize or filter counts outside DESeq2's own independent filtering beyond a low-count prefilter, and state any prefilter applied",
+          "Match the condition labels exactly as they appear in metadata.csv rather than assuming 'treated'/'control' strings",
+          "Do not silently drop sample_01 from the primary re-derivation — the leave-one-out run is a separate, clearly labelled sensitivity analysis",
+          "Report discrepancies with the supplied table rather than assuming the supplied table is wrong or right"
+        ],
+        "description": "Independently re-derive the treated vs control contrast from /eval-four-models-without-gene-list-ora-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, raw integer Salmon counts, gene symbol in first column) and /eval-four-models-without-gene-list-ora-1/data/inputs/metadata/metadata.csv (12 rows, sample + condition) using DESeq2 with design ~condition, 6 treated vs 6 control, unpaired. Report per-sample library sizes and DESeq2 size factors, confirming and quantifying the sample_01 depth anomaly. Produce a PCA on VST-transformed counts coloured by condition with sample_01 labelled, to show whether it separates from its group. Compare the re-derived log2FC and padj against de_results.csv: Spearman correlation of log2FC, and the size of the symmetric difference between the two significant sets at padj<0.05 & |log2FC|>=1. Then re-run the DE with sample_01 excluded (5 treated or 5 control vs 6, as its group dictates) and report what fraction of the original SIG_STRICT genes remain significant, plus the Spearman correlation of log2FC with and without it. Write out the leave-one-out significant gene list.",
+        "acceptance_criteria": [
+          "Per-sample library sizes and DESeq2 size factors are reported, with sample_01's deviation from the median quantified and its condition group stated",
+          "The re-derived DESeq2 contrast is compared to the supplied de_results.csv via log2FC Spearman correlation and significant-set overlap, with the numbers reported",
+          "A leave-one-out DE excluding sample_01 is run and the fraction of the original significant genes retained is reported",
+          "A VST PCA plot coloured by condition with sample_01 labelled is produced",
+          "The step states plainly whether the significant gene set is robust to sample_01 or contingent on it"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Reconcile enrichment with DE robustness and report",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Terms lost in the leave-one-out run may be lost to reduced power rather than to sample_01 being an artefact — do not over-interpret the difference",
+          "ORA answers 'over-represented among a thresholded list', which is a weaker statement than a rank-based enrichment; say so if the strict and relaxed lists disagree"
+        ],
+        "context": "This is the deliverable that answers the user's question. It exists as its own step so that the confidence attached to each enriched term is grounded in the sample_01 sensitivity result rather than asserted.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "GO.db",
+          "enrichplot",
+          "ggplot2",
+          "dplyr",
+          "readr"
+        ],
+        "question": "Which over-represented GO biological processes are the defensible answer, given how sensitive the underlying significant gene set is to sample_01 and to the fold-change threshold?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "synthesis",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Use the identical GO Biological Process annotation source, universe convention, gene-set size bounds and BH correction as T1S2 for the leave-one-out re-run, so the comparison is like-for-like",
+          "Do not present a term as a finding if it was significant only before redundancy collapsing, or only at nominal p",
+          "If T2S1 shows the significant set is not robust to sample_01, label the entire enrichment result provisional in the headline of the report"
+        ],
+        "description": "Combine the GO-BP ORA results (T1S2) with the DE robustness evidence (T2S1) into one report. Re-run the ORA on the leave-one-out significant gene list from T2S1 using the same GO Biological Process annotation, universe convention, size bounds and BH correction as T1S2, and report which top collapsed terms are shared with the primary result versus which appear only in one. Produce a final ranked table of GO BP terms for the treated (AD lesional) vs control contrast with: term, adjusted p, fold enrichment, member genes, whether the term also appeared in the up-only or down-only run, whether it survived the leave-one-out re-run, and whether the independent GOBP GMT cross-check recovered it. Close with a plain-language statement of what changed at the process level and an explicit list of the limitations — n=6 per group, single batch, one low-depth library, ORA's dependence on an arbitrary significance threshold, and GO hierarchy redundancy.",
+        "acceptance_criteria": [
+          "A single final ranked table of over-represented GO Biological Process terms is produced with adjusted p, fold enrichment, direction attribution, and member genes",
+          "Each reported term is annotated with whether it survived the leave-one-out (sample_01 excluded) re-run and whether the independent GOBP collection recovered it",
+          "The report states whether the enrichment result is robust or provisional, with the specific evidence for that verdict",
+          "Limitations are listed explicitly: group size, single batch, low-depth library, threshold dependence of ORA, GO redundancy",
+          "No causal or mechanistic claim is made beyond what over-representation supports"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE gene GO-BP over-representation",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is narrow: which GO biological processes are over-represented among genes significant in the treated (atopic dermatitis lesional) vs control contrast. A DESeq2 results table for exactly that contrast is already supplied (/data/inputs/results/de_results.csv, 12,000 genes, 8 columns, gene symbols in the first column), so no re-run of differential expression is required for the primary answer. The plan therefore has three parts.\n\nT1S1 constructs the input to enrichment properly rather than accepting the table at face value. It reads de_results.csv, checks which columns carry padj/log2FoldChange, counts how many genes have NA padj (DESeq2 independent filtering and Cook's outliers), and defines the significant set at padj < 0.05 with |log2FC| >= 1 as primary, plus a padj-only relaxed set as a sensitivity list. The critical piece is the universe: over-representation analysis is only valid against the genes that were actually testable, i.e. those with a non-NA padj in this table, NOT all 12,000 rows and definitely not the whole genome. It also splits up- and down-regulated genes, because mixing directions in ORA blurs opposing processes. If the significant set is very small (<15 genes) or implausibly large (>2,000), the step must say so, since ORA is uninformative at both extremes.\n\nT1S2 runs the ORA itself against GO Biological Process. Two GO-BP sources are present in this environment and both are human: org.Hs.eg.db + GO.db via clusterProfiler::enrichGO (true GO hierarchy, supports simplify() for redundancy collapse) and the MSigDB C5 GOBP symbols GMT (7,538 sets, HGNC symbols) confirmed at /mnt/refs. The step runs enrichGO as primary with the explicit testable-gene universe, Benjamini-Hochberg FDR, and gene-set size bounds (10–500) to avoid the enormous root-level GO terms, then cross-checks the top terms against the MSigDB GOBP GMT so that a conclusion does not rest on one annotation snapshot. Separate runs for all-significant, up-only, and down-only. GO is a nested hierarchy, so parent and child terms share most members — the step must collapse redundancy (simplify at semantic similarity 0.7) and report both raw and collapsed term counts, never presenting overlapping terms as independent findings.\n\nT2S1 is the sanity check on the supplied DE table, run in parallel and not blocking the answer. The profile flags that sample_01 has a library size ~4x below the median — a real risk in a 6 vs 6 unpaired design, where one aberrant library can drive the gene list that the whole ORA rests on. This step re-derives the contrast from counts.csv + metadata.csv with DESeq2, compares the log2FC and padj against de_results.csv, and repeats the DE with sample_01 dropped to quantify how much of the significant set is contingent on it. Its output qualifies the confidence in T1S2, and T1S3 reconciles the two: if the significant set is unstable to dropping sample_01, the enrichment must be reported as provisional.\n\nNo translational, biomarker, or drug steps are included — the question asks only for over-represented GO BP terms."
+  },
+  "usage": {
+    "inputTokens": 93963,
+    "outputTokens": 6822,
+    "cacheCreationInputTokens": 75791,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "GO.db",
+          "gseapy",
+          "enrichplot",
+          "DESeq2",
+          "decoupler",
+          "blitzgsea"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE gene GO-BP over-representation",
+          "analytical_narrative": "The question is narrow: which GO biological processes are over-represented among genes significant in the treated (atopic dermatitis lesional) vs control contrast. A DESeq2 results table for exactly that contrast is already supplied (/data/inputs/results/de_results.csv, 12,000 genes, 8 columns, gene symbols in the first column), so no re-run of differential expression is required for the primary answer. The plan therefore has three parts.\n\nT1S1 constructs the input to enrichment properly rather than accepting the table at face value. It reads de_results.csv, checks which columns carry padj/log2FoldChange, counts how many genes have NA padj (DESeq2 independent filtering and Cook's outliers), and defines the significant set at padj < 0.05 with |log2FC| >= 1 as primary, plus a padj-only relaxed set as a sensitivity list. The critical piece is the universe: over-representation analysis is only valid against the genes that were actually testable, i.e. those with a non-NA padj in this table, NOT all 12,000 rows and definitely not the whole genome. It also splits up- and down-regulated genes, because mixing directions in ORA blurs opposing processes. If the significant set is very small (<15 genes) or implausibly large (>2,000), the step must say so, since ORA is uninformative at both extremes.\n\nT1S2 runs the ORA itself against GO Biological Process. Two GO-BP sources are present in this environment and both are human: org.Hs.eg.db + GO.db via clusterProfiler::enrichGO (true GO hierarchy, supports simplify() for redundancy collapse) and the MSigDB C5 GOBP symbols GMT (7,538 sets, HGNC symbols) confirmed at /mnt/refs. The step runs enrichGO as primary with the explicit testable-gene universe, Benjamini-Hochberg FDR, and gene-set size bounds (10–500) to avoid the enormous root-level GO terms, then cross-checks the top terms against the MSigDB GOBP GMT so that a conclusion does not rest on one annotation snapshot. Separate runs for all-significant, up-only, and down-only. GO is a nested hierarchy, so parent and child terms share most members — the step must collapse redundancy (simplify at semantic similarity 0.7) and report both raw and collapsed term counts, never presenting overlapping terms as independent findings.\n\nT2S1 is the sanity check on the supplied DE table, run in parallel and not blocking the answer. The profile flags that sample_01 has a library size ~4x below the median — a real risk in a 6 vs 6 unpaired design, where one aberrant library can drive the gene list that the whole ORA rests on. This step re-derives the contrast from counts.csv + metadata.csv with DESeq2, compares the log2FC and padj against de_results.csv, and repeats the DE with sample_01 dropped to quantify how much of the significant set is contingent on it. Its output qualifies the confidence in T1S2, and T1S3 reconciles the two: if the significant set is unstable to dropping sample_01, the enrichment must be reported as provisional.\n\nNo translational, biomarker, or drug steps are included — the question asks only for over-represented GO BP terms.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Build significant gene sets and testable universe",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are significant in the treated (AD lesional) vs control DESeq2 contrast in de_results.csv, split by direction, and what is the correct background universe of testable genes for over-representation analysis?",
+              "description": "Read /eval-four-models-without-gene-list-ora-1/data/inputs/results/de_results.csv (12,000 rows x 8 columns; first column 'gene' carries HGNC-style gene symbols, plus base_mean, log2_fold_change, lfcSE, stat, pvalue, padj-type columns). Resolve the actual adjusted-p and log2FC column names from the header rather than assuming. Report: total rows, rows with non-NA adjusted p (the testable set), rows filtered out by DESeq2 independent filtering / Cook's cutoff (NA padj), and the distribution of base_mean among each. Define and write out four gene-symbol lists as plain one-column CSVs: (a) SIG_STRICT = padj < 0.05 AND |log2FC| >= 1; (b) SIG_UP = SIG_STRICT with log2FC > 0; (c) SIG_DOWN = SIG_STRICT with log2FC < 0; (d) SIG_RELAXED = padj < 0.05 with no fold-change filter. Also write UNIVERSE = all gene symbols with non-NA adjusted p. Deduplicate symbols and report how many duplicate symbols were collapsed. Produce a summary table of set sizes and a volcano plot annotating the strict cutoffs.",
+              "context": "Bulk RNA-seq of human skin, 6 atopic-dermatitis-lesional ('treated') vs 6 control, unpaired, single batch, gene-level Salmon counts. The DESeq2 results table for the treated vs control contrast is supplied directly, so the enrichment input can be derived from it without re-running DE.",
+              "question_note": null,
+              "acceptance_criteria": [
+                "The adjusted-p and log2FC column names are resolved from the actual header of de_results.csv and stated in the output, not assumed",
+                "Counts are reported for: total genes, genes with non-NA adjusted p (universe), genes with NA adjusted p",
+                "Five gene lists are written to disk as one-column CSVs of gene symbols: SIG_STRICT, SIG_UP, SIG_DOWN, SIG_RELAXED, UNIVERSE",
+                "The size of every list is reported, and the step explicitly flags if SIG_STRICT has fewer than 15 genes or more than 2000, with a statement of what that means for ORA interpretability",
+                "Duplicate gene symbols are collapsed and the number collapsed is reported"
+              ],
+              "constraints": [
+                "Use the supplied de_results.csv as-is for this step; do not recompute differential expression here",
+                "The universe must be the genes with a non-NA adjusted p-value in this table — never all 12,000 rows blindly, and never a genome-wide gene list",
+                "Gene identifiers are symbols; keep them as symbols and do not silently drop rows that fail an identifier conversion without counting them",
+                "Report set sizes for both the strict (padj<0.05 & |log2FC|>=1) and relaxed (padj<0.05) definitions so downstream enrichment can be run on both"
+              ],
+              "caveats": [
+                "DESeq2 sets padj to NA for low-count and outlier genes; treating those as 'not significant but testable' inflates the universe and biases ORA p-values",
+                "A 6 vs 6 design with 12,000 genes may yield few significant genes; if so, ORA will be underpowered and this must be stated rather than papered over",
+                "Gene-symbol tables sometimes contain duplicates or deprecated aliases that will not map to GO annotation"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "track_note": null
+            },
+            {
+              "id": "T1S2",
+              "name": "GO biological process over-representation analysis",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which GO Biological Process terms are over-represented among the significant genes of the AD-lesional vs control contrast, overall and separately for up- and down-regulated genes, relative to the testable-gene universe?",
+              "description": "Run over-representation analysis (hypergeometric / Fisher exact) of the gene lists from T1S1 against GO Biological Process. Primary engine: clusterProfiler::enrichGO with org.Hs.eg.db (human, ont='BP'), passing the T1S1 UNIVERSE explicitly as the `universe` argument, pAdjustMethod='BH', minGSSize=10, maxGSSize=500, and both pvalueCutoff and qvalueCutoff set permissively (e.g. 1) at the call so the full ranked table is retained and filtering to FDR<0.05 is applied afterwards in the reported output. Run three times: SIG_STRICT, SIG_UP, SIG_DOWN; and once more on SIG_RELAXED as a sensitivity analysis. Because GO is a nested hierarchy with heavily overlapping parent/child sets, apply clusterProfiler::simplify (semantic similarity cutoff 0.7) and report BOTH the raw significant term count and the collapsed count. Cross-check: repeat the ORA for SIG_STRICT against a human GO Biological Process gene-set collection in GMT form from the reference store (MSigDB C5 GOBP, HGNC symbols) using a plain hypergeometric test with the same universe, and report the overlap between the top 20 terms from the two sources. Outputs: a full results table per run (term ID, term name, gene ratio, background ratio, raw p, BH-adjusted p, odds/fold enrichment, member genes), a dot plot of the top 15 collapsed terms by adjusted p for SIG_STRICT/UP/DOWN, and a short written interpretation naming the specific processes and whether they are consistent with a type-2-inflammation / epidermal-barrier phenotype expected in atopic dermatitis lesional skin — stated as consistency, not as confirmation.",
+              "context": "Reference data confirmed present in this environment: human GO annotation via org.Hs.eg.db + GO.db (Bioconductor), and an MSigDB human GO Biological Process symbols GMT (7,538 GOBP_* sets, HGNC symbols) under the pathways category. Both are human, matching the taxon 9606 skin dataset. clusterProfiler 4.20.0, enrichplot, GO.db, org.Hs.eg.db and gseapy are all installed.",
+              "acceptance_criteria": [
+                "ORA is run with the explicit testable-gene universe from T1S1, and the universe size actually used is reported",
+                "GO Biological Process terms are reported with BH-adjusted p-values; terms at FDR < 0.05 are listed with gene ratio, fold enrichment, and the member significant genes",
+                "Separate result tables exist for the all-significant, up-regulated, and down-regulated gene lists",
+                "Redundancy is collapsed (semantic-similarity simplify) and both raw and collapsed significant-term counts are reported",
+                "The cross-check against the independent human GOBP GMT collection is run and the concordance of the top terms between the two annotation sources is stated",
+                "If no term reaches FDR < 0.05, the step reports that plainly with the top nominal terms and does not present them as significant"
+              ],
+              "constraints": [
+                "Use the human GO annotation and the human GOBP gene-set collection — never the mouse equivalents, which are also staged and will fail silently by symbol-case mismatch",
+                "Restrict to the Biological Process branch, as the question asks; CC and MF may be reported only as a clearly labelled secondary aside",
+                "Gene-set size must be bounded (min 10, max 500) so that near-root GO terms do not dominate the output",
+                "Do not report unadjusted p-values as evidence of enrichment; multiple-testing correction across all tested terms is mandatory",
+                "Do not claim causation or mechanism from an over-representation result — report the processes and their statistical support"
+              ],
+              "caveats": [
+                "GO's nested hierarchy produces blocks of correlated significant terms; an uncollapsed count of significant terms overstates the number of independent findings",
+                "Symbol-to-Entrez mapping inside enrichGO drops unmapped symbols silently — count and report the mapping loss for both the query list and the universe",
+                "If the significant list is small, ORA is dominated by a handful of genes appearing across many terms; inspect the member genes of top terms for this",
+                "ORA on a fold-change-thresholded list discards ranking information; the relaxed-list run is the check on how much the |log2FC|>=1 cut drove the result"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "GO.db",
+                "enrichplot",
+                "ggplot2",
+                "dplyr",
+                "readr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Verify supplied DE table and test sample_01 sensitivity",
+              "track": "T2",
+              "step_type": "qc",
+              "question": "Does the supplied de_results.csv reproduce from counts.csv + metadata.csv, and how much of the significant gene set depends on sample_01, whose library size is ~4x below the median?",
+              "description": "Independently re-derive the treated vs control contrast from /eval-four-models-without-gene-list-ora-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, raw integer Salmon counts, gene symbol in first column) and /eval-four-models-without-gene-list-ora-1/data/inputs/metadata/metadata.csv (12 rows, sample + condition) using DESeq2 with design ~condition, 6 treated vs 6 control, unpaired. Report per-sample library sizes and DESeq2 size factors, confirming and quantifying the sample_01 depth anomaly. Produce a PCA on VST-transformed counts coloured by condition with sample_01 labelled, to show whether it separates from its group. Compare the re-derived log2FC and padj against de_results.csv: Spearman correlation of log2FC, and the size of the symmetric difference between the two significant sets at padj<0.05 & |log2FC|>=1. Then re-run the DE with sample_01 excluded (5 treated or 5 control vs 6, as its group dictates) and report what fraction of the original SIG_STRICT genes remain significant, plus the Spearman correlation of log2FC with and without it. Write out the leave-one-out significant gene list.",
+              "context": "The data profile flags sample_01 as having a library size about 4x below the median. In a 6 vs 6 unpaired design, one low-depth library can materially shift dispersion estimates and the resulting significant-gene list, which is the sole input to the GO enrichment. This step does not block the enrichment; it qualifies it.",
+              "acceptance_criteria": [
+                "Per-sample library sizes and DESeq2 size factors are reported, with sample_01's deviation from the median quantified and its condition group stated",
+                "The re-derived DESeq2 contrast is compared to the supplied de_results.csv via log2FC Spearman correlation and significant-set overlap, with the numbers reported",
+                "A leave-one-out DE excluding sample_01 is run and the fraction of the original significant genes retained is reported",
+                "A VST PCA plot coloured by condition with sample_01 labelled is produced",
+                "The step states plainly whether the significant gene set is robust to sample_01 or contingent on it"
+              ],
+              "constraints": [
+                "Use DESeq2 on raw integer counts; do not pre-normalize or filter counts outside DESeq2's own independent filtering beyond a low-count prefilter, and state any prefilter applied",
+                "Match the condition labels exactly as they appear in metadata.csv rather than assuming 'treated'/'control' strings",
+                "Do not silently drop sample_01 from the primary re-derivation — the leave-one-out run is a separate, clearly labelled sensitivity analysis",
+                "Report discrepancies with the supplied table rather than assuming the supplied table is wrong or right"
+              ],
+              "caveats": [
+                "A 4x depth deficit is usually absorbed by size-factor normalization, but it inflates the variance of that sample's counts and can distort dispersion shrinkage in a 6 vs 6 design",
+                "Small differences from the supplied table are expected from DESeq2 version, lfc shrinkage settings, and prefiltering choices — distinguish those from substantive disagreement",
+                "With n dropping to 5 vs 6, some loss of significant genes is expected purely from power; do not read all of it as instability"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "ggplot2",
+                "dplyr",
+                "readr",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Reconcile enrichment with DE robustness and report",
+              "track": "T1",
+              "step_type": "synthesis",
+              "question": "Which over-represented GO biological processes are the defensible answer, given how sensitive the underlying significant gene set is to sample_01 and to the fold-change threshold?",
+              "description": "Combine the GO-BP ORA results (T1S2) with the DE robustness evidence (T2S1) into one report. Re-run the ORA on the leave-one-out significant gene list from T2S1 using the same GO Biological Process annotation, universe convention, size bounds and BH correction as T1S2, and report which top collapsed terms are shared with the primary result versus which appear only in one. Produce a final ranked table of GO BP terms for the treated (AD lesional) vs control contrast with: term, adjusted p, fold enrichment, member genes, whether the term also appeared in the up-only or down-only run, whether it survived the leave-one-out re-run, and whether the independent GOBP GMT cross-check recovered it. Close with a plain-language statement of what changed at the process level and an explicit list of the limitations — n=6 per group, single batch, one low-depth library, ORA's dependence on an arbitrary significance threshold, and GO hierarchy redundancy.",
+              "context": "This is the deliverable that answers the user's question. It exists as its own step so that the confidence attached to each enriched term is grounded in the sample_01 sensitivity result rather than asserted.",
+              "acceptance_criteria": [
+                "A single final ranked table of over-represented GO Biological Process terms is produced with adjusted p, fold enrichment, direction attribution, and member genes",
+                "Each reported term is annotated with whether it survived the leave-one-out (sample_01 excluded) re-run and whether the independent GOBP collection recovered it",
+                "The report states whether the enrichment result is robust or provisional, with the specific evidence for that verdict",
+                "Limitations are listed explicitly: group size, single batch, low-depth library, threshold dependence of ORA, GO redundancy",
+                "No causal or mechanistic claim is made beyond what over-representation supports"
+              ],
+              "constraints": [
+                "Use the identical GO Biological Process annotation source, universe convention, gene-set size bounds and BH correction as T1S2 for the leave-one-out re-run, so the comparison is like-for-like",
+                "Do not present a term as a finding if it was significant only before redundancy collapsing, or only at nominal p",
+                "If T2S1 shows the significant set is not robust to sample_01, label the entire enrichment result provisional in the headline of the report"
+              ],
+              "caveats": [
+                "Terms lost in the leave-one-out run may be lost to reduced power rather than to sample_01 being an artefact — do not over-interpret the difference",
+                "ORA answers 'over-represented among a thresholded list', which is a weaker statement than a rank-based enrichment; say so if the strict and relaxed lists disagree"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "GO.db",
+                "enrichplot",
+                "ggplot2",
+                "dplyr",
+                "readr"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

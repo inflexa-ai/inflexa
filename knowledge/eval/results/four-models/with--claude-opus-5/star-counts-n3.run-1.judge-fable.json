@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: raw STAR/featureCounts integers go straight into DESeqDataSetFromMatrix with ~condition, explicit control reference, contrast c('condition', treated, control), median-of-ratios inside the model, a minimal justified filter (>=10 counts in >=3 samples, smallest group), Wald test with BH at 0.05, apeglm shrinkage, and an explicit refusal of tximport, length offsets and pre-normalized values. QC precedes the test with blind VST, PCA on top 500 genes, sample-distance heatmap and library sizes; the only soft spot is that the outlier policy is descriptive (name, do not drop) without stating what T1S2 does if a shallow or discordant sample is found. Enrichment is correctly omitted as not asked, the edgeR QLF cross-check is properly subordinated with the intersection rather than the union reported, and the report lists method, versions, design, thresholds, n tested, n significant, NA categories, and the low-power caveat at n=3."
+}

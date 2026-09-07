@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the core method: signed WGCNA on a VST matrix (never raw counts), soft power chosen as the lowest reaching R^2 ~0.8 with the fit curve and fallback stated, TOM plus dynamic tree cut at minModuleSize 30, merge at 0.25, eigengene-trait correlation with control as reference, BH across modules, and hubs from kME versus gene significance. It departs from the reference by running the network on all filtered genes rather than the top ~5000 variable genes (explicitly forbidding a variance filter), and adds a consensus-clustering step that is superfluous to the question. QC is thorough (blind VST PCA, distance heatmap, library size, detected genes, a pre-stated MAD-based outlier rule), normalization stays inside vst/TMM, and the filter is minimal and justified against the group size. Enrichment uses a correct network-gene universe and 15-500 window with named human collections, though it names WikiPathways/GO rather than MSigDB Hallmark; the report checklist covers power, fit, module sizes, the trait table, reproducibility record, and the module-not-pathway and cell-composition caveats."
+}

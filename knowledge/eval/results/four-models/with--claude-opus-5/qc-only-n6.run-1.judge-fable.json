@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly reads the question as QC-only and stops before any test, matching the reference: library sizes, detected genes, blind VST, PCA on top 500 genes colored by condition, Euclidean distance heatmap, and a PC-versus-log-depth correlation that separates a depth axis from a condition axis. The sample_01 policy is explicit and well-reasoned (default keep, drop only on evidence beyond depth, cost of 6 vs 5 stated), and the low-count filter is minimal and tied to the smallest group size with the removed count reported. Normalization is stated as median-of-ratios inside DESeq2 with no pre-scaling, and the design formula and control reference level are declared even though no contrast is needed. Minor gaps: the recommendation for the later test is not spelled out (which test, alpha, shrinkage), and the filter wording in the prose is slightly inverted relative to the acceptance criterion."
+}

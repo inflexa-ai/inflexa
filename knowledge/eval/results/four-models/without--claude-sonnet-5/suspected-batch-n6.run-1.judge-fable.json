@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 3,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses the hidden structure, cross-tabulates clusters against condition, estimates surrogate variables with condition in the full model and intercept in the null, lets num.sv choose the count, checks SVs against condition, and feeds raw counts with ~SVs+condition into DESeq2 without any ComBat-style pre-adjustment; it loses points for not first asking the analyst for the unrecorded variable and for naming sva rather than svaseq on counts. QC has vst PCA and hierarchical clustering but no library sizes or explicit outlier policy. No low-count prefilter is stated, fold-change shrinkage is absent, the reference level is not named, and the report omits package versions. Enrichment is unrequested but reasonably specified (fgsea on the adjusted stat, named WikiPathways collection) without a version or set-size window."
+}

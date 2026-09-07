@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly recognises that TPM is not a count and fits limma with eBayes(trend=TRUE, robust=TRUE) on log2(TPM+1), explicitly forbidding DESeq2, edgeR, voom and rounding, with a two-group ~condition design, control as reference and BH FDR at 0.05; it does not, however, ask the core for the raw counts or Salmon quantification directories, which the reference expects. QC is thorough (PCA, correlation heatmap, clustering, detection rates, compositional-load check, flag-don't-drop outlier policy) and the filter uses the smallest group size, but the expression threshold is left unstated numerically. The added between-sample median/quantile normalization on the log scale is not part of the reference and quantile normalisation risks flattening the genuine global shift in lesional skin, though it is named and reported; the |logFC|>=1 cut is applied post hoc rather than via treat(). Enrichment is well specified (full ranked list by moderated t, tested-gene universe for ORA, 10-500 size window, named human collections) but no collection version is stated, and the report omits software versions."
+}

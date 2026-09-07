@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly reads the design: raw counts into DESeq2 with size factors, svaseq with ~condition full and ~1 null, SVs added to the design (~SV1 + SV2 + condition), Model C with the empirical cluster label as corroboration, no ComBat, apeglm shrinkage and BH. It does not first ask the analyst for the unrecorded variable (extraction date, lane) and it correlates SV1 with cluster and library size but never states an explicit check that no SV tracks condition; the cap at 2 SVs is defensible on degrees of freedom but is a mild override of the estimator. QC is thorough (PCA, correlation heatmap, library size, cluster proxies, a stated no-exclusion policy) though without a stated policy for a shallow library. Enrichment uses the full ranking with a size window and overlap report but leaves the ranking metric ambiguous (shrunk LFC or Wald stat) and names no collection versions; the report plan lists thresholds, counts and caveats but does not commit to recording package versions."
+}

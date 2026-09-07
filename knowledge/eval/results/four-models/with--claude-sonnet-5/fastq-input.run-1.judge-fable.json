@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 4,
+    "low_count_filter": 4,
+    "normalization": 5,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 5
+  },
+  "rationale": "The planner correctly recognised that raw paired-end FASTQ files cannot be tested for differential expression, did not invent a count matrix, verified that no quantifier or reference was available, and asked precisely the right question (pre-computed counts, or a named reference plus salmon/kallisto/STAR+featureCounts), which matches the reference outcome and earns full marks on fitting the method to the data state. Enrichment was neither asked nor warranted and was correctly omitted. However, the clarification only names DESeq2 as the downstream method; it does not sketch the post-quantification plan the reference expects (sample QC with PCA/library sizes, a minimal count filter, in-model size-factor normalization, an explicit ~condition design with control as reference, BH at 0.05 with LFC shrinkage, and a note on the low power of 3 vs 3), so those criteria are scored as largely unstated rather than wrong."
+}

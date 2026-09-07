@@ -1,0 +1,260 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "outlier-n5",
+  "run": 1,
+  "startedAt": "2026-09-06T21:22:21.016Z",
+  "elapsedMs": 24717,
+  "outcome": "plan_submitted",
+  "planId": "pln-cf48b031",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and outlier characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "How much does sample_03 deviate from the other 4 control (or treated) samples in the counts.csv matrix, and is its deviation consistent with a technical artifact (library size, gene detection rate) or a biological outlier?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports sample_03's group assignment (treated or control) from metadata.csv",
+          "Reports library size, number of detected genes, and PCA/hierarchical-clustering distance of sample_03 relative to its group's centroid and to the other group",
+          "Reports whether sample_03's deviation pattern looks technical (e.g., low depth, high proportion of low-count genes) or biological (e.g., high expression of markers concordant with treatment)",
+          "Produces a PCA plot and sample-distance heatmap with sample_03 labeled, confirming or refining the caveat already noted in the data profile"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Primary DE: treated vs control, all 10 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes are differentially expressed between the 5 treated and 5 control samples in counts.csv, using all 10 samples including sample_03?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Uses DESeq2 (or equivalent negative-binomial model) on raw integer counts with condition (treated vs control) as the design",
+          "Reports Cook's distance / influence diagnostics per sample-gene combination and flags whether sample_03 drives an outsized share of the significant hits",
+          "Outputs a full results table (log2FoldChange, p-value, BH-adjusted p-value) for all ~12000 genes",
+          "Reports the count of genes at padj < 0.05 and |log2FC| > 1"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sensitivity DE: treated vs control, sample_03 excluded",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes are differentially expressed between treated and control when sample_03 is excluded (4 vs 5, or 4 vs 4 depending on its group), and how does this gene list compare to the all-samples result?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Re-runs the same DESeq2 design after removing sample_03 from counts.csv/metadata.csv",
+          "Reports the resulting group sizes explicitly (e.g., 4 vs 5)",
+          "Outputs a full results table for comparison",
+          "Quantifies overlap (Jaccard or simple count) between the significant gene sets from T1S2 and this run, and reports genes that are significant only when sample_03 is included",
+          "States plainly whether conclusions about treated-vs-control DE are sensitive to sample_03's inclusion"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of primary DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control (from the all-samples DE result, T1S2), and do the same pathways come out of the sample_03-excluded list (T1S3)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Uses the WikiPathways human GMT gene sets (HGNC symbols) confirmed present in the reference store for enrichment",
+          "Runs enrichment (e.g., over-representation or GSEA-style ranked test) on the significant gene list from T1S2, and separately on T1S3, using the full detected gene list as background",
+          "Reports enriched pathways with adjusted p-values, and flags whether top pathways differ between the all-samples and sample_03-excluded runs",
+          "If the WikiPathways reference is unavailable at run time, reports that gap explicitly rather than fabricating pathway results"
+        ]
+      }
+    ],
+    "title": "Treated vs control DE with outlier-sensitivity check",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (Salmon gene-level counts, 12000 genes x 10 samples) with a simple 5-vs-5 treated/control design, unpaired, single batch. The data context flags sample_03 as separating from the rest of its group on PCA and the sample-distance heatmap — this is a QC caveat, not a resolved decision, so the plan does not silently drop sample_03. Instead it runs the differential expression analysis twice (all 10 samples, and with sample_03 excluded), compares the two gene lists, and lets the DE step itself quantify sample_03's leverage (Cook's distance / influence diagnostics) before any exclusion decision is treated as final. This avoids two failure modes: ignoring a possible technical outlier that inflates variance and hides real signal, and silently excluding a sample that may be a genuine biological responder. Downstream, the significant gene list from the primary (all-samples) run is used for pathway enrichment against WikiPathways human gene sets, which are confirmed present in the reference store. All steps operate on the actual counts.csv / metadata.csv files and the actual treated vs control condition contrast."
+  },
+  "usage": {
+    "inputTokens": 130892,
+    "outputTokens": 2340,
+    "cacheCreationInputTokens": 69326,
+    "cacheReadInputTokens": 61530,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human",
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways-human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control DE with outlier-sensitivity check",
+          "analytical_narrative": "The dataset is bulk RNA-seq (Salmon gene-level counts, 12000 genes x 10 samples) with a simple 5-vs-5 treated/control design, unpaired, single batch. The data context flags sample_03 as separating from the rest of its group on PCA and the sample-distance heatmap — this is a QC caveat, not a resolved decision, so the plan does not silently drop sample_03. Instead it runs the differential expression analysis twice (all 10 samples, and with sample_03 excluded), compares the two gene lists, and lets the DE step itself quantify sample_03's leverage (Cook's distance / influence diagnostics) before any exclusion decision is treated as final. This avoids two failure modes: ignoring a possible technical outlier that inflates variance and hides real signal, and silently excluding a sample that may be a genuine biological responder. Downstream, the significant gene list from the primary (all-samples) run is used for pathway enrichment against WikiPathways human gene sets, which are confirmed present in the reference store. All steps operate on the actual counts.csv / metadata.csv files and the actual treated vs control condition contrast.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and outlier characterization",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "How much does sample_03 deviate from the other 4 control (or treated) samples in the counts.csv matrix, and is its deviation consistent with a technical artifact (library size, gene detection rate) or a biological outlier?",
+              "acceptance_criteria": [
+                "Reports sample_03's group assignment (treated or control) from metadata.csv",
+                "Reports library size, number of detected genes, and PCA/hierarchical-clustering distance of sample_03 relative to its group's centroid and to the other group",
+                "Reports whether sample_03's deviation pattern looks technical (e.g., low depth, high proportion of low-count genes) or biological (e.g., high expression of markers concordant with treatment)",
+                "Produces a PCA plot and sample-distance heatmap with sample_03 labeled, confirming or refining the caveat already noted in the data profile"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Primary DE: treated vs control, all 10 samples",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between the 5 treated and 5 control samples in counts.csv, using all 10 samples including sample_03?",
+              "acceptance_criteria": [
+                "Uses DESeq2 (or equivalent negative-binomial model) on raw integer counts with condition (treated vs control) as the design",
+                "Reports Cook's distance / influence diagnostics per sample-gene combination and flags whether sample_03 drives an outsized share of the significant hits",
+                "Outputs a full results table (log2FoldChange, p-value, BH-adjusted p-value) for all ~12000 genes",
+                "Reports the count of genes at padj < 0.05 and |log2FC| > 1"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Sensitivity DE: treated vs control, sample_03 excluded",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between treated and control when sample_03 is excluded (4 vs 5, or 4 vs 4 depending on its group), and how does this gene list compare to the all-samples result?",
+              "acceptance_criteria": [
+                "Re-runs the same DESeq2 design after removing sample_03 from counts.csv/metadata.csv",
+                "Reports the resulting group sizes explicitly (e.g., 4 vs 5)",
+                "Outputs a full results table for comparison",
+                "Quantifies overlap (Jaccard or simple count) between the significant gene sets from T1S2 and this run, and reports genes that are significant only when sample_03 is included",
+                "States plainly whether conclusions about treated-vs-control DE are sensitive to sample_03's inclusion"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of primary DE gene list",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control (from the all-samples DE result, T1S2), and do the same pathways come out of the sample_03-excluded list (T1S3)?",
+              "acceptance_criteria": [
+                "Uses the WikiPathways human GMT gene sets (HGNC symbols) confirmed present in the reference store for enrichment",
+                "Runs enrichment (e.g., over-representation or GSEA-style ranked test) on the significant gene list from T1S2, and separately on T1S3, using the full detected gene list as background",
+                "Reports enriched pathways with adjusted p-values, and flags whether top pathways differ between the all-samples and sample_03-excluded runs",
+                "If the WikiPathways reference is unavailable at run time, reports that gap explicitly rather than fabricating pathway results"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

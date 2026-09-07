@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan does what the reference requires: it refuses to fit a correlation network on six samples, states the 15-20 sample floor and the noise reason, and substitutes a named prior network (STRING v12.0, combined_score>=700) overlaid on a DESeq2 treated-vs-control test with control as reference, apeglm shrinkage, BH at 0.05, and an explicit low-power caveat. The design-specific details are correct (unpaired, single batch, ~condition with no blocking term, filter tied to the smallest group size, median-of-ratios inside the model, VST only for QC and scoring). Minor gaps: the per-module PC1 t-tests on 3v3 are still a weak test even if labeled exploratory and go a bit beyond the reference's projection onto DE genes; the QC step flags outliers but gives no stated policy for dropping or retaining a flagged or shallow sample; the report lists genes tested but does not explicitly promise the count of significant genes. Enrichment is well specified with a tested-gene universe, named versioned collections, and a size window."
+}

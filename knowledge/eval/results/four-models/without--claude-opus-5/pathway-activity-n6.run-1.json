@@ -1,0 +1,558 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "pathway-activity-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T01:09:06.608Z",
+  "elapsedMs": 128439,
+  "outcome": "plan_submitted",
+  "planId": "pln-e09fe056",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, and sample_01 depth assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A 4x depth deficit can look like a biological outlier on PCA when it is purely technical; distinguish by checking whether sample_01's deviation is along a depth-correlated axis",
+          "Summing duplicate symbols is appropriate for counts but would be wrong for TPM — this input is counts, so summing is correct",
+          "With n=6 per group, dropping one sample costs real power; exclusion needs justification stronger than 'it looks different'"
+        ],
+        "context": "Human bronchial epithelium, cytokine stimulation vs vehicle, 6 vs 6, unpaired, single batch. The data profile flags one caveat: sample sample_01 has a library size about 4x below the median. Footprint-based pathway activity is scored on normalized per-sample expression, so an unresolved depth artefact would propagate directly into the pathway scores. Median-of-ratios size factors handle moderate depth differences, but a 4x deficit approaches the range where VST values become noticeably noisier for that sample; the decision must be made on the outlier statistics, not on the depth number alone.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "matrixStats",
+          "ggplot2",
+          "pheatmap",
+          "data.table"
+        ],
+        "question": "After filtering low-count genes, is the ~4x-shallow sample_01 a usable member of its group or a technical outlier, and what normalized expression matrix should downstream footprint scoring use?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "qc_normalization",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2 median-of-ratios size factors; do not use raw CPM or TPM for the normalized matrix",
+          "Do not drop sample_01 unilaterally — produce both cohorts and state a recommendation",
+          "Keep gene symbols as the row identifier space; do not convert to Ensembl or Entrez",
+          "Report numbers, not just plots, for every QC claim"
+        ],
+        "description": "Load /eval-four-models-without-pathway-activity-n6-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw integer Salmon gene-level counts, first column gene symbol) and /eval-four-models-without-pathway-activity-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify the 12 count columns match the 12 metadata sample ids exactly. Collapse duplicated gene symbols by summing counts and report how many were collapsed. Report per-sample library sizes and confirm/quantify the reported ~4x deficit of sample_01 relative to the cohort median. Filter to genes with sufficient counts (e.g. >=10 counts in at least 6 samples, the smallest group size) and report genes retained. Build a DESeq2 dataset with design ~condition, estimate size factors (median-of-ratios), and produce a VST (blind=TRUE) matrix. Assess sample_01 specifically: its position on PCA of the top variable genes, its sample-to-sample distance / Spearman correlation to the other members of its own condition group, its size factor, and the fraction of genes with zero counts relative to other samples. Emit BOTH a full 12-sample VST matrix and a sample_01-excluded 11-sample VST matrix (with size factors re-estimated on the 11 samples), plus a written recommendation on whether exclusion is warranted, so downstream steps can run the sensitivity comparison.",
+        "acceptance_criteria": [
+          "Count columns and metadata sample ids reconciled 1:1; the two condition group sizes reported and confirmed as 6 and 6",
+          "Duplicate gene symbols aggregated by summing, with the number of collapsed symbols reported",
+          "Per-sample library sizes reported as a table, with sample_01's ratio to the cohort median stated numerically",
+          "Gene filter applied and the number of genes retained out of 12000 reported",
+          "VST matrices written for both the full 12-sample cohort and the 11-sample sample_01-excluded cohort",
+          "A quantitative outlier verdict on sample_01 covering at minimum: PCA coordinates, within-group correlation, size factor, and zero-count fraction",
+          "An explicit written recommendation (retain / exclude / retain-with-sensitivity) with the numbers that justify it"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: cytokine-treated vs vehicle control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "padj is NA for genes removed by independent filtering — handle these explicitly when building the ranked vector rather than silently coercing to zero",
+          "With n=6 per group the DE list is moderately powered; large fold changes with wide lfcSE should not be over-read",
+          "If the two cohorts' stat vectors disagree substantially, that is itself the answer about sample_01 and must be reported prominently"
+        ],
+        "context": "Unpaired two-group design, 6 treated vs 6 control, single batch — a plain ~condition design is correct and no covariate or batch term is warranted by the profile. The Wald statistic vector, not a filtered DE gene list, is what PROGENy and DoRothEA contrast scoring need: footprint methods weight every gene by its regulatory coefficient, and truncating to significant genes discards the coordinated sub-threshold shifts that make the footprint detectable.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "data.table"
+        ],
+        "question": "Which genes change between cytokine-stimulated and vehicle-control bronchial epithelium, and what is the full ranked gene-level statistic vector needed for contrast-level footprint scoring?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design is ~condition only — do not add batch or other covariates, the profile reports a single batch",
+          "Export the unshrunken Wald `stat` for the full gene set; do not pre-filter to significant genes for the downstream footprint input",
+          "Use apeglm for shrinkage; if it is unavailable, use ashr and say so",
+          "Do not perform independent-filtering overrides that would drop genes from the exported stat vector without noting how many were dropped"
+        ],
+        "description": "Using the DESeq2 object from T1S1, run the Wald test for the treated-vs-control contrast on the condition factor with control as the reference level. Emit the complete results table for every tested gene: baseMean, log2FoldChange, lfcSE, stat (Wald t-like statistic), pvalue, padj (BH). Additionally compute apeglm-shrunken log2 fold changes for effect-size reporting. Report the number of genes at padj < 0.05 and at padj < 0.05 with |LFC| > 1, and the top 30 up and top 30 down genes by shrunken LFC among significant genes. Write out the unshrunken `stat` column as a named ranked vector keyed by gene symbol — this is the contrast-level input that the footprint steps consume, so it must cover all tested genes, not only the significant ones. Repeat the entire contrast on the sample_01-excluded 11-sample cohort and report the concordance between the two `stat` vectors (Spearman correlation, and overlap of the padj<0.05 sets) so the effect of the shallow sample on the ranking is quantified rather than assumed.",
+        "acceptance_criteria": [
+          "Full DESeq2 results table written for all tested genes with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj",
+          "apeglm-shrunken LFCs computed and reported alongside",
+          "Counts of significant genes at padj<0.05 and at padj<0.05 & |LFC|>1 reported",
+          "A named ranked vector of the Wald `stat` covering all tested genes exported for downstream footprint scoring",
+          "The same contrast re-run on the 11-sample cohort, with Spearman correlation of the two stat vectors and the DE-set overlap reported",
+          "Reference level explicitly set to the vehicle/control group and stated in the output"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "PROGENy footprint pathway activity",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "PROGENy pathways share responsive genes; ULM treats each pathway independently while MLM accounts for shared targets, so disagreement between them is informative about collinearity and should be reported, not averaged away",
+          "With 14 pathways and n=6 per group, BH correction is over a small family — report unadjusted and adjusted p-values both",
+          "A shallow library (sample_01) can shift its whole activity profile toward zero after scaling; check that sample_01 is not driving or masking any pathway call",
+          "PROGENy activity direction is signed — a negative score is inferred pathway inhibition, not merely absence of activation, and must be described as such"
+        ],
+        "context": "This step is the primary answer to the research question. PROGENy was built precisely for the distinction the question draws: its weights come from perturbation experiments and score the transcriptional consequence of pathway activity rather than the transcript levels of pathway components, which are often unchanged or even anti-correlated with activity. The organism is Homo sapiens, so the human PROGENy model must be used; a mouse model is also present in the environment and using it here would produce confident nonsense. Row identifiers in the counts are gene symbols, matching PROGENy's identifier space, so overlap should be high — but it must be measured.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels",
+          "matplotlib",
+          "seaborn",
+          "rpy2"
+        ],
+        "question": "Which of the 14 PROGENy signaling pathways show altered downstream transcriptional footprint in cytokine-treated versus vehicle-control bronchial epithelium, and are the per-sample and contrast-level estimates concordant?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "pathway_activity",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the human PROGENy model — never the mouse model — for this Homo sapiens dataset",
+          "Center/scale genes before per-sample ULM/MLM scoring so activities are comparable across samples",
+          "Set a minimum overlapping-target size (minsize >= 5) and drop pathways below it rather than reporting an unstable score",
+          "Run both per-sample and contrast-level scoring; do not report only one",
+          "Report raw scores alongside p-values — a significant but tiny activity shift must not be presented as a strong finding"
+        ],
+        "description": "Infer footprint-based signaling pathway activity using PROGENy pathway-responsive gene weights for Homo sapiens — the reference data needed is a human PROGENy per-gene pathway weight table (14 pathways including NFkB, TNFa, JAK-STAT, MAPK, PI3K, EGFR, TGFb, Hypoxia, p53, TRAIL, VEGF, WNT, Estrogen, Androgen), which is present in this environment as an R serialized data frame with columns gene / weight / p.value / pathway; rename to source/target/weight for decoupleR-style scoring and take the top ~500 genes per pathway by significance. Score two complementary ways. (a) Per-sample: run decoupleR on the T1S1 VST matrix (genes x samples, row-scaled/centered) with ULM and MLM, producing a pathway x sample activity matrix; then test treated vs control per pathway with a two-sided Welch t-test and BH correction across the 14 pathways, and report effect sizes with 95% CIs. (b) Contrast-level: run the same methods on the single-column T1S2 Wald `stat` vector, producing one activity score and p-value per pathway for the treated-vs-control contrast. Report both, plus their rank concordance. Show where sample_01 falls in the per-sample activity matrix and re-run (a) on the 11-sample cohort as a sensitivity analysis; report whether any pathway's significance verdict flips. Deliver a pathway x sample activity heatmap and a ranked bar chart of contrast-level scores. State explicitly in the output that these scores reflect downstream response-gene expression, not the expression of the pathway's own member genes.",
+        "acceptance_criteria": [
+          "Human (not mouse) PROGENy weights used, and the organism choice stated in the output",
+          "Number of PROGENy genes overlapping the filtered expression matrix reported per pathway, with any pathway having too few overlapping genes flagged and excluded rather than scored",
+          "Per-sample pathway x sample activity matrix produced from the VST data with at least two methods (ULM and MLM) and their consensus",
+          "Contrast-level activity score and p-value per pathway produced from the T1S2 Wald stat vector",
+          "Treated vs control comparison of per-sample activities with BH correction across pathways, reporting effect size and CI per pathway",
+          "Rank concordance between the per-sample and contrast-level pathway orderings reported numerically",
+          "Sensitivity re-run excluding sample_01, with any change in which pathways pass significance stated explicitly",
+          "Output states in plain language that the scores are footprint-based, not member-expression-based",
+          "If the human PROGENy weight table cannot be resolved in the environment, the step must stop and report that the primary analysis cannot run, rather than substituting a membership-based gene set"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "DoRothEA TF activity underlying the pathway footprint",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "DoRothEA regulons overlap heavily for related TFs (e.g. NFKB1/RELA, STAT1/STAT2), so co-significant family members are largely redundant evidence, not independent replication",
+          "TF activity inference cannot distinguish a TF whose protein is activated from one whose transcript is induced; do not claim post-translational activation from expression data alone",
+          "A TF with a small regulon can produce an extreme score from a handful of genes — flag these rather than ranking them at the top uncritically"
+        ],
+        "context": "TF activity is the layer directly beneath a pathway footprint: a signaling pathway leaves its transcriptomic mark by acting through TFs, so concordance between PROGENy pathway scores and DoRothEA TF scores is real corroboration rather than a restatement. For a cytokine stimulus in human bronchial epithelium the mechanistic prior is NF-kB/RELA and STAT/IRF activation, but this is a prior to be tested, not an expected result to confirm — the metadata says only 'cytokine stimulation' and does not name the cytokine, so the specific TF identity is an output of the analysis, not an input. Do not assume which cytokine was used.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels",
+          "matplotlib",
+          "seaborn",
+          "rpy2"
+        ],
+        "question": "Which transcription factors show altered inferred activity in cytokine-treated versus vehicle-control bronchial epithelium, and do they mechanistically corroborate the PROGENy pathway footprints?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "tf_activity",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the human DoRothEA network — never the mouse one",
+          "Keep confidence levels A-C only; state the count dropped by excluding D-E",
+          "Report regulon size next to every TF score — a high score from a 6-target regulon is not comparable to one from a 300-target regulon",
+          "Do not name the stimulating cytokine as a conclusion; the metadata records only 'cytokine stimulation'"
+        ],
+        "description": "Infer transcription-factor activity from regulon footprints. The reference data needed is a human TF-target regulon network with per-interaction confidence levels and mode-of-regulation signs — DoRothEA for Homo sapiens is present in this environment as an R serialized data frame with columns tf / confidence (A-E) / target / mor; filter to confidence levels A, B and C, and rename tf/target/mor to source/target/weight for decoupleR-style scoring. Score per-sample on the T1S1 VST matrix (gene-centered) with ULM, and at contrast level on the T1S2 Wald `stat` vector, exactly mirroring T2S1. Report the top ~25 TFs by absolute contrast-level activity score with p-values and BH-adjusted p-values, a TF x sample activity heatmap for those TFs, and the per-sample treated-vs-control test per TF. Then cross-reference against T2S1: for each PROGENy pathway called active, state which of the significant TFs are known canonical effectors of it (for example NFkB-family members for the NFkB/TNFa footprint, STAT and IRF family members for a JAK-STAT footprint) and whether the directions agree. Treat this cross-reference as corroboration or contradiction evidence, and report contradictions as prominently as agreements. Re-run excluding sample_01 as a sensitivity check.",
+        "acceptance_criteria": [
+          "Human DoRothEA regulons used, filtered to confidence levels A-C, with the number of TFs and interactions retained reported",
+          "Regulons filtered to a minimum of 5 targets present in the expression matrix, with the number of TFs scored reported",
+          "Per-sample TF x sample activity matrix and contrast-level TF activity scores with p-values and BH-adjusted p-values both produced",
+          "Top ~25 TFs by absolute contrast-level activity reported with scores, regulon sizes and adjusted p-values",
+          "Explicit cross-reference table linking significant TFs to the PROGENy pathways called in T2S1, stating agreement or contradiction of direction",
+          "Sensitivity re-run excluding sample_01 with any changed TF calls reported",
+          "The output does not assert which cytokine was applied; any inference about the stimulus is labelled as a hypothesis"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Membership-based enrichment as an explicit contrast to the footprint result",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways sets vary widely in curation quality and size; very large sets produce significant NES with weak biological specificity",
+          "Ties in the ranked vector (genes with identical stat) make fgsea p-values slightly unstable — set a seed and report it",
+          "Topical correspondence between a PROGENy pathway and a WikiPathways set is a judgement call, not a lookup; state the mapping used rather than implying it is canonical"
+        ],
+        "context": "The research question deliberately contrasts footprint-based inference with member-expression-based inference. Running the membership analysis and showing the divergence is more informative than omitting it, provided it is framed correctly. A common failure mode is that membership enrichment flags a pathway because its receptors and ligands are transcriptionally induced while the footprint shows no downstream activity change, or the reverse — those cases are exactly the interpretive payload of this step. Gene identifiers are HGNC symbols in both the counts matrix and the human WikiPathways GMT, so no mapping is required.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "What would a conventional pathway-membership enrichment over the same ranked gene list conclude, and where does it diverge from the footprint-based pathway activity in T2S1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Use the human WikiPathways collection, not the mouse or rat one",
+          "Rank by the DESeq2 Wald stat, not by log2FoldChange alone — LFC ranking is unstable for low-count genes",
+          "Do not present a significant WikiPathways NES as evidence of pathway activity; describe it only as coordinated movement of member transcripts",
+          "Recover readable pathway names by splitting the GMT descriptor on '%'"
+        ],
+        "description": "Run preranked GSEA (fgsea) on the T1S2 Wald `stat` ranked vector against human pathway gene sets — the reference data needed is a human pathway membership gene-set collection keyed by HGNC gene symbols, which is present in this environment as a WikiPathways human GMT (split each descriptor field on '%' to recover a readable pathway name). Use a minimum set size of 15 and maximum of 500, with BH correction, and report NES, p-value, padj and leading-edge genes for significantly enriched sets. Then construct an explicit side-by-side comparison against the T2S1 PROGENy results: for each PROGENy pathway with a significant footprint, report whether a topically corresponding WikiPathways set was enriched, and vice versa, and quantify the disagreement. The written conclusion must state that membership enrichment answers a different question from the one asked — it detects whether member transcripts move, whereas the research question asks about the footprint the pathway leaves — and that T2S1/T2S2 are the answer while this step is context. If the human WikiPathways collection cannot be resolved at run time, report that and skip this step; it is supplementary and its absence does not compromise the primary result.",
+        "acceptance_criteria": [
+          "fgsea run on the full T1S2 Wald stat ranked vector against human WikiPathways sets, with minSize 15 and maxSize 500",
+          "Results table with pathway name, size, NES, pval, padj and leading-edge genes for all sets passing padj < 0.05",
+          "Number of ranked genes overlapping the gene-set universe reported",
+          "Explicit side-by-side comparison table between PROGENy footprint calls (T2S1) and WikiPathways membership calls, naming agreements and disagreements",
+          "Written statement that this step is supplementary context and that footprint-based T2S1/T2S2 answer the research question",
+          "If the human WikiPathways collection is unavailable, the step reports that clearly and exits without substituting another collection silently"
+        ]
+      }
+    ],
+    "title": "Footprint pathway & TF activity: cytokine vs vehicle bronchial epithelium",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks which signaling pathways are ACTIVE in cytokine-stimulated vs vehicle bronchial epithelial cells, judged by downstream transcriptional footprint rather than by expression of pathway member genes. That rules out ORA/GSEA over pathway-membership sets (WikiPathways, GO) as the primary readout and points to footprint methods: PROGENy pathway-responsive genes and DoRothEA TF regulons, scored with decoupleR/decoupler. Both references are present in the environment for Homo sapiens (/mnt/refs/managed/progeny-human, /mnt/refs/managed/dorothea-human), matching the taxon of this dataset.\n\nThe input is a 12000 x 13 CSV of raw integer Salmon gene-level counts keyed by gene symbol plus a 12 x 2 metadata table (6 treated vs 6 control, unpaired, single batch). Gene symbols are the identifier space PROGENy and DoRothEA use, so no ID mapping is needed — but symbol collisions/aliases must be checked and duplicates aggregated before scoring.\n\nThe flagged caveat drives the design: sample_01 has a library size ~4x below the median. Footprint methods are scored on per-sample normalized expression, and a shallow library inflates dispersion and distorts variance-stabilized values, so the depth issue must be resolved before any activity inference — not after. T1S1 therefore does QC, filtering, size-factor/VST normalization, and an explicit sensitivity check on sample_01 (PCA position, Cook's/outlier statistics, correlation to its group). It produces both the full-cohort object and a sample_01-excluded object so every downstream step can be run both ways rather than deciding the exclusion on a hunch.\n\nT1S2 runs the DESeq2 Wald test for treated vs control, producing the shrunken-LFC ranked statistic that is the correct input for a contrast-level footprint score (a t-statistic vector is what PROGENy/DoRothEA scoring on a contrast expects, and it is depth-robust in a way per-sample counts are not).\n\nT2S1 is the primary answer: PROGENy pathway activity, scored two ways — per-sample on VST expression (giving a per-sample activity matrix, group comparison, and the ability to see where sample_01 sits) and on the DE t-statistic contrast vector (giving one activity score per pathway with a p-value). Consensus across ULM/MLM plus the per-sample-vs-contrast agreement is the robustness evidence. T2S2 does the same with DoRothEA A-C regulons for TF activity, which is the mechanistic layer beneath the pathway footprint: a cytokine stimulus in airway epithelium should, if the footprint is real, drive NFKB1/RELA and STAT1/STAT2/IRF family activity, and the plan states that as a falsifiable prior rather than an assumed result.\n\nT3S1 is deliberately secondary and framed as a contrast, not as the answer: membership-based enrichment (fgsea on WikiPathways human) over the same ranked list, reported side by side with the footprint scores so the divergence between 'members are differentially expressed' and 'the pathway left a footprint' is visible rather than conflated. It is explicitly labelled as not answering the research question on its own."
+  },
+  "usage": {
+    "inputTokens": 242400,
+    "outputTokens": 8985,
+    "cacheCreationInputTokens": 87460,
+    "cacheReadInputTokens": 154880,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "progeny"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "decoupleR",
+          "progeny",
+          "dorothea",
+          "pydeseq2",
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "fgsea",
+          "GSVA",
+          "msigdbr",
+          "collectri",
+          "omnipath"
+        ]
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "decoupler",
+        "query": "run mlm ulm pathway activity PROGENy from a network dataframe"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/saezlab/decoupler",
+        "query": "decoupler python 2.x API mlm ulm on bulk expression matrix with PROGENy network"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Footprint pathway & TF activity: cytokine vs vehicle bronchial epithelium",
+          "analytical_narrative": "The question asks which signaling pathways are ACTIVE in cytokine-stimulated vs vehicle bronchial epithelial cells, judged by downstream transcriptional footprint rather than by expression of pathway member genes. That rules out ORA/GSEA over pathway-membership sets (WikiPathways, GO) as the primary readout and points to footprint methods: PROGENy pathway-responsive genes and DoRothEA TF regulons, scored with decoupleR/decoupler. Both references are present in the environment for Homo sapiens (/mnt/refs/managed/progeny-human, /mnt/refs/managed/dorothea-human), matching the taxon of this dataset.\n\nThe input is a 12000 x 13 CSV of raw integer Salmon gene-level counts keyed by gene symbol plus a 12 x 2 metadata table (6 treated vs 6 control, unpaired, single batch). Gene symbols are the identifier space PROGENy and DoRothEA use, so no ID mapping is needed — but symbol collisions/aliases must be checked and duplicates aggregated before scoring.\n\nThe flagged caveat drives the design: sample_01 has a library size ~4x below the median. Footprint methods are scored on per-sample normalized expression, and a shallow library inflates dispersion and distorts variance-stabilized values, so the depth issue must be resolved before any activity inference — not after. T1S1 therefore does QC, filtering, size-factor/VST normalization, and an explicit sensitivity check on sample_01 (PCA position, Cook's/outlier statistics, correlation to its group). It produces both the full-cohort object and a sample_01-excluded object so every downstream step can be run both ways rather than deciding the exclusion on a hunch.\n\nT1S2 runs the DESeq2 Wald test for treated vs control, producing the shrunken-LFC ranked statistic that is the correct input for a contrast-level footprint score (a t-statistic vector is what PROGENy/DoRothEA scoring on a contrast expects, and it is depth-robust in a way per-sample counts are not).\n\nT2S1 is the primary answer: PROGENy pathway activity, scored two ways — per-sample on VST expression (giving a per-sample activity matrix, group comparison, and the ability to see where sample_01 sits) and on the DE t-statistic contrast vector (giving one activity score per pathway with a p-value). Consensus across ULM/MLM plus the per-sample-vs-contrast agreement is the robustness evidence. T2S2 does the same with DoRothEA A-C regulons for TF activity, which is the mechanistic layer beneath the pathway footprint: a cytokine stimulus in airway epithelium should, if the footprint is real, drive NFKB1/RELA and STAT1/STAT2/IRF family activity, and the plan states that as a falsifiable prior rather than an assumed result.\n\nT3S1 is deliberately secondary and framed as a contrast, not as the answer: membership-based enrichment (fgsea on WikiPathways human) over the same ranked list, reported side by side with the footprint scores so the divergence between 'members are differentially expressed' and 'the pathway left a footprint' is visible rather than conflated. It is explicitly labelled as not answering the research question on its own.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization, and sample_01 depth assessment",
+              "track": "T1",
+              "step_type": "qc_normalization",
+              "question": "After filtering low-count genes, is the ~4x-shallow sample_01 a usable member of its group or a technical outlier, and what normalized expression matrix should downstream footprint scoring use?",
+              "description": "Load /eval-four-models-without-pathway-activity-n6-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw integer Salmon gene-level counts, first column gene symbol) and /eval-four-models-without-pathway-activity-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify the 12 count columns match the 12 metadata sample ids exactly. Collapse duplicated gene symbols by summing counts and report how many were collapsed. Report per-sample library sizes and confirm/quantify the reported ~4x deficit of sample_01 relative to the cohort median. Filter to genes with sufficient counts (e.g. >=10 counts in at least 6 samples, the smallest group size) and report genes retained. Build a DESeq2 dataset with design ~condition, estimate size factors (median-of-ratios), and produce a VST (blind=TRUE) matrix. Assess sample_01 specifically: its position on PCA of the top variable genes, its sample-to-sample distance / Spearman correlation to the other members of its own condition group, its size factor, and the fraction of genes with zero counts relative to other samples. Emit BOTH a full 12-sample VST matrix and a sample_01-excluded 11-sample VST matrix (with size factors re-estimated on the 11 samples), plus a written recommendation on whether exclusion is warranted, so downstream steps can run the sensitivity comparison.",
+              "question_context": "",
+              "context": "Human bronchial epithelium, cytokine stimulation vs vehicle, 6 vs 6, unpaired, single batch. The data profile flags one caveat: sample sample_01 has a library size about 4x below the median. Footprint-based pathway activity is scored on normalized per-sample expression, so an unresolved depth artefact would propagate directly into the pathway scores. Median-of-ratios size factors handle moderate depth differences, but a 4x deficit approaches the range where VST values become noticeably noisier for that sample; the decision must be made on the outlier statistics, not on the depth number alone.",
+              "acceptance_criteria": [
+                "Count columns and metadata sample ids reconciled 1:1; the two condition group sizes reported and confirmed as 6 and 6",
+                "Duplicate gene symbols aggregated by summing, with the number of collapsed symbols reported",
+                "Per-sample library sizes reported as a table, with sample_01's ratio to the cohort median stated numerically",
+                "Gene filter applied and the number of genes retained out of 12000 reported",
+                "VST matrices written for both the full 12-sample cohort and the 11-sample sample_01-excluded cohort",
+                "A quantitative outlier verdict on sample_01 covering at minimum: PCA coordinates, within-group correlation, size factor, and zero-count fraction",
+                "An explicit written recommendation (retain / exclude / retain-with-sensitivity) with the numbers that justify it"
+              ],
+              "constraints": [
+                "Use DESeq2 median-of-ratios size factors; do not use raw CPM or TPM for the normalized matrix",
+                "Do not drop sample_01 unilaterally — produce both cohorts and state a recommendation",
+                "Keep gene symbols as the row identifier space; do not convert to Ensembl or Entrez",
+                "Report numbers, not just plots, for every QC claim"
+              ],
+              "caveats": [
+                "A 4x depth deficit can look like a biological outlier on PCA when it is purely technical; distinguish by checking whether sample_01's deviation is along a depth-correlated axis",
+                "Summing duplicate symbols is appropriate for counts but would be wrong for TPM — this input is counts, so summing is correct",
+                "With n=6 per group, dropping one sample costs real power; exclusion needs justification stronger than 'it looks different'"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "matrixStats",
+                "ggplot2",
+                "pheatmap",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: cytokine-treated vs vehicle control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes change between cytokine-stimulated and vehicle-control bronchial epithelium, and what is the full ranked gene-level statistic vector needed for contrast-level footprint scoring?",
+              "description": "Using the DESeq2 object from T1S1, run the Wald test for the treated-vs-control contrast on the condition factor with control as the reference level. Emit the complete results table for every tested gene: baseMean, log2FoldChange, lfcSE, stat (Wald t-like statistic), pvalue, padj (BH). Additionally compute apeglm-shrunken log2 fold changes for effect-size reporting. Report the number of genes at padj < 0.05 and at padj < 0.05 with |LFC| > 1, and the top 30 up and top 30 down genes by shrunken LFC among significant genes. Write out the unshrunken `stat` column as a named ranked vector keyed by gene symbol — this is the contrast-level input that the footprint steps consume, so it must cover all tested genes, not only the significant ones. Repeat the entire contrast on the sample_01-excluded 11-sample cohort and report the concordance between the two `stat` vectors (Spearman correlation, and overlap of the padj<0.05 sets) so the effect of the shallow sample on the ranking is quantified rather than assumed.",
+              "question_context": "",
+              "context": "Unpaired two-group design, 6 treated vs 6 control, single batch — a plain ~condition design is correct and no covariate or batch term is warranted by the profile. The Wald statistic vector, not a filtered DE gene list, is what PROGENy and DoRothEA contrast scoring need: footprint methods weight every gene by its regulatory coefficient, and truncating to significant genes discards the coordinated sub-threshold shifts that make the footprint detectable.",
+              "acceptance_criteria": [
+                "Full DESeq2 results table written for all tested genes with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj",
+                "apeglm-shrunken LFCs computed and reported alongside",
+                "Counts of significant genes at padj<0.05 and at padj<0.05 & |LFC|>1 reported",
+                "A named ranked vector of the Wald `stat` covering all tested genes exported for downstream footprint scoring",
+                "The same contrast re-run on the 11-sample cohort, with Spearman correlation of the two stat vectors and the DE-set overlap reported",
+                "Reference level explicitly set to the vehicle/control group and stated in the output"
+              ],
+              "constraints": [
+                "Design is ~condition only — do not add batch or other covariates, the profile reports a single batch",
+                "Export the unshrunken Wald `stat` for the full gene set; do not pre-filter to significant genes for the downstream footprint input",
+                "Use apeglm for shrinkage; if it is unavailable, use ashr and say so",
+                "Do not perform independent-filtering overrides that would drop genes from the exported stat vector without noting how many were dropped"
+              ],
+              "caveats": [
+                "padj is NA for genes removed by independent filtering — handle these explicitly when building the ranked vector rather than silently coercing to zero",
+                "With n=6 per group the DE list is moderately powered; large fold changes with wide lfcSE should not be over-read",
+                "If the two cohorts' stat vectors disagree substantially, that is itself the answer about sample_01 and must be reported prominently"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "PROGENy footprint pathway activity",
+              "track": "T2",
+              "step_type": "pathway_activity",
+              "question": "Which of the 14 PROGENy signaling pathways show altered downstream transcriptional footprint in cytokine-treated versus vehicle-control bronchial epithelium, and are the per-sample and contrast-level estimates concordant?",
+              "description": "Infer footprint-based signaling pathway activity using PROGENy pathway-responsive gene weights for Homo sapiens — the reference data needed is a human PROGENy per-gene pathway weight table (14 pathways including NFkB, TNFa, JAK-STAT, MAPK, PI3K, EGFR, TGFb, Hypoxia, p53, TRAIL, VEGF, WNT, Estrogen, Androgen), which is present in this environment as an R serialized data frame with columns gene / weight / p.value / pathway; rename to source/target/weight for decoupleR-style scoring and take the top ~500 genes per pathway by significance. Score two complementary ways. (a) Per-sample: run decoupleR on the T1S1 VST matrix (genes x samples, row-scaled/centered) with ULM and MLM, producing a pathway x sample activity matrix; then test treated vs control per pathway with a two-sided Welch t-test and BH correction across the 14 pathways, and report effect sizes with 95% CIs. (b) Contrast-level: run the same methods on the single-column T1S2 Wald `stat` vector, producing one activity score and p-value per pathway for the treated-vs-control contrast. Report both, plus their rank concordance. Show where sample_01 falls in the per-sample activity matrix and re-run (a) on the 11-sample cohort as a sensitivity analysis; report whether any pathway's significance verdict flips. Deliver a pathway x sample activity heatmap and a ranked bar chart of contrast-level scores. State explicitly in the output that these scores reflect downstream response-gene expression, not the expression of the pathway's own member genes.",
+              "question_context": "",
+              "context": "This step is the primary answer to the research question. PROGENy was built precisely for the distinction the question draws: its weights come from perturbation experiments and score the transcriptional consequence of pathway activity rather than the transcript levels of pathway components, which are often unchanged or even anti-correlated with activity. The organism is Homo sapiens, so the human PROGENy model must be used; a mouse model is also present in the environment and using it here would produce confident nonsense. Row identifiers in the counts are gene symbols, matching PROGENy's identifier space, so overlap should be high — but it must be measured.",
+              "acceptance_criteria": [
+                "Human (not mouse) PROGENy weights used, and the organism choice stated in the output",
+                "Number of PROGENy genes overlapping the filtered expression matrix reported per pathway, with any pathway having too few overlapping genes flagged and excluded rather than scored",
+                "Per-sample pathway x sample activity matrix produced from the VST data with at least two methods (ULM and MLM) and their consensus",
+                "Contrast-level activity score and p-value per pathway produced from the T1S2 Wald stat vector",
+                "Treated vs control comparison of per-sample activities with BH correction across pathways, reporting effect size and CI per pathway",
+                "Rank concordance between the per-sample and contrast-level pathway orderings reported numerically",
+                "Sensitivity re-run excluding sample_01, with any change in which pathways pass significance stated explicitly",
+                "Output states in plain language that the scores are footprint-based, not member-expression-based",
+                "If the human PROGENy weight table cannot be resolved in the environment, the step must stop and report that the primary analysis cannot run, rather than substituting a membership-based gene set"
+              ],
+              "constraints": [
+                "Use the human PROGENy model — never the mouse model — for this Homo sapiens dataset",
+                "Center/scale genes before per-sample ULM/MLM scoring so activities are comparable across samples",
+                "Set a minimum overlapping-target size (minsize >= 5) and drop pathways below it rather than reporting an unstable score",
+                "Run both per-sample and contrast-level scoring; do not report only one",
+                "Report raw scores alongside p-values — a significant but tiny activity shift must not be presented as a strong finding"
+              ],
+              "caveats": [
+                "PROGENy pathways share responsive genes; ULM treats each pathway independently while MLM accounts for shared targets, so disagreement between them is informative about collinearity and should be reported, not averaged away",
+                "With 14 pathways and n=6 per group, BH correction is over a small family — report unadjusted and adjusted p-values both",
+                "A shallow library (sample_01) can shift its whole activity profile toward zero after scaling; check that sample_01 is not driving or masking any pathway call",
+                "PROGENy activity direction is signed — a negative score is inferred pathway inhibition, not merely absence of activation, and must be described as such"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "scipy",
+                "statsmodels",
+                "matplotlib",
+                "seaborn",
+                "rpy2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "network-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "DoRothEA TF activity underlying the pathway footprint",
+              "track": "T2",
+              "step_type": "tf_activity",
+              "question": "Which transcription factors show altered inferred activity in cytokine-treated versus vehicle-control bronchial epithelium, and do they mechanistically corroborate the PROGENy pathway footprints?",
+              "description": "Infer transcription-factor activity from regulon footprints. The reference data needed is a human TF-target regulon network with per-interaction confidence levels and mode-of-regulation signs — DoRothEA for Homo sapiens is present in this environment as an R serialized data frame with columns tf / confidence (A-E) / target / mor; filter to confidence levels A, B and C, and rename tf/target/mor to source/target/weight for decoupleR-style scoring. Score per-sample on the T1S1 VST matrix (gene-centered) with ULM, and at contrast level on the T1S2 Wald `stat` vector, exactly mirroring T2S1. Report the top ~25 TFs by absolute contrast-level activity score with p-values and BH-adjusted p-values, a TF x sample activity heatmap for those TFs, and the per-sample treated-vs-control test per TF. Then cross-reference against T2S1: for each PROGENy pathway called active, state which of the significant TFs are known canonical effectors of it (for example NFkB-family members for the NFkB/TNFa footprint, STAT and IRF family members for a JAK-STAT footprint) and whether the directions agree. Treat this cross-reference as corroboration or contradiction evidence, and report contradictions as prominently as agreements. Re-run excluding sample_01 as a sensitivity check.",
+              "question_context": "",
+              "context": "TF activity is the layer directly beneath a pathway footprint: a signaling pathway leaves its transcriptomic mark by acting through TFs, so concordance between PROGENy pathway scores and DoRothEA TF scores is real corroboration rather than a restatement. For a cytokine stimulus in human bronchial epithelium the mechanistic prior is NF-kB/RELA and STAT/IRF activation, but this is a prior to be tested, not an expected result to confirm — the metadata says only 'cytokine stimulation' and does not name the cytokine, so the specific TF identity is an output of the analysis, not an input. Do not assume which cytokine was used.",
+              "acceptance_criteria": [
+                "Human DoRothEA regulons used, filtered to confidence levels A-C, with the number of TFs and interactions retained reported",
+                "Regulons filtered to a minimum of 5 targets present in the expression matrix, with the number of TFs scored reported",
+                "Per-sample TF x sample activity matrix and contrast-level TF activity scores with p-values and BH-adjusted p-values both produced",
+                "Top ~25 TFs by absolute contrast-level activity reported with scores, regulon sizes and adjusted p-values",
+                "Explicit cross-reference table linking significant TFs to the PROGENy pathways called in T2S1, stating agreement or contradiction of direction",
+                "Sensitivity re-run excluding sample_01 with any changed TF calls reported",
+                "The output does not assert which cytokine was applied; any inference about the stimulus is labelled as a hypothesis"
+              ],
+              "constraints": [
+                "Use the human DoRothEA network — never the mouse one",
+                "Keep confidence levels A-C only; state the count dropped by excluding D-E",
+                "Report regulon size next to every TF score — a high score from a 6-target regulon is not comparable to one from a 300-target regulon",
+                "Do not name the stimulating cytokine as a conclusion; the metadata records only 'cytokine stimulation'"
+              ],
+              "caveats": [
+                "DoRothEA regulons overlap heavily for related TFs (e.g. NFKB1/RELA, STAT1/STAT2), so co-significant family members are largely redundant evidence, not independent replication",
+                "TF activity inference cannot distinguish a TF whose protein is activated from one whose transcript is induced; do not claim post-translational activation from expression data alone",
+                "A TF with a small regulon can produce an extreme score from a handful of genes — flag these rather than ranking them at the top uncritically"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "scipy",
+                "statsmodels",
+                "matplotlib",
+                "seaborn",
+                "rpy2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "network-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Membership-based enrichment as an explicit contrast to the footprint result",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "What would a conventional pathway-membership enrichment over the same ranked gene list conclude, and where does it diverge from the footprint-based pathway activity in T2S1?",
+              "description": "Run preranked GSEA (fgsea) on the T1S2 Wald `stat` ranked vector against human pathway gene sets — the reference data needed is a human pathway membership gene-set collection keyed by HGNC gene symbols, which is present in this environment as a WikiPathways human GMT (split each descriptor field on '%' to recover a readable pathway name). Use a minimum set size of 15 and maximum of 500, with BH correction, and report NES, p-value, padj and leading-edge genes for significantly enriched sets. Then construct an explicit side-by-side comparison against the T2S1 PROGENy results: for each PROGENy pathway with a significant footprint, report whether a topically corresponding WikiPathways set was enriched, and vice versa, and quantify the disagreement. The written conclusion must state that membership enrichment answers a different question from the one asked — it detects whether member transcripts move, whereas the research question asks about the footprint the pathway leaves — and that T2S1/T2S2 are the answer while this step is context. If the human WikiPathways collection cannot be resolved at run time, report that and skip this step; it is supplementary and its absence does not compromise the primary result.",
+              "question_context": "",
+              "context": "The research question deliberately contrasts footprint-based inference with member-expression-based inference. Running the membership analysis and showing the divergence is more informative than omitting it, provided it is framed correctly. A common failure mode is that membership enrichment flags a pathway because its receptors and ligands are transcriptionally induced while the footprint shows no downstream activity change, or the reverse — those cases are exactly the interpretive payload of this step. Gene identifiers are HGNC symbols in both the counts matrix and the human WikiPathways GMT, so no mapping is required.",
+              "acceptance_criteria": [
+                "fgsea run on the full T1S2 Wald stat ranked vector against human WikiPathways sets, with minSize 15 and maxSize 500",
+                "Results table with pathway name, size, NES, pval, padj and leading-edge genes for all sets passing padj < 0.05",
+                "Number of ranked genes overlapping the gene-set universe reported",
+                "Explicit side-by-side comparison table between PROGENy footprint calls (T2S1) and WikiPathways membership calls, naming agreements and disagreements",
+                "Written statement that this step is supplementary context and that footprint-based T2S1/T2S2 answer the research question",
+                "If the human WikiPathways collection is unavailable, the step reports that clearly and exits without substituting another collection silently"
+              ],
+              "constraints": [
+                "Use the human WikiPathways collection, not the mouse or rat one",
+                "Rank by the DESeq2 Wald stat, not by log2FoldChange alone — LFC ranking is unstable for low-count genes",
+                "Do not present a significant WikiPathways NES as evidence of pathway activity; describe it only as coordinated movement of member transcripts",
+                "Recover readable pathway names by splitting the GMT descriptor on '%'"
+              ],
+              "caveats": [
+                "WikiPathways sets vary widely in curation quality and size; very large sets produce significant NES with weak biological specificity",
+                "Ties in the ranked vector (genes with identical stat) make fgsea p-values slightly unstable — set a seed and report it",
+                "Topical correspondence between a PROGENy pathway and a WikiPathways set is a judgement call, not a lookup; state the mapping used rather than implying it is canonical"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

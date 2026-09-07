@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw counts with a justified filter (>=10 in >=6, the smallest group), size factors inside the model, explicit relevel of vehicle, BH at 0.05 with alpha passed to results(), apeglm kept separate from the unshrunken Wald statistic that feeds decoupleR ulm on signed CollecTRI v2.0 with min regulon 5 and BH across regulators, plus per-sample ulm on log2-CPM tested with limma. It uses a second network (DoRothEA A-C) rather than mlm as the second estimator, which is a defensible substitute but not the reference's choice, and the DoRothEA version is not stated. QC is complete and design-specific with a no-drop policy, and the report step lists all provenance fields, the inference-not-measurement caution, and reproducibility, though the count of tested genes is only implied rather than named in the report step."
+}

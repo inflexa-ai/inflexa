@@ -1,0 +1,247 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "log-normalized-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T21:36:56.929Z",
+  "elapsedMs": 50254,
+  "outcome": "plan_submitted",
+  "planId": "pln-899ae94f",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load and QC log2 expression matrix and metadata",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "data.table"
+        ],
+        "question": "Do the log2(TPM+1) expression matrix (12000 genes x 12 samples) and the metadata (12 samples x condition) align correctly for 6 treated vs 6 control samples, and is the matrix free of structural issues (missing values, duplicate gene IDs, non-log-scale outliers) before fitting a linear model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample IDs in log_expr.csv columns match metadata.csv rows exactly, with condition assigned to each of the 12 samples (6 treated, 6 control)",
+          "Report gene count (12000), sample count (12), and confirm no counts-like (non-log, large integer) values are present, consistent with delivered log2(TPM+1) values",
+          "Report and handle any missing values or duplicate gene identifiers; document how they were resolved",
+          "A boxplot or summary of per-sample distributions is produced to confirm comparable normalization across the 12 samples (single batch, unpaired design)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control via limma moderated t-test",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between the 6 treated and 6 control muscle samples, using a moderated t-test appropriate for pre-normalized log2(TPM+1) values rather than a count-based model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Design matrix encodes condition (treated vs control) as the sole factor, consistent with the unpaired, single-batch design (no batch term needed)",
+          "limma lmFit + eBayes is applied directly to the log2 expression matrix (no voom step, since data is already normalized log2 values, not counts)",
+          "topTable output reports logFC, moderated t-statistic, raw p-value, and BH-adjusted p-value (adj.P.Val) for all 12000 genes",
+          "A full ranked gene table (by adj.P.Val) and a filtered significant gene list (e.g., adj.P.Val < 0.05) are saved, with the count of significant genes reported explicitly, including if zero given the modest n=6 per group"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of treatment-associated genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed (or ranked by differential expression) between treated and control muscle samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the human WikiPathways gene sets (HGNC symbols) confirmed present in the reference store; if absent at run time, reports the gap explicitly rather than substituting a non-human gene set",
+          "Runs an over-representation analysis on genes significant at adj.P.Val < 0.05 (or the top N by adj.P.Val if none pass 0.05, stated explicitly) against the full 12000-gene background as the universe",
+          "Runs a complementary ranked enrichment (fgsea) on the full gene list ranked by the limma moderated t-statistic to capture sub-threshold coordinated signal",
+          "Reports enriched pathway names, gene set size, NES/ES or odds ratio, and BH-adjusted p-values; states plainly if no pathway reaches significance given the small n=6 per group"
+        ]
+      }
+    ],
+    "title": "Treated vs control muscle DE via limma on log2 expression",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The core facility delivered log2(TPM+1) normalized expression (12000 genes x 12 samples: 6 treated vs 6 control, unpaired, single batch) rather than raw counts, which rules out count-based tools (DESeq2, edgeR) that model raw count variance explicitly. The appropriate approach for pre-normalized, log-scale continuous data is limma's linear model + empirical Bayes moderated t-test (limma-trend/direct lmFit on log2 values, the standard approach for microarray-like or pre-normalized log-ratio data), which does not require a count-based variance model. Step 1 loads and QCs the expression matrix and metadata, confirms sample-to-condition mapping and matrix orientation, and performs light exploratory diagnostics (library-wise distribution check) appropriate for already-normalized data - not exploratory profiling of raw data, but a mandatory input-integrity check before fitting a model. Step 2 fits the limma model (~condition) and extracts moderated-t DE statistics with BH-adjusted p-values, producing the ranked gene list that answers the core question. Step 3 takes that gene list/ranking and performs pathway enrichment against WikiPathways human gene sets (confirmed present in the reference store) using both an over-representation test on significant genes and a ranked GSEA-style test on the full ranked list, to contextualize which biological processes the treatment affects. This mirrors standard practice for single-batch bulk RNA-seq lacking counts and stays fully within the installed R/Bioconductor toolchain (limma, fgsea, clusterProfiler) and the human WikiPathways GMT confirmed in the reference census."
+  },
+  "usage": {
+    "inputTokens": 399527,
+    "outputTokens": 2791,
+    "cacheCreationInputTokens": 114586,
+    "cacheReadInputTokens": 284845,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "WikiPathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "limma",
+          "DESeq2",
+          "statsmodels",
+          "pandas"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/limma/limma",
+        "query": "lmFit eBayes on log2 normalized expression already normalized, not counts, moderated t-test"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "limma",
+        "query": "lmFit eBayes moderated t-test on log2 expression matrix"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "limma bioconductor",
+        "query": "lmFit eBayes moderated t-test differential expression"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc",
+        "query": "limma lmFit eBayes topTable differential expression log2 normalized microarray-like data design matrix"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "GSVA",
+          "org.Hs.eg.db",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control muscle DE via limma on log2 expression",
+          "analytical_narrative": "The core facility delivered log2(TPM+1) normalized expression (12000 genes x 12 samples: 6 treated vs 6 control, unpaired, single batch) rather than raw counts, which rules out count-based tools (DESeq2, edgeR) that model raw count variance explicitly. The appropriate approach for pre-normalized, log-scale continuous data is limma's linear model + empirical Bayes moderated t-test (limma-trend/direct lmFit on log2 values, the standard approach for microarray-like or pre-normalized log-ratio data), which does not require a count-based variance model. Step 1 loads and QCs the expression matrix and metadata, confirms sample-to-condition mapping and matrix orientation, and performs light exploratory diagnostics (library-wise distribution check) appropriate for already-normalized data - not exploratory profiling of raw data, but a mandatory input-integrity check before fitting a model. Step 2 fits the limma model (~condition) and extracts moderated-t DE statistics with BH-adjusted p-values, producing the ranked gene list that answers the core question. Step 3 takes that gene list/ranking and performs pathway enrichment against WikiPathways human gene sets (confirmed present in the reference store) using both an over-representation test on significant genes and a ranked GSEA-style test on the full ranked list, to contextualize which biological processes the treatment affects. This mirrors standard practice for single-batch bulk RNA-seq lacking counts and stays fully within the installed R/Bioconductor toolchain (limma, fgsea, clusterProfiler) and the human WikiPathways GMT confirmed in the reference census.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load and QC log2 expression matrix and metadata",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the log2(TPM+1) expression matrix (12000 genes x 12 samples) and the metadata (12 samples x condition) align correctly for 6 treated vs 6 control samples, and is the matrix free of structural issues (missing values, duplicate gene IDs, non-log-scale outliers) before fitting a linear model?",
+              "acceptance_criteria": [
+                "Sample IDs in log_expr.csv columns match metadata.csv rows exactly, with condition assigned to each of the 12 samples (6 treated, 6 control)",
+                "Report gene count (12000), sample count (12), and confirm no counts-like (non-log, large integer) values are present, consistent with delivered log2(TPM+1) values",
+                "Report and handle any missing values or duplicate gene identifiers; document how they were resolved",
+                "A boxplot or summary of per-sample distributions is produced to confirm comparable normalization across the 12 samples (single batch, unpaired design)"
+              ],
+              "packages": [
+                "limma",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control via limma moderated t-test",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are differentially expressed between the 6 treated and 6 control muscle samples, using a moderated t-test appropriate for pre-normalized log2(TPM+1) values rather than a count-based model?",
+              "acceptance_criteria": [
+                "Design matrix encodes condition (treated vs control) as the sole factor, consistent with the unpaired, single-batch design (no batch term needed)",
+                "limma lmFit + eBayes is applied directly to the log2 expression matrix (no voom step, since data is already normalized log2 values, not counts)",
+                "topTable output reports logFC, moderated t-statistic, raw p-value, and BH-adjusted p-value (adj.P.Val) for all 12000 genes",
+                "A full ranked gene table (by adj.P.Val) and a filtered significant gene list (e.g., adj.P.Val < 0.05) are saved, with the count of significant genes reported explicitly, including if zero given the modest n=6 per group"
+              ],
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of treatment-associated genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed (or ranked by differential expression) between treated and control muscle samples?",
+              "acceptance_criteria": [
+                "Uses the human WikiPathways gene sets (HGNC symbols) confirmed present in the reference store; if absent at run time, reports the gap explicitly rather than substituting a non-human gene set",
+                "Runs an over-representation analysis on genes significant at adj.P.Val < 0.05 (or the top N by adj.P.Val if none pass 0.05, stated explicitly) against the full 12000-gene background as the universe",
+                "Runs a complementary ranked enrichment (fgsea) on the full gene list ranked by the limma moderated t-statistic to capture sub-threshold coordinated signal",
+                "Reports enriched pathway names, gene set size, NES/ES or odds ratio, and BH-adjusted p-values; states plainly if no pathway reaches significance given the small n=6 per group"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,897 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "suspected-batch-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T23:05:02.748Z",
+  "elapsedMs": 141541,
+  "outcome": "plan_submitted",
+  "planId": "pln-3bca521b",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and hidden-factor characterisation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If a variable separates the samples and each condition occurs at each level of that variable, it belongs in the design as a fixed effect; never adjust the counts before the test, because a removal method takes condition signal with the batch in an unbalanced design",
+          "If a sample departs from its group, investigate a technical cause (library size, detected genes) before any removal, remove only with a stated numeric criterion, and report the analysis both with and without it",
+          "A cluster that coincides exactly with the condition arms is confounding, not a nuisance factor — no model separates the two in that case"
+        ],
+        "context": "The data profile states the PCA shows two clusters of six samples that do not follow condition, and the sample table records no processing batch. No extraction date, lane, or operator column exists to colour by, so the empirical cluster label is the only handle on the hidden factor. Do not remove any sample here and do not adjust the counts.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "What separates the two six-sample clusters seen in the PCA of the 12 kidney samples, and is that split balanced across treated vs control or confounded with it?",
+        "grounding": {
+          "claims": [
+            "R-0022@6ba4",
+            "R-0033@40bf",
+            "R-0034@2166"
+          ],
+          "reason": "Suspected batch with no recorded batch variable: blind VST, PCA on top 500 genes, sample-distance heatmap and per-variable inspection is the selected QC procedure (R-0022, R-0033), with the outlier policy of R-0034.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the blind variance stabilizing transformation (blind=TRUE) for QC; the model is fitted separately downstream",
+          "PCA on the top 500 most variable genes",
+          "Do not remove any sample at this step, and do not apply ComBat, removeBatchEffect, or any count adjustment",
+          "Report the cluster-by-condition cross-tabulation as raw counts, not as a p-value alone"
+        ],
+        "description": "Load /eval-four-models-with-suspected-batch-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbol in column 1) and /eval-four-models-with-suspected-batch-n6-1/data/inputs/metadata/metadata.csv (12 rows, condition column). Build a DESeqDataSet with design ~condition, apply the variance stabilizing transformation blind to the design, run PCA on the 500 most variable genes, draw a Euclidean sample-distance heatmap, and plot per-sample library size and number of detected genes. Colour every plot by condition. Then define the two clusters empirically (hierarchical clustering on the VST sample distances, cut into k=2) and cross-tabulate cluster membership against condition and against library size / detection rate. Report the 2x2 table of cluster by condition verbatim — it is the single fact that determines whether the downstream contrast is estimable. Also report the share of variance on PC1 and PC2 and whether condition separates on any of PC1-PC4. Save the cluster assignment as a table for downstream steps to read, and save the VST matrix.",
+        "acceptance_criteria": [
+          "PCA (top 500 variable genes, blind VST) and sample-distance heatmap produced for all 12 samples, coloured by condition",
+          "A 2x2 contingency table of the k=2 sample cluster against condition is reported explicitly, with the counts in each cell",
+          "Library size and detected-gene count reported per sample, with any sample below half the median library size named",
+          "An explicit statement of whether the cluster split is balanced across condition (each cluster holds both conditions) or confounded (a cluster coincides with a condition arm)",
+          "Cluster assignment written to a table file for downstream steps; no sample removed and no counts adjusted at this step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test with surrogate variables as covariates",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With a suspected batch, a clean p-value histogram is not proof of a clean fit: an unmodeled batch inflates the test statistics and mimics a strong result. Fix the design first, then read the histogram",
+          "Surrogate variables consume residual degrees of freedom; with 12 samples, k=3 or more leaves little power and risks absorbing the condition effect itself",
+          "Do not test on counts that any removal method adjusted — such a test does not account for the information the adjustment consumed and reports unsupported confidence",
+          "6 vs 6 is modest power; a null result is not evidence of no effect"
+        ],
+        "context": "12 human kidney samples, 6 treated vs 6 control, unpaired, raw Salmon gene-level counts. The batch is suspected but unrecorded, so no measured covariate can be added; surrogate variables estimated from the counts with condition as the known factor are the route. The counts themselves must go into the model unadjusted — the size factors and the surrogate variables act inside the model. If T1S1 reported the cluster split as confounded with condition, do not report an inferential gene list: state that the design cannot separate the two effects and produce descriptive output only.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "sva",
+          "apeglm",
+          "ashr",
+          "fdrtool"
+        ],
+        "question": "Which genes differ between treated and control kidney samples once the unrecorded source of the two-cluster structure is modelled as surrogate variables?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0149@aa57",
+            "R-0068@eb3c",
+            "R-0036@9786",
+            "R-0025@1e65",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0084@2a4e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "Suspected batch, no recorded batch variable, 6 replicates per group: sva surrogate variables as design covariates (R-0068, R-0025) with the DESeq2 Wald test and apeglm shrinkage (R-0001, R-0009), BH with independent filtering and a histogram check (R-0010, R-0083, R-0084).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not scale, transform, or batch-correct the counts before the model; median-of-ratios size factors and the surrogate variables act inside the negative binomial model",
+          "Estimate surrogate variables with sva using ~condition as the full model and ~1 as the null model; keep k small relative to n=12 (cap at 2) and state the reason",
+          "Set the reference level of the condition factor explicitly; name the contrast as factor, numerator, denominator",
+          "alpha = 0.05 passed to results(), independent filtering on, BH adjustment",
+          "Keep the DESeq2 Cook's-distance count-outlier behaviour on (with 6 replicates per cell it flags and sets p to NA rather than replacing) and report the flagged genes",
+          "Do not run ComBat, removeBatchEffect, RUV, or Harmony on the counts — Harmony is a single-cell embedding method and none of these belong upstream of this test"
+        ],
+        "description": "Primary inference. Pre-filter the 12,000-gene matrix minimally: keep genes with at least 10 counts in at least 6 samples (the smallest group size). Build the DESeqDataSet on the raw counts with condition as a factor whose reference level is explicitly set to the control level as named in metadata.csv — do not rely on alphabetical ordering. Estimate median-of-ratios size factors. Estimate surrogate variables with sva on the log of the normalized counts, with the full model ~condition and the null model ~1; let sva's num.sv estimate k, but cap k at 2 given n=12 and state both the estimated and the used k with the reason. Add the surrogate variables to the design as ~SV1 + ... + SVk + condition and refit. Run the DESeq2 Wald test for the contrast c('condition', treated_level, control_level) so a positive log2 fold change means higher in treated. Shrink the condition coefficient with apeglm (use ashr instead only if the contrast is not a single model coefficient, and state which was used). Extract results with alpha=0.05, independent filtering on, BH adjustment. Before trusting the adjustment, plot the histogram of unadjusted p-values and describe its shape; if it has a hill in the middle or rises toward 1, re-estimate the null with fdrtool on the test statistics and report the estimated null proportion, and state that the BH values from that fit are not reliable. Correlate each surrogate variable with the T1S1 cluster label, with condition, and with library size, and report those correlations. Output a results table with gene symbol, baseMean, unshrunken log2FoldChange, lfcSE, shrunken log2FoldChange, stat, pvalue, padj. Report the number of genes tested, the number with padj < 0.05, and separately the number of genes whose p-value is NA from the Cook's-distance count-outlier flag versus from independent filtering.",
+        "acceptance_criteria": [
+          "Pre-filter applied as >=10 counts in >=6 samples, with the number of genes before and after reported",
+          "Reference level of condition set explicitly to the control level and the contrast named as (condition, treated, control)",
+          "Number of surrogate variables estimated by sva reported alongside the number actually used and the reason for any cap",
+          "Design formula printed verbatim in the output, showing the surrogate variables beside condition",
+          "Results table contains unshrunken log2FoldChange, lfcSE, shrunken log2FoldChange, stat, pvalue and padj per gene",
+          "p-value histogram produced and its shape described in words before any interpretation of the adjusted p-values",
+          "Correlation of each surrogate variable with the T1S1 cluster label, with condition, and with library size reported",
+          "Counts of NA p-values attributed separately to Cook's-distance outlier flagging and to independent filtering",
+          "If T1S1 found the cluster confounded with condition, the step reports descriptive output only and states that no valid inferential contrast exists"
+        ]
+      },
+      {
+        "id": "T1S2b",
+        "name": "edgeR QL cross-check and no-SV sensitivity fit",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If a sample is flagged as an outlier and each group holds three or more replicates, keep it and down-weight it (edgeR robust dispersion, or limma voomWithQualityWeights) rather than deleting it — removal without a criterion selects the result",
+          "Disagreement between DESeq2 and edgeR grows at low counts and low replicate numbers; a gene called by one method only is a weaker claim, not a finding"
+        ],
+        "context": "With 6 replicates per group and a strong nuisance axis, the DESeq2 and edgeR gene lists will not be identical, and the difference between the SV-adjusted and unadjusted fits is the quantitative statement of how much the hidden cluster structure matters. The robust dispersion estimation of edgeR also down-weights outlying observations, which is the preferred handling for a flagged sample rather than removal.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "DESeq2"
+        ],
+        "question": "How much of the treated vs control gene list depends on the choice of test and on the inclusion of the surrogate variables?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0067@e082",
+            "R-0090@be6e",
+            "R-0001@9a17"
+          ],
+          "reason": "Two-method robustness with the intersection as the high-confidence set (R-0042); outlier sample down-weighted via edgeR robust dispersion rather than removed (R-0067), with both fits reported if any removal occurs (R-0090).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the same filtered gene set, the same samples, and the same surrogate variables as the primary fit so the comparison is like for like",
+          "Report the overlap of DESeq2 and edgeR as the high-confidence set; never report the union",
+          "Remove a sample only against a numeric criterion stated in T1S1, and report both fits when a removal happens"
+        ],
+        "description": "Two robustness fits on the same filtered count matrix and the same samples. (1) edgeR quasi-likelihood: TMM normalization, estimateDisp with robust=TRUE, glmQLFit with robust=TRUE on the identical design ~SV1..SVk + condition using the surrogate variables carried over from T1S2, glmQLFTest on the condition coefficient, BH at 0.05. Report the number of significant genes and the size of the intersection with the DESeq2 set from T1S2; the intersection is the high-confidence set, and genes called by only one method are listed as a secondary set naming the method. Do not present the union as the result. (2) Sensitivity fit: rerun DESeq2 with the naive design ~condition (no surrogate variables) and report the number of significant genes, the overlap with the primary set, and the shape of its p-value histogram, so the reader can see exactly what modelling the hidden factor changed. Additionally, if T1S1 named any sample as a candidate outlier on a stated numeric criterion, refit the primary DESeq2 model without that sample and report both gene counts and the intersection; if no sample met a stated criterion, say so and skip the leave-one-out fit rather than removing a sample on appearance. Produce a comparison table: fit name, design formula, n significant at padj<0.05, and pairwise overlaps.",
+        "acceptance_criteria": [
+          "edgeR QL fit run with TMM normalization and robust=TRUE on the same design as the primary DESeq2 fit",
+          "Number of significant genes from each method and the size of their intersection reported; intersection named as the high-confidence set and the union explicitly not presented as the result",
+          "Naive ~condition DESeq2 fit reported with its significant-gene count, its overlap with the primary set, and its p-value histogram shape",
+          "Leave-one-out refit performed only if T1S1 supplied a stated numeric outlier criterion; otherwise the step states that no sample met a criterion and none was removed",
+          "A single comparison table listing each fit, its design formula, its significant-gene count, and pairwise overlaps"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked GSEA on the Wald statistic",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If fewer than about 50 genes pass padj<0.05, do not fall back to an over-representation test on that short list — the ranked test on the full list is the right instrument and the size of the significant list must be stated",
+          "Enrichment results depend on the method and the collection; report a set as a hypothesis for follow-up, not as a proven finding",
+          "Gene length and expression level bias enrichment on count data; the tested-gene universe removes only the detection part of that bias"
+        ],
+        "context": "Reference store holds human hallmark sets (msigdb-hallmark-human 2026.1), human canonical pathways including KEGG MEDICUS / BioCarta / PID (msigdb-canonical-pathways-human 2026.1), human GO (msigdb-go-human 2026.1), and human WikiPathways (2026.07.10). All are HGNC-symbol GMTs, matching the gene symbols in counts.csv. The organism is human — do not use the mouse or rat collections. With 12 samples and a hidden nuisance factor the significant gene list may be short, which is exactly why a ranked test on the full list is used rather than an over-representation test.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "data.table"
+        ],
+        "question": "Which biological processes are coordinately shifted between treated and control kidney samples, on the full ranked list of tested genes?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0108@409f",
+            "R-0099@0a77",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0054@801e",
+            "R-0101@06c8",
+            "R-0103@93aa"
+          ],
+          "reason": "Preranked fgsea on the full tested list against human hallmark first, then Reactome/WikiPathways with releases stated (R-0107, R-0048, R-0098, R-0165); disputed rank metric R-0108 resolved in favour of the Wald statistic and stated in the step.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Never cut the ranked list at an adjusted p-value or fold change before the enrichment test",
+          "Rank by the DESeq2 Wald statistic (`stat`), not by the unshrunken log2 fold change alone and not by a signed p-value",
+          "Set the universe to the genes tested in T1S2, never the whole genome or annotation",
+          "Test each collection separately and state its release; do not merge collections into a single set list",
+          "Keep one identifier space throughout — the collections here are HGNC symbols, matching the counts matrix"
+        ],
+        "description": "Take the full T1S2 results table — every tested gene, not a thresholded subset — and rank it by the DESeq2 Wald statistic (the `stat` column). The rank metric is a stated choice: use the Wald statistic, because it is the effect scaled by its standard error, which neither the unshrunken fold change (large and noisy at low counts) nor a signed p-value (ties at saturation) provides. Run fgsea against the human MSigDB hallmark gene sets from the reference store, then repeat against the human Reactome/canonical-pathway sets and the human WikiPathways collection as separate runs, each with its own BH adjustment and each with its release stated — do not merge collections into one set list. Apply a gene set size window of 15 to 500 members after intersecting each set with the tested genes. Gene symbols in counts.csv are HGNC; map to the identifier space each collection uses with org.Hs.eg.db where a mapping is needed and report the share of tested genes that failed to map. Collapse redundant significant sets (fgsea collapsePathways) and report one representative per group, keeping the full table as a supplement. For each significant set, list its leading-edge genes with their gene-level Wald statistic, and mark leading-edge overlap between reported sets. Set and record a random seed for the permutations. If a pathway collection is absent from the reference store at run time, report that collection as unavailable and continue with the ones present — hallmark alone is sufficient for the step to succeed.",
+        "acceptance_criteria": [
+          "fgsea run on the full ranked list of all tested genes from T1S2, ranked by the Wald statistic, with the choice of metric stated",
+          "Hallmark run completed; each additional collection reported separately with its own BH adjustment and its release named",
+          "Gene set size window of 15-500 applied after intersection with the tested genes, and the window reported",
+          "Share of tested genes that failed identifier mapping reported",
+          "Redundant significant sets collapsed with one representative per group reported and the full table retained",
+          "Leading-edge genes listed per significant set with their gene-level statistic, and overlaps between leading edges marked",
+          "Random seed recorded; absent collections named as unavailable rather than silently skipped"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Consolidated report with diagnostics and reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If any sample was removed, both fits must appear with their gene counts, intersection, and the genes that changed status, and the removal criterion must be named",
+          "Do not present a surrogate-variable-adjusted result as if the batch were known — the surrogate variables capture unmodeled structure whose biological or technical identity remains undetermined"
+        ],
+        "context": "This is the deliverable that the biologist reads. The honest framing matters more than the gene count: a list produced without addressing the two-cluster structure would be wrong, and a list produced by correcting the counts and then testing would be overconfident. Say which route was taken and why.",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "DESeq2",
+          "EnhancedVolcano",
+          "sessioninfo"
+        ],
+        "question": "What is the defensible answer to 'which genes differ between treated and control', given that a six-versus-six sample split unrelated to condition dominates the variance and was not recorded as a batch?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0090@be6e",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf",
+            "R-0042@54e1"
+          ],
+          "reason": "Report content, fit diagnostics, effect columns, enrichment reporting fields and the reproducibility record follow the returned report procedure (R-0041, R-0085, R-0087, R-0051, R-0055, R-0105, R-0086).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S2b",
+          "T2S1"
+        ],
+        "constraints": [
+          "Rank genes and draw plots on the shrunken log2 fold change; keep the p-values from the unshrunken fit and name the shrinkage estimator in the table header",
+          "Report the method, package versions, design formula, contrast, thresholds, number of genes tested and number of DE genes before the gene tables",
+          "Do not present the union of the two methods as the result; the intersection is the high-confidence set"
+        ],
+        "description": "Assemble the final report. Lead with the design problem and how it was handled: the two six-sample clusters from T1S1, their cross-tabulation against condition, the number of surrogate variables used and their correlation with the cluster label, and the design formula that was actually fitted. Then the results: number of genes tested after filtering, number significant at padj<0.05 in the primary SV-adjusted DESeq2 fit, the edgeR QL intersection as the high-confidence set, and the naive ~condition fit as the contrast that shows what the adjustment changed. Gene table carries, per gene, the unshrunken log2FoldChange, the shrunken log2FoldChange (naming apeglm as the estimator), the lfcSE, and padj; rank genes and draw plots on the shrunken value, keep p-values from the unshrunken fit. Include the MA plot and the dispersion plot before the gene tables, plus the p-value histogram and a volcano. Report the enrichment from T2S1 with its database, release, rank metric, universe, size window and leading-edge genes, and state that enrichment results are method-dependent. Close with the reproducibility record: sessionInfo, every package version, the random seeds, and the version of each gene set collection used. State the limitations plainly: 6 vs 6, surrogate variables consuming degrees of freedom, the hidden factor's identity unknown, and — if applicable — that a confounded cluster split makes the contrast uninterpretable.",
+        "acceptance_criteria": [
+          "Report opens with the cluster-by-condition table, the number of surrogate variables, and the fitted design formula",
+          "MA plot and dispersion plot present before the gene tables, with a stated reading of each; p-value histogram and volcano included",
+          "Gene table carries unshrunken log2FoldChange, shrunken log2FoldChange with the estimator named, lfcSE and padj; ranking done on the shrunken value",
+          "Primary fit, edgeR intersection, and naive no-SV fit reported side by side with their significant-gene counts and overlaps",
+          "Enrichment reported with database, release, rank metric, universe, size window and leading-edge genes, and flagged as method-dependent",
+          "Reproducibility record attached: sessionInfo, package versions, random seeds, gene set collection versions",
+          "Limitations stated explicitly, including replicate number, degrees of freedom consumed by the surrogate variables, and the unknown identity of the hidden factor"
+        ]
+      }
+    ],
+    "title": "Kidney treated vs control DE with SVA for unrecorded batch",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a 12,000 x 12 raw Salmon gene-level count matrix (counts.csv, gene symbols in the first column) with a 12-row metadata table carrying only `condition` (6 treated, 6 control, unpaired, human kidney). The profiler flagged the central problem: the PCA splits the samples into two clusters of six that do NOT follow condition, and no processing batch is recorded. That structure is the whole analytical difficulty — a dominant unmodeled source of variation orthogonal to (or partly overlapping) the contrast of interest. Testing treated vs control while ignoring it inflates the dispersion and the test statistics; correcting the counts with ComBat/removeBatchEffect and then testing on the corrected matrix would do the opposite and report confidence the data does not support. The plan therefore keeps the counts untouched and puts the hidden structure into the design as estimated covariates.\n\nT1S1 characterises the structure before any test: blind VST, PCA on the top 500 variable genes, sample-distance heatmap, library sizes and detected-gene counts, and an explicit cross-tabulation of the two six-sample clusters against condition and against library size. That is what decides whether the hidden factor is balanced across condition (each cluster holds 3 treated + 3 control -> estimable) or confounded with it (a cluster equals a condition arm -> no model separates them, and the run stops at a descriptive result). T1S2 runs the primary inference: minimal pre-filter (>=10 counts in >=6 samples), median-of-ratios size factors inside the model, surrogate variables estimated by sva with condition as the known factor, and a DESeq2 Wald test on ~SV1..SVk + condition with control as the explicit reference level, apeglm shrinkage, BH at alpha 0.05 with independent filtering. The p-value histogram is inspected before the adjustment is trusted, and fdrtool re-estimates the null if it is irregular. T1S2b is the robustness check the small-n design needs: edgeR quasi-likelihood with robust dispersion on the identical design, reported as an overlap with the DESeq2 set, plus the naive ~condition fit shown side by side to quantify what the surrogate variables changed. T2S1 takes the full ranked list of tested genes by the Wald statistic into fgsea against human Hallmark, then Reactome/WikiPathways as staged; with 12 samples and a hidden factor, a gene list may be short, so a ranked test rather than an over-representation test is the right instrument. T1S3 assembles the report with both fits, the diagnostics, and the reproducibility record.\n\nHonest limits stated up front: 6 vs 6 with a strong nuisance axis is modest power; surrogate variables consume residual degrees of freedom (k is kept small, 1-2 for n=12); and if the two clusters turn out to be confounded with condition, no statistical construction rescues the contrast and the plan says so rather than producing a gene list."
+  },
+  "usage": {
+    "inputTokens": 376267,
+    "outputTokens": 11610,
+    "cacheCreationInputTokens": 197755,
+    "cacheReadInputTokens": 178464,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "suspected",
+        "quality_flags": [
+          "outlier_sample"
+        ],
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "sva",
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "RUVSeq",
+          "variancePartition",
+          "apeglm",
+          "ashr",
+          "pheatmap",
+          "ComplexHeatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb",
+        "limit": 30
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "fdrtool",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "sessioninfo",
+          "msigdbr",
+          "GSVA"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "suspected",
+        "quality_flags": [
+          "outlier_sample"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: blind VST, PCA on top 500 variable genes, sample distance heatmap, library sizes, cluster-vs-condition cross-tabulation",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "batch_check",
+                "value": "pca_by_processing_variable"
+              },
+              {
+                "name": "outlier_policy",
+                "value": "investigate_state_reason_report_both"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with at least 10 counts in at least 6 samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors inside the model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "Surrogate variable analysis (sva) with the surrogate variables as design covariates",
+            "package": "sva",
+            "parameters": [
+              {
+                "name": "surrogate_variables",
+                "value": "as_covariates"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "report_n_surrogate_variables",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test on ~ SV1..SVk + condition",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              },
+              {
+                "name": "outlier_sample_policy",
+                "value": "down_weight_not_remove"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, p-value histogram inspection, fdrtool empirical null if irregular",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              },
+              {
+                "name": "null_distribution_check",
+                "value": "fix_design_then_empirical_null"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the DESeq2 Wald statistic, Hallmark then Reactome/WikiPathways",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducible report: design, SV count, MA and dispersion plots, both fits, leading edge, sessionInfo",
+            "package": "sessioninfo",
+            "parameters": [
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot, dispersion_plot"
+              },
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange, shrunken_log2FoldChange, lfcSE"
+              },
+              {
+                "name": "robustness",
+                "value": "overlap_of_two_methods"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with SVA for unrecorded batch",
+          "analytical_narrative": "The input is a 12,000 x 12 raw Salmon gene-level count matrix (counts.csv, gene symbols in the first column) with a 12-row metadata table carrying only `condition` (6 treated, 6 control, unpaired, human kidney). The profiler flagged the central problem: the PCA splits the samples into two clusters of six that do NOT follow condition, and no processing batch is recorded. That structure is the whole analytical difficulty — a dominant unmodeled source of variation orthogonal to (or partly overlapping) the contrast of interest. Testing treated vs control while ignoring it inflates the dispersion and the test statistics; correcting the counts with ComBat/removeBatchEffect and then testing on the corrected matrix would do the opposite and report confidence the data does not support. The plan therefore keeps the counts untouched and puts the hidden structure into the design as estimated covariates.\n\nT1S1 characterises the structure before any test: blind VST, PCA on the top 500 variable genes, sample-distance heatmap, library sizes and detected-gene counts, and an explicit cross-tabulation of the two six-sample clusters against condition and against library size. That is what decides whether the hidden factor is balanced across condition (each cluster holds 3 treated + 3 control -> estimable) or confounded with it (a cluster equals a condition arm -> no model separates them, and the run stops at a descriptive result). T1S2 runs the primary inference: minimal pre-filter (>=10 counts in >=6 samples), median-of-ratios size factors inside the model, surrogate variables estimated by sva with condition as the known factor, and a DESeq2 Wald test on ~SV1..SVk + condition with control as the explicit reference level, apeglm shrinkage, BH at alpha 0.05 with independent filtering. The p-value histogram is inspected before the adjustment is trusted, and fdrtool re-estimates the null if it is irregular. T1S2b is the robustness check the small-n design needs: edgeR quasi-likelihood with robust dispersion on the identical design, reported as an overlap with the DESeq2 set, plus the naive ~condition fit shown side by side to quantify what the surrogate variables changed. T2S1 takes the full ranked list of tested genes by the Wald statistic into fgsea against human Hallmark, then Reactome/WikiPathways as staged; with 12 samples and a hidden factor, a gene list may be short, so a ranked test rather than an over-representation test is the right instrument. T1S3 assembles the report with both fits, the diagnostics, and the reproducibility record.\n\nHonest limits stated up front: 6 vs 6 with a strong nuisance axis is modest power; surrogate variables consume residual degrees of freedom (k is kept small, 1-2 for n=12); and if the two clusters turn out to be confounded with condition, no statistical construction rescues the contrast and the plan says so rather than producing a gene list.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and hidden-factor characterisation",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "What separates the two six-sample clusters seen in the PCA of the 12 kidney samples, and is that split balanced across treated vs control or confounded with it?",
+              "description": "Load /eval-four-models-with-suspected-batch-n6-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbol in column 1) and /eval-four-models-with-suspected-batch-n6-1/data/inputs/metadata/metadata.csv (12 rows, condition column). Build a DESeqDataSet with design ~condition, apply the variance stabilizing transformation blind to the design, run PCA on the 500 most variable genes, draw a Euclidean sample-distance heatmap, and plot per-sample library size and number of detected genes. Colour every plot by condition. Then define the two clusters empirically (hierarchical clustering on the VST sample distances, cut into k=2) and cross-tabulate cluster membership against condition and against library size / detection rate. Report the 2x2 table of cluster by condition verbatim — it is the single fact that determines whether the downstream contrast is estimable. Also report the share of variance on PC1 and PC2 and whether condition separates on any of PC1-PC4. Save the cluster assignment as a table for downstream steps to read, and save the VST matrix.",
+              "context": "The data profile states the PCA shows two clusters of six samples that do not follow condition, and the sample table records no processing batch. No extraction date, lane, or operator column exists to colour by, so the empirical cluster label is the only handle on the hidden factor. Do not remove any sample here and do not adjust the counts.",
+              "question_note": null,
+              "acceptance_criteria": [
+                "PCA (top 500 variable genes, blind VST) and sample-distance heatmap produced for all 12 samples, coloured by condition",
+                "A 2x2 contingency table of the k=2 sample cluster against condition is reported explicitly, with the counts in each cell",
+                "Library size and detected-gene count reported per sample, with any sample below half the median library size named",
+                "An explicit statement of whether the cluster split is balanced across condition (each cluster holds both conditions) or confounded (a cluster coincides with a condition arm)",
+                "Cluster assignment written to a table file for downstream steps; no sample removed and no counts adjusted at this step"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Use the blind variance stabilizing transformation (blind=TRUE) for QC; the model is fitted separately downstream",
+                "PCA on the top 500 most variable genes",
+                "Do not remove any sample at this step, and do not apply ComBat, removeBatchEffect, or any count adjustment",
+                "Report the cluster-by-condition cross-tabulation as raw counts, not as a p-value alone"
+              ],
+              "caveats": [
+                "If a variable separates the samples and each condition occurs at each level of that variable, it belongs in the design as a fixed effect; never adjust the counts before the test, because a removal method takes condition signal with the batch in an unbalanced design",
+                "If a sample departs from its group, investigate a technical cause (library size, detected genes) before any removal, remove only with a stated numeric criterion, and report the analysis both with and without it",
+                "A cluster that coincides exactly with the condition arms is confounding, not a nuisance factor — no model separates the two in that case"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0022@6ba4",
+                  "R-0033@40bf",
+                  "R-0034@2166"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Suspected batch with no recorded batch variable: blind VST, PCA on top 500 genes, sample-distance heatmap and per-variable inspection is the selected QC procedure (R-0022, R-0033), with the outlier policy of R-0034."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test with surrogate variables as covariates",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes differ between treated and control kidney samples once the unrecorded source of the two-cluster structure is modelled as surrogate variables?",
+              "description": "Primary inference. Pre-filter the 12,000-gene matrix minimally: keep genes with at least 10 counts in at least 6 samples (the smallest group size). Build the DESeqDataSet on the raw counts with condition as a factor whose reference level is explicitly set to the control level as named in metadata.csv — do not rely on alphabetical ordering. Estimate median-of-ratios size factors. Estimate surrogate variables with sva on the log of the normalized counts, with the full model ~condition and the null model ~1; let sva's num.sv estimate k, but cap k at 2 given n=12 and state both the estimated and the used k with the reason. Add the surrogate variables to the design as ~SV1 + ... + SVk + condition and refit. Run the DESeq2 Wald test for the contrast c('condition', treated_level, control_level) so a positive log2 fold change means higher in treated. Shrink the condition coefficient with apeglm (use ashr instead only if the contrast is not a single model coefficient, and state which was used). Extract results with alpha=0.05, independent filtering on, BH adjustment. Before trusting the adjustment, plot the histogram of unadjusted p-values and describe its shape; if it has a hill in the middle or rises toward 1, re-estimate the null with fdrtool on the test statistics and report the estimated null proportion, and state that the BH values from that fit are not reliable. Correlate each surrogate variable with the T1S1 cluster label, with condition, and with library size, and report those correlations. Output a results table with gene symbol, baseMean, unshrunken log2FoldChange, lfcSE, shrunken log2FoldChange, stat, pvalue, padj. Report the number of genes tested, the number with padj < 0.05, and separately the number of genes whose p-value is NA from the Cook's-distance count-outlier flag versus from independent filtering.",
+              "context": "12 human kidney samples, 6 treated vs 6 control, unpaired, raw Salmon gene-level counts. The batch is suspected but unrecorded, so no measured covariate can be added; surrogate variables estimated from the counts with condition as the known factor are the route. The counts themselves must go into the model unadjusted — the size factors and the surrogate variables act inside the model. If T1S1 reported the cluster split as confounded with condition, do not report an inferential gene list: state that the design cannot separate the two effects and produce descriptive output only.",
+              "acceptance_criteria": [
+                "Pre-filter applied as >=10 counts in >=6 samples, with the number of genes before and after reported",
+                "Reference level of condition set explicitly to the control level and the contrast named as (condition, treated, control)",
+                "Number of surrogate variables estimated by sva reported alongside the number actually used and the reason for any cap",
+                "Design formula printed verbatim in the output, showing the surrogate variables beside condition",
+                "Results table contains unshrunken log2FoldChange, lfcSE, shrunken log2FoldChange, stat, pvalue and padj per gene",
+                "p-value histogram produced and its shape described in words before any interpretation of the adjusted p-values",
+                "Correlation of each surrogate variable with the T1S1 cluster label, with condition, and with library size reported",
+                "Counts of NA p-values attributed separately to Cook's-distance outlier flagging and to independent filtering",
+                "If T1S1 found the cluster confounded with condition, the step reports descriptive output only and states that no valid inferential contrast exists"
+              ],
+              "packages": [
+                "DESeq2",
+                "sva",
+                "apeglm",
+                "ashr",
+                "fdrtool"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Do not scale, transform, or batch-correct the counts before the model; median-of-ratios size factors and the surrogate variables act inside the negative binomial model",
+                "Estimate surrogate variables with sva using ~condition as the full model and ~1 as the null model; keep k small relative to n=12 (cap at 2) and state the reason",
+                "Set the reference level of the condition factor explicitly; name the contrast as factor, numerator, denominator",
+                "alpha = 0.05 passed to results(), independent filtering on, BH adjustment",
+                "Keep the DESeq2 Cook's-distance count-outlier behaviour on (with 6 replicates per cell it flags and sets p to NA rather than replacing) and report the flagged genes",
+                "Do not run ComBat, removeBatchEffect, RUV, or Harmony on the counts — Harmony is a single-cell embedding method and none of these belong upstream of this test"
+              ],
+              "caveats": [
+                "With a suspected batch, a clean p-value histogram is not proof of a clean fit: an unmodeled batch inflates the test statistics and mimics a strong result. Fix the design first, then read the histogram",
+                "Surrogate variables consume residual degrees of freedom; with 12 samples, k=3 or more leaves little power and risks absorbing the condition effect itself",
+                "Do not test on counts that any removal method adjusted — such a test does not account for the information the adjustment consumed and reports unsupported confidence",
+                "6 vs 6 is modest power; a null result is not evidence of no effect"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0149@aa57",
+                  "R-0068@eb3c",
+                  "R-0036@9786",
+                  "R-0025@1e65",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0084@2a4e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Suspected batch, no recorded batch variable, 6 replicates per group: sva surrogate variables as design covariates (R-0068, R-0025) with the DESeq2 Wald test and apeglm shrinkage (R-0001, R-0009), BH with independent filtering and a histogram check (R-0010, R-0083, R-0084)."
+              }
+            },
+            {
+              "id": "T1S2b",
+              "name": "edgeR QL cross-check and no-SV sensitivity fit",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "How much of the treated vs control gene list depends on the choice of test and on the inclusion of the surrogate variables?",
+              "description": "Two robustness fits on the same filtered count matrix and the same samples. (1) edgeR quasi-likelihood: TMM normalization, estimateDisp with robust=TRUE, glmQLFit with robust=TRUE on the identical design ~SV1..SVk + condition using the surrogate variables carried over from T1S2, glmQLFTest on the condition coefficient, BH at 0.05. Report the number of significant genes and the size of the intersection with the DESeq2 set from T1S2; the intersection is the high-confidence set, and genes called by only one method are listed as a secondary set naming the method. Do not present the union as the result. (2) Sensitivity fit: rerun DESeq2 with the naive design ~condition (no surrogate variables) and report the number of significant genes, the overlap with the primary set, and the shape of its p-value histogram, so the reader can see exactly what modelling the hidden factor changed. Additionally, if T1S1 named any sample as a candidate outlier on a stated numeric criterion, refit the primary DESeq2 model without that sample and report both gene counts and the intersection; if no sample met a stated criterion, say so and skip the leave-one-out fit rather than removing a sample on appearance. Produce a comparison table: fit name, design formula, n significant at padj<0.05, and pairwise overlaps.",
+              "context": "With 6 replicates per group and a strong nuisance axis, the DESeq2 and edgeR gene lists will not be identical, and the difference between the SV-adjusted and unadjusted fits is the quantitative statement of how much the hidden cluster structure matters. The robust dispersion estimation of edgeR also down-weights outlying observations, which is the preferred handling for a flagged sample rather than removal.",
+              "acceptance_criteria": [
+                "edgeR QL fit run with TMM normalization and robust=TRUE on the same design as the primary DESeq2 fit",
+                "Number of significant genes from each method and the size of their intersection reported; intersection named as the high-confidence set and the union explicitly not presented as the result",
+                "Naive ~condition DESeq2 fit reported with its significant-gene count, its overlap with the primary set, and its p-value histogram shape",
+                "Leave-one-out refit performed only if T1S1 supplied a stated numeric outlier criterion; otherwise the step states that no sample met a criterion and none was removed",
+                "A single comparison table listing each fit, its design formula, its significant-gene count, and pairwise overlaps"
+              ],
+              "packages": [
+                "edgeR",
+                "limma",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Use the same filtered gene set, the same samples, and the same surrogate variables as the primary fit so the comparison is like for like",
+                "Report the overlap of DESeq2 and edgeR as the high-confidence set; never report the union",
+                "Remove a sample only against a numeric criterion stated in T1S1, and report both fits when a removal happens"
+              ],
+              "caveats": [
+                "If a sample is flagged as an outlier and each group holds three or more replicates, keep it and down-weight it (edgeR robust dispersion, or limma voomWithQualityWeights) rather than deleting it — removal without a criterion selects the result",
+                "Disagreement between DESeq2 and edgeR grows at low counts and low replicate numbers; a gene called by one method only is a weaker claim, not a finding"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0067@e082",
+                  "R-0090@be6e",
+                  "R-0001@9a17"
+                ],
+                "reason": "Two-method robustness with the intersection as the high-confidence set (R-0042); outlier sample down-weighted via edgeR robust dispersion rather than removed (R-0067), with both fits reported if any removal occurs (R-0090)."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked GSEA on the Wald statistic",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological processes are coordinately shifted between treated and control kidney samples, on the full ranked list of tested genes?",
+              "description": "Take the full T1S2 results table — every tested gene, not a thresholded subset — and rank it by the DESeq2 Wald statistic (the `stat` column). The rank metric is a stated choice: use the Wald statistic, because it is the effect scaled by its standard error, which neither the unshrunken fold change (large and noisy at low counts) nor a signed p-value (ties at saturation) provides. Run fgsea against the human MSigDB hallmark gene sets from the reference store, then repeat against the human Reactome/canonical-pathway sets and the human WikiPathways collection as separate runs, each with its own BH adjustment and each with its release stated — do not merge collections into one set list. Apply a gene set size window of 15 to 500 members after intersecting each set with the tested genes. Gene symbols in counts.csv are HGNC; map to the identifier space each collection uses with org.Hs.eg.db where a mapping is needed and report the share of tested genes that failed to map. Collapse redundant significant sets (fgsea collapsePathways) and report one representative per group, keeping the full table as a supplement. For each significant set, list its leading-edge genes with their gene-level Wald statistic, and mark leading-edge overlap between reported sets. Set and record a random seed for the permutations. If a pathway collection is absent from the reference store at run time, report that collection as unavailable and continue with the ones present — hallmark alone is sufficient for the step to succeed.",
+              "context": "Reference store holds human hallmark sets (msigdb-hallmark-human 2026.1), human canonical pathways including KEGG MEDICUS / BioCarta / PID (msigdb-canonical-pathways-human 2026.1), human GO (msigdb-go-human 2026.1), and human WikiPathways (2026.07.10). All are HGNC-symbol GMTs, matching the gene symbols in counts.csv. The organism is human — do not use the mouse or rat collections. With 12 samples and a hidden nuisance factor the significant gene list may be short, which is exactly why a ranked test on the full list is used rather than an over-representation test.",
+              "acceptance_criteria": [
+                "fgsea run on the full ranked list of all tested genes from T1S2, ranked by the Wald statistic, with the choice of metric stated",
+                "Hallmark run completed; each additional collection reported separately with its own BH adjustment and its release named",
+                "Gene set size window of 15-500 applied after intersection with the tested genes, and the window reported",
+                "Share of tested genes that failed identifier mapping reported",
+                "Redundant significant sets collapsed with one representative per group reported and the full table retained",
+                "Leading-edge genes listed per significant set with their gene-level statistic, and overlaps between leading edges marked",
+                "Random seed recorded; absent collections named as unavailable rather than silently skipped"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "constraints": [
+                "Never cut the ranked list at an adjusted p-value or fold change before the enrichment test",
+                "Rank by the DESeq2 Wald statistic (`stat`), not by the unshrunken log2 fold change alone and not by a signed p-value",
+                "Set the universe to the genes tested in T1S2, never the whole genome or annotation",
+                "Test each collection separately and state its release; do not merge collections into a single set list",
+                "Keep one identifier space throughout — the collections here are HGNC symbols, matching the counts matrix"
+              ],
+              "caveats": [
+                "If fewer than about 50 genes pass padj<0.05, do not fall back to an over-representation test on that short list — the ranked test on the full list is the right instrument and the size of the significant list must be stated",
+                "Enrichment results depend on the method and the collection; report a set as a hypothesis for follow-up, not as a proven finding",
+                "Gene length and expression level bias enrichment on count data; the tested-gene universe removes only the detection part of that bias"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0108@409f",
+                  "R-0099@0a77",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0054@801e",
+                  "R-0101@06c8",
+                  "R-0103@93aa"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "Preranked fgsea on the full tested list against human hallmark first, then Reactome/WikiPathways with releases stated (R-0107, R-0048, R-0098, R-0165); disputed rank metric R-0108 resolved in favour of the Wald statistic and stated in the step."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Consolidated report with diagnostics and reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the defensible answer to 'which genes differ between treated and control', given that a six-versus-six sample split unrelated to condition dominates the variance and was not recorded as a batch?",
+              "description": "Assemble the final report. Lead with the design problem and how it was handled: the two six-sample clusters from T1S1, their cross-tabulation against condition, the number of surrogate variables used and their correlation with the cluster label, and the design formula that was actually fitted. Then the results: number of genes tested after filtering, number significant at padj<0.05 in the primary SV-adjusted DESeq2 fit, the edgeR QL intersection as the high-confidence set, and the naive ~condition fit as the contrast that shows what the adjustment changed. Gene table carries, per gene, the unshrunken log2FoldChange, the shrunken log2FoldChange (naming apeglm as the estimator), the lfcSE, and padj; rank genes and draw plots on the shrunken value, keep p-values from the unshrunken fit. Include the MA plot and the dispersion plot before the gene tables, plus the p-value histogram and a volcano. Report the enrichment from T2S1 with its database, release, rank metric, universe, size window and leading-edge genes, and state that enrichment results are method-dependent. Close with the reproducibility record: sessionInfo, every package version, the random seeds, and the version of each gene set collection used. State the limitations plainly: 6 vs 6, surrogate variables consuming degrees of freedom, the hidden factor's identity unknown, and — if applicable — that a confounded cluster split makes the contrast uninterpretable.",
+              "context": "This is the deliverable that the biologist reads. The honest framing matters more than the gene count: a list produced without addressing the two-cluster structure would be wrong, and a list produced by correcting the counts and then testing would be overconfident. Say which route was taken and why.",
+              "acceptance_criteria": [
+                "Report opens with the cluster-by-condition table, the number of surrogate variables, and the fitted design formula",
+                "MA plot and dispersion plot present before the gene tables, with a stated reading of each; p-value histogram and volcano included",
+                "Gene table carries unshrunken log2FoldChange, shrunken log2FoldChange with the estimator named, lfcSE and padj; ranking done on the shrunken value",
+                "Primary fit, edgeR intersection, and naive no-SV fit reported side by side with their significant-gene counts and overlaps",
+                "Enrichment reported with database, release, rank metric, universe, size window and leading-edge genes, and flagged as method-dependent",
+                "Reproducibility record attached: sessionInfo, package versions, random seeds, gene set collection versions",
+                "Limitations stated explicitly, including replicate number, degrees of freedom consumed by the surrogate variables, and the unknown identity of the hidden factor"
+              ],
+              "packages": [
+                "ggplot2",
+                "DESeq2",
+                "EnhancedVolcano",
+                "sessioninfo"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S2b",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Rank genes and draw plots on the shrunken log2 fold change; keep the p-values from the unshrunken fit and name the shrinkage estimator in the table header",
+                "Report the method, package versions, design formula, contrast, thresholds, number of genes tested and number of DE genes before the gene tables",
+                "Do not present the union of the two methods as the result; the intersection is the high-confidence set"
+              ],
+              "caveats": [
+                "If any sample was removed, both fits must appear with their gene counts, intersection, and the genes that changed status, and the removal criterion must be named",
+                "Do not present a surrogate-variable-adjusted result as if the batch were known — the surrogate variables capture unmodeled structure whose biological or technical identity remains undetermined"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0090@be6e",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf",
+                  "R-0042@54e1"
+                ],
+                "reason": "Report content, fit diagnostics, effect columns, enrichment reporting fields and the reproducibility record follow the returned report procedure (R-0041, R-0085, R-0087, R-0051, R-0055, R-0105, R-0086)."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

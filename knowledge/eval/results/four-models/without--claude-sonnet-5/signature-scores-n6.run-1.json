@@ -1,0 +1,287 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "signature-scores-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T21:58:23.504Z",
+  "elapsedMs": 38345,
+  "outcome": "plan_submitted",
+  "planId": "pln-f29992a3",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and normalization of ileum RNA-seq counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR"
+        ],
+        "question": "After confirming sample_01's low library size (raw counts.csv, 12000 genes x 12 samples), what normalized expression matrix (log2 CPM or DESeq2 variance-stabilized) should be used for downstream hallmark scoring, and should sample_01 be excluded or retained with a caveat?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Library sizes are computed and reported for all 12 samples, confirming/quantifying the ~4x deficit in sample_01",
+          "A normalized (log2 CPM or VST) expression matrix with gene symbols as rows and all samples as columns is produced",
+          "A documented decision is made and justified on whether sample_01 is retained (with caveat) or excluded, based on quantitative QC (e.g. library size, fraction of genes detected)",
+          "Output normalized matrix and metadata are saved for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, inflamed vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Using raw counts and the DESeq2 negative-binomial model, which genes are differentially expressed between Crohn disease inflamed (n=6) and control (n=6) ileum samples, and is the result sensitive to the shallow sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run on raw integer counts with condition (inflamed vs control) as the design factor",
+          "Results table with log2FC, p-value, and BH-adjusted p-value for all ~12000 genes",
+          "A sensitivity check comparing DE results with and without sample_01 is reported (e.g. concordance of top genes/effect sizes)",
+          "Output DE table saved for downstream interpretation"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Per-sample hallmark gene-set scoring (GSVA)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "GSVA"
+        ],
+        "question": "What is the per-sample enrichment score for each of the 50 MSigDB hallmark gene sets, computed from the normalized ileum expression matrix (12 samples), using the human hallmark gene set collection available in the reference store?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Confirms the human MSigDB hallmark GMT (50 HALLMARK_* gene sets, HGNC symbols) is available in the reference store before running; if absent, reports the gap rather than substituting a different collection",
+          "GSVA (or ssGSEA as a documented alternative) run on the normalized log-scale expression matrix from T1S1, producing a 50 (hallmark) x 12 (sample) enrichment score matrix",
+          "Every sample, including sample_01, receives a score for every hallmark signature; the output table has samples as columns and hallmark names as rows",
+          "Output score matrix saved as a CSV for downstream statistical testing"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Differential hallmark signature testing, inflamed vs control",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "scipy",
+          "statsmodels",
+          "seaborn"
+        ],
+        "question": "Which of the 50 hallmark gene-set scores differ significantly between Crohn disease inflamed (n=6) and control (n=6) ileum samples, after correcting for testing 50 signatures, and how much does excluding the shallow sample_01 change the result?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistics",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Two-group test (e.g. Welch t-test or Wilcoxon rank-sum, appropriate for n=6 per group) applied to each of the 50 hallmark scores from T2S1 comparing inflamed vs control",
+          "Benjamini-Hochberg FDR correction applied across the 50 tests, with raw and adjusted p-values reported per signature",
+          "A ranked table of hallmark signatures by effect size and significance is produced, explicitly identifying which pass FDR<0.05",
+          "A documented sensitivity analysis rerunning the same test with sample_01 excluded, to show whether any significant hallmark depends on that single low-depth sample",
+          "Visualization (e.g. heatmap of hallmark scores across all 12 samples, ordered by condition) is produced"
+        ]
+      }
+    ],
+    "title": "Ileum Crohn's hallmark signature scoring vs control",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The input is a 12000x13 raw Salmon gene-level count matrix for 6 inflamed vs 6 control ileum samples (unpaired, single batch), with sample_01 flagged as having ~4x below-median library size. Because the research question asks for a per-sample score for every MSigDB hallmark signature and a comparison between conditions, the workflow is: (1) QC-normalize the raw counts, explicitly flagging/handling the shallow sample rather than silently including it; (2) compute single-sample gene-set enrichment scores (GSVA, the standard method for per-sample pathway scoring on bulk RNA-seq) against the 50 human MSigDB hallmark gene sets staged in the reference store; (3) test each hallmark score for a difference between inflamed and control groups using a standard two-group test appropriate for n=6 per group, with multiple-testing correction across the 50 signatures; (4) run a conventional gene-level DE analysis (DESeq2) in parallel as an orthogonal check that hallmark differences are not simply an artifact of the low-library-size outlier, and to give the enrichment result independent support. All steps operate on the actual counts.csv/metadata.csv files and the actual condition labels (Crohn disease inflamed vs control)."
+  },
+  "usage": {
+    "inputTokens": 308240,
+    "outputTokens": 2713,
+    "cacheCreationInputTokens": 101609,
+    "cacheReadInputTokens": 206559,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "GSVA",
+          "gseapy",
+          "decoupleR",
+          "decoupler",
+          "singscore",
+          "fgsea",
+          "pydeseq2",
+          "DESeq2",
+          "UCell"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTEx ileum"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "GSVA",
+        "query": "ssgsea gsva method parameters for gene set scoring per sample"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/rcastelo/gsva",
+        "query": "gsvaParam ssgseaParam usage with gene expression matrix and gene sets list, how to run gsva()"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Ileum Crohn's hallmark signature scoring vs control",
+          "analytical_narrative": "The input is a 12000x13 raw Salmon gene-level count matrix for 6 inflamed vs 6 control ileum samples (unpaired, single batch), with sample_01 flagged as having ~4x below-median library size. Because the research question asks for a per-sample score for every MSigDB hallmark signature and a comparison between conditions, the workflow is: (1) QC-normalize the raw counts, explicitly flagging/handling the shallow sample rather than silently including it; (2) compute single-sample gene-set enrichment scores (GSVA, the standard method for per-sample pathway scoring on bulk RNA-seq) against the 50 human MSigDB hallmark gene sets staged in the reference store; (3) test each hallmark score for a difference between inflamed and control groups using a standard two-group test appropriate for n=6 per group, with multiple-testing correction across the 50 signatures; (4) run a conventional gene-level DE analysis (DESeq2) in parallel as an orthogonal check that hallmark differences are not simply an artifact of the low-library-size outlier, and to give the enrichment result independent support. All steps operate on the actual counts.csv/metadata.csv files and the actual condition labels (Crohn disease inflamed vs control).",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and normalization of ileum RNA-seq counts",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "After confirming sample_01's low library size (raw counts.csv, 12000 genes x 12 samples), what normalized expression matrix (log2 CPM or DESeq2 variance-stabilized) should be used for downstream hallmark scoring, and should sample_01 be excluded or retained with a caveat?",
+              "acceptance_criteria": [
+                "Library sizes are computed and reported for all 12 samples, confirming/quantifying the ~4x deficit in sample_01",
+                "A normalized (log2 CPM or VST) expression matrix with gene symbols as rows and all samples as columns is produced",
+                "A documented decision is made and justified on whether sample_01 is retained (with caveat) or excluded, based on quantitative QC (e.g. library size, fraction of genes detected)",
+                "Output normalized matrix and metadata are saved for downstream steps"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, inflamed vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using raw counts and the DESeq2 negative-binomial model, which genes are differentially expressed between Crohn disease inflamed (n=6) and control (n=6) ileum samples, and is the result sensitive to the shallow sample_01?",
+              "acceptance_criteria": [
+                "DESeq2 run on raw integer counts with condition (inflamed vs control) as the design factor",
+                "Results table with log2FC, p-value, and BH-adjusted p-value for all ~12000 genes",
+                "A sensitivity check comparing DE results with and without sample_01 is reported (e.g. concordance of top genes/effect sizes)",
+                "Output DE table saved for downstream interpretation"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Per-sample hallmark gene-set scoring (GSVA)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "What is the per-sample enrichment score for each of the 50 MSigDB hallmark gene sets, computed from the normalized ileum expression matrix (12 samples), using the human hallmark gene set collection available in the reference store?",
+              "acceptance_criteria": [
+                "Confirms the human MSigDB hallmark GMT (50 HALLMARK_* gene sets, HGNC symbols) is available in the reference store before running; if absent, reports the gap rather than substituting a different collection",
+                "GSVA (or ssGSEA as a documented alternative) run on the normalized log-scale expression matrix from T1S1, producing a 50 (hallmark) x 12 (sample) enrichment score matrix",
+                "Every sample, including sample_01, receives a score for every hallmark signature; the output table has samples as columns and hallmark names as rows",
+                "Output score matrix saved as a CSV for downstream statistical testing"
+              ],
+              "packages": [
+                "GSVA"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Differential hallmark signature testing, inflamed vs control",
+              "track": "T2",
+              "step_type": "statistics",
+              "question": "Which of the 50 hallmark gene-set scores differ significantly between Crohn disease inflamed (n=6) and control (n=6) ileum samples, after correcting for testing 50 signatures, and how much does excluding the shallow sample_01 change the result?",
+              "acceptance_criteria": [
+                "Two-group test (e.g. Welch t-test or Wilcoxon rank-sum, appropriate for n=6 per group) applied to each of the 50 hallmark scores from T2S1 comparing inflamed vs control",
+                "Benjamini-Hochberg FDR correction applied across the 50 tests, with raw and adjusted p-values reported per signature",
+                "A ranked table of hallmark signatures by effect size and significance is produced, explicitly identifying which pass FDR<0.05",
+                "A documented sensitivity analysis rerunning the same test with sample_01 excluded, to show whether any significant hallmark depends on that single low-depth sample",
+                "Visualization (e.g. heatmap of hallmark scores across all 12 samples, ordered by condition) is produced"
+              ],
+              "packages": [
+                "pandas",
+                "scipy",
+                "statsmodels",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent"
+            }
+          ],
+          "created_at": "2026-09-07T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

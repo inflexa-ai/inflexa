@@ -1,0 +1,589 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "python-enrichment-only",
+  "run": 1,
+  "startedAt": "2026-09-07T03:00:52.799Z",
+  "elapsedMs": 467358,
+  "outcome": "plan_submitted",
+  "planId": "pln-1a86c4dd",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Validate delivered tables and build Wald-statistic ranked list",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "sample_01's low depth (~4x below median) is inherited from the delivered DE analysis: DESeq2 already down-weighted it via its size factor, but it lowers power genome-wide — the enrichment inherits this and it must be reported as inherited, not fixed",
+          "DESeq2 sets p/padj to NA for Cook's-distance outlier-flagged genes at 6 replicates per cell; these genes are dropped from the ranking and their count reported"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "From the delivered DESeq2 results table of the treated (AD lesional) vs control contrast, can a clean full-length ranked gene list be built, and are the delivered inputs internally consistent?",
+        "grounding": {
+          "claims": [
+            "R-0110@41cb",
+            "R-0008@440d",
+            "R-0099@0a77",
+            "R-0108@409f"
+          ],
+          "reason": "Enrichment on a delivered results table: input-contrast/tie-rule/pinned-collection statement per R-0110@41cb; low-depth sample kept, inspected, reported per R-0008@440d; Wald statistic chosen from the disputed ranking metric R-0108@409f. The full vst/PCA sample-structure QC (R-0033) was checked and flagged as the permitted method, but it requires DESeq2 in R, which the user's Python-only constraint excludes; the sample-level check is therefore reduced to the descriptive library-size report that R-0110 requires when counts are delivered, with no model fitted.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Python only — no R scripts, no rpy2 calls",
+          "Do NOT re-run differential expression; the delivered DESeq2 table is the sole source of the ranking statistic",
+          "No inferential QC or model on the counts; the sample-level check is descriptive only",
+          "Keep sample_01; report its library size beside the others, never drop it silently (R-0008)",
+          "Rank metric = DESeq2 Wald statistic (stat column); never rank on the unshrunken log2FC alone or a signed p-value (R-0099); state the disputed-choice resolution (R-0108)",
+          "State the input contrast, reference level and sign convention explicitly in the step output (R-0110)",
+          "State and apply one deterministic tie rule for duplicated symbols and tied statistics",
+          "GSEA input must be the FULL ranked list — do not threshold at padj or LFC (R-0045)"
+        ],
+        "description": "Python (pandas) validation and ranked-list construction. (1) Load the metadata table (12 samples) at /eval-four-models-with-python-enrichment-only-1/data/inputs/metadata/metadata.csv and verify the design stated there (6 treated vs 6 control, unpaired); report the column holding the condition and its levels. (2) Load /eval-four-models-with-python-enrichment-only-1/data/inputs/counts/counts.csv (12000 genes x 13 columns, first column gene symbol) and /eval-four-models-with-python-enrichment-only-1/data/inputs/results/de_results.csv (12000 x 8). Verify every sample in the metadata appears in counts.csv and that every DE-table gene exists in the counts matrix; report any mismatch. (3) Descriptive sample-level check per R-0110 (counts are delivered): report library size (column sums) per sample, explicitly reporting sample_01's ~4x-below-median depth alongside the others (flag R-0008; it is kept, not removed — removal is a judgment, and no new DE test is fitted here). This check is descriptive only; no statistical model is fitted and no inferential QC test is run. (4) State the delivered table's contrast and sign convention in the output (treated vs control; positive log2FoldChange/stat = higher in treated) — if the table's contrast direction cannot be confirmed from the metadata, verify by checking that canonical atopic-dermatitis lesional markers (e.g. KRT16, FLG, CLDN1, IL13-response genes such as CCL17/CCL18/CCL26, PSORS1C1/LCN2) carry positive log2FC and note the verification in the report. (5) Build the ranked list: metric = DESeq2 Wald statistic ('stat' column) per R-0099/R-0108 (chosen over signed -log10 p, which saturates and ties, and over the unshrunken log2FC alone); drop genes with NA statistic (report how many and why — DESeq2 outlier-flagging and independent filtering both produce NAs); resolve duplicate gene symbols deterministically (keep the row with max |stat|, ties broken by smaller padj) and state this tie rule in the output; sort descending. Save ranked_list.csv (gene, stat). Report: n tested genes, n dropped with cause, library sizes, and the count of genes with padj < 0.05 (context only — the GSEA itself uses the full list, never a thresholded one, per R-0045).",
+        "acceptance_criteria": [
+          "ranked_list.csv exists with one row per unique tested gene, sorted by descending Wald statistic",
+          "A validation report states: 6 treated vs 6 control confirmed from metadata, n genes in DE table, n dropped for NA with cause, n duplicates collapsed under the stated tie rule, per-sample library sizes including sample_01",
+          "The contrast and sign convention (positive = higher in treated) is stated and, if direction was verified against known AD markers, that verification is recorded",
+          "No column of the ranked list mixes identifier spaces; all identifiers are HGNC symbols as delivered"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Preranked Hallmark GSEA (gseapy) + blitzgsea concordance",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "gseapy's permutation-based p-values are stochastic: the seed must be fixed and recorded or NES/p-values do not reproduce",
+          "With only 12 samples the DE statistics come from 6 vs 6 — expect fewer and weaker Hallmark hits than a larger cohort would give; absence of a set is not evidence of no biology",
+          "The low-depth sample may have inflated the sampling variance of the delivered statistics; a hit that rests on a handful of leading-edge genes from few samples is a hypothesis, not a finding",
+          "If fewer than ~50 genes pass padj < 0.05 in the delivered table, over-representation analysis would have no power — the ranked method on the full list is the correct input (R-0103); state the significant-gene count in the report"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "blitzgsea",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 50 MSigDB Hallmark gene sets are enriched among genes up- or down-regulated in treated (AD lesional) skin vs control?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0045@f652",
+            "R-0047@fd9d",
+            "R-0099@0a77",
+            "R-0108@409f",
+            "R-0101@06c8",
+            "R-0054@801e",
+            "R-0046@a0ac",
+            "R-0052@620a",
+            "R-0110@41cb"
+          ],
+          "reason": "Preranked GSEA on the full Wald-statistic list vs MSigDB Hallmark per R-0107@976c; the procedure's R fgsea tool of record is substituted with gseapy.prerank because the user mandates Python-only scripts, and blitzgsea serves as the second method per R-0055",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Python only; gseapy is the primary tool, blitzgsea the independent second implementation",
+          "Full ranked list only — no thresholding before the test (R-0045)",
+          "Gene set size window 15–500 applied after intersecting each set with the tested genes; report the window (R-0047)",
+          "Pin and state the collection: MSigDB human Hallmark, 2026.1 release (R-0110 collection pin)",
+          "Fixed seed (42) written into the script before it runs; report it (R-0086)",
+          "BH FDR across the tested sets; do not merge Hallmark with any other collection",
+          "Report the unmapped share per set (genes in the set absent from the ranked list)",
+          "State in the output that enrichment results are method-dependent (R-0055) and record the concordance between the two implementations"
+        ],
+        "description": "Run preranked gene set enrichment of the full Wald-statistic ranked list against the pinned MSigDB human Hallmark collection — the 50 HALLMARK_* sets, MSigDB 2026.1 release, staged at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt (HGNC symbols, matching the ranked list's identifier space, so no Entrez mapping is needed — symbols to symbols is one identifier space; R-0101's Entrez mapping applies only when the collection is Entrez-space). Primary tool: gseapy.prerank (Python implementation of preranked GSEA, substituting for the R fgsea tool of record per the user's Python-only constraint; R-0107): rank metric = Wald statistic, full ranked list input, weight = 1, min_size = 15, max_size = 500 (window applied AFTER intersecting each set with the tested genes, R-0047), permutation_num = 1000, fixed seed 42, Benjamini–Hochberg FDR across the 50 sets. Report per set: ES, NES, nominal p, FDR, and set size after intersection; report the share of each set's members absent from the tested genes (unmapped share, R-0101's reporting requirement in symbol space). Robustness: run blitzgsea (independent Python implementation) on the same ranked list and same collection/parameters and report concordance (rank correlation of NES, agreement of FDR<0.25 calls, disagreements listed). If blitzgsea cannot read the staged GMT or fails, record the failure and keep the gseapy result as primary — the loss costs a concordance annotation, not the analysis. Collapse redundant significant sets before interpretation (R-0052): quantify pairwise leading-edge overlap among significant Hallmark sets and group sets whose leading edges overlap >50% into one finding. Write hallmarks_gsea.csv (all 50 sets with all statistics) and blitzgsea_concordance.csv.",
+        "acceptance_criteria": [
+          "hallmarks_gsea.csv contains one row per Hallmark set with set size (post-intersection), ES, NES, nominal p, and BH FDR",
+          "Every ranked-list gene that is a member of any Hallmark set is counted as mapped; per-set and overall unmapped shares reported",
+          "blitzgsea_concordance.csv reports NES correlation between implementations and the set-level agreement/disagreement at FDR < 0.25",
+          "All 50 sets are tested (none pre-excluded by name); sets excluded only by the 15–500 size window are listed with their post-intersection sizes",
+          "The seed, permutation count, weight parameter, and collection file/release appear in the step output"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Enrichment report with leading edges",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Which Hallmark sets are significant at FDR < 0.25, in which direction, driven by which leading-edge genes, and how sensitive is the call to the enrichment implementation?",
+        "grounding": {
+          "claims": [
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report content follows R-0051@01ca, R-0055@107a, R-0105@c4a8, R-0086@becf; the knowledge procedure marks the report step itself ungrounded (no rule covers it), so the step is planned from those claims directly",
+          "status": "ungrounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Python only (pandas, matplotlib/seaborn for figures)",
+          "Leading-edge genes listed per significant set with gene-level statistics (R-0105)",
+          "Report must state database version, rank metric, universe, size window, tool and versions, and multiple-testing method (R-0051)",
+          "Method-dependence caveat included; no set presented as a proven finding (R-0055)",
+          "Reproducibility record with seed, package versions, and collection version stored alongside results (R-0086)"
+        ],
+        "description": "Produce the final enrichment deliverable from hallmarks_gsea.csv and blitzgsea_concordance.csv. (1) A ranked significance table (pandas/matplotlib): pathway, set size, ES, NES, p, FDR, direction (up in treated vs down in treated), sorted by NES. (2) Leading-edge genes per significant set (R-0105): extract from gseapy's enrichment term-gene output, each with its Wald statistic and log2FC, and mark leading edges shared between significant sets so correlated sets are recognizable as one finding; collapse overlapping sets per the R-0052 pass of T1S2. (3) A bar/heatmap figure of NES with FDR annotation, split by direction. (4) Method-dependence caveat (R-0055): state that ranked and over-representation methods give different set lists, name the method, and report the gseapy-vs-blitzgsea agreement. (5) Reproducibility record (R-0086): session/package versions (gseapy, blitzgsea, pandas, numpy), the permutation seed, and the collection version (MSigDB Hallmark 2026.1) stored with the results. (6) State the full reporting set per R-0051: database and version, rank metric (Wald statistic, with the R-0108 disputed-choice resolution), universe (tested genes in the delivered table), size window (15–500), and tool versions. Optionally render an enrichment plot for the top set. No claims of mechanism — sets are hypotheses for follow-up (WikiPathways human and MSigDB GO collections are available in the reference store if a second collection is later wanted).",
+        "acceptance_criteria": [
+          "hallmark_enrichment_report.csv with all 50 sets (or all tested sets) and every reported set annotated with direction and FDR",
+          "leading_edges.csv with per-set leading-edge gene symbols plus their Wald statistic and log2FC",
+          "At least one figure (NES ranking with FDR) rendered to a file",
+          "A reproducibility record (package versions, seed, collection release) saved with the outputs"
+        ]
+      }
+    ],
+    "title": "Hallmark GSEA of AD treated vs control DE",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question is which MSigDB Hallmark pathways are enriched in the treated (atopic dermatitis lesional) vs control contrast, and the DESeq2 results table is already delivered — so the plan is enrichment-only and starts from that table, as the user asked. The delivered counts and metadata are used only descriptively (library sizes, coverage of the DE table), never re-modeled, and the known low-depth sample (sample_01, ~4x below median library size) is kept and reported as inherited context per R-0008, since DESeq2's size factors already down-weighted it in the delivered test. The enrichment follows the grounded procedure: rank every tested gene by the DESeq2 Wald statistic (the disputed ranking-metric choice R-0108 is resolved in favor of the Wald statistic: signed, uncertainty-scaled, no zero-p-value tie pathology), run preranked GSEA against the pinned MSigDB human Hallmark collection (50 sets, 2026.1 release, staged at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt) on the FULL ranked list with a 15–500 gene size window and Benjamini–Hochberg FDR, and corroborate with an independent second Python implementation (blitzgsea) because enrichment results are method-dependent (R-0055). Per the user's hard constraint every script is Python; the knowledge plane's tool of record (R fgsea) is therefore replaced by gseapy.prerank, an equivalent preranked-GSEA implementation, and blitzgsea serves as the second estimator. Both DE results and Hallmark GMT are in HGNC symbol space, so no identifier mixing occurs; the unmapped share per set is reported. The report lists leading-edge genes per significant set, collapses redundant sets, and carries a reproducibility record (seed, package versions, collection release)."
+  },
+  "usage": {
+    "inputTokens": 384422,
+    "outputTokens": 13641,
+    "cacheReadInputTokens": 110592,
+    "reasoningTokens": 4279
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "descriptive library-size and delivered-table validation in Python (no model fitted; counts used only to report library sizes and to confirm the delivered DE table covers the tested genes)",
+            "package": "pandas",
+            "parameters": [
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              },
+              {
+                "name": "model_fitted",
+                "value": "none"
+              }
+            ],
+            "outcome": "descriptive_only"
+          },
+          {
+            "step_type": "enrichment",
+            "method": "gseapy prerank GSEA on the full Wald-statistic ranked list against MSigDB Hallmark (python implementation of preranked GSEA, replacing the R fgsea tool of record per the user's Python-only constraint), with blitzgsea as an independent second implementation for concordance",
+            "package": "gseapy",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "permutation_num",
+                "value": 1000
+              },
+              {
+                "name": "weight",
+                "value": 1
+              },
+              {
+                "name": "multiple_testing",
+                "value": "BH_fdr"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human_2026.1"
+              },
+              {
+                "name": "gsea_input",
+                "value": "full_ranked_list"
+              },
+              {
+                "name": "seed",
+                "value": 42
+              }
+            ],
+            "outcome": "none"
+          },
+          {
+            "step_type": "report",
+            "method": "enrichment report with database version, rank metric, universe, size window, leading-edge genes per significant set, and reproducibility record",
+            "package": "pandas",
+            "parameters": [
+              {
+                "name": "leading_edge",
+                "value": "per_significant_set"
+              },
+              {
+                "name": "enrichment_report",
+                "value": "database,version,rank_metric,universe,size_window"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "session_info,seed,package_versions,collection_version"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "enrichment",
+            "method": "gseapy prerank GSEA on the full Wald-statistic ranked list against MSigDB Hallmark (python implementation of preranked GSEA, replacing the R fgsea tool of record per the user's Python-only constraint), with blitzgsea as an independent second implementation for concordance",
+            "package": "gseapy",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "permutation_num",
+                "value": 1000
+              },
+              {
+                "name": "weight",
+                "value": 1
+              },
+              {
+                "name": "multiple_testing",
+                "value": "BH_fdr"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human_2026.1"
+              },
+              {
+                "name": "gsea_input",
+                "value": "full_ranked_list"
+              },
+              {
+                "name": "seed",
+                "value": 42
+              }
+            ],
+            "outcome": "none"
+          },
+          {
+            "step_type": "report",
+            "method": "enrichment report with database version, rank metric, universe, size window, leading-edge genes per significant set, and reproducibility record",
+            "package": "pandas",
+            "parameters": [
+              {
+                "name": "leading_edge",
+                "value": "per_significant_set"
+              },
+              {
+                "name": "enrichment_report",
+                "value": "database,version,rank_metric,universe,size_window"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "session_info,seed,package_versions,collection_version"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Hallmark GSEA of AD treated vs control DE\", \"analytical_narrative\": \"The research question is which MSigDB Hallmark pathways are enriched in the treated (atopic dermatitis lesional) vs control contrast, and the DESeq2 results table is already delivered — so the plan is enrichment-only and starts from that table, as the user asked. The delivered counts and metadata are used only descriptively (library sizes, coverage of the DE table), never re-modeled, and the known low-depth sample (sample_01, ~4x below median library size) is kept and reported as inherited context per R-0008, since DESeq2's size factors already down-weighted it in the delivered test. The enrichment follows the grounded procedure: rank every tested gene by the DESeq2 Wald statistic (the disputed ranking-metric choice R-0108 is resolved in favor of the Wald statistic: signed, uncertainty-scaled, no zero-p-value tie pathology), run preranked GSEA against the pinned MSigDB human Hallmark collection (50 sets, 2026.1 release, staged at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt) on the FULL ranked list with a 15–500 gene size window and Benjamini–Hochberg FDR, and corroborate with an independent second Python implementation (blitzgsea) because enrichment results are method-dependent (R-0055). Per the user's hard constraint every script is Python; the knowledge plane's tool of record (R fgsea) is therefore replaced by gseapy.prerank, an equivalent preranked-GSEA implementation, and blitzgsea serves as the second estimator. Both DE results and Hallmark GMT are in HGNC symbol space, so no identifier mixing occurs; the unmapped share per set is reported. The report lists leading-edge genes per significant set, collapses redundant sets, and carries a reproducibility record (seed, package versions, collection release).\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Validate delivered tables and build Wald-statistic ranked list\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"From the delivered DESeq2 results table of the treated (AD lesional) vs control contrast, can a clean full-length ranked gene list be built, and are the delivered inputs internally consistent?\", \"description\": \"Python (pandas) validation and ranked-list construction. (1) Load /eval-four-models-with-python-enrichment-only-1/data/inputs/metadata/metadata.csv (12 samples) and verify the design stated there (6 treated vs 6 control, unpaired); report the column holding the condition and its levels. (2) Load /eval-four-models-with-python-only-1 ... correct path is /eval-four-models-with-python-enrichment-only-1/data/inputs/counts/counts.csv (12000 genes x 13 columns, first column gene symbol) and /eval-four-models-with-python-enrichment-only-1/data/inputs/results/de_results.csv (12000 x 8). Verify every sample column in the DE-relevant metadata appears in counts.csv and that every DE-table gene exists in the counts matrix; report any mismatch. (3) Descriptive sample-level check per R-0110 (counts are delivered): report library size (column sums) per sample, explicitly reporting sample_01's ~4x-below-median depth alongside the others (flag R-0008; it is kept, not removed — removal is a judgment, and no new DE test is fitted here). This check is descriptive only; no statistical model is fitted and no inferential QC test is run. (4) State the delivered table's contrast and sign convention in the output (treated vs control; positive log2FoldChange/stat = higher in treated) — if the table's contrast direction cannot be confirmed from the metadata, verify by checking that canonical atopic-dermatitis lesional markers (e.g. KRT16, FLG, CLDN1, IL13-response genes such as CCL17/CCL18/CCL26, PSORS1C1/LCN2) carry positive log2FC and note the verification in the report. (5) Build the ranked list: metric = DESeq2 Wald statistic ('stat' column) per R-0099/R-0108 (chosen over signed -log10 p, which saturates and ties, and over the unshrunken log2FC alone); drop genes with NA statistic (report how many and why — DESeq2 outlier-flagging and independent filtering both produce NAs); resolve duplicate gene symbols deterministically (keep the row with max |stat|, ties broken by smaller padj) and state this tie rule in the output; sort descending. Save ranked_list.csv (gene, stat). Report: n tested genes, n dropped with cause, library sizes, and the count of genes with padj < 0.05 (context only — the GSEA itself uses the full list, never a thresholded one, per R-0045).\", \"constraints\": [\"Python only — no R scripts, no rpy2 calls\", \"Do NOT re-run differential expression; the delivered DESeq2 table is the sole source of the ranking statistic\", \"No inferential QC or model on the counts; the sample-level check is descriptive only\", \"Keep sample_01; report its library size beside the others, never drop it silently (R-0008)\", \"Rank metric = DESeq2 Wald statistic (stat column); never rank on the unshrunken log2FC alone or a signed p-value (R-0099); state the disputed-choice resolution (R-0108)\", \"State the input contrast, reference level and sign convention explicitly in the step output (R-0110)\", \"State and apply one deterministic tie rule for duplicated symbols and tied statistics\", \"GSEA input must be the FULL ranked list — do not threshold at padj or LFC (R-0045)\"], \"acceptance_criteria\": [\"ranked_list.csv exists with one row per unique tested gene, sorted by descending Wald statistic\", \"A validation report states: 6 treated vs 6 control confirmed from metadata, n genes in DE table, n dropped for NA with cause, n duplicates collapsed under the stated tie rule, per-sample library sizes including sample_01\", \"The contrast and sign convention (positive = higher in treated) is stated and, if direction was verified against known AD markers, that verification is recorded\", \"No column of the ranked list mixes identifier spaces; all identifiers are HGNC symbols as delivered\"], \"packages\": [\"pandas\", \"numpy\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\", \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a\", \"claims\": [\"R-0110@41cb\", \"R-0008@440d\", \"R-0099@0a77\", \"R-0108@409f\"], \"reason\": \"Enrichment on a delivered results table: input-contrast/tie-rule/pinned-collection statement per R-0110@41cb; low-depth sample kept, inspected, reported per R-0008@440d; Wald statistic chosen from the disputed ranking metric R-0108@409f. The full vst/PCA sample-structure QC (R-0033) was checked and flagged as the permitted method, but it requires DESeq2 in R, which the user's Python-only constraint excludes; the sample-level check is therefore reduced to the descriptive library-size report that R-0110 requires when counts are delivered, with no model fitted.\"}, \"caveats\": [\"sample_01's low depth (~4x below median) is inherited from the delivered DE analysis: DESeq2 already down-weighted it via its size factor, but it lowers power genome-wide — the enrichment inherits this and it must be reported as inherited, not fixed\", \"DESeq2 sets p/padj to NA for Cook's-distance outlier-flagged genes at 6 replicates per cell; these genes are dropped from the ranking and their count reported\"]}, {\"id\": \"T1S2\", \"name\": \"Preranked Hallmark GSEA (gseapy) + blitzgsea concordance\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which of the 50 MSigDB Hallmark gene sets are enriched among genes up- or down-regulated in treated (AD lesional) skin vs control?\", \"description\": \"Run preranked gene set enrichment of the full Wald-statistic ranked list against the pinned MSigDB human Hallmark collection — the 50 HALLMARK_* sets, MSigDB 2026.1 release, staged at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt (HGNC symbols, matching the ranked list's identifier space, so no Entrez mapping is needed — symbols to symbols is one identifier space; R-0101's Entrez mapping applies only when the collection is Entrez-space). Primary tool: gseapy.prerank (Python implementation of preranked GSEA, substituting for the R fgsea tool of record per the user's Python-only constraint; R-0107): rank metric = Wald statistic, full ranked list input, weight = 1, min_size = 15, max_size = 500 (window applied AFTER intersecting each set with the tested genes, R-0047), permutation_num = 1000, fixed seed 42, Benjamini–Hochberg FDR across the 50 sets. Report per set: ES, NES, nominal p, FDR, and set size after intersection; report the share of each set's members absent from the tested genes (unmapped share, R-0101's reporting requirement in symbol space). Robustness: run blitzgsea (independent Python implementation) on the same ranked list and same collection/parameters and report concordance (rank correlation of NES, agreement of FDR<0.25 calls, disagreements listed). If blitzgsea cannot read the staged GMT or fails, record the failure and keep the gseapy result as primary — the loss costs a concordance annotation, not the analysis. Collapse redundant significant sets before interpretation (R-0052): quantify pairwise leading-edge overlap among significant Hallmark sets and group sets whose leading edges overlap >50% into one finding. Write hallmarks_gsea.csv (all 50 sets with all statistics) and blitzgsea_concordance.csv.\", \"constraints\": [\"Python only; gseapy is the primary tool, blitzgsea the independent second implementation\", \"Full ranked list only — no thresholding before the test (R-0045)\", \"Gene set size window 15–500 applied after intersecting each set with the tested genes; report the window (R-0047)\", \"Pin and state the collection: MSigDB human Hallmark, 2026.1 release (R-0110 collection pin)\", \"Fixed seed (42) written into the script before it runs; report it (R-0086)\", \"BH FDR across the tested sets; do not merge Hallmark with any other collection\", \"Report the unmapped share per set (genes in the set absent from the ranked list)\", \"State in the output that enrichment results are method-dependent (R-0055) and record the concordance between the two implementations\"], \"acceptance_criteria\": [\"hallmarks_gsea.csv contains one row per Hallmark set with set size (post-intersection), ES, NES, nominal p, and BH FDR\", \"Every ranked-list gene that is a member of any Hallmark set is counted as mapped; per-set and overall unmapped shares reported\", \"blitzgsea_concordance.csv reports NES correlation between implementations and the set-level agreement/disagreement at FDR < 0.25\", \"All 50 sets are tested (none pre-excluded by name); sets excluded only by the 15–500 size window are listed with their post-intersection sizes\", \"The seed, permutation count, weight parameter, and collection file/release appear in the step output\"], \"packages\": [\"gseapy\", \"blitzgsea\", \"pandas\", \"numpy\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"enrichment-agent\", \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a\", \"claims\": [\"R-0107@976c\", \"R-0048@500d\", \"R-0045@f652\", \"R-0047@fd9d\", \"R-0099@0a77\", \"R-0108@409f\", \"R-0101@06c8\", \"R-0054@801e\", \"R-0046@a0ac\", \"R-0052@620a\", \"R-0110@41cb\"], \"template\": \"tpl-fgsea-preranked@1.0.0\", \"reason\": \"Preranked GSEA on the full Wald-statistic list vs MSigDB Hallmark per R-0107@976c; the procedure's R fgsea tool of record is substituted with gseapy.prerank because the user mandates Python-only scripts, and blitzgsea serves as the second method per R-0055\"}, \"caveats\": [\"gseapy's permutation-based p-values are stochastic: the seed must be fixed and recorded or NES/p-values do not reproduce\", \"With only 12 samples the DE statistics come from 6 vs 6 — expect fewer and weaker Hallmark hits than a larger cohort would give; absence of a set is not evidence of no biology\", \"The low-depth sample may have inflated the sampling variance of the delivered statistics; a hit that rests on a handful of leading-edge genes from few samples is a hypothesis, not a finding\", \"If fewer than ~50 genes pass padj < 0.05 in the delivered table, over-representation analysis would have no power — the ranked method on the full list is the correct input (R-0103); state the significant-gene count in the report\"]}, {\"id\": \"T1S3\", \"name\": \"Enrichment report with leading edges\", \"track\": \"T1\", \"step_type\": \"report\", \"question\": \"Which Hallmark sets are significant at FDR < 0.25, in which direction, driven by which leading-edge genes, and how sensitive is the call to the enrichment implementation?\", \"description\": \"Produce the final enrichment deliverable from hallmarks_gsea.csv and blitzgsea_concordance.csv. (1) A ranked significance table (pandas/matplotlib): pathway, set size, ES, NES, p, FDR, direction (up in treated vs down in treated), sorted by NES. (2) Leading-edge genes per significant set (R-0105): extract from gseapy's enrichment term-gene output, each with its Wald statistic and log2FC, and mark leading edges shared between significant sets so correlated sets are recognizable as one finding; collapse overlapping sets per the R-0052 pass of T1S2. (3) A bar/heatmap figure of NES with FDR annotation, split by direction. (4) Method-dependence caveat (R-0055): state that ranked and over-representation methods give different set lists, name the method, and report the gseapy-vs-blitzgsea agreement. (5) Reproducibility record (R-0086): session/package versions (gseapy, blitzgsea, pandas, numpy), the permutation seed, and the collection version (MSigDB Hallmark 2026.1) stored with the results. (6) State the full reporting set per R-0051: database and version, rank metric (Wald statistic, with the R-0108 disputed-choice resolution), universe (tested genes in the delivered table), size window (15–500), and tool versions. Optionally render an enrichment plot for the top set. No claims of mechanism — sets are hypotheses for follow-up (WikiPathways human and MSigDB GO/Reactome-substitute collections are available in the reference store if a second collection is later wanted).\", \"constraints\": [\"Python only (pandas, matplotlib/seaborn for figures)\", \"Leading-edge genes listed per significant set with gene-level statistics (R-0105)\", \"Report must state database version, rank metric, universe, size window, tool and versions, and multiple-testing method (R-0051)\", \"Method-dependence caveat included; no set presented as a proven finding (R-0055)\", \"Reproducibility record with seed, package versions, and collection version stored alongside results (R-0086)\"], \"acceptance_criteria\": [\"hallmark_enrichment_report.csv with all 50 sets (or all tested sets) and every reported set annotated with direction and FDR\", \"leading_edges.csv with per-set leading-edge gene symbols plus their Wald statistic and log2FC\", \"At least one figure (NES ranking with FDR) rendered to a file\", \"A reproducibility record (package versions, seed, collection release) saved with the outputs\"], \"packages\": [\"pandas\", \"matplotlib\", \"seaborn\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\", \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a\", \"claims\": [\"R-0051@01ca\", \"R-0055@107a\", \"R-0105@c4a8\", \"R-0086@becf\"], \"reason\": \"Report content follows R-0051@01ca, R-0055@107a, R-0105@c4a8, R-0086@becf; the knowledge procedure marks the report step itself ungrounded (no rule covers it), so the step is planned from those claims directly\"}}], \"created_at\": \"2026-09-06T00:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\"} }"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "ranked_list.csv exists with one row per unique tested gene, sorted by descending Wald statistic",
+                "A validation report states: 6 treated vs 6 control confirmed from metadata, n genes in DE table, n dropped for NA with cause, n duplicates collapsed under the stated tie rule, per-sample library sizes including sample_01",
+                "The contrast and sign convention (positive = higher in treated) is stated and, if direction was verified against known AD markers, that verification is recorded",
+                "No column of the ranked list mixes identifier spaces; all identifiers are HGNC symbols as delivered"
+              ],
+              "agent": "enrichment-agent",
+              "caveats": [
+                "sample_01's low depth (~4x below median) is inherited from the delivered DE analysis: DESeq2 already down-weighted it via its size factor, but it lowers power genome-wide — the enrichment inherits this and it must be reported as inherited, not fixed",
+                "DESeq2 sets p/padj to NA for Cook's-distance outlier-flagged genes at 6 replicates per cell; these genes are dropped from the ranking and their count reported"
+              ],
+              "constraints": [
+                "Python only — no R scripts, no rpy2 calls",
+                "Do NOT re-run differential expression; the delivered DESeq2 table is the sole source of the ranking statistic",
+                "No inferential QC or model on the counts; the sample-level check is descriptive only",
+                "Keep sample_01; report its library size beside the others, never drop it silently (R-0008)",
+                "Rank metric = DESeq2 Wald statistic (stat column); never rank on the unshrunken log2FC alone or a signed p-value (R-0099); state the disputed-choice resolution (R-0108)",
+                "State the input contrast, reference level and sign convention explicitly in the step output (R-0110)",
+                "State and apply one deterministic tie rule for duplicated symbols and tied statistics",
+                "GSEA input must be the FULL ranked list — do not threshold at padj or LFC (R-0045)"
+              ],
+              "depends_on": [],
+              "description": "Python (pandas) validation and ranked-list construction. (1) Load the metadata table (12 samples) at /eval-four-models-with-python-enrichment-only-1/data/inputs/metadata/metadata.csv and verify the design stated there (6 treated vs 6 control, unpaired); report the column holding the condition and its levels. (2) Load /eval-four-models-with-python-enrichment-only-1/data/inputs/counts/counts.csv (12000 genes x 13 columns, first column gene symbol) and /eval-four-models-with-python-enrichment-only-1/data/inputs/results/de_results.csv (12000 x 8). Verify every sample in the metadata appears in counts.csv and that every DE-table gene exists in the counts matrix; report any mismatch. (3) Descriptive sample-level check per R-0110 (counts are delivered): report library size (column sums) per sample, explicitly reporting sample_01's ~4x-below-median depth alongside the others (flag R-0008; it is kept, not removed — removal is a judgment, and no new DE test is fitted here). This check is descriptive only; no statistical model is fitted and no inferential QC test is run. (4) State the delivered table's contrast and sign convention in the output (treated vs control; positive log2FoldChange/stat = higher in treated) — if the table's contrast direction cannot be confirmed from the metadata, verify by checking that canonical atopic-dermatitis lesional markers (e.g. KRT16, FLG, CLDN1, IL13-response genes such as CCL17/CCL18/CCL26, PSORS1C1/LCN2) carry positive log2FC and note the verification in the report. (5) Build the ranked list: metric = DESeq2 Wald statistic ('stat' column) per R-0099/R-0108 (chosen over signed -log10 p, which saturates and ties, and over the unshrunken log2FC alone); drop genes with NA statistic (report how many and why — DESeq2 outlier-flagging and independent filtering both produce NAs); resolve duplicate gene symbols deterministically (keep the row with max |stat|, ties broken by smaller padj) and state this tie rule in the output; sort descending. Save ranked_list.csv (gene, stat). Report: n tested genes, n dropped with cause, library sizes, and the count of genes with padj < 0.05 (context only — the GSEA itself uses the full list, never a thresholded one, per R-0045).",
+              "grounding": {
+                "claims": [
+                  "R-0110@41cb",
+                  "R-0008@440d",
+                  "R-0099@0a77",
+                  "R-0108@409f"
+                ],
+                "reason": "Enrichment on a delivered results table: input-contrast/tie-rule/pinned-collection statement per R-0110@41cb; low-depth sample kept, inspected, reported per R-0008@440d; Wald statistic chosen from the disputed ranking metric R-0108@409f. The full vst/PCA sample-structure QC (R-0033) was checked and flagged as the permitted method, but it requires DESeq2 in R, which the user's Python-only constraint excludes; the sample-level check is therefore reduced to the descriptive library-size report that R-0110 requires when counts are delivered, with no model fitted.",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded"
+              },
+              "id": "T1S1",
+              "name": "Validate delivered tables and build Wald-statistic ranked list",
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "question": "From the delivered DESeq2 results table of the treated (AD lesional) vs control contrast, can a clean full-length ranked gene list be built, and are the delivered inputs internally consistent?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "hallmarks_gsea.csv contains one row per Hallmark set with set size (post-intersection), ES, NES, nominal p, and BH FDR",
+                "Every ranked-list gene that is a member of any Hallmark set is counted as mapped; per-set and overall unmapped shares reported",
+                "blitzgsea_concordance.csv reports NES correlation between implementations and the set-level agreement/disagreement at FDR < 0.25",
+                "All 50 sets are tested (none pre-excluded by name); sets excluded only by the 15–500 size window are listed with their post-intersection sizes",
+                "The seed, permutation count, weight parameter, and collection file/release appear in the step output"
+              ],
+              "agent": "enrichment-agent",
+              "caveats": [
+                "gseapy's permutation-based p-values are stochastic: the seed must be fixed and recorded or NES/p-values do not reproduce",
+                "With only 12 samples the DE statistics come from 6 vs 6 — expect fewer and weaker Hallmark hits than a larger cohort would give; absence of a set is not evidence of no biology",
+                "The low-depth sample may have inflated the sampling variance of the delivered statistics; a hit that rests on a handful of leading-edge genes from few samples is a hypothesis, not a finding",
+                "If fewer than ~50 genes pass padj < 0.05 in the delivered table, over-representation analysis would have no power — the ranked method on the full list is the correct input (R-0103); state the significant-gene count in the report"
+              ],
+              "constraints": [
+                "Python only; gseapy is the primary tool, blitzgsea the independent second implementation",
+                "Full ranked list only — no thresholding before the test (R-0045)",
+                "Gene set size window 15–500 applied after intersecting each set with the tested genes; report the window (R-0047)",
+                "Pin and state the collection: MSigDB human Hallmark, 2026.1 release (R-0110 collection pin)",
+                "Fixed seed (42) written into the script before it runs; report it (R-0086)",
+                "BH FDR across the tested sets; do not merge Hallmark with any other collection",
+                "Report the unmapped share per set (genes in the set absent from the ranked list)",
+                "State in the output that enrichment results are method-dependent (R-0055) and record the concordance between the two implementations"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Run preranked gene set enrichment of the full Wald-statistic ranked list against the pinned MSigDB human Hallmark collection — the 50 HALLMARK_* sets, MSigDB 2026.1 release, staged at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt (HGNC symbols, matching the ranked list's identifier space, so no Entrez mapping is needed — symbols to symbols is one identifier space; R-0101's Entrez mapping applies only when the collection is Entrez-space). Primary tool: gseapy.prerank (Python implementation of preranked GSEA, substituting for the R fgsea tool of record per the user's Python-only constraint; R-0107): rank metric = Wald statistic, full ranked list input, weight = 1, min_size = 15, max_size = 500 (window applied AFTER intersecting each set with the tested genes, R-0047), permutation_num = 1000, fixed seed 42, Benjamini–Hochberg FDR across the 50 sets. Report per set: ES, NES, nominal p, FDR, and set size after intersection; report the share of each set's members absent from the tested genes (unmapped share, R-0101's reporting requirement in symbol space). Robustness: run blitzgsea (independent Python implementation) on the same ranked list and same collection/parameters and report concordance (rank correlation of NES, agreement of FDR<0.25 calls, disagreements listed). If blitzgsea cannot read the staged GMT or fails, record the failure and keep the gseapy result as primary — the loss costs a concordance annotation, not the analysis. Collapse redundant significant sets before interpretation (R-0052): quantify pairwise leading-edge overlap among significant Hallmark sets and group sets whose leading edges overlap >50% into one finding. Write hallmarks_gsea.csv (all 50 sets with all statistics) and blitzgsea_concordance.csv.",
+              "grounding": {
+                "claims": [
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0045@f652",
+                  "R-0047@fd9d",
+                  "R-0099@0a77",
+                  "R-0108@409f",
+                  "R-0101@06c8",
+                  "R-0054@801e",
+                  "R-0046@a0ac",
+                  "R-0052@620a",
+                  "R-0110@41cb"
+                ],
+                "reason": "Preranked GSEA on the full Wald-statistic list vs MSigDB Hallmark per R-0107@976c; the procedure's R fgsea tool of record is substituted with gseapy.prerank because the user mandates Python-only scripts, and blitzgsea serves as the second method per R-0055",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded",
+                "template": "tpl-fgsea-preranked@1.0.0"
+              },
+              "id": "T1S2",
+              "name": "Preranked Hallmark GSEA (gseapy) + blitzgsea concordance",
+              "packages": [
+                "gseapy",
+                "blitzgsea",
+                "pandas",
+                "numpy"
+              ],
+              "question": "Which of the 50 MSigDB Hallmark gene sets are enriched among genes up- or down-regulated in treated (AD lesional) skin vs control?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "hallmark_enrichment_report.csv with all 50 sets (or all tested sets) and every reported set annotated with direction and FDR",
+                "leading_edges.csv with per-set leading-edge gene symbols plus their Wald statistic and log2FC",
+                "At least one figure (NES ranking with FDR) rendered to a file",
+                "A reproducibility record (package versions, seed, collection release) saved with the outputs"
+              ],
+              "agent": "enrichment-agent",
+              "constraints": [
+                "Python only (pandas, matplotlib/seaborn for figures)",
+                "Leading-edge genes listed per significant set with gene-level statistics (R-0105)",
+                "Report must state database version, rank metric, universe, size window, tool and versions, and multiple-testing method (R-0051)",
+                "Method-dependence caveat included; no set presented as a proven finding (R-0055)",
+                "Reproducibility record with seed, package versions, and collection version stored alongside results (R-0086)"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Produce the final enrichment deliverable from hallmarks_gsea.csv and blitzgsea_concordance.csv. (1) A ranked significance table (pandas/matplotlib): pathway, set size, ES, NES, p, FDR, direction (up in treated vs down in treated), sorted by NES. (2) Leading-edge genes per significant set (R-0105): extract from gseapy's enrichment term-gene output, each with its Wald statistic and log2FC, and mark leading edges shared between significant sets so correlated sets are recognizable as one finding; collapse overlapping sets per the R-0052 pass of T1S2. (3) A bar/heatmap figure of NES with FDR annotation, split by direction. (4) Method-dependence caveat (R-0055): state that ranked and over-representation methods give different set lists, name the method, and report the gseapy-vs-blitzgsea agreement. (5) Reproducibility record (R-0086): session/package versions (gseapy, blitzgsea, pandas, numpy), the permutation seed, and the collection version (MSigDB Hallmark 2026.1) stored with the results. (6) State the full reporting set per R-0051: database and version, rank metric (Wald statistic, with the R-0108 disputed-choice resolution), universe (tested genes in the delivered table), size window (15–500), and tool versions. Optionally render an enrichment plot for the top set. No claims of mechanism — sets are hypotheses for follow-up (WikiPathways human and MSigDB GO collections are available in the reference store if a second collection is later wanted).",
+              "grounding": {
+                "claims": [
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report content follows R-0051@01ca, R-0055@107a, R-0105@c4a8, R-0086@becf; the knowledge procedure marks the report step itself ungrounded (no rule covers it), so the step is planned from those claims directly",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "ungrounded"
+              },
+              "id": "T1S3",
+              "name": "Enrichment report with leading edges",
+              "packages": [
+                "pandas",
+                "matplotlib",
+                "seaborn"
+              ],
+              "question": "Which Hallmark sets are significant at FDR < 0.25, in which direction, driven by which leading-edge genes, and how sensitive is the call to the enrichment implementation?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "report",
+              "track": "T1"
+            }
+          ],
+          "title": "Hallmark GSEA of AD treated vs control DE",
+          "analytical_narrative": "The research question is which MSigDB Hallmark pathways are enriched in the treated (atopic dermatitis lesional) vs control contrast, and the DESeq2 results table is already delivered — so the plan is enrichment-only and starts from that table, as the user asked. The delivered counts and metadata are used only descriptively (library sizes, coverage of the DE table), never re-modeled, and the known low-depth sample (sample_01, ~4x below median library size) is kept and reported as inherited context per R-0008, since DESeq2's size factors already down-weighted it in the delivered test. The enrichment follows the grounded procedure: rank every tested gene by the DESeq2 Wald statistic (the disputed ranking-metric choice R-0108 is resolved in favor of the Wald statistic: signed, uncertainty-scaled, no zero-p-value tie pathology), run preranked GSEA against the pinned MSigDB human Hallmark collection (50 sets, 2026.1 release, staged at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt) on the FULL ranked list with a 15–500 gene size window and Benjamini–Hochberg FDR, and corroborate with an independent second Python implementation (blitzgsea) because enrichment results are method-dependent (R-0055). Per the user's hard constraint every script is Python; the knowledge plane's tool of record (R fgsea) is therefore replaced by gseapy.prerank, an equivalent preranked-GSEA implementation, and blitzgsea serves as the second estimator. Both DE results and Hallmark GMT are in HGNC symbol space, so no identifier mixing occurs; the unmapped share per set is reported. The report lists leading-edge genes per significant set, collapses redundant sets, and carries a reproducibility record (seed, package versions, collection release)."
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

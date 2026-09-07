@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every point: raw featureCounts integers go straight into DESeq2 Wald (with edgeR QL as a second method), no length offset, no tximport, and an explicit statement that TPM/FPKM do not apply to a 3' tag library. The filter is lowered to 5 counts in at least 3 samples with the reason given and the retained gene count reported; normalization is median-of-ratios and TMM inside the models; the design ~condition with control set as reference and the contrast (condition, treated, control) are explicit; BH at 0.05 with apeglm shrinkage and no post-hoc fold-change filter. QC precedes the model with blind-VST PCA, distance heatmap, and library sizes coloured by condition and a stated no-drop policy, though the downstream handling of a flagged outlier is only implicit. Enrichment is correctly omitted and the report lists method, versions, design, thresholds, tested and significant counts, NA-cause split, and a low-power caveat for n=3."
+}

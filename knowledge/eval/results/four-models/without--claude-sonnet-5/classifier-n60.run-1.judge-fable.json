@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 5,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly frames this as a nested-CV penalized classification with elastic net, feature selection inside training folds, ROC-AUC with CIs, calibration/Brier, selection-frequency reporting, and the external-validation and latent-technical-covariate caveats. It falls short of the reference by computing VST/log-CPM and the gene filter on the full matrix before splitting rather than inside folds, omitting stratification and a fixed seed for the repeated outer CV, and never specifying a final refit on all 120 samples with coefficients. The low-count threshold is deferred rather than stated, and the QC does not explicitly say PCA is colored by condition. The DESeq2 DE step and WikiPathways enrichment are extraneous to the question; the enrichment lacks a universe, version, size window, and ranking metric, and the DE step lacks fold-change shrinkage."
+}

@@ -1,0 +1,652 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "classifier-n60",
+  "run": 1,
+  "startedAt": "2026-09-07T01:02:25.832Z",
+  "elapsedMs": 134607,
+  "outcome": "plan_submitted",
+  "planId": "pln-bdf5edc2",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, filter, normalize, QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Duplicate gene symbols in a symbol-indexed matrix must be resolved before modelling or feature identity becomes ambiguous",
+          "A PC1 that tracks library size rather than condition indicates depth normalisation is doing the work, not biology"
+        ],
+        "context": "Single batch, unpaired, 60 cases vs 60 controls, whole blood, raw gene-level Salmon counts. Metadata carries only condition — no age, sex, batch, or blood-count covariates are available, so none can be adjusted for. Whole-blood expression is strongly driven by leukocyte proportion; PC structure may reflect composition rather than disease.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scanpy",
+          "matplotlib",
+          "seaborn",
+          "scikit-learn"
+        ],
+        "question": "After aligning counts.csv (12,000 genes x 120 samples) to metadata.csv, how many genes survive an expression filter, and do library size, PCA, or sample-level outliers threaten a case-vs-control comparison in this 60/60 whole-blood cohort?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "The expression filter must be computed without using the condition labels",
+          "Do not remove samples automatically — flag suspected outliers and report, keeping the full 120 unless a sample is technically unusable, and state the decision",
+          "Keep both raw filtered counts (for DESeq2) and the VST matrix (for machine learning) — do not feed VST values to DESeq2"
+        ],
+        "description": "Read /eval-four-models-without-classifier-n60-1/data/inputs/counts/counts.csv (first column gene symbol, 120 sample columns) and /eval-four-models-without-classifier-n60-1/data/inputs/metadata/metadata.csv (120 rows, sample id + condition). Verify the 120 sample IDs intersect exactly and reorder counts columns to match metadata. Confirm counts are non-negative integers; report the 60/60 class balance actually observed and the two condition level names verbatim. Collapse duplicate gene symbols by summing (report how many). Apply a label-blind expression filter (edgeR filterByExpr-equivalent, or CPM>1 in at least the size of the smaller class) and report genes in/out. Compute library sizes, per-sample detected-gene counts, and a VST/log-CPM matrix. Produce PCA (PC1-PC5) coloured by condition and by library size, a sample-sample correlation heatmap, and flag outliers by median correlation. Export: filtered raw count matrix, VST matrix, aligned sample table, QC figures, and a JSON summary of gene/sample counts and PC-vs-condition association.",
+        "acceptance_criteria": [
+          "All 120 metadata samples matched to count columns; any mismatch reported explicitly rather than silently dropped",
+          "Observed class sizes and the two verbatim condition labels reported",
+          "Number of genes before and after the low-expression filter reported",
+          "VST (or log-CPM) matrix and filtered count matrix written to disk for downstream steps",
+          "PCA and correlation-based outlier assessment produced, with a stated verdict on whether condition separates on the top PCs and whether library size confounds PC1"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 case vs control DE",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Whole-blood DE is frequently driven by shifts in cell-type proportion rather than per-cell regulation; do not assert mechanism from these genes alone",
+          "An extremely large DE gene count in a 60/60 cohort can indicate residual structure (unmodelled batch or composition) rather than a strong disease effect"
+        ],
+        "context": "This is the descriptive counterpart to the predictive question: it establishes whether there is any differential signal at all and what it looks like. Sixty per group is well powered for moderate effects in bulk RNA-seq, so a near-empty result would itself be an important finding about the classifier's ceiling.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Which genes are differentially expressed between cases and controls in this 60/60 whole-blood cohort, and is the effect-size/significance structure consistent with a real, learnable signal?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use raw integer counts, never VST or CPM values, as DESeq2 input",
+          "Design is ~ condition only; no covariates exist in metadata.csv to adjust for",
+          "Name the reference level explicitly so the direction of log2FC is unambiguous"
+        ],
+        "description": "Run DESeq2 (or PyDESeq2) on the filtered raw counts from T1S1 with design ~ condition, using the control level as reference (state which level was set as reference). Apply apeglm/ashr LFC shrinkage. Report: number of genes at FDR<0.05 and at FDR<0.05 with |log2FC|>0.5, the full results table sorted by adjusted p-value, a volcano plot, an MA plot, the raw p-value histogram (to confirm the null is well behaved rather than inflated or conservative), and a heatmap of the top 50 genes on VST values. Explicitly note that this contrast uses all 120 samples and therefore its gene list must NOT be handed to the classifier as a pre-selected feature set — it is descriptive and for biological interpretation only.",
+        "acceptance_criteria": [
+          "DESeq2 results table for all filtered genes with log2FC, shrunken LFC, p-value and BH-adjusted p-value",
+          "Counts of genes passing FDR<0.05, and FDR<0.05 combined with |log2FC|>0.5, reported as numbers",
+          "p-value histogram inspected and its shape commented on",
+          "Volcano, MA, and top-gene heatmap figures produced",
+          "Written statement that this gene list is not used as fixed input features for the cross-validated classifier"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Nested CV classifier benchmark",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With 24 samples per outer test fold, a single fold's AUC is very noisy — only the repeated-CV aggregate is interpretable",
+          "If the selection-frequency table shows almost no gene recurring across folds, the apparent accuracy is likely noise-fitting and must be reported that way",
+          "Perfect or near-perfect AUC in a 120-sample blood cohort is more often a leakage or design artefact than a real effect — investigate before reporting it as a result"
+        ],
+        "context": "p >> n: ~12,000 features against 120 samples with 60 per class. This regime is where reported classifier accuracy is most often inflated. Strongly regularised linear models typically outperform trees here, and the answer to 'how accurate on a new sample' is the outer-fold estimate, not any resubstitution or inner-loop number. There is no external validation cohort in this dataset, so the outer-fold estimate is the best available proxy and must be reported as such.",
+        "maxSteps": 200,
+        "packages": [
+          "scikit-learn",
+          "pandas",
+          "numpy",
+          "xgboost",
+          "matplotlib",
+          "seaborn",
+          "scipy"
+        ],
+        "question": "What is the honest out-of-sample accuracy of a gene-expression classifier distinguishing case from control in this 120-sample whole-blood cohort, when feature selection and hyperparameter tuning are performed entirely inside training folds?",
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "machine_learning",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Feature selection MUST be refit inside each outer training fold, starting from the full filtered gene matrix — do not use the T1S2 DESeq2 gene list or any all-sample ranking as input features",
+          "Stratify all splits on condition to preserve the 60/60 balance",
+          "Fix and record random seeds so the numbers are reproducible",
+          "Report the primary headline metric as ROC-AUC with its across-fold interval, not a single best-fold value"
+        ],
+        "description": "Build the primary predictive result. Input: the VST matrix from T1S1 (all filtered genes, ~12,000-scale) and the condition labels. Use repeated stratified nested cross-validation: outer 5-fold stratified CV repeated 10 times with different seeds for the performance estimate, inner 5-fold stratified CV for model selection. Every supervised operation — variance/univariate filtering, scaling, feature selection, hyperparameter search — must live inside a scikit-learn Pipeline fitted only on the outer training fold. Compare at least three families: (a) L2-penalized logistic regression, (b) L1/elastic-net logistic regression, (c) gradient boosting (xgboost or sklearn HistGradientBoosting), each with a modest hyperparameter grid, plus a stratified-random baseline. Report per model, pooled over outer folds: ROC-AUC, PR-AUC, accuracy, sensitivity, specificity, F1, Matthews correlation coefficient, each with a 95% interval across the repeated outer folds; plus the pooled ROC and PR curves, a confusion matrix at the 0.5 threshold, and the distribution of out-of-fold predicted probabilities by class. Record which genes are selected in each outer fold and report a selection-frequency table (how often each gene is chosen across the 50 outer fits) — this is the stable-signature readout and the check on whether the model relies on a consistent gene set or a different one each fold.",
+        "acceptance_criteria": [
+          "Nested CV implemented such that no label-dependent transformation touches an outer test fold — verified and stated in the output",
+          "Outer-fold ROC-AUC, PR-AUC, accuracy, sensitivity, specificity, F1 and MCC reported per model family with dispersion across the 50 outer fits",
+          "A stratified-random baseline reported alongside, showing where chance sits",
+          "Gene selection-frequency table across outer folds exported",
+          "Best-performing model family named with the evidence for the choice",
+          "Explicit statement that this is an internal resampling estimate with no external cohort, and that it may still be mildly optimistic because the model family was chosen by looking at these same outer results"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Leakage-inflated comparison",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If the honest and leaky estimates are close, that indicates broad distributed signal rather than a validation of the leaky approach — say so rather than concluding leakage does not matter"
+        ],
+        "context": "This step exists to answer the second half of the research question defensibly. Readers of biomarker papers routinely encounter the leaky number; showing both, from the same data and same model, converts an abstract caution into a measured quantity for this specific cohort.",
+        "maxSteps": 200,
+        "packages": [
+          "scikit-learn",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "How much does selecting discriminative genes on all 120 samples before cross-validation inflate the apparent accuracy relative to the honest nested-CV estimate from T2S1?",
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "machine_learning",
+        "depends_on": [
+          "T2S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the same model family, same CV scheme, same seeds and same metric definitions as T2S1 so the only difference is where feature selection happens",
+          "Never present the leaky figure as the study's performance result"
+        ],
+        "description": "Deliberately reproduce the common analysis error and measure its size. Using the same VST matrix and the same best model family as T2S1, select the top-k differentially discriminative genes (e.g. k = 20, 50, 200 by univariate t-statistic or by the T1S2 DESeq2 ranking) ONCE on all 120 samples, then run the identical repeated stratified cross-validation on that fixed reduced feature set. Report the same metric panel and place it side by side with T2S1 in one table and one figure. The deliverable is the delta in ROC-AUC and accuracy between the leaky and the honest procedure, at each k, with a plain statement that the leaky number is not a valid estimate of performance on a new sample and exists here only to quantify the bias.",
+        "acceptance_criteria": [
+          "Leaky-CV metric panel produced at each k and tabulated against the T2S1 honest estimate",
+          "Difference in ROC-AUC and accuracy (honest minus leaky) reported explicitly per k",
+          "Output states unambiguously that the leaky estimate is invalid for predicting new-sample performance"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Permutation null and learning curve",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A permutation null whose centre exceeds ~0.55 means the pipeline itself is leaking and the headline AUC must not be trusted",
+          "Permutation testing with a full nested CV is expensive; reducing repeats per permutation is acceptable but must be disclosed"
+        ],
+        "context": "With 120 samples and 12,000 features, a permutation null is the strongest available internal check that the reported AUC is not an artefact of the procedure. The learning curve converts 'how accurate on a new sample' into an actionable statement about whether cohort size is the limiting factor.",
+        "maxSteps": 200,
+        "packages": [
+          "scikit-learn",
+          "pandas",
+          "numpy",
+          "xgboost",
+          "scipy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Is the nested-CV AUC from T2S1 significantly better than the label-permuted null, and would more than 120 whole-blood samples materially improve the classifier?",
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "validation",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Permute labels outside the CV loop and rerun the ENTIRE pipeline including feature selection for each permutation — permuting inside a fold or reusing selected features invalidates the null",
+          "Keep the model family and hyperparameter grid identical to the winning T2S1 configuration",
+          "Report the exact permutation count and CV repeat structure used"
+        ],
+        "description": "Two robustness analyses on the winning configuration from T2S1. (1) Permutation test: shuffle the condition labels and rerun the full nested CV (reduced repeats acceptable for cost, e.g. 200-500 permutations with a single outer 5-fold repeat each, or fewer permutations with more repeats — state the trade-off made), building the null distribution of outer ROC-AUC and computing an empirical p-value for the observed value. Confirm the null centres near 0.5; a null centred well above 0.5 is direct evidence of leakage remaining in the pipeline. (2) Learning curve: repeat the honest nested CV on stratified subsamples of the cohort (e.g. 30, 50, 70, 90, 110 samples, several draws each) and plot outer AUC versus training size with dispersion, to state whether performance has plateaued at n=120 or is still rising.",
+        "acceptance_criteria": [
+          "Empirical null distribution of outer ROC-AUC under label permutation, with the number of permutations reported and the observed value placed on it",
+          "Empirical p-value reported; the null distribution's centre reported and compared to 0.5 as a leakage check",
+          "Learning curve of outer AUC versus training-set size with dispersion bands, plus a stated verdict on plateau vs sample-starvation"
+        ]
+      },
+      {
+        "id": "T2S4",
+        "name": "Final locked model and calibration",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A final model fit on all data has no honest internal accuracy — any number computed on its training samples is meaningless",
+          "Genes with large coefficients in a single all-data fit may be unstable; the selection-frequency table is the better guide to which markers are real"
+        ],
+        "context": "The research question asks for a classifier and an expected accuracy on a new sample. This step supplies the artefact; T2S1 and T2S3 supply the credible accuracy. The 60/60 design is a case-control artefact, so PPV in any real screening population will be lower than the balanced-cohort confusion matrix suggests.",
+        "maxSteps": 200,
+        "packages": [
+          "scikit-learn",
+          "pandas",
+          "numpy",
+          "xgboost",
+          "shap",
+          "matplotlib",
+          "seaborn",
+          "joblib"
+        ],
+        "question": "What does the deployable case-vs-control classifier look like when fit on all 120 samples, which genes drive it, and are its predicted probabilities calibrated?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 12
+        },
+        "step_type": "machine_learning",
+        "depends_on": [
+          "T2S1",
+          "T2S3"
+        ],
+        "constraints": [
+          "Do not report any in-sample accuracy, AUC or confusion matrix from the final fit as a performance estimate",
+          "Calibration must be assessed using out-of-fold predictions from T2S1",
+          "Cross-reference the final feature list against the T2S1 selection-frequency table and report the overlap"
+        ],
+        "description": "Fit one final model on all 120 samples using the winning family and the hyperparameters most frequently chosen in the T2S1 inner loops, with feature selection applied once on the full cohort (appropriate here because no performance number is derived from this fit). Export: the final feature list with coefficients or gain-based importances and their direction relative to the case class; SHAP values if the winning model is tree-based; the cross-validated calibration assessment (reliability curve and Brier score computed from the T2S1 out-of-fold probabilities, not from this final fit); and a decision-threshold analysis giving sensitivity/specificity/PPV/NPV across thresholds, with PPV/NPV also recomputed at one or two plausible real-world prevalences to show how a 50% balanced cohort overstates positive predictive value in a screening setting. Serialize the fitted pipeline. State in the output that the accuracy attributable to this locked model is the T2S1 outer-fold estimate, not any statistic computed from the data it was fitted on.",
+        "acceptance_criteria": [
+          "Serialized final pipeline plus a ranked feature table with signed coefficients or importances",
+          "Reliability curve and Brier score derived from out-of-fold probabilities, not from in-sample predictions",
+          "Threshold sweep with sensitivity, specificity, PPV, NPV, including PPV/NPV recomputed at at least one non-50% prevalence",
+          "Explicit statement linking the model's expected new-sample performance to the T2S1 nested-CV interval, and noting no external validation cohort exists in this dataset"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment of DE and classifier genes",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Whole-blood signatures are dominated by cell-type composition; enrichment for neutrophil/lymphocyte programmes may reflect differential blood counts rather than transcriptional regulation",
+          "A gene list of only a handful of genes gives ORA almost no power — report the term counts honestly rather than lowering the FDR threshold to produce hits"
+        ],
+        "context": "Interpretation layer over both tracks. Coherent immune/inflammatory blood pathways behind the same genes the classifier keeps choosing is supporting evidence for a real signal; enrichment restricted to nothing in particular, with unstable gene selection, points the other way. Human (taxon 9606) resources only — the mouse and rat WikiPathways files in the store must not be used.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the DESeq2 case-vs-control genes and the recurrently selected classifier genes converge on coherent human blood/immune pathways, or are they a scattered set consistent with overfitting?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Use human gene sets only; do not substitute the mouse or rat WikiPathways files present in the reference store",
+          "Background universe must be the filtered expressed genes from T1S1, not all annotated human genes",
+          "Gene identifiers are HGNC symbols in this dataset — map, and report the mapping rate, before enrichment"
+        ],
+        "description": "Run over-representation analysis on the T1S2 significant gene list (FDR<0.05) and, separately, on the genes selected in a high fraction of T2S1 outer folds, using the filtered gene universe from T1S1 as background. Additionally run a rank-based GSEA on the full DESeq2 gene ranking (e.g. by shrunken log2FC or by the signed Wald statistic). Use human pathway gene sets keyed on HGNC symbols — the environment carries a human WikiPathways collection; if broader human collections (GO, Hallmark, Reactome) are resolvable at run time, include them and say which were used. Report enriched terms with FDR, gene overlap, and the leading-edge genes; produce a dot plot and, for the classifier-gene set, an explicit statement of whether the discriminant genes are functionally coherent. If no human pathway resource is resolvable at run time, report that and fall back to describing the gene lists themselves — the classifier result does not depend on this step.",
+        "acceptance_criteria": [
+          "ORA run on the DE gene list and on the recurrently-selected classifier gene list, each against the T1S1 filtered-gene background rather than the whole genome",
+          "Rank-based GSEA run on the full DESeq2 ranking",
+          "Enriched terms reported with FDR, set size, overlap and leading-edge genes; dot plot produced",
+          "Named statement of which human gene-set collections were actually available and used",
+          "A verdict on the functional coherence of the classifier's recurrent genes"
+        ]
+      }
+    ],
+    "title": "Blood RNA-seq case/control classifier with nested CV",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is predictive, not descriptive: can a gene-expression classifier separate the 60 cases from the 60 controls in this whole-blood cohort, and what accuracy should be expected on a new sample. The input is a single 12,000-gene x 120-sample raw Salmon count matrix (counts.csv, 121 columns = gene symbol + 120 samples) with a 120-row metadata.csv carrying one condition column. There is no external cohort and no held-out replication set, so every performance number must come from resampling on these 120 samples, and the dominant risk is optimism from selection leakage — with p >> n (12,000 features, 120 samples) even pure noise yields near-perfect apparent separation if genes are ranked on all samples before cross-validation.\\n\\nThe plan is built around that risk. T1S1 does the count-level work that any downstream model needs: load, align sample IDs between the two files, drop low-count genes with an edgeR-style filter applied once on the full cohort (an unsupervised, label-blind filter, which does not leak), and produce a variance-stabilised (VST) matrix plus library-size QC and a PCA that reports whether condition separates at all and whether any sample is an outlier or a depth artefact masquerading as biology. T1S2 runs the descriptive DESeq2 contrast cases vs controls, which is what tells us whether there is any real differential signal to build on and which genes carry it — it is interpretation, deliberately NOT the feature-selection step for the classifier.\\n\\nT2S1 is the core deliverable: repeated stratified nested cross-validation in scikit-learn where the ENTIRE supervised pipeline — filtering/scaling, univariate or L1 feature selection, hyperparameter tuning — is refit inside each training fold on the full 12,000-gene matrix, never on genes pre-selected from all samples. Outer folds give the honest estimate (ROC-AUC, PR-AUC, accuracy, sensitivity, specificity, MCC with confidence intervals). Three model families are compared (L2/L1 logistic regression, elastic net, gradient boosting) because a small-n, high-p problem usually favours strongly regularised linear models, and showing that is informative. T2S2 quantifies the leakage penalty explicitly by rerunning the identical CV with features chosen once on all 120 samples — the gap between T2S2 and T2S1 is the number readers of such papers most often get wrong, and reporting both is the honest answer to 'how accurate on a new sample'. T2S3 adds a permutation test (labels shuffled, whole nested procedure repeated) to give an empirical null and a p-value for the outer AUC, plus a learning curve indicating whether 120 samples is near the plateau or whether the estimate is still sample-starved.\\n\\nT2S4 then fits one final locked model on all 120 samples using the winning configuration, exports the coefficient/importance list and calibration (Brier score, calibration curve) so a per-sample probability is interpretable, not just a label. T3S1 closes the loop biologically: enrichment of the DESeq2 signature and of the recurrently selected classifier genes against human pathway gene sets, checking whether the discriminant genes are coherent blood biology or a scattered set consistent with overfitting. All reference use is human (WikiPathways human is present in the store); the mouse/rat files are ignored.\\n\\nCaveat carried through the whole plan: metadata.csv holds only condition, so no age, sex, batch, or cell-composition covariate can be modelled. Whole blood expression is dominated by leukocyte proportions, so any classifier here may be reading cell composition rather than disease-intrinsic transcription; the plan states this rather than resolving it, and T1S2 reports the top marker genes so the reader can judge."
+  },
+  "usage": {
+    "inputTokens": 87656,
+    "outputTokens": 8793,
+    "cacheCreationInputTokens": 69484,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "scikit-learn",
+          "pydeseq2",
+          "edgeR",
+          "DESeq2",
+          "glmnet",
+          "xgboost",
+          "shap",
+          "mlr3",
+          "caret",
+          "limma"
+        ]
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "nested cross-validation feature selection bias RNA-seq classifier blood biomarker",
+        "limit": 8
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Blood RNA-seq case/control classifier with nested CV",
+          "analytical_narrative": "The question is predictive, not descriptive: can a gene-expression classifier separate the 60 cases from the 60 controls in this whole-blood cohort, and what accuracy should be expected on a new sample. The input is a single 12,000-gene x 120-sample raw Salmon count matrix (counts.csv, 121 columns = gene symbol + 120 samples) with a 120-row metadata.csv carrying one condition column. There is no external cohort and no held-out replication set, so every performance number must come from resampling on these 120 samples, and the dominant risk is optimism from selection leakage — with p >> n (12,000 features, 120 samples) even pure noise yields near-perfect apparent separation if genes are ranked on all samples before cross-validation.\\n\\nThe plan is built around that risk. T1S1 does the count-level work that any downstream model needs: load, align sample IDs between the two files, drop low-count genes with an edgeR-style filter applied once on the full cohort (an unsupervised, label-blind filter, which does not leak), and produce a variance-stabilised (VST) matrix plus library-size QC and a PCA that reports whether condition separates at all and whether any sample is an outlier or a depth artefact masquerading as biology. T1S2 runs the descriptive DESeq2 contrast cases vs controls, which is what tells us whether there is any real differential signal to build on and which genes carry it — it is interpretation, deliberately NOT the feature-selection step for the classifier.\\n\\nT2S1 is the core deliverable: repeated stratified nested cross-validation in scikit-learn where the ENTIRE supervised pipeline — filtering/scaling, univariate or L1 feature selection, hyperparameter tuning — is refit inside each training fold on the full 12,000-gene matrix, never on genes pre-selected from all samples. Outer folds give the honest estimate (ROC-AUC, PR-AUC, accuracy, sensitivity, specificity, MCC with confidence intervals). Three model families are compared (L2/L1 logistic regression, elastic net, gradient boosting) because a small-n, high-p problem usually favours strongly regularised linear models, and showing that is informative. T2S2 quantifies the leakage penalty explicitly by rerunning the identical CV with features chosen once on all 120 samples — the gap between T2S2 and T2S1 is the number readers of such papers most often get wrong, and reporting both is the honest answer to 'how accurate on a new sample'. T2S3 adds a permutation test (labels shuffled, whole nested procedure repeated) to give an empirical null and a p-value for the outer AUC, plus a learning curve indicating whether 120 samples is near the plateau or whether the estimate is still sample-starved.\\n\\nT2S4 then fits one final locked model on all 120 samples using the winning configuration, exports the coefficient/importance list and calibration (Brier score, calibration curve) so a per-sample probability is interpretable, not just a label. T3S1 closes the loop biologically: enrichment of the DESeq2 signature and of the recurrently selected classifier genes against human pathway gene sets, checking whether the discriminant genes are coherent blood biology or a scattered set consistent with overfitting. All reference use is human (WikiPathways human is present in the store); the mouse/rat files are ignored.\\n\\nCaveat carried through the whole plan: metadata.csv holds only condition, so no age, sex, batch, or cell-composition covariate can be modelled. Whole blood expression is dominated by leukocyte proportions, so any classifier here may be reading cell composition rather than disease-intrinsic transcription; the plan states this rather than resolving it, and T1S2 reports the top marker genes so the reader can judge.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, filter, normalize, QC",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "After aligning counts.csv (12,000 genes x 120 samples) to metadata.csv, how many genes survive an expression filter, and do library size, PCA, or sample-level outliers threaten a case-vs-control comparison in this 60/60 whole-blood cohort?",
+              "description": "Read /eval-four-models-without-classifier-n60-1/data/inputs/counts/counts.csv (first column gene symbol, 120 sample columns) and /eval-four-models-without-classifier-n60-1/data/inputs/metadata/metadata.csv (120 rows, sample id + condition). Verify the 120 sample IDs intersect exactly and reorder counts columns to match metadata. Confirm counts are non-negative integers; report the 60/60 class balance actually observed and the two condition level names verbatim. Collapse duplicate gene symbols by summing (report how many). Apply a label-blind expression filter (edgeR filterByExpr-equivalent, or CPM>1 in at least the size of the smaller class) and report genes in/out. Compute library sizes, per-sample detected-gene counts, and a VST/log-CPM matrix. Produce PCA (PC1-PC5) coloured by condition and by library size, a sample-sample correlation heatmap, and flag outliers by median correlation. Export: filtered raw count matrix, VST matrix, aligned sample table, QC figures, and a JSON summary of gene/sample counts and PC-vs-condition association.",
+              "context": "Single batch, unpaired, 60 cases vs 60 controls, whole blood, raw gene-level Salmon counts. Metadata carries only condition — no age, sex, batch, or blood-count covariates are available, so none can be adjusted for. Whole-blood expression is strongly driven by leukocyte proportion; PC structure may reflect composition rather than disease.",
+              "question_context": "",
+              "acceptance_criteria": [
+                "All 120 metadata samples matched to count columns; any mismatch reported explicitly rather than silently dropped",
+                "Observed class sizes and the two verbatim condition labels reported",
+                "Number of genes before and after the low-expression filter reported",
+                "VST (or log-CPM) matrix and filtered count matrix written to disk for downstream steps",
+                "PCA and correlation-based outlier assessment produced, with a stated verdict on whether condition separates on the top PCs and whether library size confounds PC1"
+              ],
+              "constraints": [
+                "The expression filter must be computed without using the condition labels",
+                "Do not remove samples automatically — flag suspected outliers and report, keeping the full 120 unless a sample is technically unusable, and state the decision",
+                "Keep both raw filtered counts (for DESeq2) and the VST matrix (for machine learning) — do not feed VST values to DESeq2"
+              ],
+              "caveats": [
+                "Duplicate gene symbols in a symbol-indexed matrix must be resolved before modelling or feature identity becomes ambiguous",
+                "A PC1 that tracks library size rather than condition indicates depth normalisation is doing the work, not biology"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scanpy",
+                "matplotlib",
+                "seaborn",
+                "scikit-learn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 case vs control DE",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between cases and controls in this 60/60 whole-blood cohort, and is the effect-size/significance structure consistent with a real, learnable signal?",
+              "description": "Run DESeq2 (or PyDESeq2) on the filtered raw counts from T1S1 with design ~ condition, using the control level as reference (state which level was set as reference). Apply apeglm/ashr LFC shrinkage. Report: number of genes at FDR<0.05 and at FDR<0.05 with |log2FC|>0.5, the full results table sorted by adjusted p-value, a volcano plot, an MA plot, the raw p-value histogram (to confirm the null is well behaved rather than inflated or conservative), and a heatmap of the top 50 genes on VST values. Explicitly note that this contrast uses all 120 samples and therefore its gene list must NOT be handed to the classifier as a pre-selected feature set — it is descriptive and for biological interpretation only.",
+              "context": "This is the descriptive counterpart to the predictive question: it establishes whether there is any differential signal at all and what it looks like. Sixty per group is well powered for moderate effects in bulk RNA-seq, so a near-empty result would itself be an important finding about the classifier's ceiling.",
+              "acceptance_criteria": [
+                "DESeq2 results table for all filtered genes with log2FC, shrunken LFC, p-value and BH-adjusted p-value",
+                "Counts of genes passing FDR<0.05, and FDR<0.05 combined with |log2FC|>0.5, reported as numbers",
+                "p-value histogram inspected and its shape commented on",
+                "Volcano, MA, and top-gene heatmap figures produced",
+                "Written statement that this gene list is not used as fixed input features for the cross-validated classifier"
+              ],
+              "constraints": [
+                "Use raw integer counts, never VST or CPM values, as DESeq2 input",
+                "Design is ~ condition only; no covariates exist in metadata.csv to adjust for",
+                "Name the reference level explicitly so the direction of log2FC is unambiguous"
+              ],
+              "caveats": [
+                "Whole-blood DE is frequently driven by shifts in cell-type proportion rather than per-cell regulation; do not assert mechanism from these genes alone",
+                "An extremely large DE gene count in a 60/60 cohort can indicate residual structure (unmodelled batch or composition) rather than a strong disease effect"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Nested CV classifier benchmark",
+              "track": "T2",
+              "step_type": "machine_learning",
+              "question": "What is the honest out-of-sample accuracy of a gene-expression classifier distinguishing case from control in this 120-sample whole-blood cohort, when feature selection and hyperparameter tuning are performed entirely inside training folds?",
+              "description": "Build the primary predictive result. Input: the VST matrix from T1S1 (all filtered genes, ~12,000-scale) and the condition labels. Use repeated stratified nested cross-validation: outer 5-fold stratified CV repeated 10 times with different seeds for the performance estimate, inner 5-fold stratified CV for model selection. Every supervised operation — variance/univariate filtering, scaling, feature selection, hyperparameter search — must live inside a scikit-learn Pipeline fitted only on the outer training fold. Compare at least three families: (a) L2-penalized logistic regression, (b) L1/elastic-net logistic regression, (c) gradient boosting (xgboost or sklearn HistGradientBoosting), each with a modest hyperparameter grid, plus a stratified-random baseline. Report per model, pooled over outer folds: ROC-AUC, PR-AUC, accuracy, sensitivity, specificity, F1, Matthews correlation coefficient, each with a 95% interval across the repeated outer folds; plus the pooled ROC and PR curves, a confusion matrix at the 0.5 threshold, and the distribution of out-of-fold predicted probabilities by class. Record which genes are selected in each outer fold and report a selection-frequency table (how often each gene is chosen across the 50 outer fits) — this is the stable-signature readout and the check on whether the model relies on a consistent gene set or a different one each fold.",
+              "context": "p >> n: ~12,000 features against 120 samples with 60 per class. This regime is where reported classifier accuracy is most often inflated. Strongly regularised linear models typically outperform trees here, and the answer to 'how accurate on a new sample' is the outer-fold estimate, not any resubstitution or inner-loop number. There is no external validation cohort in this dataset, so the outer-fold estimate is the best available proxy and must be reported as such.",
+              "acceptance_criteria": [
+                "Nested CV implemented such that no label-dependent transformation touches an outer test fold — verified and stated in the output",
+                "Outer-fold ROC-AUC, PR-AUC, accuracy, sensitivity, specificity, F1 and MCC reported per model family with dispersion across the 50 outer fits",
+                "A stratified-random baseline reported alongside, showing where chance sits",
+                "Gene selection-frequency table across outer folds exported",
+                "Best-performing model family named with the evidence for the choice",
+                "Explicit statement that this is an internal resampling estimate with no external cohort, and that it may still be mildly optimistic because the model family was chosen by looking at these same outer results"
+              ],
+              "constraints": [
+                "Feature selection MUST be refit inside each outer training fold, starting from the full filtered gene matrix — do not use the T1S2 DESeq2 gene list or any all-sample ranking as input features",
+                "Stratify all splits on condition to preserve the 60/60 balance",
+                "Fix and record random seeds so the numbers are reproducible",
+                "Report the primary headline metric as ROC-AUC with its across-fold interval, not a single best-fold value"
+              ],
+              "caveats": [
+                "With 24 samples per outer test fold, a single fold's AUC is very noisy — only the repeated-CV aggregate is interpretable",
+                "If the selection-frequency table shows almost no gene recurring across folds, the apparent accuracy is likely noise-fitting and must be reported that way",
+                "Perfect or near-perfect AUC in a 120-sample blood cohort is more often a leakage or design artefact than a real effect — investigate before reporting it as a result"
+              ],
+              "packages": [
+                "scikit-learn",
+                "pandas",
+                "numpy",
+                "xgboost",
+                "matplotlib",
+                "seaborn",
+                "scipy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Leakage-inflated comparison",
+              "track": "T2",
+              "step_type": "machine_learning",
+              "question": "How much does selecting discriminative genes on all 120 samples before cross-validation inflate the apparent accuracy relative to the honest nested-CV estimate from T2S1?",
+              "description": "Deliberately reproduce the common analysis error and measure its size. Using the same VST matrix and the same best model family as T2S1, select the top-k differentially discriminative genes (e.g. k = 20, 50, 200 by univariate t-statistic or by the T1S2 DESeq2 ranking) ONCE on all 120 samples, then run the identical repeated stratified cross-validation on that fixed reduced feature set. Report the same metric panel and place it side by side with T2S1 in one table and one figure. The deliverable is the delta in ROC-AUC and accuracy between the leaky and the honest procedure, at each k, with a plain statement that the leaky number is not a valid estimate of performance on a new sample and exists here only to quantify the bias.",
+              "context": "This step exists to answer the second half of the research question defensibly. Readers of biomarker papers routinely encounter the leaky number; showing both, from the same data and same model, converts an abstract caution into a measured quantity for this specific cohort.",
+              "acceptance_criteria": [
+                "Leaky-CV metric panel produced at each k and tabulated against the T2S1 honest estimate",
+                "Difference in ROC-AUC and accuracy (honest minus leaky) reported explicitly per k",
+                "Output states unambiguously that the leaky estimate is invalid for predicting new-sample performance"
+              ],
+              "constraints": [
+                "Use the same model family, same CV scheme, same seeds and same metric definitions as T2S1 so the only difference is where feature selection happens",
+                "Never present the leaky figure as the study's performance result"
+              ],
+              "caveats": [
+                "If the honest and leaky estimates are close, that indicates broad distributed signal rather than a validation of the leaky approach — say so rather than concluding leakage does not matter"
+              ],
+              "packages": [
+                "scikit-learn",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S3",
+              "name": "Permutation null and learning curve",
+              "track": "T2",
+              "step_type": "validation",
+              "question": "Is the nested-CV AUC from T2S1 significantly better than the label-permuted null, and would more than 120 whole-blood samples materially improve the classifier?",
+              "description": "Two robustness analyses on the winning configuration from T2S1. (1) Permutation test: shuffle the condition labels and rerun the full nested CV (reduced repeats acceptable for cost, e.g. 200-500 permutations with a single outer 5-fold repeat each, or fewer permutations with more repeats — state the trade-off made), building the null distribution of outer ROC-AUC and computing an empirical p-value for the observed value. Confirm the null centres near 0.5; a null centred well above 0.5 is direct evidence of leakage remaining in the pipeline. (2) Learning curve: repeat the honest nested CV on stratified subsamples of the cohort (e.g. 30, 50, 70, 90, 110 samples, several draws each) and plot outer AUC versus training size with dispersion, to state whether performance has plateaued at n=120 or is still rising.",
+              "context": "With 120 samples and 12,000 features, a permutation null is the strongest available internal check that the reported AUC is not an artefact of the procedure. The learning curve converts 'how accurate on a new sample' into an actionable statement about whether cohort size is the limiting factor.",
+              "acceptance_criteria": [
+                "Empirical null distribution of outer ROC-AUC under label permutation, with the number of permutations reported and the observed value placed on it",
+                "Empirical p-value reported; the null distribution's centre reported and compared to 0.5 as a leakage check",
+                "Learning curve of outer AUC versus training-set size with dispersion bands, plus a stated verdict on plateau vs sample-starvation"
+              ],
+              "constraints": [
+                "Permute labels outside the CV loop and rerun the ENTIRE pipeline including feature selection for each permutation — permuting inside a fold or reusing selected features invalidates the null",
+                "Keep the model family and hyperparameter grid identical to the winning T2S1 configuration",
+                "Report the exact permutation count and CV repeat structure used"
+              ],
+              "caveats": [
+                "A permutation null whose centre exceeds ~0.55 means the pipeline itself is leaking and the headline AUC must not be trusted",
+                "Permutation testing with a full nested CV is expensive; reducing repeats per permutation is acceptable but must be disclosed"
+              ],
+              "packages": [
+                "scikit-learn",
+                "pandas",
+                "numpy",
+                "xgboost",
+                "scipy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S4",
+              "name": "Final locked model and calibration",
+              "track": "T2",
+              "step_type": "machine_learning",
+              "question": "What does the deployable case-vs-control classifier look like when fit on all 120 samples, which genes drive it, and are its predicted probabilities calibrated?",
+              "description": "Fit one final model on all 120 samples using the winning family and the hyperparameters most frequently chosen in the T2S1 inner loops, with feature selection applied once on the full cohort (appropriate here because no performance number is derived from this fit). Export: the final feature list with coefficients or gain-based importances and their direction relative to the case class; SHAP values if the winning model is tree-based; the cross-validated calibration assessment (reliability curve and Brier score computed from the T2S1 out-of-fold probabilities, not from this final fit); and a decision-threshold analysis giving sensitivity/specificity/PPV/NPV across thresholds, with PPV/NPV also recomputed at one or two plausible real-world prevalences to show how a 50% balanced cohort overstates positive predictive value in a screening setting. Serialize the fitted pipeline. State in the output that the accuracy attributable to this locked model is the T2S1 outer-fold estimate, not any statistic computed from the data it was fitted on.",
+              "context": "The research question asks for a classifier and an expected accuracy on a new sample. This step supplies the artefact; T2S1 and T2S3 supply the credible accuracy. The 60/60 design is a case-control artefact, so PPV in any real screening population will be lower than the balanced-cohort confusion matrix suggests.",
+              "acceptance_criteria": [
+                "Serialized final pipeline plus a ranked feature table with signed coefficients or importances",
+                "Reliability curve and Brier score derived from out-of-fold probabilities, not from in-sample predictions",
+                "Threshold sweep with sensitivity, specificity, PPV, NPV, including PPV/NPV recomputed at at least one non-50% prevalence",
+                "Explicit statement linking the model's expected new-sample performance to the T2S1 nested-CV interval, and noting no external validation cohort exists in this dataset"
+              ],
+              "constraints": [
+                "Do not report any in-sample accuracy, AUC or confusion matrix from the final fit as a performance estimate",
+                "Calibration must be assessed using out-of-fold predictions from T2S1",
+                "Cross-reference the final feature list against the T2S1 selection-frequency table and report the overlap"
+              ],
+              "caveats": [
+                "A final model fit on all data has no honest internal accuracy — any number computed on its training samples is meaningless",
+                "Genes with large coefficients in a single all-data fit may be unstable; the selection-frequency table is the better guide to which markers are real"
+              ],
+              "packages": [
+                "scikit-learn",
+                "pandas",
+                "numpy",
+                "xgboost",
+                "shap",
+                "matplotlib",
+                "seaborn",
+                "joblib"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 12
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment of DE and classifier genes",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Do the DESeq2 case-vs-control genes and the recurrently selected classifier genes converge on coherent human blood/immune pathways, or are they a scattered set consistent with overfitting?",
+              "description": "Run over-representation analysis on the T1S2 significant gene list (FDR<0.05) and, separately, on the genes selected in a high fraction of T2S1 outer folds, using the filtered gene universe from T1S1 as background. Additionally run a rank-based GSEA on the full DESeq2 gene ranking (e.g. by shrunken log2FC or by the signed Wald statistic). Use human pathway gene sets keyed on HGNC symbols — the environment carries a human WikiPathways collection; if broader human collections (GO, Hallmark, Reactome) are resolvable at run time, include them and say which were used. Report enriched terms with FDR, gene overlap, and the leading-edge genes; produce a dot plot and, for the classifier-gene set, an explicit statement of whether the discriminant genes are functionally coherent. If no human pathway resource is resolvable at run time, report that and fall back to describing the gene lists themselves — the classifier result does not depend on this step.",
+              "context": "Interpretation layer over both tracks. Coherent immune/inflammatory blood pathways behind the same genes the classifier keeps choosing is supporting evidence for a real signal; enrichment restricted to nothing in particular, with unstable gene selection, points the other way. Human (taxon 9606) resources only — the mouse and rat WikiPathways files in the store must not be used.",
+              "acceptance_criteria": [
+                "ORA run on the DE gene list and on the recurrently-selected classifier gene list, each against the T1S1 filtered-gene background rather than the whole genome",
+                "Rank-based GSEA run on the full DESeq2 ranking",
+                "Enriched terms reported with FDR, set size, overlap and leading-edge genes; dot plot produced",
+                "Named statement of which human gene-set collections were actually available and used",
+                "A verdict on the functional coherence of the classifier's recurrent genes"
+              ],
+              "constraints": [
+                "Use human gene sets only; do not substitute the mouse or rat WikiPathways files present in the reference store",
+                "Background universe must be the filtered expressed genes from T1S1, not all annotated human genes",
+                "Gene identifiers are HGNC symbols in this dataset — map, and report the mapping rate, before enrichment"
+              ],
+              "caveats": [
+                "Whole-blood signatures are dominated by cell-type composition; enrichment for neutrophil/lymphocyte programmes may reflect differential blood counts rather than transcriptional regulation",
+                "A gene list of only a handful of genes gives ORA almost no power — report the term counts honestly rather than lowering the FDR threshold to produce hits"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every point: DESeq2 Wald with apeglm on raw counts for an unpaired 6v6 single-batch design, with an edgeR QL cross-check whose intersection (not union) is reported. QC keeps sample_01, inspects it on top-500 VST PCA and a distance heatmap, tabulates library sizes and detected genes for all samples, and states explicitly that depth alone is not a removal reason, adding a sensitivity re-run without it. The filter (>=10 counts in >=6 samples) is minimal and tied to group size; normalization is median-of-ratios/TMM inside the model with no pre-scaling; design ~condition with control releveled as reference and the contrast (condition, lesional, control) is explicit; BH at alpha 0.05 is set in results() with independent filtering and shrinkage applied to the reported effect. Enrichment is fgsea on the full ranked list with the Wald statistic stated as the metric, Hallmark 2026.1 with a 15-500 window, tested genes as universe, ORA correctly withheld, and the report enumerates versions, thresholds, tested/significant counts, sample_01 handling, seeds and sessionInfo."
+}

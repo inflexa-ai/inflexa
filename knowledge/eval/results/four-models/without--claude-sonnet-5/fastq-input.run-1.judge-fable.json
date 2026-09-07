@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 5,
+    "normalization": 5,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 6
+  },
+  "rationale": "The planner correctly recognized that raw paired-end FASTQ with no count matrix cannot be tested, verified that no quantifier or matching genome/transcriptome reference exists in the sandbox, and stopped with a precise question naming the missing tools (STAR/salmon/kallisto), the available GENCODE v50 GTF, and the alternative of supplying a count matrix — this matches the reference outcome and avoids the fatal error of inventing a matrix. It falls short of the reference in not sketching the downstream plan once counts arrive (two-group DESeq2/edgeR, BH at 0.05, low-power caveat with n=3), so QC, filtering, normalization, formula/contrast, and FDR/shrinkage are simply unstated rather than wrong. Enrichment was not warranted and was correctly omitted. The clarification message is thorough about the data-state caveat but no report structure is specified."
+}

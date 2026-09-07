@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: filterByExpr, blind VST, top-2000 variable genes, ConsensusClusterPlus with 1000 reps at 80% subsampling over k=2..8 with PAC, delta-area and consensus matrices, an explicit gene-permutation null so that k=1 is reachable, Jaccard bootstrap stability plus cross-method ARI, cluster-vs-condition tabulation with Fisher/chi-square and ARI, within-arm reclustering, and leukocyte deconvolution as the composition confounder. QC is thorough (PCA, correlation heatmap, library size, detected genes, globin fraction, report-not-drop outlier policy), though pFeature=1 omits gene resampling and library depth is regressed against PCs rather than tabulated directly against the final clusters. The conditional DE step uses ~condition + cluster with apeglm shrinkage and BH, but the |log2FC|>0.5 cutoff is post hoc rather than tested, and the reference level is not stated. Enrichment is arguably not warranted for this question; it is included conditionally with a stated ranking metric and human hallmark/GO BP sets, but without a collection version or gene-set size window. Reporting is complete, with package versions, seeds, gene counts, and honest caveats on double dipping and the null's limits."
+}

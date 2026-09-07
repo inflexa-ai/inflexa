@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 1,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The core analysis is correct: DESeq2 with ~ subject + condition, control as reference, treated-vs-control contrast, apeglm/ashr shrinkage, BH at 0.05, and size factors inside the model; the per-subject track is explicitly descriptive with no n=1 p-values, which is defensible. QC lists library sizes, PCA colored by subject and condition, and a distance heatmap but states no policy for handling an outlier or shallow sample. No low-count filter is mentioned anywhere (results are reported for all ~12000 genes), and the |log2FC|>1 cut is applied post hoc rather than via lfcThreshold. Enrichment names WikiPathways and restricts the universe to tested genes, but gives no collection version, no gene-set size window, an ambiguous ranking metric (stat/LFC), and a loose padj<0.25 per-subject convention; the report lacks package versions."
+}

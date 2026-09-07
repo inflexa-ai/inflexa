@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the question as a genotype x treatment interaction and fits a single DESeq2 model ~genotype+treatment+genotype:treatment with explicit reference levels, testing the interaction coefficient and extracting both simple effects (WT via the treatment coefficient, KO via a summed contrast), with ashr shrinkage and BH at a stated alpha applied within contrast. QC is design-specific (blind vst, PCA, distances, library sizes colored by both factors, flag rule for library size) though the outlier policy stops at flagging rather than stating a removal/retention decision. The low-count filter is minimal and tied to the smallest cell size, normalization is internal to the model, and the report specifies versions, design, thresholds, counts, and the n=4 power caveat for the interaction. Enrichment was not requested but is executed properly (full Wald-stat ranked list, named versioned collections, 15-500 size window, BH per contrast x collection), so it is scored on merit with a small deduction for being unrequested."
+}

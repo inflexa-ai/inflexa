@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the data as RSEM expected counts, states that the tximport effective-length offset is lost without the genes.results files, rounds for DESeq2 rather than substituting TPM/FPKM, and fits an appropriate Wald model with ~condition, control as reference, apeglm shrinkage, BH at 0.05, and a minimal group-size-based filter with normalization inside the model. QC is complete for a single-batch design with an explicit keep-by-default policy for sample_01. It loses some credit for not requesting the missing per-sample genes.results files (the reference asks for them) and for adding an unrequested GSEA step whose Reactome collection lacks a concrete version, although the ranking metric, universe, and size window are stated. The report specification is thorough and names methods, versions, thresholds, counts, and design caveats."
+}

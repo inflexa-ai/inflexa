@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 2,
+    "normalization": 3,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 5
+  },
+  "rationale": "The planner reached the correct outcome: it recognised that a gene-level count matrix cannot answer an isoform-switch question, refused to substitute DESeq2/edgeR results or invent a transcript matrix, and asked for the per-sample quant.sf files plus the transcript-to-gene map, naming DRIMSeq/DEXSeq/stageR/tximport as the methods of record, though it did not request the annotation version. It stated a sensible policy for sample_01 (keep, report influence, sensitivity analysis) but no PCA/library-size QC. Because no plan was submitted, the filter (dmFilter), the import scaling (scaledTPM/dtuScaledTPM), the design formula and contrast, and the stageR alpha are not stated, so those criteria score low on what is written. Enrichment is correctly absent, and the commitment to label any gene-level fallback as not answering the question is a good reporting caveat."
+}

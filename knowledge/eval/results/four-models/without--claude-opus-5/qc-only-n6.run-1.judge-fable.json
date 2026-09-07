@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly stays inside the QC question: per-sample library sizes and complexity on raw counts, a minimal stated pre-filter (non-zero in >=3 samples) with retained-gene count reported, blind VST for PCA and Euclidean distances, and an evidence-based verdict on sample_01 that weighs embedding position, mean distance, PC-depth correlation, and complexity rather than depth alone, with the n=5 consequence of exclusion spelled out. No DE, p-values, fold changes, or enrichment are run, which is right for the request. Minor gaps: size-factor normalization is implied by VST but not stated, the reference level of condition is not set explicitly, and package versions are not requested in the report."
+}

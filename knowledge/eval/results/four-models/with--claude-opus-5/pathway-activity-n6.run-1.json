@@ -1,0 +1,851 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "pathway-activity-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T23:45:39.178Z",
+  "elapsedMs": 130207,
+  "outcome": "plan_submitted",
+  "planId": "pln-4a74596d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and sample_01 depth assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A library size ~4x below the median is handled by the size factor; low depth alone is not a reason to drop a sample",
+          "A single low-depth sample can dominate PC1 by detection dropout rather than biology — check whether sample_01 separates from its own condition group or from all samples"
+        ],
+        "context": "Inputs: /eval-four-models-with-pathway-activity-n6-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw integer Salmon gene-level counts, first column gene symbol) and /eval-four-models-with-pathway-activity-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Design is 6 treated vs 6 control, unpaired, single batch. The profile flags sample_01 for low depth.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 12 bronchial epithelium samples separate by cytokine stimulation vs vehicle on the top 500 variable genes, and does sample_01 (library size ~4x below the median) behave as an outlier beyond its depth?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d",
+            "R-0030@2248"
+          ],
+          "reason": "Raw counts with a flagged low-depth sample: blind VST + PCA on top 500 + distance heatmap per R-0033, and keep_inspect_report policy for sample_01 per R-0008/R-0030.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-python@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the blind VST (blind=TRUE) for QC — the QC transform must not use the design",
+          "PCA on the top 500 most variable genes",
+          "Do not delete sample_01 silently; keep it through QC and report its library size and detected genes beside the others",
+          "Do not scale, transform, or pre-normalize counts outside the DESeq2 size-factor machinery"
+        ],
+        "description": "Load counts and metadata, verify sample-column alignment with the metadata rows, build a DESeq2 object with design ~condition, apply the blind variance-stabilizing transformation, and produce: PCA on the 500 most variable genes coloured by condition and annotated with sample name; a Euclidean sample-distance heatmap; and a table of per-sample library size, detected genes (count > 0), and DESeq2 size factor. Report where sample_01 falls on each. Recommend keep or drop with a stated reason; the default is keep.",
+        "acceptance_criteria": [
+          "PCA plot on top 500 variable genes and sample-distance heatmap written, both labelled by sample and coloured by condition",
+          "Table of library size, detected gene count, and size factor for all 12 samples, with sample_01's values reported explicitly against the cohort median",
+          "An explicit keep/drop recommendation for sample_01 with a written reason; if drop is recommended, the reason is something other than depth alone",
+          "Confirmation that metadata sample identifiers match the 12 count-matrix columns one-to-one"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Filter, fit condition model, and export gene-level statistics for footprint inference",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 per group DESeq2 flags Cook's-distance outlier genes and sets their p-values to NA rather than replacing counts — report those genes as a separate NA class",
+          "A 12000-gene matrix is already pre-filtered relative to a full transcriptome; state how many genes survive the count filter so the enrichment universe is explicit"
+        ],
+        "context": "Follows T1S1. The footprint steps need two things: the full ranked contrast statistic (every tested gene, no significance cut) and a per-sample log-scale matrix. This step produces both. The gene-level differential expression table is supporting evidence, not the answer to the research question.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "ggplot2"
+        ],
+        "question": "What is the per-gene Wald statistic for cytokine-treated vs vehicle control across every tested gene, and what is the per-sample log-expression matrix that the activity inference will score?",
+        "grounding": {
+          "claims": [
+            "R-0002@087b",
+            "R-0029@fa6d",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0001@9a17",
+            "R-0009@f54e",
+            "R-0010@91a5",
+            "R-0039@e17a",
+            "R-0083@12de",
+            "R-0099@0a77"
+          ],
+          "reason": "Raw Salmon counts, 6v6 fixed-effects two-group design: minimal pre-filter (R-0002/R-0029), size factors inside the model (R-0026), explicit reference level (R-0036), DESeq2 Wald with apeglm shrinkage (R-0001/R-0009), BH at 0.05 (R-0010); Wald statistic exported as the ranking metric the footprint steps consume (R-0099).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Pre-filter: keep genes with >=10 counts in at least 6 samples (the smallest group size); do not filter more aggressively",
+          "Set the reference level explicitly with relevel to the control condition before fitting; state the contrast as factor/numerator/denominator",
+          "Do not pre-normalize the counts — DESeq2 median-of-ratios size factors handle depth inside the model",
+          "Shrink the reported log2FC with apeglm and keep the unshrunken estimate beside it",
+          "Rank and export by the Wald statistic, not by the unshrunken fold change and not by a signed p-value",
+          "Select any reported DE genes by BH-adjusted p-value at alpha 0.05, never by raw p-value or fold change alone"
+        ],
+        "description": "Apply a minimal pre-filter (keep genes with at least 10 counts in at least 6 samples — the smallest group size). Set the condition reference level explicitly to the vehicle/control level named in metadata.csv; do not rely on alphabetical ordering. Fit DESeq2 with design ~condition and run the Wald test for the contrast condition treated vs control. Export (a) the full results table for every tested gene with the Wald statistic, unshrunken log2FC, apeglm-shrunken log2FC, p-value and BH-adjusted p-value, and (b) a per-sample log2-CPM matrix of the filtered genes (and the blind VST matrix). Report the number of genes filtered out, the number tested, the p-value histogram shape, the number of genes with NA p-values from Cook's outlier flagging separately from independent-filter NAs, and the count at padj < 0.05. If T1S1 recommended dropping sample_01, produce the statistics both with and without it so downstream steps can be checked for sensitivity.",
+        "acceptance_criteria": [
+          "Results table covering every tested gene with Wald statistic, unshrunken and apeglm-shrunken log2FC, p-value and BH padj — no thresholded subsetting",
+          "Per-sample log2-CPM matrix of the filtered genes written for downstream activity scoring, with gene symbols as row identifiers",
+          "Reference level of the condition factor stated in the output, and the contrast named as (condition, treated numerator, control denominator)",
+          "p-value histogram written and its shape described; NA counts from Cook's outlier flagging reported separately from independent-filter NAs",
+          "Gene counts before and after the pre-filter reported"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "PROGENy pathway activity (footprint, not membership)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A pathway member can change expression without a change in footprint activity, and the reverse — do not cross-read the two",
+          "With 6 per group the per-pathway limma test has 12 observations; a non-significant pathway is not evidence of inactivity",
+          "Scores from the contrast mode and the per-sample mode are on different scales and need not rank identically; report disagreement rather than picking the more favourable one",
+          "The reference resource is an R serialized data frame — read it in R, or through rpy2 if the step is written in Python"
+        ],
+        "context": "This is the primary answer to the research question. PROGENy scores a pathway from the genes that respond downstream of its perturbation, so it reports footprint activity rather than expression of pathway members — exactly the distinction the question draws. Needs a human footprint pathway-weight resource (PROGENy human, 14 pathways, per-gene weights); the environment currently exposes one at /mnt/refs/managed/progeny-human/current/model_human_full.rda as an R data frame with columns gene, weight, p.value, pathway. Resolve it at run time and confirm it is the human model, not the mouse one — this dataset is Homo sapiens.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupleR",
+          "limma",
+          "dplyr",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which of the 14 PROGENy signaling pathways show altered transcriptional footprint activity in cytokine-stimulated vs vehicle bronchial epithelium, and in which direction?",
+        "grounding": {
+          "claims": [
+            "R-0115@1504",
+            "R-0122@08af",
+            "R-0134@0f16"
+          ],
+          "reason": "Question asks for signaling activity by transcriptional footprint rather than member expression: PROGENy + decoupleR mlm on top 500 responsive genes per R-0115; SPIA absent so no topology claim per R-0122; per-sample scores tested with limma + BH per R-0134.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-progeny-pathway-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "activity",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Estimator: decoupleR mlm; ulm may be reported as a secondary estimator",
+          "Use the top 500 responsive genes per pathway and state that number",
+          "Use the HUMAN PROGENy model — verify the organism of the loaded weights before scoring; a mouse model on human symbols yields confident nonsense",
+          "Interpret and report scores as footprint, not membership",
+          "If the human footprint pathway-weight resource cannot be resolved at run time, stop and report that; do not substitute a membership-based over-representation test and call it pathway activity",
+          "No topology-based impact analysis is claimed — SPIA is absent from this environment and neither PROGENy nor an enrichment uses the pathway graph"
+        ],
+        "description": "Run decoupleR mlm with the PROGENy human weights, restricted to the top 500 responsive genes per pathway, in two modes. (1) Contrast mode: score the per-gene Wald statistic from T1S2 across all tested genes, giving one activity score and p-value per pathway for treated vs control; adjust across pathways with BH. (2) Per-sample mode: score the per-sample log2-CPM matrix, giving one score per pathway per sample; test treated vs control on the score matrix with limma under design ~condition and adjust with BH across the 14 pathways. Report both, plus the number of PROGENy genes per pathway actually present in the 12000-gene matrix. Produce a barplot of pathway activity for the contrast and a per-sample heatmap of pathway scores annotated by condition and by library size. Re-run the ranking with sample_01 excluded and report whether the top pathways and their directions change.",
+        "acceptance_criteria": [
+          "Table of all 14 PROGENy pathways with contrast activity score, p-value, and BH-adjusted p-value for treated vs control",
+          "Per-sample pathway score matrix (14 x 12) plus a limma treated-vs-control test per pathway with BH adjustment across pathways",
+          "Number of PROGENy weight genes present in the tested gene set reported per pathway",
+          "Barplot of contrast pathway activity and per-sample score heatmap annotated by condition and library size",
+          "Sensitivity result stated: the top pathways and their directions with and without sample_01",
+          "Report states explicitly that a PROGENy score is a transcriptional footprint inferred from a prior perturbation-response model, not the expression of pathway members and not a measurement of pathway flux"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "CollecTRI transcription factor activity",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "VIPER on an ARACNe regulon is the tool of record for context-specific regulator activity and both are absent here; a prior network is the same for every tissue, so an airway-epithelium-specific regulator can be missed and a target silent in this tissue adds noise — state this",
+          "A TF activity score is not TF expression; a TF whose own transcript is unchanged can still show a strong activity shift",
+          "12 samples give a wide confidence interval on every per-regulator test"
+        ],
+        "context": "TF activity localizes the pathway footprint to the regulators that produce it — for a cytokine stimulation of airway epithelium, the expected regulators are the NF-kB and STAT families, and whether the data supports that is the test. Needs a signed human TF-target regulon network; the environment currently exposes CollecTRI human (source/target/weight, +1 activating / -1 repressing) at /mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv, with DoRothEA human as the confidence-graded alternative. Resolve at run time and confirm the human collection.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupleR",
+          "limma",
+          "dplyr",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which transcription factors show altered inferred activity in cytokine-treated vs vehicle bronchial epithelium, and do they correspond to the pathways flagged by PROGENy?",
+        "grounding": {
+          "claims": [
+            "R-0111@b668",
+            "R-0112@f200",
+            "R-0113@7a4d",
+            "R-0114@9db7",
+            "R-0121@5f27"
+          ],
+          "reason": "TF activity from a two-group contrast: decoupleR ulm on the Wald statistic with signed CollecTRI regulons and min size 5 per R-0111/R-0112; DoRothEA A-C as the alternative per R-0113; VIPER/ARACNe absent and 12 samples forbid network inference per R-0114/R-0121.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-decoupler-py-tf-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "activity",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Estimator: decoupleR ulm on the full set of tested genes — never on the significant genes only",
+          "Use the HUMAN CollecTRI regulons and keep the sign of each edge (mode of regulation)",
+          "Minimum regulon size 5 targets among the tested genes",
+          "Adjust p-values with BH across regulators",
+          "Use a prior-knowledge network only; do not infer a regulatory network from this 12-sample expression matrix",
+          "If DoRothEA is used as the alternative, keep confidence levels A-C only and state the levels used"
+        ],
+        "description": "Run decoupleR ulm with the CollecTRI human regulons, keeping the sign (mode of regulation) of each edge so that a repressor's targets lower rather than raise the score. Require at least 5 targets present among the tested genes for a regulator to be scored. Score both the per-gene Wald statistic from T1S2 (contrast mode, one score per TF) and the per-sample log2-CPM matrix (per-sample mode), test the per-sample scores between conditions with limma under design ~condition, and adjust with BH across regulators. Report the number of regulators that entered the test, the top up- and down-scored TFs with their regulon sizes, and a per-sample heatmap of the leading regulators annotated by condition. Cross-tabulate the leading TFs against the PROGENy pathways from T2S1 and state agreements and disagreements. Optionally repeat with DoRothEA confidence A-C as a robustness check and report the overlap of the top regulators between the two networks.",
+        "acceptance_criteria": [
+          "Table of scored transcription factors with contrast activity score, p-value, BH-adjusted p-value, and regulon size among the tested genes",
+          "Per-sample TF score matrix plus limma treated-vs-control tests with BH adjustment across regulators",
+          "Number of regulators that entered the test stated, along with the minimum regulon size used",
+          "Heatmap of the leading regulators across the 12 samples, annotated by condition",
+          "Explicit comparison of the leading TFs against the PROGENy pathway results from T2S1, naming agreements and disagreements",
+          "Report states the network name and version and that an activity score is an inference from a prior network, so a high score is a hypothesis for follow-up, not a proven finding"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "STRING neighborhood of the leading footprint genes",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A dense cluster of co-regulated genes in STRING is expected for a cytokine response and is not independent confirmation of the footprint result",
+          "The full STRING graph is far too dense for distance measures to be meaningful; do not compute path-based statistics on the unfiltered network"
+        ],
+        "context": "Descriptive support for the activity calls. Uses the human STRING v12.0 protein-association network in the reference store: 9606.protein.links.v12.0.txt.gz (space-delimited, STRING protein ids, combined_score 0-1000) joined to 9606.protein.info.v12.0.txt.gz for gene symbols. This step annotates the footprint result; it does not decide it.",
+        "maxSteps": 200,
+        "packages": [
+          "igraph",
+          "dplyr",
+          "readr",
+          "ggraph"
+        ],
+        "question": "Do the genes driving the top PROGENy pathway footprints and the targets of the leading CollecTRI regulators form a connected high-confidence protein-association module?",
+        "grounding": {
+          "claims": [
+            "R-0123@5521"
+          ],
+          "reason": "Human dataset: STRING from the reference store gives the protein-association neighborhood of the footprint genes with the 0.7 confidence cutoff and version stated per R-0123.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "network",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "Join the STRING info file to recover gene symbols — the links file carries STRING protein ids only and is unusable alone",
+          "The links file is SPACE-delimited despite the .txt name; a tab-expecting reader silently parses each row into one column",
+          "Use combined_score >= 700 (0.7) as the high-confidence cutoff and state it",
+          "Every edge appears twice, once per direction — collapse to an undirected graph before counting edges",
+          "Present the module as a hypothesis about a functional neighborhood, not as an activity measurement"
+        ],
+        "description": "Take the leading-edge genes of the top PROGENy pathways from T2S1 and the targets of the top regulators from T2S2, map them to STRING identifiers via the info file, and extract the induced subgraph at combined_score >= 700. Report how many of the input genes are present in the network, the size and density of the largest connected component, and the highest-degree nodes. Draw the subgraph coloured by the direction of the gene's Wald statistic from T1S2. If the STRING files cannot be resolved at run time, report that and skip this step — it is an annotation of the footprint result, not a prerequisite for it.",
+        "acceptance_criteria": [
+          "Induced subgraph extracted at combined_score >= 700 with the cutoff and the STRING version stated",
+          "Number of input genes present in the network reported against the number submitted",
+          "Largest connected component size and top-degree nodes reported",
+          "Network figure coloured by direction of change, or an explicit statement that the STRING resource was unavailable and the step was skipped"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Activity report and reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "12 samples in a single batch: the design is clean but small, and a non-significant pathway is not evidence of inactivity",
+          "If sample_01 was retained, its lower depth widens the uncertainty on its per-sample scores; say so rather than smoothing over it"
+        ],
+        "context": "Assembles T1S1, T1S2, T2S1, T2S2 and T2S3 into one report. The headline result is the PROGENy pathway activity table; the TF activity localizes it; the gene-level DESeq2 table is supporting evidence only.",
+        "maxSteps": 200,
+        "packages": [
+          "sessioninfo",
+          "rmarkdown",
+          "knitr"
+        ],
+        "question": "What is the defensible answer to which signaling pathways are active in cytokine-treated vs vehicle bronchial epithelium by transcriptional footprint, and how strong is the evidence?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0119@5f4d"
+          ],
+          "reason": "Activity report fields (network, version, statistic, estimator, min regulon size, n regulators, inference caution) per R-0119, with the full reproducibility record per R-0086.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S1",
+          "T2S2",
+          "T2S3"
+        ],
+        "constraints": [
+          "Do not present a gene-level DE result as an answer to the pathway-activity question",
+          "Do not claim pathway topology or flux — no topology method was run",
+          "State the number of samples (6 vs 6) beside every inferential claim"
+        ],
+        "description": "Write a report that leads with the PROGENy pathway activity for treated vs control and the direction of each significant pathway, then the CollecTRI regulators consistent with it, then the supporting gene-level statistics and the STRING neighborhood. State for every activity result: the network name and version, the input statistic and the named contrast, the estimator, the minimum regulon size, and the number of pathways and regulators tested. State plainly that activity scores are inferences from prior networks and not measurements, and that footprint activity is not the expression of pathway members. Record the sample_01 decision and the sensitivity of the pathway ranking to it. Include the reproducibility record: session info, package versions, random seeds, and the version of every reference collection used (PROGENy, CollecTRI/DoRothEA, STRING).",
+        "acceptance_criteria": [
+          "Report leads with the PROGENy pathway activity result for treated vs control, with directions and adjusted p-values",
+          "For each activity result the report states network name and version, input statistic, named contrast, estimator, minimum regulon size, and number of regulators/pathways tested",
+          "Explicit inference caution written: a footprint activity score is a hypothesis from a prior network, not a measurement, and not member expression",
+          "sample_01 decision and the with/without sensitivity of the pathway ranking recorded",
+          "Reproducibility record present: session info, package versions, seeds, and the version of each reference collection used"
+        ]
+      }
+    ],
+    "title": "Cytokine vs vehicle bronchial epithelium: PROGENy + CollecTRI footprint activity",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question asks which signaling pathways are ACTIVE in cytokine-stimulated versus vehicle bronchial epithelium, judged by the transcriptional footprint rather than by expression of pathway members. That is explicitly a footprint-inference question, so the core of the plan is PROGENy pathway activity and CollecTRI transcription-factor activity via decoupleR, not a membership-based over-representation test. The inputs are a 12000 x 12 raw Salmon gene-level count matrix (counts.csv, first column gene symbol) and a 12-row metadata table (metadata.csv) with one condition column, 6 treated vs 6 control, unpaired, single batch.\n\nStep order follows from the data. T1S1 does sample-structure QC on blind VST values: PCA on the top 500 variable genes, a sample-distance heatmap, and per-sample library size and detected-gene counts. This is where the flagged sample_01 (library size about 4x below the median) is examined. It is kept by default — size factors down-weight a shallow library, and depth alone is not grounds for exclusion — and removal, if any, must be stated with a reason and both variants reported downstream. T1S2 applies a minimal pre-filter (>=10 counts in at least 6 samples, the smallest group size), fits the DESeq2 model ~condition with control as the explicit reference level, and emits two artifacts the activity steps need: a per-sample log2-CPM (or VST) matrix, and the per-gene Wald statistic for treated vs control across every tested gene (no significance cut). The gene-level table exists to feed the footprint inference and to be reported as supporting evidence; it is not the answer to the question.\n\nT2S1 is the primary answer: PROGENy human pathway weights (14 signaling pathways, top 500 responsive genes per pathway) scored with decoupleR mlm, both on the contrast statistic (one activity score per pathway for treated vs control) and on the per-sample log matrix (score per sample, tested between groups with limma and BH across pathways). T2S2 runs CollecTRI human regulons with decoupleR ulm to identify which transcription factors carry the footprint, keeping the sign of each edge (a repressor target must lower the score), requiring at least 5 targets among the tested genes, and testing the per-sample scores between groups with BH across regulators. Both steps read scores as footprints and inferences from a prior network, never as measurements or as member expression. With 12 samples a network cannot be inferred from this cohort — only prior-knowledge networks are sound here, and the plan says so.\n\nT2S3 places the leading footprint genes and the top regulators on the STRING human PPI network (combined_score >= 0.7) as a descriptive neighborhood, and T1S3 assembles the report with the network names and versions, input statistic, estimator, minimum regulon size, number of pathways and regulators tested, the sample_01 decision, and the reproducibility record. Sensitivity of the pathway ranking to sample_01 is checked explicitly, because a shallow library is the one technical factor that could plausibly move a footprint score."
+  },
+  "usage": {
+    "inputTokens": 391730,
+    "outputTokens": 10539,
+    "cacheCreationInputTokens": 144222,
+    "cacheReadInputTokens": 247448,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "tf_activity",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "preferred_language": "python"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "progeny"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks",
+        "limit": 20
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "tf_activity",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Minimal pre-filter: at least 10 counts in at least 6 samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "Pathway activity with decoupleR mlm on the PROGENy footprint model",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "footprint_model",
+                "value": "progeny_human"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "interpretation",
+                "value": "footprint_not_membership"
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "Transcription factor activity with decoupleR ulm on the CollecTRI regulons",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "regulon_collection",
+                "value": "collectri_human"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              },
+              {
+                "name": "activity_input",
+                "value": "per_sample_log_matrix"
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_bh_across_regulators"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Activity report with network version, estimator, contrast, inference caution, and reproducibility record",
+            "package": "sessioninfo"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Cytokine vs vehicle bronchial epithelium: PROGENy + CollecTRI footprint activity",
+          "analytical_narrative": "The research question asks which signaling pathways are ACTIVE in cytokine-stimulated versus vehicle bronchial epithelium, judged by the transcriptional footprint rather than by expression of pathway members. That is explicitly a footprint-inference question, so the core of the plan is PROGENy pathway activity and CollecTRI transcription-factor activity via decoupleR, not a membership-based over-representation test. The inputs are a 12000 x 12 raw Salmon gene-level count matrix (counts.csv, first column gene symbol) and a 12-row metadata table (metadata.csv) with one condition column, 6 treated vs 6 control, unpaired, single batch.\n\nStep order follows from the data. T1S1 does sample-structure QC on blind VST values: PCA on the top 500 variable genes, a sample-distance heatmap, and per-sample library size and detected-gene counts. This is where the flagged sample_01 (library size about 4x below the median) is examined. It is kept by default — size factors down-weight a shallow library, and depth alone is not grounds for exclusion — and removal, if any, must be stated with a reason and both variants reported downstream. T1S2 applies a minimal pre-filter (>=10 counts in at least 6 samples, the smallest group size), fits the DESeq2 model ~condition with control as the explicit reference level, and emits two artifacts the activity steps need: a per-sample log2-CPM (or VST) matrix, and the per-gene Wald statistic for treated vs control across every tested gene (no significance cut). The gene-level table exists to feed the footprint inference and to be reported as supporting evidence; it is not the answer to the question.\n\nT2S1 is the primary answer: PROGENy human pathway weights (14 signaling pathways, top 500 responsive genes per pathway) scored with decoupleR mlm, both on the contrast statistic (one activity score per pathway for treated vs control) and on the per-sample log matrix (score per sample, tested between groups with limma and BH across pathways). T2S2 runs CollecTRI human regulons with decoupleR ulm to identify which transcription factors carry the footprint, keeping the sign of each edge (a repressor target must lower the score), requiring at least 5 targets among the tested genes, and testing the per-sample scores between groups with BH across regulators. Both steps read scores as footprints and inferences from a prior network, never as measurements or as member expression. With 12 samples a network cannot be inferred from this cohort — only prior-knowledge networks are sound here, and the plan says so.\n\nT2S3 places the leading footprint genes and the top regulators on the STRING human PPI network (combined_score >= 0.7) as a descriptive neighborhood, and T1S3 assembles the report with the network names and versions, input statistic, estimator, minimum regulon size, number of pathways and regulators tested, the sample_01 decision, and the reproducibility record. Sensitivity of the pathway ranking to sample_01 is checked explicitly, because a shallow library is the one technical factor that could plausibly move a footprint score.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and sample_01 depth assessment",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 bronchial epithelium samples separate by cytokine stimulation vs vehicle on the top 500 variable genes, and does sample_01 (library size ~4x below the median) behave as an outlier beyond its depth?",
+              "context": "Inputs: /eval-four-models-with-pathway-activity-n6-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw integer Salmon gene-level counts, first column gene symbol) and /eval-four-models-with-pathway-activity-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Design is 6 treated vs 6 control, unpaired, single batch. The profile flags sample_01 for low depth.",
+              "description": "Load counts and metadata, verify sample-column alignment with the metadata rows, build a DESeq2 object with design ~condition, apply the blind variance-stabilizing transformation, and produce: PCA on the 500 most variable genes coloured by condition and annotated with sample name; a Euclidean sample-distance heatmap; and a table of per-sample library size, detected genes (count > 0), and DESeq2 size factor. Report where sample_01 falls on each. Recommend keep or drop with a stated reason; the default is keep.",
+              "acceptance_criteria": [
+                "PCA plot on top 500 variable genes and sample-distance heatmap written, both labelled by sample and coloured by condition",
+                "Table of library size, detected gene count, and size factor for all 12 samples, with sample_01's values reported explicitly against the cohort median",
+                "An explicit keep/drop recommendation for sample_01 with a written reason; if drop is recommended, the reason is something other than depth alone",
+                "Confirmation that metadata sample identifiers match the 12 count-matrix columns one-to-one"
+              ],
+              "constraints": [
+                "Use the blind VST (blind=TRUE) for QC — the QC transform must not use the design",
+                "PCA on the top 500 most variable genes",
+                "Do not delete sample_01 silently; keep it through QC and report its library size and detected genes beside the others",
+                "Do not scale, transform, or pre-normalize counts outside the DESeq2 size-factor machinery"
+              ],
+              "caveats": [
+                "A library size ~4x below the median is handled by the size factor; low depth alone is not a reason to drop a sample",
+                "A single low-depth sample can dominate PC1 by detection dropout rather than biology — check whether sample_01 separates from its own condition group or from all samples"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d",
+                  "R-0030@2248"
+                ],
+                "template": "tpl-qc-python@1.0.0",
+                "reason": "Raw counts with a flagged low-depth sample: blind VST + PCA on top 500 + distance heatmap per R-0033, and keep_inspect_report policy for sample_01 per R-0008/R-0030."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Filter, fit condition model, and export gene-level statistics for footprint inference",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What is the per-gene Wald statistic for cytokine-treated vs vehicle control across every tested gene, and what is the per-sample log-expression matrix that the activity inference will score?",
+              "context": "Follows T1S1. The footprint steps need two things: the full ranked contrast statistic (every tested gene, no significance cut) and a per-sample log-scale matrix. This step produces both. The gene-level differential expression table is supporting evidence, not the answer to the research question.",
+              "description": "Apply a minimal pre-filter (keep genes with at least 10 counts in at least 6 samples — the smallest group size). Set the condition reference level explicitly to the vehicle/control level named in metadata.csv; do not rely on alphabetical ordering. Fit DESeq2 with design ~condition and run the Wald test for the contrast condition treated vs control. Export (a) the full results table for every tested gene with the Wald statistic, unshrunken log2FC, apeglm-shrunken log2FC, p-value and BH-adjusted p-value, and (b) a per-sample log2-CPM matrix of the filtered genes (and the blind VST matrix). Report the number of genes filtered out, the number tested, the p-value histogram shape, the number of genes with NA p-values from Cook's outlier flagging separately from independent-filter NAs, and the count at padj < 0.05. If T1S1 recommended dropping sample_01, produce the statistics both with and without it so downstream steps can be checked for sensitivity.",
+              "acceptance_criteria": [
+                "Results table covering every tested gene with Wald statistic, unshrunken and apeglm-shrunken log2FC, p-value and BH padj — no thresholded subsetting",
+                "Per-sample log2-CPM matrix of the filtered genes written for downstream activity scoring, with gene symbols as row identifiers",
+                "Reference level of the condition factor stated in the output, and the contrast named as (condition, treated numerator, control denominator)",
+                "p-value histogram written and its shape described; NA counts from Cook's outlier flagging reported separately from independent-filter NAs",
+                "Gene counts before and after the pre-filter reported"
+              ],
+              "constraints": [
+                "Pre-filter: keep genes with >=10 counts in at least 6 samples (the smallest group size); do not filter more aggressively",
+                "Set the reference level explicitly with relevel to the control condition before fitting; state the contrast as factor/numerator/denominator",
+                "Do not pre-normalize the counts — DESeq2 median-of-ratios size factors handle depth inside the model",
+                "Shrink the reported log2FC with apeglm and keep the unshrunken estimate beside it",
+                "Rank and export by the Wald statistic, not by the unshrunken fold change and not by a signed p-value",
+                "Select any reported DE genes by BH-adjusted p-value at alpha 0.05, never by raw p-value or fold change alone"
+              ],
+              "caveats": [
+                "With 6 per group DESeq2 flags Cook's-distance outlier genes and sets their p-values to NA rather than replacing counts — report those genes as a separate NA class",
+                "A 12000-gene matrix is already pre-filtered relative to a full transcriptome; state how many genes survive the count filter so the enrichment universe is explicit"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "edgeR",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0002@087b",
+                  "R-0029@fa6d",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0001@9a17",
+                  "R-0009@f54e",
+                  "R-0010@91a5",
+                  "R-0039@e17a",
+                  "R-0083@12de",
+                  "R-0099@0a77"
+                ],
+                "reason": "Raw Salmon counts, 6v6 fixed-effects two-group design: minimal pre-filter (R-0002/R-0029), size factors inside the model (R-0026), explicit reference level (R-0036), DESeq2 Wald with apeglm shrinkage (R-0001/R-0009), BH at 0.05 (R-0010); Wald statistic exported as the ranking metric the footprint steps consume (R-0099)."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "PROGENy pathway activity (footprint, not membership)",
+              "track": "T2",
+              "step_type": "activity",
+              "question": "Which of the 14 PROGENy signaling pathways show altered transcriptional footprint activity in cytokine-stimulated vs vehicle bronchial epithelium, and in which direction?",
+              "context": "This is the primary answer to the research question. PROGENy scores a pathway from the genes that respond downstream of its perturbation, so it reports footprint activity rather than expression of pathway members — exactly the distinction the question draws. Needs a human footprint pathway-weight resource (PROGENy human, 14 pathways, per-gene weights); the environment currently exposes one at /mnt/refs/managed/progeny-human/current/model_human_full.rda as an R data frame with columns gene, weight, p.value, pathway. Resolve it at run time and confirm it is the human model, not the mouse one — this dataset is Homo sapiens.",
+              "description": "Run decoupleR mlm with the PROGENy human weights, restricted to the top 500 responsive genes per pathway, in two modes. (1) Contrast mode: score the per-gene Wald statistic from T1S2 across all tested genes, giving one activity score and p-value per pathway for treated vs control; adjust across pathways with BH. (2) Per-sample mode: score the per-sample log2-CPM matrix, giving one score per pathway per sample; test treated vs control on the score matrix with limma under design ~condition and adjust with BH across the 14 pathways. Report both, plus the number of PROGENy genes per pathway actually present in the 12000-gene matrix. Produce a barplot of pathway activity for the contrast and a per-sample heatmap of pathway scores annotated by condition and by library size. Re-run the ranking with sample_01 excluded and report whether the top pathways and their directions change.",
+              "acceptance_criteria": [
+                "Table of all 14 PROGENy pathways with contrast activity score, p-value, and BH-adjusted p-value for treated vs control",
+                "Per-sample pathway score matrix (14 x 12) plus a limma treated-vs-control test per pathway with BH adjustment across pathways",
+                "Number of PROGENy weight genes present in the tested gene set reported per pathway",
+                "Barplot of contrast pathway activity and per-sample score heatmap annotated by condition and library size",
+                "Sensitivity result stated: the top pathways and their directions with and without sample_01",
+                "Report states explicitly that a PROGENy score is a transcriptional footprint inferred from a prior perturbation-response model, not the expression of pathway members and not a measurement of pathway flux"
+              ],
+              "constraints": [
+                "Estimator: decoupleR mlm; ulm may be reported as a secondary estimator",
+                "Use the top 500 responsive genes per pathway and state that number",
+                "Use the HUMAN PROGENy model — verify the organism of the loaded weights before scoring; a mouse model on human symbols yields confident nonsense",
+                "Interpret and report scores as footprint, not membership",
+                "If the human footprint pathway-weight resource cannot be resolved at run time, stop and report that; do not substitute a membership-based over-representation test and call it pathway activity",
+                "No topology-based impact analysis is claimed — SPIA is absent from this environment and neither PROGENy nor an enrichment uses the pathway graph"
+              ],
+              "caveats": [
+                "A pathway member can change expression without a change in footprint activity, and the reverse — do not cross-read the two",
+                "With 6 per group the per-pathway limma test has 12 observations; a non-significant pathway is not evidence of inactivity",
+                "Scores from the contrast mode and the per-sample mode are on different scales and need not rank identically; report disagreement rather than picking the more favourable one",
+                "The reference resource is an R serialized data frame — read it in R, or through rpy2 if the step is written in Python"
+              ],
+              "packages": [
+                "decoupleR",
+                "limma",
+                "dplyr",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0115@1504",
+                  "R-0122@08af",
+                  "R-0134@0f16"
+                ],
+                "template": "tpl-progeny-pathway-activity@1.0.0",
+                "reason": "Question asks for signaling activity by transcriptional footprint rather than member expression: PROGENy + decoupleR mlm on top 500 responsive genes per R-0115; SPIA absent so no topology claim per R-0122; per-sample scores tested with limma + BH per R-0134."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "CollecTRI transcription factor activity",
+              "track": "T2",
+              "step_type": "activity",
+              "question": "Which transcription factors show altered inferred activity in cytokine-treated vs vehicle bronchial epithelium, and do they correspond to the pathways flagged by PROGENy?",
+              "context": "TF activity localizes the pathway footprint to the regulators that produce it — for a cytokine stimulation of airway epithelium, the expected regulators are the NF-kB and STAT families, and whether the data supports that is the test. Needs a signed human TF-target regulon network; the environment currently exposes CollecTRI human (source/target/weight, +1 activating / -1 repressing) at /mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv, with DoRothEA human as the confidence-graded alternative. Resolve at run time and confirm the human collection.",
+              "description": "Run decoupleR ulm with the CollecTRI human regulons, keeping the sign (mode of regulation) of each edge so that a repressor's targets lower rather than raise the score. Require at least 5 targets present among the tested genes for a regulator to be scored. Score both the per-gene Wald statistic from T1S2 (contrast mode, one score per TF) and the per-sample log2-CPM matrix (per-sample mode), test the per-sample scores between conditions with limma under design ~condition, and adjust with BH across regulators. Report the number of regulators that entered the test, the top up- and down-scored TFs with their regulon sizes, and a per-sample heatmap of the leading regulators annotated by condition. Cross-tabulate the leading TFs against the PROGENy pathways from T2S1 and state agreements and disagreements. Optionally repeat with DoRothEA confidence A-C as a robustness check and report the overlap of the top regulators between the two networks.",
+              "acceptance_criteria": [
+                "Table of scored transcription factors with contrast activity score, p-value, BH-adjusted p-value, and regulon size among the tested genes",
+                "Per-sample TF score matrix plus limma treated-vs-control tests with BH adjustment across regulators",
+                "Number of regulators that entered the test stated, along with the minimum regulon size used",
+                "Heatmap of the leading regulators across the 12 samples, annotated by condition",
+                "Explicit comparison of the leading TFs against the PROGENy pathway results from T2S1, naming agreements and disagreements",
+                "Report states the network name and version and that an activity score is an inference from a prior network, so a high score is a hypothesis for follow-up, not a proven finding"
+              ],
+              "constraints": [
+                "Estimator: decoupleR ulm on the full set of tested genes — never on the significant genes only",
+                "Use the HUMAN CollecTRI regulons and keep the sign of each edge (mode of regulation)",
+                "Minimum regulon size 5 targets among the tested genes",
+                "Adjust p-values with BH across regulators",
+                "Use a prior-knowledge network only; do not infer a regulatory network from this 12-sample expression matrix",
+                "If DoRothEA is used as the alternative, keep confidence levels A-C only and state the levels used"
+              ],
+              "caveats": [
+                "VIPER on an ARACNe regulon is the tool of record for context-specific regulator activity and both are absent here; a prior network is the same for every tissue, so an airway-epithelium-specific regulator can be missed and a target silent in this tissue adds noise — state this",
+                "A TF activity score is not TF expression; a TF whose own transcript is unchanged can still show a strong activity shift",
+                "12 samples give a wide confidence interval on every per-regulator test"
+              ],
+              "packages": [
+                "decoupleR",
+                "limma",
+                "dplyr",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0111@b668",
+                  "R-0112@f200",
+                  "R-0113@7a4d",
+                  "R-0114@9db7",
+                  "R-0121@5f27"
+                ],
+                "template": "tpl-decoupler-py-tf-activity@1.0.0",
+                "reason": "TF activity from a two-group contrast: decoupleR ulm on the Wald statistic with signed CollecTRI regulons and min size 5 per R-0111/R-0112; DoRothEA A-C as the alternative per R-0113; VIPER/ARACNe absent and 12 samples forbid network inference per R-0114/R-0121."
+              }
+            },
+            {
+              "id": "T2S3",
+              "name": "STRING neighborhood of the leading footprint genes",
+              "track": "T2",
+              "step_type": "network",
+              "question": "Do the genes driving the top PROGENy pathway footprints and the targets of the leading CollecTRI regulators form a connected high-confidence protein-association module?",
+              "context": "Descriptive support for the activity calls. Uses the human STRING v12.0 protein-association network in the reference store: 9606.protein.links.v12.0.txt.gz (space-delimited, STRING protein ids, combined_score 0-1000) joined to 9606.protein.info.v12.0.txt.gz for gene symbols. This step annotates the footprint result; it does not decide it.",
+              "description": "Take the leading-edge genes of the top PROGENy pathways from T2S1 and the targets of the top regulators from T2S2, map them to STRING identifiers via the info file, and extract the induced subgraph at combined_score >= 700. Report how many of the input genes are present in the network, the size and density of the largest connected component, and the highest-degree nodes. Draw the subgraph coloured by the direction of the gene's Wald statistic from T1S2. If the STRING files cannot be resolved at run time, report that and skip this step — it is an annotation of the footprint result, not a prerequisite for it.",
+              "acceptance_criteria": [
+                "Induced subgraph extracted at combined_score >= 700 with the cutoff and the STRING version stated",
+                "Number of input genes present in the network reported against the number submitted",
+                "Largest connected component size and top-degree nodes reported",
+                "Network figure coloured by direction of change, or an explicit statement that the STRING resource was unavailable and the step was skipped"
+              ],
+              "constraints": [
+                "Join the STRING info file to recover gene symbols — the links file carries STRING protein ids only and is unusable alone",
+                "The links file is SPACE-delimited despite the .txt name; a tab-expecting reader silently parses each row into one column",
+                "Use combined_score >= 700 (0.7) as the high-confidence cutoff and state it",
+                "Every edge appears twice, once per direction — collapse to an undirected graph before counting edges",
+                "Present the module as a hypothesis about a functional neighborhood, not as an activity measurement"
+              ],
+              "caveats": [
+                "A dense cluster of co-regulated genes in STRING is expected for a cytokine response and is not independent confirmation of the footprint result",
+                "The full STRING graph is far too dense for distance measures to be meaningful; do not compute path-based statistics on the unfiltered network"
+              ],
+              "packages": [
+                "igraph",
+                "dplyr",
+                "readr",
+                "ggraph"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "network-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0123@5521"
+                ],
+                "reason": "Human dataset: STRING from the reference store gives the protein-association neighborhood of the footprint genes with the 0.7 confidence cutoff and version stated per R-0123."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Activity report and reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the defensible answer to which signaling pathways are active in cytokine-treated vs vehicle bronchial epithelium by transcriptional footprint, and how strong is the evidence?",
+              "context": "Assembles T1S1, T1S2, T2S1, T2S2 and T2S3 into one report. The headline result is the PROGENy pathway activity table; the TF activity localizes it; the gene-level DESeq2 table is supporting evidence only.",
+              "description": "Write a report that leads with the PROGENy pathway activity for treated vs control and the direction of each significant pathway, then the CollecTRI regulators consistent with it, then the supporting gene-level statistics and the STRING neighborhood. State for every activity result: the network name and version, the input statistic and the named contrast, the estimator, the minimum regulon size, and the number of pathways and regulators tested. State plainly that activity scores are inferences from prior networks and not measurements, and that footprint activity is not the expression of pathway members. Record the sample_01 decision and the sensitivity of the pathway ranking to it. Include the reproducibility record: session info, package versions, random seeds, and the version of every reference collection used (PROGENy, CollecTRI/DoRothEA, STRING).",
+              "acceptance_criteria": [
+                "Report leads with the PROGENy pathway activity result for treated vs control, with directions and adjusted p-values",
+                "For each activity result the report states network name and version, input statistic, named contrast, estimator, minimum regulon size, and number of regulators/pathways tested",
+                "Explicit inference caution written: a footprint activity score is a hypothesis from a prior network, not a measurement, and not member expression",
+                "sample_01 decision and the with/without sensitivity of the pathway ranking recorded",
+                "Reproducibility record present: session info, package versions, seeds, and the version of each reference collection used"
+              ],
+              "constraints": [
+                "Do not present a gene-level DE result as an answer to the pathway-activity question",
+                "Do not claim pathway topology or flux — no topology method was run",
+                "State the number of samples (6 vs 6) beside every inferential claim"
+              ],
+              "caveats": [
+                "12 samples in a single batch: the design is clean but small, and a non-significant pathway is not evidence of inactivity",
+                "If sample_01 was retained, its lower depth widens the uncertainty on its per-sample scores; say so rather than smoothing over it"
+              ],
+              "packages": [
+                "sessioninfo",
+                "rmarkdown",
+                "knitr"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2",
+                "T2S3"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0119@5f4d"
+                ],
+                "reason": "Activity report fields (network, version, statistic, estimator, min regulon size, n regulators, inference caution) per R-0119, with the full reproducibility record per R-0086."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

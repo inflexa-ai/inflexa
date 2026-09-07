@@ -1,0 +1,279 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "no-replicates-1v1",
+  "run": 1,
+  "startedAt": "2026-09-06T21:10:37.555Z",
+  "elapsedMs": 28347,
+  "outcome": "plan_submitted",
+  "planId": "pln-2e1e9bbc",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and normalization of counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Only 2 samples total (1 vs 1); no per-gene variance is estimable from the data itself"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2"
+        ],
+        "question": "What are the library sizes, count distributions, and normalization factors for the single treated and single control liver samples in counts.csv?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports total counts, number of zero/low-count genes, and library size per sample",
+          "Computes normalization factors (e.g., TMM or median-of-ratios) using edgeR or DESeq2 utilities",
+          "Filters out genes with negligible counts across both samples (e.g., CPM<1) before DE testing and reports the number of genes retained out of the original 12000",
+          "Outputs a normalized/filtered count table used by downstream DE steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DE testing with fixed-dispersion edgeR (no-replicate design)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Dispersion is assumed, not estimated — treat all significance calls as exploratory, not confirmatory",
+          "Sensitivity of the significant-gene list to the chosen BCV value should be checked (e.g., rerun at BCV 0.2 and 0.6) and reported"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Using edgeR's exactTest with a fixed common dispersion (since no replicates exist to estimate BCV empirically), which genes are differentially expressed between the treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Uses edgeR exactTest or glmFit with a manually specified dispersion (report the value used, e.g. BCV=0.4, edgeR's documented recommendation for human data without replicates) since dispersion cannot be estimated from n=1 per group",
+          "Reports log2FoldChange, p-value, and FDR-adjusted p-value for every retained gene",
+          "Explicitly states in output that FDR/p-values assume an assumed, not estimated, dispersion and are not equivalent in confidence to a replicated design",
+          "Produces a ranked full results table and a subset of significant genes (FDR<0.05 and |log2FC|>1, clearly labeled as exploratory)"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Cross-check DE with DESeq2 blind/no-replicate approach and simple fold-change ranking",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This design has zero degrees of freedom for within-group variance; all p-values here are approximations built on an assumed noise model, not empirical replication",
+          "Report this limitation prominently in the final gene list, not just in a caveat field"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do DESeq2's no-replicate workaround (dispersion estimation via a single-sample-per-group blind design substituting a nbinomWaldTest with an imposed dispersion) and simple log2 fold-change ranking on normalized counts agree with the edgeR fixed-dispersion results for the treated vs control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Runs DESeq2 with the group variable as the only factor, using either a manually supplied dispersion (dispersionFunction override) or treats replicates as absent and documents the specific workaround used",
+          "Computes plain log2(normalized treated+1 / normalized control+1) fold-change ranking as a model-free cross-check",
+          "Reports overlap (concordance) of top up/down genes between edgeR fixed-dispersion results, DESeq2 results, and the simple fold-change ranking",
+          "Final output is a merged table listing genes flagged as concordant DE hits across at least 2 of the 3 approaches, explicitly labeled exploratory due to n=1 per group"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of concordant DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If the WikiPathways human GMT is unavailable at run time, report enrichment as skipped rather than substituting a different organism's gene sets"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among the genes flagged as concordant differentially expressed between the treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Uses the WikiPathways human GMT gene sets (HGNC symbols) available in the environment for over-representation or GSEA-style analysis",
+          "Runs enrichment on the concordant DE gene list from T1S3 (and separately on the full ranked list for a GSEA pre-ranked analysis using log2FC)",
+          "Reports enriched pathways with adjusted p-values (FDR<0.25 for GSEA or FDR<0.05 for ORA) and the overlapping gene sets",
+          "Notes explicitly that enrichment results inherit the exploratory, unreplicated nature of the input gene list"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control DE, no-replicate design",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The dataset is a single-sample-per-group bulk RNA-seq comparison (1 treated liver sample vs 1 control liver sample, 12000 genes, raw salmon counts, no biological replication). Standard replicate-based methods (DESeq2/edgeR Wald or LRT tests with per-gene dispersion estimation) cannot estimate within-group variance from n=1 per group, so a dispersion must be borrowed or fixed. The plan runs count normalization and QC, then applies the two established approaches for unreplicated designs — edgeR with a fixed/preset common dispersion (BCV, e.g. 0.4 as edgeR's documented default for human data lacking replicates) and DESeq2's blind dispersion-by-fold-change heuristic — cross-checking results with a simple fold-change/count-based ranking, and flags all results as exploratory given the total absence of replication. Genes surviving as concordant hits across methods are then passed to pathway enrichment against WikiPathways human gene sets to give the DE list biological context."
+  },
+  "usage": {
+    "inputTokens": 87153,
+    "outputTokens": 2476,
+    "cacheCreationInputTokens": 68845,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control DE, no-replicate design",
+          "analytical_narrative": "The dataset is a single-sample-per-group bulk RNA-seq comparison (1 treated liver sample vs 1 control liver sample, 12000 genes, raw salmon counts, no biological replication). Standard replicate-based methods (DESeq2/edgeR Wald or LRT tests with per-gene dispersion estimation) cannot estimate within-group variance from n=1 per group, so a dispersion must be borrowed or fixed. The plan runs count normalization and QC, then applies the two established approaches for unreplicated designs — edgeR with a fixed/preset common dispersion (BCV, e.g. 0.4 as edgeR's documented default for human data lacking replicates) and DESeq2's blind dispersion-by-fold-change heuristic — cross-checking results with a simple fold-change/count-based ranking, and flags all results as exploratory given the total absence of replication. Genes surviving as concordant hits across methods are then passed to pathway enrichment against WikiPathways human gene sets to give the DE list biological context.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and normalization of counts",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "What are the library sizes, count distributions, and normalization factors for the single treated and single control liver samples in counts.csv?",
+              "acceptance_criteria": [
+                "Reports total counts, number of zero/low-count genes, and library size per sample",
+                "Computes normalization factors (e.g., TMM or median-of-ratios) using edgeR or DESeq2 utilities",
+                "Filters out genes with negligible counts across both samples (e.g., CPM<1) before DE testing and reports the number of genes retained out of the original 12000",
+                "Outputs a normalized/filtered count table used by downstream DE steps"
+              ],
+              "packages": [
+                "edgeR",
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Only 2 samples total (1 vs 1); no per-gene variance is estimable from the data itself"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DE testing with fixed-dispersion edgeR (no-replicate design)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using edgeR's exactTest with a fixed common dispersion (since no replicates exist to estimate BCV empirically), which genes are differentially expressed between the treated and control liver samples?",
+              "acceptance_criteria": [
+                "Uses edgeR exactTest or glmFit with a manually specified dispersion (report the value used, e.g. BCV=0.4, edgeR's documented recommendation for human data without replicates) since dispersion cannot be estimated from n=1 per group",
+                "Reports log2FoldChange, p-value, and FDR-adjusted p-value for every retained gene",
+                "Explicitly states in output that FDR/p-values assume an assumed, not estimated, dispersion and are not equivalent in confidence to a replicated design",
+                "Produces a ranked full results table and a subset of significant genes (FDR<0.05 and |log2FC|>1, clearly labeled as exploratory)"
+              ],
+              "packages": [
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Dispersion is assumed, not estimated — treat all significance calls as exploratory, not confirmatory",
+                "Sensitivity of the significant-gene list to the chosen BCV value should be checked (e.g., rerun at BCV 0.2 and 0.6) and reported"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Cross-check DE with DESeq2 blind/no-replicate approach and simple fold-change ranking",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Do DESeq2's no-replicate workaround (dispersion estimation via a single-sample-per-group blind design substituting a nbinomWaldTest with an imposed dispersion) and simple log2 fold-change ranking on normalized counts agree with the edgeR fixed-dispersion results for the treated vs control liver samples?",
+              "acceptance_criteria": [
+                "Runs DESeq2 with the group variable as the only factor, using either a manually supplied dispersion (dispersionFunction override) or treats replicates as absent and documents the specific workaround used",
+                "Computes plain log2(normalized treated+1 / normalized control+1) fold-change ranking as a model-free cross-check",
+                "Reports overlap (concordance) of top up/down genes between edgeR fixed-dispersion results, DESeq2 results, and the simple fold-change ranking",
+                "Final output is a merged table listing genes flagged as concordant DE hits across at least 2 of the 3 approaches, explicitly labeled exploratory due to n=1 per group"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "This design has zero degrees of freedom for within-group variance; all p-values here are approximations built on an assumed noise model, not empirical replication",
+                "Report this limitation prominently in the final gene list, not just in a caveat field"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of concordant DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among the genes flagged as concordant differentially expressed between the treated and control liver samples?",
+              "acceptance_criteria": [
+                "Uses the WikiPathways human GMT gene sets (HGNC symbols) available in the environment for over-representation or GSEA-style analysis",
+                "Runs enrichment on the concordant DE gene list from T1S3 (and separately on the full ranked list for a GSEA pre-ranked analysis using log2FC)",
+                "Reports enriched pathways with adjusted p-values (FDR<0.25 for GSEA or FDR<0.05 for ORA) and the overlapping gene sets",
+                "Notes explicitly that enrichment results inherit the exploratory, unreplicated nature of the input gene list"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "If the WikiPathways human GMT is unavailable at run time, report enrichment as skipped rather than substituting a different organism's gene sets"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

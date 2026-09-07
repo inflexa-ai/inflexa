@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: one DESeq2 model ~condition fitted on all twelve samples, an LRT against ~1 for the omnibus question, and two pre-specified Wald contrasts against a relevelled control from the same fit, with BH within each contrast and apeglm/ashr shrinkage, and it explicitly warns against subsetting to eight samples and against conflating LRT p-values with pairwise fold changes. QC is thorough (library sizes, PCA, distances, dispersion, p-value histogram) with a stated policy for within-group splits, though there is no explicit rule for a shallow sample. Weaknesses: the low-count filter gives the sample-count rule but never names the minimum count; the |log2FC|>1 cutoff is applied post hoc rather than via lfcThreshold, and the plan deliberately reports unshrunken LFCs as the effect, using shrinkage only for ranking; normalization is stated only by prohibition of pre-normalized input rather than naming size factors; and gene-set collection versions and package versions are not required in the report. Enrichment was not asked for but is handled carefully with an explicit post-filter universe, named human collections, a set-size window, and a stated ranking metric."
+}

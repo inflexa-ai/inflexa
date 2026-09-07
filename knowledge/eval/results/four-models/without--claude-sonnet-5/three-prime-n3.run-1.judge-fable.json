@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 10,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the 3' tag-seq implication, refuses TPM/FPKM and any length correction, and fits DESeq2 with median-of-ratios normalization inside the model on a ~condition design with apeglm shrinkage and BH at 0.05, with PCA/distance QC and an explicit outlier policy for n=3. The low-count filter is left as a vague 'e.g.' with no stated floor and no requirement to report genes retained, the reference level is not stated, and the |LFC|>1 cutoff is applied post hoc rather than as a tested threshold. Enrichment was not requested or warranted; it is added anyway with a stated universe and ranking metric but no collection version or gene-set size window. The report specification omits package versions and the count of genes tested."
+}

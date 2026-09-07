@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 1,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 2
+  },
+  "rationale": "The planner reached the correct outcome: it recognized that a gene-level count matrix cannot resolve dominant-isoform switching and stopped to request transcript-level Salmon quantifications rather than fitting DESeq2/edgeR and mislabeling DE genes as switches. It did not, however, ask for the transcript-to-gene map with the annotation version or the effective lengths, and it named no downstream method (DRIMSeq/DEXSeq via tximport scaledTPM, dmFilter, stageR) that would apply once the files arrive. No plan was submitted, so nothing is stated about QC or a policy for the shallow sample_01, filtering, normalization, design/contrast, multiple-testing control, or report content; these criteria score at or near zero on what is stated. Enrichment is correctly absent, which is appropriate for a transcript-usage question, but credit is tempered because there is no plan in which the omission was a deliberate choice."
+}

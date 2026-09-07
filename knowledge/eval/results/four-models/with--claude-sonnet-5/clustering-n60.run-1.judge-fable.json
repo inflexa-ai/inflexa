@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly frames this as a consensus-clustering question and specifies ConsensusClusterPlus with VST, top-2000 centered genes, 1-Pearson/average linkage, 1000 reps at 80% item subsampling, k=2-8, delta-area plus PAC, item and cluster consensus, and a mandatory cross-tabulation against case/control (chi-square/Fisher) and library depth. It falls short of the reference by omitting gene resampling and, more importantly, by only stating the noise caveat rather than running a permuted or simulated null matrix to decide whether the structure is real; ARI is not reported. The one-vs-rest limma-voom marker step has no explicit design formula or contrast, ignores case/control as a covariate, and does not acknowledge the circularity of testing clusters defined on the same data, and no fold-change shrinkage or threshold is stated for the markers. QC, filtering, normalization and the report are otherwise well specified with seeds, versions and confounder tables, though the plan leans on opaque internal rule references."
+}

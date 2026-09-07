@@ -1,0 +1,13 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "batch-balanced-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T05:30:46.709Z",
+  "elapsedMs": 643598,
+  "outcome": "error",
+  "error": "Plan generation failed: Provider call failed for analysis:eval-four-models-without-batch-balanced-n6-1: Upstream error from Wafer: The model request timed out. Please retry.",
+  "usage": {},
+  "toolCalls": []
+}

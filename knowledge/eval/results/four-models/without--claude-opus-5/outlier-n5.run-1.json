@@ -1,0 +1,521 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "outlier-n5",
+  "run": 1,
+  "startedAt": "2026-09-07T00:29:13.679Z",
+  "elapsedMs": 106430,
+  "outcome": "plan_submitted",
+  "planId": "pln-0b19f886",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Matrix/metadata reconciliation and sample_03 outlier characterisation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=5 per group, sample-level QC statistics have wide uncertainty; a sample can look like an outlier by chance.",
+          "If sample_03 turns out to be, for example, the treated sample with the strongest response, removing it would remove signal rather than noise — this is exactly why the plan runs both analyses rather than choosing here.",
+          "A gene-symbol first column can contain duplicate symbols; collapse duplicates by summing (and report how many) rather than silently letting the reader drop rows."
+        ],
+        "context": "Input is /eval-four-models-without-outlier-n5-1/data/inputs/counts/counts.csv (12000 genes x 11 columns, raw integer Salmon gene-level counts, first column gene symbol) and /eval-four-models-without-outlier-n5-1/data/inputs/metadata/metadata.csv (10 rows x 2 columns, one row per sample with a condition column). Design: 5 treated vs 5 control, unpaired, single batch, Homo sapiens muscle. The persisted data profile flags that sample_03 separates from every other sample on the PCA and on the sample distance heatmap. Everything downstream depends on knowing whether that separation is technical or biological, and on the count matrix and metadata agreeing on sample identity.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "matrixStats",
+          "pheatmap",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Do the 11 columns of counts.csv reconcile to the 10 samples in metadata.csv, which group does sample_03 belong to, and is its separation on PCA explained by a technical defect (library size, detection rate, RLE shift) or by a coherent biological expression difference?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Use the exact file paths given; do not attempt any network access or any download.",
+          "Filter genes to those with count >= 10 in at least 5 samples before VST/PCA, and report how many of the 12000 genes survive.",
+          "Do not impute, do not batch-correct, and do not run SVA — there is a single batch and n=5 per group.",
+          "Report every outlier statistic as a number for all 10 samples, not only for sample_03, so the reader can judge the margin by which sample_03 is unusual.",
+          "Do not declare sample_03 an artefact without technical evidence; 'unexplained separation' is an acceptable and expected verdict."
+        ],
+        "description": "Load the counts matrix and metadata, reconcile columns to samples, and produce a quantitative outlier dossier for sample_03: per-sample library size, number of detected genes (count>0 and count>=10), median and IQR of relative log expression (RLE) after DESeq2 median-of-ratios size-factor estimation, mean Spearman correlation of each sample to all others and to the other members of its own group, hierarchical clustering on VST-based sample distances, and PCA (VST, top 500 variable genes) with PC1/PC2 coordinates and percent variance reported numerically. Also report, for sample_03, how many genes are its own private extreme values (highest or lowest VST value across all 10 samples) — a technical failure typically shows a global RLE/detection shift, while genuine biology shows a coherent, gene-set-structured difference. State explicitly which condition group sample_03 belongs to, since the plan does not know this.",
+        "acceptance_criteria": [
+          "The 11 columns of counts.csv are accounted for: which are samples, and what the 11th column is (gene ID column read as data, an unlabelled extra sample, or an annotation column). The sample columns used downstream match the 10 metadata rows exactly, by name, and the mapping is written to disk.",
+          "Metadata condition column is reported with its exact level names and the n per level (expected 5 and 5); the group membership of sample_03 is stated explicitly.",
+          "A per-sample QC table (library size, detected genes at >0 and >=10, DESeq2 size factor, RLE median, RLE IQR, mean inter-sample Spearman correlation, mean within-group Spearman correlation) is written as CSV covering all 10 samples.",
+          "PCA on VST of the top 500 variable genes is produced with numeric PC1/PC2 coordinates and percent variance explained per PC, plus the VST sample-distance heatmap; both saved as figures and the coordinates as CSV.",
+          "A written verdict on sample_03 that names the specific evidence: whether its separation tracks a library-size/detection/RLE anomaly (technical) or not (biological/unexplained), and whether it drives PC1 or a later PC.",
+          "No sample is deleted in this step — the step characterises, it does not filter."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Primary DESeq2 DE: treated vs control, all 10 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=5 per group gives limited power; genuinely moderate effects will be missed and the reported effect sizes of the significant genes are biased upward (winner's curse).",
+          "If sample_03 is extreme, dispersion estimates are inflated for the genes it affects, which costs power genome-wide — this shows up as a smaller significant set here than in T1S3 even when nothing is wrong.",
+          "DESeq2's own Cook's-distance outlier replacement can silently change calls with n=5; report whether replacement or filtering was triggered and for how many genes."
+        ],
+        "context": "Raw integer Salmon gene-level counts, 12000 gene symbols x 10 samples, 5 treated vs 5 control, unpaired, single batch. This is the primary, pre-specified analysis on the full cohort, using the reconciled matrix and sample mapping from T1S1. sample_03 is retained here by design; the parallel run without it is T1S3.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano",
+          "data.table"
+        ],
+        "question": "Which genes are differentially expressed between the treated and control groups across all 10 samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use DESeq2 with design ~ condition and nothing else — there is no batch or covariate to model.",
+          "Do not pre-filter on fold change before the test; apply fold-change cutoffs only when summarising.",
+          "Use apeglm for shrinkage; do not use shrunken values for the p-values.",
+          "Report results for all genes, not only significant ones.",
+          "State the sample size (5 vs 5) alongside every significance count."
+        ],
+        "description": "Run DESeq2 on the full 10-sample matrix with design ~ condition, control level set as the reference so the log2 fold change reads as treated-over-control. Use median-of-ratios normalisation, independent filtering as DESeq2 defaults, and Wald test. Report the full results table (baseMean, unshrunken log2FC, lfcSE, stat, pvalue, padj) for every tested gene, plus apeglm-shrunken log2 fold changes for ranking and plotting. Produce the count of genes at padj < 0.05, at padj < 0.05 with |log2FC| >= 1, and at padj < 0.10, and a top-50 table sorted by padj. Produce MA plot, volcano plot, p-value histogram, and a heatmap of VST values for the top 30 genes by padj annotated with condition and with sample_03 marked. Also extract and save the per-gene maximum Cook's distance and flag which significant genes have a Cook's outlier in any sample.",
+        "acceptance_criteria": [
+          "DESeq2 results table for all tested genes written as CSV, with both unshrunken and apeglm-shrunken log2FC columns and the contrast direction stated in words (treated relative to control).",
+          "The reference level is verified and reported, so the sign of the log2 fold change is unambiguous.",
+          "Significant-gene counts reported at padj<0.05, padj<0.05 & |log2FC|>=1, and padj<0.10, with the number of genes tested after independent filtering.",
+          "p-value histogram inspected and described: a flat-with-spike-at-zero shape is expected; a non-uniform or U-shaped histogram is reported as a model-fit warning rather than ignored.",
+          "Per-gene max Cook's distance saved, and every gene in the padj<0.05 set flagged for whether a single sample drives it.",
+          "Dispersion-estimate plot produced and the fit described.",
+          "MA, volcano, and top-gene heatmap figures saved."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sensitivity DESeq2 DE: same contrast excluding sample_03",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A 5-vs-4 design is unbalanced and slightly less powerful per sample than 5-vs-5, yet removing a high-variance sample usually lowers dispersion and increases the number of significant genes — a larger gene list here is therefore expected and is NOT evidence that this list is more correct.",
+          "If sample_03 is a treated sample with a strong response, this analysis systematically removes true signal."
+        ],
+        "context": "Pre-specified sensitivity analysis mirroring T1S2 exactly, on the 9 samples remaining after dropping sample_03. Group sizes become 5 vs 4 (or 4 vs 5, depending on which group sample_03 belongs to, as determined in T1S1). This is not a replacement for the primary analysis and must not be presented as one.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano",
+          "data.table"
+        ],
+        "question": "How does the treated-versus-control gene list change when sample_03 — the sample that separates from all others on PCA and on the sample-distance heatmap — is excluded, leaving 9 samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Identical model, filtering rule, reference level, and shrinkage estimator as T1S2 — the only difference is the sample set.",
+          "Re-estimate size factors and dispersions from the 9 samples; do not reuse the 10-sample estimates.",
+          "Do not exclude any sample other than sample_03.",
+          "Do not present this list as the headline result on its own."
+        ],
+        "description": "Re-run the identical DESeq2 pipeline (design ~ condition, same reference level, same filtering rules, apeglm shrinkage) on the 9-sample matrix with sample_03 removed. Produce the same outputs as T1S2: full results table, significance counts at the same thresholds, top-50 table, MA/volcano/p-value histogram/dispersion plot, and a top-gene VST heatmap. Report the number of samples in each group after removal and note that the design is now unbalanced.",
+        "acceptance_criteria": [
+          "Full 9-sample DESeq2 results table written as CSV, with the same columns and the same stated contrast direction as T1S2.",
+          "Group sizes after removal reported explicitly (which group lost a sample).",
+          "Significance counts at padj<0.05, padj<0.05 & |log2FC|>=1, padj<0.10, alongside the number of genes tested.",
+          "Dispersion plot and p-value histogram produced and compared in words to the T1S2 versions (in particular whether the dispersion trend dropped).",
+          "The step's report states plainly that removing a sample after seeing that it is an outlier on QC plots is a data-dependent choice and that the resulting p-values are not corrected for that selection."
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Concordance of the two DE analyses and outlier-driven gene flagging",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Concordance between two analyses that share 9 of 10 samples is guaranteed to be high; the informative quantity is the disagreement set, not the correlation.",
+          "Genes labelled outlier-dependent are not necessarily false positives, and genes labelled outlier-masked are not necessarily true — both classes need independent replication, which this dataset cannot provide."
+        ],
+        "context": "Takes the two full results tables from T1S2 (10 samples) and T1S3 (9 samples, sample_03 removed). This step is the direct answer to the research question as posed, which explicitly names the odd sample: the deliverable is a single ranked gene list annotated with how dependent each call is on one sample.",
+        "maxSteps": 200,
+        "packages": [
+          "data.table",
+          "ggplot2",
+          "ComplexHeatmap",
+          "ComplexUpset",
+          "ggrepel"
+        ],
+        "question": "Which differentially expressed genes are robust to the presence of sample_03, and which are called only because of it (or only in its absence)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Do not choose one analysis and discard the other; report both and label the difference.",
+          "Merge on the gene symbol used in counts.csv; report how many genes are tested in one analysis but filtered out in the other and handle them as missing rather than as non-significant.",
+          "Do not re-run any statistical test here — this step compares existing results.",
+          "Do not describe the sensitivity analysis as a 'corrected' or 'cleaned' result."
+        ],
+        "description": "Merge the two results tables on gene symbol and quantify agreement: Spearman correlation of the Wald statistic and of the shrunken log2FC across all commonly tested genes; a scatter of the two log2FC vectors with the diagonal and a sign-discordance count; overlap of the padj<0.05 sets as a Venn/UpSet plot with the three counts (both, primary-only, sensitivity-only). Build one consolidated master table of every gene with: baseMean, log2FC and padj from each analysis, a robustness label (robust = significant in both with the same sign; outlier-dependent = significant only with sample_03 present; outlier-masked = significant only with sample_03 removed; not significant), and the per-gene max Cook's distance from T1S2. Additionally, for the top 30 genes by each analysis, plot per-sample normalised counts with sample_03 highlighted, so the reader can see directly whether a call rests on one point. Rank the final recommended gene list by the primary (10-sample) padj and report the robustness label beside each entry.",
+        "acceptance_criteria": [
+          "Consolidated master table written as CSV covering every gene tested in both analyses, carrying both sets of statistics and the robustness label.",
+          "Spearman correlation of Wald statistics and of shrunken log2FC between the two analyses reported as numbers, with the count of sign discordances among genes significant in either.",
+          "Set-overlap counts at padj<0.05 (both / primary-only / sensitivity-only) reported with a figure.",
+          "Per-sample normalised-count dot plots for the top genes with sample_03 visually distinguished.",
+          "A stated headline gene list with its robustness annotation, plus an explicit statement of which analysis is the primary one and why both are reported.",
+          "An explicit statement of how many of the headline genes would change status if sample_03 were dropped."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark and GO-BP GSEA on both rankings",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Only 12000 gene symbols are present, so gene-set coverage is incomplete and small sets will lose members; report set size after intersection, never the nominal size.",
+          "GSEA on an underpowered 5-vs-5 contrast produces enrichment scores whose leading edges are unstable — treat the pathway result as hypothesis-generating.",
+          "If the two rankings give different pathway stories, that is itself the finding and should be reported as such rather than resolved by preferring one."
+        ],
+        "context": "Takes the ranked gene statistics from T1S2 (all 10 samples) and T1S3 (sample_03 removed). Genes are HGNC symbols, matching the symbol space of the staged human gene-set files, so no ID conversion should be needed beyond reporting the overlap. Human muscle tissue, treatment vs control. Gene-set-level testing is included because with 5 vs 5 the per-gene test is underpowered and a coordinated shift across a set can be detectable when individual genes are not.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2",
+          "clusterProfiler",
+          "enrichplot"
+        ],
+        "question": "Which biological processes are coordinately shifted between treated and control muscle, and does the pathway-level answer survive removal of sample_03?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use human gene sets only — the data is Homo sapiens; a mouse or rat collection is present in the environment and must not be used.",
+          "Rank by the DESeq2 Wald statistic from the corresponding DE step; do not rank by p-value alone and do not use a significance-filtered gene list as input to a pre-ranked test.",
+          "Restrict gene sets to size 15-500 after intersecting with the tested gene universe, and report the resulting number of sets.",
+          "Use the tested-gene background from the DE step, not all 12000 input rows.",
+          "Set and report the random seed — fgsea permutation results are stochastic."
+        ],
+        "description": "Run pre-ranked GSEA (fgsea) separately on the 10-sample and 9-sample rankings, ranking genes by the DESeq2 Wald statistic (not by fold change, and with NA-stat genes dropped). Test against human hallmark gene sets and human GO Biological Process gene sets — both are needed because hallmark gives 50 broad states and GO-BP gives process-level resolution. Report normalised enrichment score, p-value, BH-adjusted p-value and leading-edge genes per set, for each ranking. Collapse redundant GO-BP hits (parent/child sets share most members) before reporting a count, and present a side-by-side table of the top sets under each ranking so pathway-level sensitivity to sample_03 is visible. Report the fraction of ranked genes that matched the gene-set symbol space. The step must confirm the human hallmark and human GO-BP gene-set resources are present before use; if either is absent, run with whichever is available and say plainly in the output which collection was missing — the analysis is not invalidated by losing one of the two.",
+        "acceptance_criteria": [
+          "fgsea results for hallmark and for GO-BP, for both the 10-sample and 9-sample rankings, written as CSV with NES, pval, padj, set size and leading-edge genes.",
+          "The gene-set resources actually used are named in the output, with the organism confirmed as human, and any absent collection reported explicitly rather than silently skipped.",
+          "Symbol-match rate between the ranking and each gene-set collection reported as a number; a match rate below ~60% is flagged as an identifier problem.",
+          "Redundant GO-BP sets collapsed (by leading-edge overlap or a Jaccard cutoff) before any headline count is given.",
+          "A side-by-side comparison of the top enriched sets under the two rankings, naming sets that appear under only one.",
+          "Enrichment plots for the top few sets under the primary (10-sample) ranking."
+        ]
+      }
+    ],
+    "title": "Treated vs control muscle RNA-seq DE with outlier sensitivity",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is a small unpaired bulk RNA-seq experiment: 12,000 gene-symbol rows x 11 count columns in counts.csv (10 of which map to the 10 rows of metadata.csv; the extra column is almost certainly the gene-ID column read as data or an unannotated sample and must be reconciled explicitly), 5 treated vs 5 control, single batch, raw Salmon gene-level counts. The research question is simply which genes differ between treated and control, but the profile already flags that sample_03 separates from every other sample on PCA and on the sample-distance heatmap. With n=5 per group, one aberrant sample can dominate the fit, so the honest analysis is not to pick a side up front but to quantify the outlier, run DESeq2 both with and without it, and report the concordance. T1S1 reconciles the count matrix against the metadata and quantifies how far sample_03 sits from its group using library size, detected-gene count, RLE median/IQR, Cook's distance, correlation-based outlier statistics and PCA — this decides whether sample_03 is a technical failure or genuine biological variation, and it names which group it belongs to (the seed does not say). T1S2 is the primary DE analysis: DESeq2 negative-binomial Wald test on all 10 samples, with apeglm-shrunken LFCs and the full result table. T1S3 repeats the identical model on the 9 samples without sample_03 as a pre-specified sensitivity analysis. T1S4 compares the two, which is the actual deliverable given the caveat: rank concordance, overlap of significant sets, and a labelled list of genes whose call is driven by one sample. T2S1 then takes the ranked statistic from the primary analysis into hallmark and GO-BP GSEA (both staged for human), run on the with-outlier and without-outlier rankings so the pathway story is subject to the same sensitivity check. No batch variable exists so none is modelled; no surrogate-variable correction is planned because with n=5 and one known outlier SVA would absorb the very effect under examination — that is stated rather than silently done. Power is the binding limitation and every step is required to say so."
+  },
+  "usage": {
+    "inputTokens": 92745,
+    "outputTokens": 7459,
+    "cacheCreationInputTokens": 74573,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "pheatmap",
+          "clusterProfiler",
+          "fgsea",
+          "msigdbr",
+          "org.Hs.eg.db",
+          "sva",
+          "pydeseq2",
+          "gseapy",
+          "RUVSeq",
+          "vsn",
+          "ComplexHeatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control muscle RNA-seq DE with outlier sensitivity",
+          "analytical_narrative": "The dataset is a small unpaired bulk RNA-seq experiment: 12,000 gene-symbol rows x 11 count columns in counts.csv (10 of which map to the 10 rows of metadata.csv; the extra column is almost certainly the gene-ID column read as data or an unannotated sample and must be reconciled explicitly), 5 treated vs 5 control, single batch, raw Salmon gene-level counts. The research question is simply which genes differ between treated and control, but the profile already flags that sample_03 separates from every other sample on PCA and on the sample-distance heatmap. With n=5 per group, one aberrant sample can dominate the fit, so the honest analysis is not to pick a side up front but to quantify the outlier, run DESeq2 both with and without it, and report the concordance. T1S1 reconciles the count matrix against the metadata and quantifies how far sample_03 sits from its group using library size, detected-gene count, RLE median/IQR, Cook's distance, correlation-based outlier statistics and PCA — this decides whether sample_03 is a technical failure or genuine biological variation, and it names which group it belongs to (the seed does not say). T1S2 is the primary DE analysis: DESeq2 negative-binomial Wald test on all 10 samples, with apeglm-shrunken LFCs and the full result table. T1S3 repeats the identical model on the 9 samples without sample_03 as a pre-specified sensitivity analysis. T1S4 compares the two, which is the actual deliverable given the caveat: rank concordance, overlap of significant sets, and a labelled list of genes whose call is driven by one sample. T2S1 then takes the ranked statistic from the primary analysis into hallmark and GO-BP GSEA (both staged for human), run on the with-outlier and without-outlier rankings so the pathway story is subject to the same sensitivity check. No batch variable exists so none is modelled; no surrogate-variable correction is planned because with n=5 and one known outlier SVA would absorb the very effect under examination — that is stated rather than silently done. Power is the binding limitation and every step is required to say so.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Matrix/metadata reconciliation and sample_03 outlier characterisation",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Do the 11 columns of counts.csv reconcile to the 10 samples in metadata.csv, which group does sample_03 belong to, and is its separation on PCA explained by a technical defect (library size, detection rate, RLE shift) or by a coherent biological expression difference?",
+              "context": "Input is /eval-four-models-without-outlier-n5-1/data/inputs/counts/counts.csv (12000 genes x 11 columns, raw integer Salmon gene-level counts, first column gene symbol) and /eval-four-models-without-outlier-n5-1/data/inputs/metadata/metadata.csv (10 rows x 2 columns, one row per sample with a condition column). Design: 5 treated vs 5 control, unpaired, single batch, Homo sapiens muscle. The persisted data profile flags that sample_03 separates from every other sample on the PCA and on the sample distance heatmap. Everything downstream depends on knowing whether that separation is technical or biological, and on the count matrix and metadata agreeing on sample identity.",
+              "description": "Load the counts matrix and metadata, reconcile columns to samples, and produce a quantitative outlier dossier for sample_03: per-sample library size, number of detected genes (count>0 and count>=10), median and IQR of relative log expression (RLE) after DESeq2 median-of-ratios size-factor estimation, mean Spearman correlation of each sample to all others and to the other members of its own group, hierarchical clustering on VST-based sample distances, and PCA (VST, top 500 variable genes) with PC1/PC2 coordinates and percent variance reported numerically. Also report, for sample_03, how many genes are its own private extreme values (highest or lowest VST value across all 10 samples) — a technical failure typically shows a global RLE/detection shift, while genuine biology shows a coherent, gene-set-structured difference. State explicitly which condition group sample_03 belongs to, since the plan does not know this.",
+              "acceptance_criteria": [
+                "The 11 columns of counts.csv are accounted for: which are samples, and what the 11th column is (gene ID column read as data, an unlabelled extra sample, or an annotation column). The sample columns used downstream match the 10 metadata rows exactly, by name, and the mapping is written to disk.",
+                "Metadata condition column is reported with its exact level names and the n per level (expected 5 and 5); the group membership of sample_03 is stated explicitly.",
+                "A per-sample QC table (library size, detected genes at >0 and >=10, DESeq2 size factor, RLE median, RLE IQR, mean inter-sample Spearman correlation, mean within-group Spearman correlation) is written as CSV covering all 10 samples.",
+                "PCA on VST of the top 500 variable genes is produced with numeric PC1/PC2 coordinates and percent variance explained per PC, plus the VST sample-distance heatmap; both saved as figures and the coordinates as CSV.",
+                "A written verdict on sample_03 that names the specific evidence: whether its separation tracks a library-size/detection/RLE anomaly (technical) or not (biological/unexplained), and whether it drives PC1 or a later PC.",
+                "No sample is deleted in this step — the step characterises, it does not filter."
+              ],
+              "constraints": [
+                "Use the exact file paths given; do not attempt any network access or any download.",
+                "Filter genes to those with count >= 10 in at least 5 samples before VST/PCA, and report how many of the 12000 genes survive.",
+                "Do not impute, do not batch-correct, and do not run SVA — there is a single batch and n=5 per group.",
+                "Report every outlier statistic as a number for all 10 samples, not only for sample_03, so the reader can judge the margin by which sample_03 is unusual.",
+                "Do not declare sample_03 an artefact without technical evidence; 'unexplained separation' is an acceptable and expected verdict."
+              ],
+              "caveats": [
+                "With n=5 per group, sample-level QC statistics have wide uncertainty; a sample can look like an outlier by chance.",
+                "If sample_03 turns out to be, for example, the treated sample with the strongest response, removing it would remove signal rather than noise — this is exactly why the plan runs both analyses rather than choosing here.",
+                "A gene-symbol first column can contain duplicate symbols; collapse duplicates by summing (and report how many) rather than silently letting the reader drop rows."
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "matrixStats",
+                "pheatmap",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Primary DESeq2 DE: treated vs control, all 10 samples",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between the treated and control groups across all 10 samples?",
+              "context": "Raw integer Salmon gene-level counts, 12000 gene symbols x 10 samples, 5 treated vs 5 control, unpaired, single batch. This is the primary, pre-specified analysis on the full cohort, using the reconciled matrix and sample mapping from T1S1. sample_03 is retained here by design; the parallel run without it is T1S3.",
+              "description": "Run DESeq2 on the full 10-sample matrix with design ~ condition, control level set as the reference so the log2 fold change reads as treated-over-control. Use median-of-ratios normalisation, independent filtering as DESeq2 defaults, and Wald test. Report the full results table (baseMean, unshrunken log2FC, lfcSE, stat, pvalue, padj) for every tested gene, plus apeglm-shrunken log2 fold changes for ranking and plotting. Produce the count of genes at padj < 0.05, at padj < 0.05 with |log2FC| >= 1, and at padj < 0.10, and a top-50 table sorted by padj. Produce MA plot, volcano plot, p-value histogram, and a heatmap of VST values for the top 30 genes by padj annotated with condition and with sample_03 marked. Also extract and save the per-gene maximum Cook's distance and flag which significant genes have a Cook's outlier in any sample.",
+              "acceptance_criteria": [
+                "DESeq2 results table for all tested genes written as CSV, with both unshrunken and apeglm-shrunken log2FC columns and the contrast direction stated in words (treated relative to control).",
+                "The reference level is verified and reported, so the sign of the log2 fold change is unambiguous.",
+                "Significant-gene counts reported at padj<0.05, padj<0.05 & |log2FC|>=1, and padj<0.10, with the number of genes tested after independent filtering.",
+                "p-value histogram inspected and described: a flat-with-spike-at-zero shape is expected; a non-uniform or U-shaped histogram is reported as a model-fit warning rather than ignored.",
+                "Per-gene max Cook's distance saved, and every gene in the padj<0.05 set flagged for whether a single sample drives it.",
+                "Dispersion-estimate plot produced and the fit described.",
+                "MA, volcano, and top-gene heatmap figures saved."
+              ],
+              "constraints": [
+                "Use DESeq2 with design ~ condition and nothing else — there is no batch or covariate to model.",
+                "Do not pre-filter on fold change before the test; apply fold-change cutoffs only when summarising.",
+                "Use apeglm for shrinkage; do not use shrunken values for the p-values.",
+                "Report results for all genes, not only significant ones.",
+                "State the sample size (5 vs 5) alongside every significance count."
+              ],
+              "caveats": [
+                "n=5 per group gives limited power; genuinely moderate effects will be missed and the reported effect sizes of the significant genes are biased upward (winner's curse).",
+                "If sample_03 is extreme, dispersion estimates are inflated for the genes it affects, which costs power genome-wide — this shows up as a smaller significant set here than in T1S3 even when nothing is wrong.",
+                "DESeq2's own Cook's-distance outlier replacement can silently change calls with n=5; report whether replacement or filtering was triggered and for how many genes."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Sensitivity DESeq2 DE: same contrast excluding sample_03",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "How does the treated-versus-control gene list change when sample_03 — the sample that separates from all others on PCA and on the sample-distance heatmap — is excluded, leaving 9 samples?",
+              "context": "Pre-specified sensitivity analysis mirroring T1S2 exactly, on the 9 samples remaining after dropping sample_03. Group sizes become 5 vs 4 (or 4 vs 5, depending on which group sample_03 belongs to, as determined in T1S1). This is not a replacement for the primary analysis and must not be presented as one.",
+              "description": "Re-run the identical DESeq2 pipeline (design ~ condition, same reference level, same filtering rules, apeglm shrinkage) on the 9-sample matrix with sample_03 removed. Produce the same outputs as T1S2: full results table, significance counts at the same thresholds, top-50 table, MA/volcano/p-value histogram/dispersion plot, and a top-gene VST heatmap. Report the number of samples in each group after removal and note that the design is now unbalanced.",
+              "acceptance_criteria": [
+                "Full 9-sample DESeq2 results table written as CSV, with the same columns and the same stated contrast direction as T1S2.",
+                "Group sizes after removal reported explicitly (which group lost a sample).",
+                "Significance counts at padj<0.05, padj<0.05 & |log2FC|>=1, padj<0.10, alongside the number of genes tested.",
+                "Dispersion plot and p-value histogram produced and compared in words to the T1S2 versions (in particular whether the dispersion trend dropped).",
+                "The step's report states plainly that removing a sample after seeing that it is an outlier on QC plots is a data-dependent choice and that the resulting p-values are not corrected for that selection."
+              ],
+              "constraints": [
+                "Identical model, filtering rule, reference level, and shrinkage estimator as T1S2 — the only difference is the sample set.",
+                "Re-estimate size factors and dispersions from the 9 samples; do not reuse the 10-sample estimates.",
+                "Do not exclude any sample other than sample_03.",
+                "Do not present this list as the headline result on its own."
+              ],
+              "caveats": [
+                "A 5-vs-4 design is unbalanced and slightly less powerful per sample than 5-vs-5, yet removing a high-variance sample usually lowers dispersion and increases the number of significant genes — a larger gene list here is therefore expected and is NOT evidence that this list is more correct.",
+                "If sample_03 is a treated sample with a strong response, this analysis systematically removes true signal."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Concordance of the two DE analyses and outlier-driven gene flagging",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which differentially expressed genes are robust to the presence of sample_03, and which are called only because of it (or only in its absence)?",
+              "context": "Takes the two full results tables from T1S2 (10 samples) and T1S3 (9 samples, sample_03 removed). This step is the direct answer to the research question as posed, which explicitly names the odd sample: the deliverable is a single ranked gene list annotated with how dependent each call is on one sample.",
+              "description": "Merge the two results tables on gene symbol and quantify agreement: Spearman correlation of the Wald statistic and of the shrunken log2FC across all commonly tested genes; a scatter of the two log2FC vectors with the diagonal and a sign-discordance count; overlap of the padj<0.05 sets as a Venn/UpSet plot with the three counts (both, primary-only, sensitivity-only). Build one consolidated master table of every gene with: baseMean, log2FC and padj from each analysis, a robustness label (robust = significant in both with the same sign; outlier-dependent = significant only with sample_03 present; outlier-masked = significant only with sample_03 removed; not significant), and the per-gene max Cook's distance from T1S2. Additionally, for the top 30 genes by each analysis, plot per-sample normalised counts with sample_03 highlighted, so the reader can see directly whether a call rests on one point. Rank the final recommended gene list by the primary (10-sample) padj and report the robustness label beside each entry.",
+              "acceptance_criteria": [
+                "Consolidated master table written as CSV covering every gene tested in both analyses, carrying both sets of statistics and the robustness label.",
+                "Spearman correlation of Wald statistics and of shrunken log2FC between the two analyses reported as numbers, with the count of sign discordances among genes significant in either.",
+                "Set-overlap counts at padj<0.05 (both / primary-only / sensitivity-only) reported with a figure.",
+                "Per-sample normalised-count dot plots for the top genes with sample_03 visually distinguished.",
+                "A stated headline gene list with its robustness annotation, plus an explicit statement of which analysis is the primary one and why both are reported.",
+                "An explicit statement of how many of the headline genes would change status if sample_03 were dropped."
+              ],
+              "constraints": [
+                "Do not choose one analysis and discard the other; report both and label the difference.",
+                "Merge on the gene symbol used in counts.csv; report how many genes are tested in one analysis but filtered out in the other and handle them as missing rather than as non-significant.",
+                "Do not re-run any statistical test here — this step compares existing results.",
+                "Do not describe the sensitivity analysis as a 'corrected' or 'cleaned' result."
+              ],
+              "caveats": [
+                "Concordance between two analyses that share 9 of 10 samples is guaranteed to be high; the informative quantity is the disagreement set, not the correlation.",
+                "Genes labelled outlier-dependent are not necessarily false positives, and genes labelled outlier-masked are not necessarily true — both classes need independent replication, which this dataset cannot provide."
+              ],
+              "packages": [
+                "data.table",
+                "ggplot2",
+                "ComplexHeatmap",
+                "ComplexUpset",
+                "ggrepel"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark and GO-BP GSEA on both rankings",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological processes are coordinately shifted between treated and control muscle, and does the pathway-level answer survive removal of sample_03?",
+              "context": "Takes the ranked gene statistics from T1S2 (all 10 samples) and T1S3 (sample_03 removed). Genes are HGNC symbols, matching the symbol space of the staged human gene-set files, so no ID conversion should be needed beyond reporting the overlap. Human muscle tissue, treatment vs control. Gene-set-level testing is included because with 5 vs 5 the per-gene test is underpowered and a coordinated shift across a set can be detectable when individual genes are not.",
+              "description": "Run pre-ranked GSEA (fgsea) separately on the 10-sample and 9-sample rankings, ranking genes by the DESeq2 Wald statistic (not by fold change, and with NA-stat genes dropped). Test against human hallmark gene sets and human GO Biological Process gene sets — both are needed because hallmark gives 50 broad states and GO-BP gives process-level resolution. Report normalised enrichment score, p-value, BH-adjusted p-value and leading-edge genes per set, for each ranking. Collapse redundant GO-BP hits (parent/child sets share most members) before reporting a count, and present a side-by-side table of the top sets under each ranking so pathway-level sensitivity to sample_03 is visible. Report the fraction of ranked genes that matched the gene-set symbol space. The step must confirm the human hallmark and human GO-BP gene-set resources are present before use; if either is absent, run with whichever is available and say plainly in the output which collection was missing — the analysis is not invalidated by losing one of the two.",
+              "acceptance_criteria": [
+                "fgsea results for hallmark and for GO-BP, for both the 10-sample and 9-sample rankings, written as CSV with NES, pval, padj, set size and leading-edge genes.",
+                "The gene-set resources actually used are named in the output, with the organism confirmed as human, and any absent collection reported explicitly rather than silently skipped.",
+                "Symbol-match rate between the ranking and each gene-set collection reported as a number; a match rate below ~60% is flagged as an identifier problem.",
+                "Redundant GO-BP sets collapsed (by leading-edge overlap or a Jaccard cutoff) before any headline count is given.",
+                "A side-by-side comparison of the top enriched sets under the two rankings, naming sets that appear under only one.",
+                "Enrichment plots for the top few sets under the primary (10-sample) ranking."
+              ],
+              "constraints": [
+                "Use human gene sets only — the data is Homo sapiens; a mouse or rat collection is present in the environment and must not be used.",
+                "Rank by the DESeq2 Wald statistic from the corresponding DE step; do not rank by p-value alone and do not use a significance-filtered gene list as input to a pre-ranked test.",
+                "Restrict gene sets to size 15-500 after intersecting with the tested gene universe, and report the resulting number of sets.",
+                "Use the tested-gene background from the DE step, not all 12000 input rows.",
+                "Set and report the random seed — fgsea permutation results are stochastic."
+              ],
+              "caveats": [
+                "Only 12000 gene symbols are present, so gene-set coverage is incomplete and small sets will lose members; report set size after intersection, never the nominal size.",
+                "GSEA on an underpowered 5-vs-5 contrast produces enrichment scores whose leading edges are unstable — treat the pathway result as hypothesis-generating.",
+                "If the two rankings give different pathway stories, that is itself the finding and should be reported as such rather than resolved by preferring one."
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2",
+                "clusterProfiler",
+                "enrichplot"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

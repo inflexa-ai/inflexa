@@ -1,0 +1,602 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "rsem-counts-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T21:29:53.740Z",
+  "elapsedMs": 237552,
+  "outcome": "plan_submitted",
+  "planId": "pln-d3c58eb0",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC counts matrix and flag sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "RSEM expected counts are non-integer; round before any count-based test, and state this rounding as an approximation since the exact effective-length-corrected offset (tximport countsFromAbundance) is unavailable",
+          "A single low-depth sample in a 6-vs-6 design can materially bias size-factor estimation; do not assume median-of-ratios normalization fully corrects for a 4x depth difference without checking"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Given the RSEM gene-level expected-count matrix (12000 genes x 12 samples, 6 treated/6 control) and the flag that sample_01's library size is ~4x below the median, what is the actual library-size distribution, does sample_01 cluster as an outlier on PCA/sample-correlation, and should it be excluded or retained for the primary DE analysis?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports total library size (column sums) per sample and confirms/quantifies the ~4x deviation for sample_01",
+          "Produces a PCA or hierarchical clustering / sample-to-sample correlation plot on variance-stabilized or log-CPM data showing where sample_01 falls relative to its condition group",
+          "Makes an explicit, justified recommendation (retain with caveat vs exclude) rather than silently deciding",
+          "Rounds RSEM expected counts to nearest integer and documents that the effective-length offset could not be applied because per-sample genes.results files are absent"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Primary DESeq2 treated vs control (all 12 samples)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group is modest; do not overinterpret genes just below the significance threshold",
+          "If sample_01 is retained, note it explicitly as a limitation on the precision of its own condition group's estimates"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano"
+        ],
+        "question": "Using the rounded RSEM count matrix and metadata (condition: treated n=6 vs control n=6, unpaired, single batch), which of the 12000 genes are differentially expressed between treated and control colon samples, run on all 12 samples per the T1S1 QC recommendation?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeqDataSetFromMatrix built with design ~condition on integer-rounded counts and the 12-sample metadata table",
+          "Independent filtering and Benjamini-Hochberg FDR applied; results table has baseMean, log2FoldChange, lfcSE, padj for every gene",
+          "Log2 fold changes shrunk via apeglm or ashr (both available) rather than reported raw",
+          "Reports number of genes at padj < 0.05 and |log2FC| thresholds explicitly stated, plus an MA plot and a PCA/sample-distance plot annotated by condition and by library-size quartile"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sensitivity DESeq2 treated vs control excluding sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Dropping a sample reduces one group from n=6 to n=5, further lowering power; a gene losing significance here may reflect power loss rather than sample_01 driving a false positive, and the write-up must distinguish the two"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr"
+        ],
+        "question": "Does removing sample_01 (library size ~4x below median) from the treated-vs-control comparison change which genes are called differentially expressed, i.e. is the primary gene list from T1S2 robust to this single low-depth outlier?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Re-runs the identical DESeq2 model (design ~condition, apeglm/ashr shrinkage) on the 11 remaining samples (whichever group loses sample_01)",
+          "Reports the overlap (Jaccard or simple intersection count) between the T1S2 and T1S3 significant gene sets at the same padj/log2FC thresholds",
+          "States plainly whether the primary conclusions depend on sample_01's inclusion, and if so, which specific genes flip significance"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways/Reactome/Hallmark GMTs use HGNC symbols matching the counts.csv gene-symbol column directly; confirm symbol matching rate before interpreting enrichment, since any unmapped or outdated symbols silently drop from the background",
+          "GO/pathway hierarchies are nested; do not report every significant term as an independent finding"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "enrichplot"
+        ],
+        "question": "Which biological pathways and processes are enriched among the genes differentially expressed between treated and control colon samples (from T1S2, cross-checked against T1S3)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Runs over-representation analysis (or fgsea preranked on the full DESeq2 stat/log2FC-ordered gene list) against Homo sapiens WikiPathways, Reactome, and MSigDB Hallmark gene sets staged locally",
+          "Reports enriched terms with FDR-adjusted p-values, and collapses redundant/nested GO or pathway hits rather than reporting a raw uncollapsed count",
+          "Explicitly notes which enriched terms are supported only by genes that are inconsistent between the T1S2 (full-cohort) and T1S3 (sample_01-excluded) DE gene lists"
+        ]
+      }
+    ],
+    "title": "Colon treated vs control DE with RSEM count QC",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The matrix holds RSEM gene-level expected counts (12,000 genes x 12 samples: 6 treated, 6 control, unpaired, single batch) with two data-quality issues flagged in the profile that must be handled before any comparison is trustworthy: (1) RSEM expected counts are non-integer and were summarized without the per-sample genes.results effective-length files, so the standard tximport average-transcript-length offset cannot be built and counts must instead be rounded to nearest integer before feeding a count-based negative-binomial model; (2) sample_01 has a library size ~4x below the median, which is large enough to distort size-factor estimation and to sit as a leverage point in a 6-vs-6 design where losing even one sample changes power materially. The plan therefore front-loads QC (library size, PCA/sample correlation, outlier assessment) as a gating step whose output determines whether sample_01 is dropped or retained-with-caveat before DESeq2 is run, rather than silently either including or excluding it. DESeq2 (already staged, Bioconductor 1.52.0) is used for the primary treated-vs-control test with rounded counts as integer input, standard median-of-ratios size factors (robust to one aberrant library as long as it is not so extreme it fails normalization, which the QC step checks explicitly), and apeglm/ashr shrinkage (both staged) for interpretable fold changes. Results are checked in a sensitivity re-run excluding sample_01, since the primary run's inclusion of a 4x-shallow library is a real threat to validity that must be quantified, not assumed away. Significant genes then feed pathway enrichment using WikiPathways, Reactome, MSigDB Hallmark/GO human gene sets available locally (all restricted to Homo sapiens, matching the organism of the data) via fgsea/clusterProfiler, giving biological context to the DE gene list. No drug, safety, or clinical-response angle is stated in the research question, so no translational steps are added."
+  },
+  "usage": {
+    "inputTokens": 3699430,
+    "outputTokens": 6433,
+    "cacheCreationInputTokens": 218937,
+    "cacheReadInputTokens": 3480025,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "tximport",
+          "rnanorm"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSEM expected counts DESeq2 non-integer rounding differential expression",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "tximport DESeq2 RSEM gene-level estimated counts",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 differential expression RSEM expected counts rounding",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "HGNC gene symbol mapping human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/decoupler",
+        "query": "DESeq2 import counts data non-integer expected counts round"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "DESeqDataSetFromMatrix with non-integer counts"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeqDataSetFromMatrix non-integer counts round countData must be integer"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTF gene annotation human genome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "colon"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "colon normal expression tissue-specific"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/gtex-v8"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/gtex-v8/8"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "handling non-integer RNA-seq counts negative binomial DESeq2 rounding practice",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "library size outlier sample exclusion RNA-seq differential expression quality control",
+        "limit": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTEx colon expression tissue baseline"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "GSVA",
+          "ashr",
+          "apeglm"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "clusterProfiler",
+          "enrichplot"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "arrow",
+          "data.table"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gseapy",
+          "GSVA",
+          "fgsea"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "quantiseqr",
+          "MCPcounter"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "rnanorm",
+          "sva"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "org.Hs.eg.db",
+          "AnnotationDbi"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "ComplexHeatmap",
+          "ggrepel"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "PCAtools",
+          "vsn"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSEM effective length transcript per gene expected count DESeq2 tximport average transcript length offset",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "tximport average transcript length offset RSEM DESeq2 gene-level counts",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "tximport average transcript length offset RSEM DESeq2 gene-level counts",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "RSEM expected counts round DESeq2 negative binomial",
+        "limit": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 differential expression analysis RNA-seq",
+        "limit": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 Love Huber Anders moderated fold change 2014",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSEM accurate transcript quantification RNA-seq expected counts Li Dewey",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Colon treated vs control DE with RSEM count QC",
+          "analytical_narrative": "The matrix holds RSEM gene-level expected counts (12,000 genes x 12 samples: 6 treated, 6 control, unpaired, single batch) with two data-quality issues flagged in the profile that must be handled before any comparison is trustworthy: (1) RSEM expected counts are non-integer and were summarized without the per-sample genes.results effective-length files, so the standard tximport average-transcript-length offset cannot be built and counts must instead be rounded to nearest integer before feeding a count-based negative-binomial model; (2) sample_01 has a library size ~4x below the median, which is large enough to distort size-factor estimation and to sit as a leverage point in a 6-vs-6 design where losing even one sample changes power materially. The plan therefore front-loads QC (library size, PCA/sample correlation, outlier assessment) as a gating step whose output determines whether sample_01 is dropped or retained-with-caveat before DESeq2 is run, rather than silently either including or excluding it. DESeq2 (already staged, Bioconductor 1.52.0) is used for the primary treated-vs-control test with rounded counts as integer input, standard median-of-ratios size factors (robust to one aberrant library as long as it is not so extreme it fails normalization, which the QC step checks explicitly), and apeglm/ashr shrinkage (both staged) for interpretable fold changes. Results are checked in a sensitivity re-run excluding sample_01, since the primary run's inclusion of a 4x-shallow library is a real threat to validity that must be quantified, not assumed away. Significant genes then feed pathway enrichment using WikiPathways, Reactome, MSigDB Hallmark/GO human gene sets available locally (all restricted to Homo sapiens, matching the organism of the data) via fgsea/clusterProfiler, giving biological context to the DE gene list. No drug, safety, or clinical-response angle is stated in the research question, so no translational steps are added.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC counts matrix and flag sample_01",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Given the RSEM gene-level expected-count matrix (12000 genes x 12 samples, 6 treated/6 control) and the flag that sample_01's library size is ~4x below the median, what is the actual library-size distribution, does sample_01 cluster as an outlier on PCA/sample-correlation, and should it be excluded or retained for the primary DE analysis?",
+              "acceptance_criteria": [
+                "Reports total library size (column sums) per sample and confirms/quantifies the ~4x deviation for sample_01",
+                "Produces a PCA or hierarchical clustering / sample-to-sample correlation plot on variance-stabilized or log-CPM data showing where sample_01 falls relative to its condition group",
+                "Makes an explicit, justified recommendation (retain with caveat vs exclude) rather than silently deciding",
+                "Rounds RSEM expected counts to nearest integer and documents that the effective-length offset could not be applied because per-sample genes.results files are absent"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "RSEM expected counts are non-integer; round before any count-based test, and state this rounding as an approximation since the exact effective-length-corrected offset (tximport countsFromAbundance) is unavailable",
+                "A single low-depth sample in a 6-vs-6 design can materially bias size-factor estimation; do not assume median-of-ratios normalization fully corrects for a 4x depth difference without checking"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Primary DESeq2 treated vs control (all 12 samples)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using the rounded RSEM count matrix and metadata (condition: treated n=6 vs control n=6, unpaired, single batch), which of the 12000 genes are differentially expressed between treated and control colon samples, run on all 12 samples per the T1S1 QC recommendation?",
+              "acceptance_criteria": [
+                "DESeqDataSetFromMatrix built with design ~condition on integer-rounded counts and the 12-sample metadata table",
+                "Independent filtering and Benjamini-Hochberg FDR applied; results table has baseMean, log2FoldChange, lfcSE, padj for every gene",
+                "Log2 fold changes shrunk via apeglm or ashr (both available) rather than reported raw",
+                "Reports number of genes at padj < 0.05 and |log2FC| thresholds explicitly stated, plus an MA plot and a PCA/sample-distance plot annotated by condition and by library-size quartile"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=6 per group is modest; do not overinterpret genes just below the significance threshold",
+                "If sample_01 is retained, note it explicitly as a limitation on the precision of its own condition group's estimates"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Sensitivity DESeq2 treated vs control excluding sample_01",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Does removing sample_01 (library size ~4x below median) from the treated-vs-control comparison change which genes are called differentially expressed, i.e. is the primary gene list from T1S2 robust to this single low-depth outlier?",
+              "acceptance_criteria": [
+                "Re-runs the identical DESeq2 model (design ~condition, apeglm/ashr shrinkage) on the 11 remaining samples (whichever group loses sample_01)",
+                "Reports the overlap (Jaccard or simple intersection count) between the T1S2 and T1S3 significant gene sets at the same padj/log2FC thresholds",
+                "States plainly whether the primary conclusions depend on sample_01's inclusion, and if so, which specific genes flip significance"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Dropping a sample reduces one group from n=6 to n=5, further lowering power; a gene losing significance here may reflect power loss rather than sample_01 driving a false positive, and the write-up must distinguish the two"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways and processes are enriched among the genes differentially expressed between treated and control colon samples (from T1S2, cross-checked against T1S3)?",
+              "acceptance_criteria": [
+                "Runs over-representation analysis (or fgsea preranked on the full DESeq2 stat/log2FC-ordered gene list) against Homo sapiens WikiPathways, Reactome, and MSigDB Hallmark gene sets staged locally",
+                "Reports enriched terms with FDR-adjusted p-values, and collapses redundant/nested GO or pathway hits rather than reporting a raw uncollapsed count",
+                "Explicitly notes which enriched terms are supported only by genes that are inconsistent between the T1S2 (full-cohort) and T1S3 (sample_01-excluded) DE gene lists"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "enrichplot"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "WikiPathways/Reactome/Hallmark GMTs use HGNC symbols matching the counts.csv gene-symbol column directly; confirm symbol matching rate before interpreting enrichment, since any unmapped or outdated symbols silently drop from the background",
+                "GO/pathway hierarchies are nested; do not report every significant term as an independent finding"
+              ]
+            }
+          ],
+          "created_at": "2026-09-07T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

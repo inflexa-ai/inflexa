@@ -1,0 +1,367 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "two-group-n3",
+  "run": 1,
+  "startedAt": "2026-09-07T05:17:05.026Z",
+  "elapsedMs": 283359,
+  "outcome": "plan_submitted",
+  "planId": "pln-081c73bc",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DE analysis: treated vs control (DESeq2)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group gives 4 residual df; dispersion estimates are heavily shrunk toward the trend and outliers are hard to detect — flag any sample with unusual Cook's distance rather than silently keeping it",
+          "A p-value histogram with a spike near 0 and no enrichment of small p-values across the genome is itself evidence of weak signal and must be reported",
+          "Raw (unshrunken) LFCs at n=3 are inflated for low-count genes; the report should present shrunk LFCs as the effect-size estimate and state that they are shrinkage-biased toward zero"
+        ],
+        "context": "Files: /eval-four-models-without-two-group-n3-1/data/inputs/counts/counts.csv (12000 genes x 6 samples, first column gene symbol, raw Salmon gene-level integer counts) and /eval-four-models-without-two-group-n3-1/data/inputs/metadata/metadata.csv (6 rows, condition column). Human liver, 3 treated vs 3 control, unpaired, single batch. DESeq2 1.52.0, apeglm 1.34.0, edgeR 4.10.3 are installed in R.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "data.table",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between the 3 treated and 3 control human liver samples, with what effect sizes and adjusted p-values?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load counts.csv and metadata.csv, reconcile sample IDs, filter low-count genes, run DESeq2 with ~condition, and export the full DE table plus QC diagnostics.",
+        "acceptance_criteria": [
+          "Counts matrix columns and metadata rows reconcile 1:1 (every count column matched to exactly one metadata row with a condition label); any mismatch reported and run stops",
+          "Pre-filter keeps genes with adequate counts for dispersion estimation (e.g., count of 10 in >= 3 samples); number of genes before/after reported",
+          "DESeq2 runs with design ~ condition, estimating dispersion for ~11-12k genes without failure",
+          "Output table has gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, BH padj, and an apeglm-shrunk log2FoldChange with its svalue for every tested gene",
+          "Diagnostic plots produced: PCA of VST-transformed counts colored by condition, sample-to-sample distance heatmap, dispersion plot, MA plot, p-value histogram",
+          "Counts of DE genes reported at padj < 0.05 and padj < 0.1, both directions"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Confidence assessment at n=3: stability, concordance, power",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Leave-one-out on n=3 vs n=2 per group is itself unstable; interpret fold-to-fold variation as a lower bound on instability, and say so",
+          "Method concordance between DESeq2 and edgeR is reassuring but not independent validation — both use the same 6 samples and the same NB variance assumption; it cannot substitute for biological replicates",
+          "Do not compute formal power calculations implying a fixed detectable effect size without stating the assumed dispersion and LFC they are conditioned on"
+        ],
+        "context": "Builds on the T1S1 DESeq2 fit of the same 6-sample liver dataset. The confidence question is central to the research question; this step answers it with resampling plus a second method rather than a single p-value distribution.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "How confident can we be in the treated-vs-control DE calls given only 3 replicates per group?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Quantify how trustworthy the DE calls are at n=3 per group: leave-one-out stability of the significant set, cross-method concordance with edgeR, and effect-size shrinkage behavior.",
+        "acceptance_criteria": [
+          "Leave-one-out: DE table recomputed 6 times (once per dropped sample); for each fold, number of padj<0.05 calls and Jaccard/overlap with the full-model call set reported",
+          "A list of robust DE genes (e.g., padj<0.05 in the full model AND detected in >= 5 of 6 folds AND same direction every time) exported",
+          "edgeR TREAT or exact-test concordance table: counts of DE calls by method, number of genes called by both, and correlation of test statistics; discordant top genes listed",
+          "Shrunk vs raw LFC comparison: mean absolute LFC inflation, fraction of padj<0.05 genes whose 95% CI crosses zero, sorted list of the highest-confidence genes with their CIs",
+          "Explicit written verdict on confidence: whether the n=3 design can distinguish treated from control, how many genes are robust vs marginal, and what sample size would be needed — grounded in the observed dispersion and observed effect sizes"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway coherence: pre-ranked GSEA on WikiPathways",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 12k genes and weak per-gene power, enrichment may pick up small coherent shifts that per-gene FDR misses — that is the point, but enriched pathways at n=3 are still hypotheses, not conclusions",
+          "Gene symbols must be HGNC; if the counts file contains entries not in the GMT universe, report the match rate instead of silently dropping signal"
+        ],
+        "context": "Uses the signed Wald statistic ranking from T1S1 and, optionally, the robust-gene list from T1S2. Gene-set reference: WikiPathways human gene sets (GMT with HGNC symbols, '%'-delimited descriptor per line) provisioned under /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt — the executing agent resolves this against what the environment actually holds.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Do the treated-vs-control expression changes converge on coherent human liver pathways, and which pathways are enriched in either direction?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Pre-ranked GSEA of the treated-vs-control signal against WikiPathways human pathways to test whether the transcriptional response is pathway-coherent despite low per-gene power.",
+        "acceptance_criteria": [
+          "GMT parsed as human HGNC gene sets; genes in the ranked list matched against the GMT universe with match fraction reported; if the reference is unavailable the step reports that and produces no results rather than failing the run",
+          "fgsea run on the full ranked statistic (no FDR pre-filtering), minSize ~10-15, with leading-edge genes per enriched pathway",
+          "Pathways with padj < 0.1 reported with NES, direction, and leading-edge members; consistent direction of enriched sets relative to treatment stated",
+          "Cross-check: whether any pathway-level signal agrees with the top individual genes from T1S1/T1S2 (e.g., leading-edge overlap with the robust gene list)"
+        ]
+      }
+    ],
+    "title": "Liver treated-vs-control DE with n=3 confidence assessment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-15T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is a small, clean design: Salmon-derived gene-level integer counts for 12,000 genes across 6 human liver samples, 3 treated vs 3 control, unpaired, single batch. With n=3 per group there are only 4 residual degrees of freedom, so the plan must both produce a defensible DE list and quantify how much of it is stable. Step T1S1 loads and matches counts to metadata, filters near-zero genes, runs DESeq2 (negative binomial GLM with empirical-Bayes dispersion shrinkage, appropriate for tiny n), applies BH FDR, and produces diagnostics (PCA, sample distances, dispersion fit) to confirm the samples are exchangeable within group. Step T1S2 interrogates confidence directly: leave-one-out re-runs of the DE model to measure how many calls survive dropping each sample, concordance with an independent count-based method (edgeR, robust GLM with quasi-likelihood F-tests), and shrunk (apeglm) vs raw log2FC comparison, since with n=3 raw LFCs are wildly variable and false positives concentrate among low-count genes. Step T1S3 tests whether the treated-vs-control signal organizes into biology at all by running pre-ranked GSEA (fgsea) on the signed test statistic against the provisioned WikiPathways human gene sets — a rank-based check that is more robust to the weak per-gene power than an FDR-cutoff overlap test. No batch, pairing, or covariate terms exist to model; the design formula is ~condition."
+  },
+  "usage": {
+    "inputTokens": 65105,
+    "outputTokens": 5170,
+    "cacheReadInputTokens": 33536,
+    "reasoningTokens": 1075
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "agent": "bulk-transcriptomics-agent",
+          "analytical_narrative": "The dataset is a small, clean design: Salmon-derived gene-level integer counts for 12,000 genes across 6 human liver samples, 3 treated vs 3 control, unpaired, single batch. With n=3 per group there are only 4 residual degrees of freedom, so the plan must both produce a defensible DE list and quantify how much of it is stable. Step 1 loads and matches counts to metadata, filters near-zero genes, runs DESeq2 (negative binomial GLM with empirical-Bayes dispersion shrinkage, appropriate for tiny n), applies BH FDR, and produces diagnostics (PCA, sample distances, dispersion fit) to confirm the samples are exchangeable within group. Step 2 interrogates confidence directly: leave-one-out re-runs of the DE model to measure how many calls survive dropping each sample, concordance with an independent count-based method (edgeR, robust GLM with quasi-likelihood F-tests), and shrunk (apeglm) vs raw log2FC comparison, since with n=3 raw LFCs are wildly variable and false positives concentrate among low-count genes. Step 3 tests whether the treated-vs-control signal organizes into biology at all by running pre-ranked GSEA (fgsea) on the signed test statistic against the provisioned WikiPathways human gene sets — a rank-based check that is more robust to the weak per-gene power than an FDR-cutoff overlap test. No batch, pairing, or covariate terms exist to model; the design formula is ~condition.",
+          "created_at": "2026-07-15T00:00:00Z",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "Counts matrix columns and metadata rows reconcile 1:1 (every count column matched to exactly one metadata row with a condition label); any mismatch reported and run stops",
+                "Pre-filter keeps genes with adequate counts for dispersion estimation (e.g., count of 10 in >= 3 samples); number of genes before/after reported",
+                "DESeq2 runs with design ~ condition, estimating dispersion for ~11-12k genes without failure",
+                "Output table has gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, BH padj, and an apeglm-shrunk log2FoldChange with its svalue for every tested gene",
+                "Diagnostic plots produced: PCA of VST-transformed counts colored by condition, sample-to-sample distance heatmap, dispersion plot, MA plot, p-value histogram",
+                "Counts of DE genes reported at padj < 0.05 and padj < 0.1, both directions"
+              ],
+              "context": "Files: /eval-four-models-without-two-group-n3-1/data/inputs/counts/counts.csv (12000 genes x 6 samples, first column gene symbol, raw Salmon gene-level integer counts) and /eval-four-models-without-two-group-n3-1/data/inputs/metadata/metadata.csv (6 rows, condition column). Human liver, 3 treated vs 3 control, unpaired, single batch. DESeq2 1.52.0, apeglm 1.34.0, edgeR 4.10.3 are installed in R.",
+              "caveats": [
+                "n=3 per group gives 4 residual df; dispersion estimates are heavily shrunk toward the trend and outliers are hard to detect — flag any sample with unusual Cook's distance rather than silently keeping it",
+                "A p-value histogram with a spike near 0 and no enrichment of small p-values across the genome is itself evidence of weak signal and must be reported",
+                "Raw (unshrunken) LFCs at n=3 are inflated for low-count genes; the report should present shrunk LFCs as the effect-size estimate and state that they are shrinkage-biased toward zero"
+              ],
+              "depends_on": [],
+              "description": "Load counts.csv and metadata.csv, reconcile sample IDs, filter low-count genes, run DESeq2 with ~condition, and export the full DE table plus QC diagnostics.",
+              "id": "T1S1",
+              "name": "DE analysis: treated vs control (DESeq2)",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "data.table",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "question": "Which genes are differentially expressed between the 3 treated and 3 control human liver samples, with what effect sizes and adjusted p-values?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Leave-one-out: DE table recomputed 6 times (once per dropped sample); for each fold, number of padj<0.05 calls and Jaccard/overlap with the full-model call set reported",
+                "A list of robust DE genes (e.g., padj<0.05 in the full model AND detected in >= 5 of 6 folds AND same direction every time) exported",
+                "edgeR TREAT or exact-test concordance table: counts of DE calls by method, number of genes called by both, and correlation of test statistics; discordant top genes listed",
+                "Shrunk vs raw LFC comparison: mean absolute LFC inflation, fraction of padj<0.05 genes whose 95% CI crosses zero, sorted list of the highest-confidence genes with their CIs",
+                "Explicit written verdict on confidence: whether the n=3 design can distinguish treated from control, how many genes are robust vs marginal, and what sample size would be needed — grounded in the observed dispersion and observed effect sizes"
+              ],
+              "context": "Builds on the T1S1 DESeq2 fit of the same 6-sample liver dataset. The confidence question is central to the research question; this step answers it with resampling plus a second method rather than a single p-value distribution.",
+              "caveats": [
+                "Leave-one-out on n=3 vs n=2 per group is itself unstable; interpret fold-to-fold variation as a lower bound on instability, and say so",
+                "Method concordance between DESeq2 and edgeR is reassuring but not independent validation — both use the same 6 samples and the same NB variance assumption; it cannot substitute for biological replicates",
+                "Do not compute formal power calculations implying a fixed detectable effect size without stating the assumed dispersion and LFC they are conditioned on"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Quantify how trustworthy the DE calls are at n=3 per group: leave-one-out stability of the significant set, cross-method concordance with edgeR, and effect-size shrinkage behavior.",
+              "id": "T1S2",
+              "name": "Confidence assessment at n=3: stability, concordance, power",
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "How confident can we be in the treated-vs-control DE calls given only 3 replicates per group?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "GMT parsed as human HGNC gene sets; genes in the ranked list matched against the GMT universe with match fraction reported; if the reference is unavailable the step reports that and produces no results rather than failing the run",
+                "fgsea run on the full ranked statistic (no FDR pre-filtering), minSize ~10-15, with leading-edge genes per enriched pathway",
+                "Pathways with padj < 0.1 reported with NES, direction, and leading-edge members; consistent direction of enriched sets relative to treatment stated",
+                "Cross-check: whether any pathway-level signal agrees with the top individual genes from T1S1/T1S2 (e.g., leading-edge overlap with the robust gene list)"
+              ],
+              "context": "Uses the signed Wald statistic ranking from T1S1 and, optionally, the robust-gene list from T1S2. Gene-set reference: WikiPathways human gene sets (GMT with HGNC symbols, '%'-delimited descriptor per line) provisioned under /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt — the executing agent resolves this against what the environment actually holds.",
+              "caveats": [
+                "With 12k genes and weak per-gene power, enrichment may pick up small coherent shifts that per-gene FDR misses — that is the point, but enriched pathways at n=3 are still hypotheses, not conclusions",
+                "Gene symbols must be HGNC; if the counts file contains entries not in the GMT universe, report the match rate instead of silently dropping signal"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Pre-ranked GSEA of the treated-vs-control signal against WikiPathways human pathways to test whether the transcriptional response is pathway-coherent despite low per-gene power.",
+              "id": "T1S3",
+              "name": "Pathway coherence: pre-ranked GSEA on WikiPathways",
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Do the treated-vs-control expression changes converge on coherent human liver pathways, and which pathways are enriched in either direction?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            }
+          ],
+          "title": "Liver treated-vs-control DE with n=3 confidence assessment",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics"
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "agent": "bulk-transcriptomics-agent",
+          "analytical_narrative": "The dataset is a small, clean design: Salmon-derived gene-level integer counts for 12,000 genes across 6 human liver samples, 3 treated vs 3 control, unpaired, single batch. With n=3 per group there are only 4 residual degrees of freedom, so the plan must both produce a defensible DE list and quantify how much of it is stable. Step T1S1 loads and matches counts to metadata, filters near-zero genes, runs DESeq2 (negative binomial GLM with empirical-Bayes dispersion shrinkage, appropriate for tiny n), applies BH FDR, and produces diagnostics (PCA, sample distances, dispersion fit) to confirm the samples are exchangeable within group. Step T1S2 interrogates confidence directly: leave-one-out re-runs of the DE model to measure how many calls survive dropping each sample, concordance with an independent count-based method (edgeR, robust GLM with quasi-likelihood F-tests), and shrunk (apeglm) vs raw log2FC comparison, since with n=3 raw LFCs are wildly variable and false positives concentrate among low-count genes. Step T1S3 tests whether the treated-vs-control signal organizes into biology at all by running pre-ranked GSEA (fgsea) on the signed test statistic against the provisioned WikiPathways human gene sets — a rank-based check that is more robust to the weak per-gene power than an FDR-cutoff overlap test. No batch, pairing, or covariate terms exist to model; the design formula is ~condition.",
+          "created_at": "2026-07-15T00:00:00Z",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "Counts matrix columns and metadata rows reconcile 1:1 (every count column matched to exactly one metadata row with a condition label); any mismatch reported and run stops",
+                "Pre-filter keeps genes with adequate counts for dispersion estimation (e.g., count of 10 in >= 3 samples); number of genes before/after reported",
+                "DESeq2 runs with design ~ condition, estimating dispersion for ~11-12k genes without failure",
+                "Output table has gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, BH padj, and an apeglm-shrunk log2FoldChange with its svalue for every tested gene",
+                "Diagnostic plots produced: PCA of VST-transformed counts colored by condition, sample-to-sample distance heatmap, dispersion plot, MA plot, p-value histogram",
+                "Counts of DE genes reported at padj < 0.05 and padj < 0.1, both directions"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Files: /eval-four-models-without-two-group-n3-1/data/inputs/counts/counts.csv (12000 genes x 6 samples, first column gene symbol, raw Salmon gene-level integer counts) and /eval-four-models-without-two-group-n3-1/data/inputs/metadata/metadata.csv (6 rows, condition column). Human liver, 3 treated vs 3 control, unpaired, single batch. DESeq2 1.52.0, apeglm 1.34.0, edgeR 4.10.3 are installed in R.",
+              "caveats": [
+                "n=3 per group gives 4 residual df; dispersion estimates are heavily shrunk toward the trend and outliers are hard to detect — flag any sample with unusual Cook's distance rather than silently keeping it",
+                "A p-value histogram with a spike near 0 and no enrichment of small p-values across the genome is itself evidence of weak signal and must be reported",
+                "Raw (unshrunken) LFCs at n=3 are inflated for low-count genes; the report should present shrunk LFCs as the effect-size estimate and state that they are shrinkage-biased toward zero"
+              ],
+              "depends_on": [],
+              "description": "Load counts.csv and metadata.csv, reconcile sample IDs, filter low-count genes, run DESeq2 with ~condition, and export the full DE table plus QC diagnostics.",
+              "id": "T1S1",
+              "name": "DE analysis: treated vs control (DESeq2)",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "data.table",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "question": "Which genes are differentially expressed between the 3 treated and 3 control human liver samples, with what effect sizes and adjusted p-values?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Leave-one-out: DE table recomputed 6 times (once per dropped sample); for each fold, number of padj<0.05 calls and Jaccard/overlap with the full-model call set reported",
+                "A list of robust DE genes (e.g., padj<0.05 in the full model AND detected in >= 5 of 6 folds AND same direction every time) exported",
+                "edgeR TREAT or exact-test concordance table: counts of DE calls by method, number of genes called by both, and correlation of test statistics; discordant top genes listed",
+                "Shrunk vs raw LFC comparison: mean absolute LFC inflation, fraction of padj<0.05 genes whose 95% CI crosses zero, sorted list of the highest-confidence genes with their CIs",
+                "Explicit written verdict on confidence: whether the n=3 design can distinguish treated from control, how many genes are robust vs marginal, and what sample size would be needed — grounded in the observed dispersion and observed effect sizes"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Builds on the T1S1 DESeq2 fit of the same 6-sample liver dataset. The confidence question is central to the research question; this step answers it with resampling plus a second method rather than a single p-value distribution.",
+              "caveats": [
+                "Leave-one-out on n=3 vs n=2 per group is itself unstable; interpret fold-to-fold variation as a lower bound on instability, and say so",
+                "Method concordance between DESeq2 and edgeR is reassuring but not independent validation — both use the same 6 samples and the same NB variance assumption; it cannot substitute for biological replicates",
+                "Do not compute formal power calculations implying a fixed detectable effect size without stating the assumed dispersion and LFC they are conditioned on"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Quantify how trustworthy the DE calls are at n=3 per group: leave-one-out stability of the significant set, cross-method concordance with edgeR, and effect-size shrinkage behavior.",
+              "id": "T1S2",
+              "name": "Confidence assessment at n=3: stability, concordance, power",
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "How confident can we be in the treated-vs-control DE calls given only 3 replicates per group?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "GMT parsed as human HGNC gene sets; genes in the ranked list matched against the GMT universe with match fraction reported; if the reference is unavailable the step reports that and produces no results rather than failing the run",
+                "fgsea run on the full ranked statistic (no FDR pre-filtering), minSize ~10-15, with leading-edge genes per enriched pathway",
+                "Pathways with padj < 0.1 reported with NES, direction, and leading-edge members; consistent direction of enriched sets relative to treatment stated",
+                "Cross-check: whether any pathway-level signal agrees with the top individual genes from T1S1/T1S2 (e.g., leading-edge overlap with the robust gene list)"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Uses the signed Wald statistic ranking from T1S1 and, optionally, the robust-gene list from T1S2. Gene-set reference: WikiPathways human gene sets (GMT with HGNC symbols, '%'-delimited descriptor per line) provisioned under /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt — the executing agent resolves this against what the environment actually holds.",
+              "caveats": [
+                "With 12k genes and weak per-gene power, enrichment may pick up small coherent shifts that per-gene FDR misses — that is the point, but enriched pathways at n=3 are still hypotheses, not conclusions",
+                "Gene symbols must be HGNC; if the counts file contains entries not in the GMT universe, report the match rate instead of silently dropping signal"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Pre-ranked GSEA of the treated-vs-control signal against WikiPathways human pathways to test whether the transcriptional response is pathway-coherent despite low per-gene power.",
+              "id": "T1S3",
+              "name": "Pathway coherence: pre-ranked GSEA on WikiPathways",
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Do the treated-vs-control expression changes converge on coherent human liver pathways, and which pathways are enriched in either direction?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            }
+          ],
+          "title": "Liver treated-vs-control DE with n=3 confidence assessment",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics"
+        }
+      }
+    }
+  ]
+}

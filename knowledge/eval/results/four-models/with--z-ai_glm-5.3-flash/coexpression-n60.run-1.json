@@ -1,0 +1,326 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "coexpression-n60",
+  "run": 1,
+  "startedAt": "2026-09-07T04:15:21.299Z",
+  "elapsedMs": 45110,
+  "outcome": "plan_submitted",
+  "planId": "pln-a9081d87",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Whole blood: composition effects may drive the primary axis; note, do not correct here"
+        ],
+        "context": "12000 x 121 raw count CSV from Salmon; metadata has condition (60 case vs 60 control), single batch, unpaired.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 120 samples group by condition, and is any sample an outlier or depth-driven before network construction?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500",
+          "transform = vst_blind"
+        ],
+        "acceptance_criteria": [
+          "vst (blind) PCA on the 500 most variable genes colored by condition",
+          "sample distance heatmap and library-size table",
+          "outlier status of each sample stated"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count filter and normalization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Report the number of genes removed"
+        ],
+        "context": "Raw Salmon-derived gene counts; counts stay unscaled, normalization factors computed for downstream use.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Which genes carry enough counts to enter the co-expression network, and what size factors align the samples?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filterByExpr on the group variable",
+          "minimal pre-filter, minimal_then_independent policy",
+          "no pre-normalization of the counts themselves"
+        ],
+        "acceptance_criteria": [
+          "gene count kept after filter reported",
+          "filter = filterByExpr with group; min_count = 10 in smallest group size (60)",
+          "counts passed downstream unscaled"
+        ]
+      },
+      {
+        "id": "T3S3",
+        "name": "WGCNA signed co-expression modules and trait association",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Module-trait correlation is an association in this cohort, not a proven pathway; modules are correlated gene groups",
+          "State the seed used for any stochastic step"
+        ],
+        "context": "Build the network on the variance-stabilized filtered matrix of all 120 samples; trait = case/control status from metadata.csv condition column.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA"
+        ],
+        "question": "Which co-expression modules form across the 120 samples, and which module eigengenes correlate with case versus control status?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "network_type = signed",
+          "soft_threshold_criterion = scale_free_fit_index_0.8",
+          "module_detection = topological_overlap_dynamic_tree_cut",
+          "hub_ranking = module_membership_kME",
+          "min_module_size = 30",
+          "merge_cut_height = 0.25",
+          "state the sample count (120) beside every module"
+        ],
+        "acceptance_criteria": [
+          "soft-threshold power and scale-free fit index reported",
+          "module list with sizes; dynamic tree cut on TOM; merge cut height 0.25",
+          "eigengene-trait correlations with BH-adjusted p-values across module x trait tests",
+          "hub genes per module ranked by kME",
+          "full gene-to-module table with module membership"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Report states that a module is not a proven pathway and trait correlations are cohort-specific associations"
+        ],
+        "context": "Consolidated report of QC, filtering, network parameters, modules, and trait associations.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What are the modules, which track case/control status, and is the analysis reproducible?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T3S3"
+        ],
+        "constraints": [
+          "Adjustment across the product of module and trait counts"
+        ],
+        "acceptance_criteria": [
+          "coexpression report: n_samples, n_genes, network_type, soft_threshold_power, scale_free_fit, module_sizes, gene_module_table, module_membership, eigengene_trait_correlations, adjusted_p_values",
+          "reproducibility record: session_info, seed, package_versions, collection_version, annotation_release"
+        ]
+      }
+    ],
+    "title": "WGCNA co-expression modules tracking case vs control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is a human whole-blood bulk RNA-seq cohort of 120 samples (60 cases vs 60 controls, unpaired), with raw gene-level counts from Salmon (12000 genes x 121 columns incl. gene symbol). The question is which co-expression modules the genes form across all 120 samples and which modules track case/control status. Plan: (1) sample structure QC on blind variance-stabilized counts (PCA on top-500 variable genes, sample distance heatmap, library sizes) to confirm no outlier or technical axis before network construction; (2) minimal low-count filter (10 counts in the smallest group size, per R-0002) and TMM-style normalization consistent with the population-scale cohort; (3) signed WGCNA network on the variance-stabilized, filtered matrix of all 120 samples: soft-threshold power chosen for scale-free fit >= 0.8, dynamic tree cut on topological overlap, min module size 30, merge cut height 0.25, module eigengenes correlated with the case/control trait with BH adjustment across the module x trait tests, hubs ranked by module membership (kME); (4) report with full gene-to-module table, eigengene-trait correlations, and reproducibility record. A module is a group of correlated genes and a module-trait correlation is an association in this cohort, not a proven pathway."
+  },
+  "usage": {
+    "inputTokens": 90697,
+    "outputTokens": 1536,
+    "cacheReadInputTokens": 34944,
+    "reasoningTokens": 101
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "WGCNA co-expression modules tracking case vs control",
+          "analytical_narrative": "The dataset is a human whole-blood bulk RNA-seq cohort of 120 samples (60 cases vs 60 controls, unpaired), with raw gene-level counts from Salmon (12000 genes x 121 columns incl. gene symbol). The question is which co-expression modules the genes form across all 120 samples and which modules track case/control status. Plan: (1) sample structure QC on blind variance-stabilized counts (PCA on top-500 variable genes, sample distance heatmap, library sizes) to confirm no outlier or technical axis before network construction; (2) minimal low-count filter (10 counts in the smallest group size, per R-0002) and TMM-style normalization consistent with the population-scale cohort; (3) signed WGCNA network on the variance-stabilized, filtered matrix of all 120 samples: soft-threshold power chosen for scale-free fit >= 0.8, dynamic tree cut on topological overlap, min module size 30, merge cut height 0.25, module eigengenes correlated with the case/control trait with BH adjustment across the module x trait tests, hubs ranked by module membership (kME); (4) report with full gene-to-module table, eigengene-trait correlations, and reproducibility record. A module is a group of correlated genes and a module-trait correlation is an association in this cohort, not a proven pathway.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "agent": "bulk-transcriptomics-agent",
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "context": "12000 x 121 raw count CSV from Salmon; metadata has condition (60 case vs 60 control), single batch, unpaired.",
+              "question": "Do the 120 samples group by condition, and is any sample an outlier or depth-driven before network construction?",
+              "acceptance_criteria": [
+                "vst (blind) PCA on the 500 most variable genes colored by condition",
+                "sample distance heatmap and library-size table",
+                "outlier status of each sample stated"
+              ],
+              "constraints": [
+                "n_top_genes = 500",
+                "transform = vst_blind"
+              ],
+              "caveats": [
+                "Whole blood: composition effects may drive the primary axis; note, do not correct here"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count filter and normalization",
+              "track": "T1",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "packages": [
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "context": "Raw Salmon-derived gene counts; counts stay unscaled, normalization factors computed for downstream use.",
+              "question": "Which genes carry enough counts to enter the co-expression network, and what size factors align the samples?",
+              "acceptance_criteria": [
+                "gene count kept after filter reported",
+                "filter = filterByExpr with group; min_count = 10 in smallest group size (60)",
+                "counts passed downstream unscaled"
+              ],
+              "constraints": [
+                "filterByExpr on the group variable",
+                "minimal pre-filter, minimal_then_independent policy",
+                "no pre-normalization of the counts themselves"
+              ],
+              "caveats": [
+                "Report the number of genes removed"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              }
+            },
+            {
+              "id": "T3S3",
+              "name": "WGCNA signed co-expression modules and trait association",
+              "track": "T3",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "packages": [
+                "WGCNA"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "context": "Build the network on the variance-stabilized filtered matrix of all 120 samples; trait = case/control status from metadata.csv condition column.",
+              "question": "Which co-expression modules form across the 120 samples, and which module eigengenes correlate with case versus control status?",
+              "acceptance_criteria": [
+                "soft-threshold power and scale-free fit index reported",
+                "module list with sizes; dynamic tree cut on TOM; merge cut height 0.25",
+                "eigengene-trait correlations with BH-adjusted p-values across module x trait tests",
+                "hub genes per module ranked by kME",
+                "full gene-to-module table with module membership"
+              ],
+              "constraints": [
+                "network_type = signed",
+                "soft_threshold_criterion = scale_free_fit_index_0.8",
+                "module_detection = topological_overlap_dynamic_tree_cut",
+                "hub_ranking = module_membership_kME",
+                "min_module_size = 30",
+                "merge_cut_height = 0.25",
+                "state the sample count (120) beside every module"
+              ],
+              "caveats": [
+                "Module-trait correlation is an association in this cohort, not a proven pathway; modules are correlated gene groups",
+                "State the seed used for any stochastic step"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Report",
+              "track": "T1",
+              "step_type": "report",
+              "agent": "bulk-transcriptomics-agent",
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T3S3"
+              ],
+              "context": "Consolidated report of QC, filtering, network parameters, modules, and trait associations.",
+              "question": "What are the modules, which track case/control status, and is the analysis reproducible?",
+              "acceptance_criteria": [
+                "coexpression report: n_samples, n_genes, network_type, soft_threshold_power, scale_free_fit, module_sizes, gene_module_table, module_membership, eigengene_trait_correlations, adjusted_p_values",
+                "reproducibility record: session_info, seed, package_versions, collection_version, annotation_release"
+              ],
+              "constraints": [
+                "Adjustment across the product of module and trait counts"
+              ],
+              "caveats": [
+                "Report states that a module is not a proven pathway and trait correlations are cohort-specific associations"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies that six samples cannot support a data-driven correlation network, names the 15-sample threshold, and substitutes a prior network (STRING v12.0, combined_score >= 700) with the expression used only to score modules; the de novo WGCNA is kept but explicitly quarantined as a labelled instability diagnostic with the 0.1 permutation floor stated, which is acceptable though it stops short of simply refusing the network. QC (blind VST, PCA on top 500, distances, library sizes, no-drop policy), the minimal filter (10 counts in 3 samples, justified by group size), and in-model median-of-ratios normalization are all explicit. The main gap versus the reference is the absence of a gene-level DESeq2/edgeR test: no reference level or contrast is named, no alpha is stated, and there is no apeglm shrinkage, so the prior network is projected onto all expressed genes rather than onto genes found changed, and BH is applied only across module scores. Enrichment is well specified (expressed-gene universe, hallmark and GO BP, 15-500 window, mapping failures reported) but the MSigDB release is not named in the plan; the report is thorough on caveats, seeds, versions and the design limitation."
+}

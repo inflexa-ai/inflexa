@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly refuses count models and voom, fits limma with eBayes(trend=TRUE) on log2(TPM+1), and states BH at 0.05, but it never asks the core for the raw counts or quantification directories, which the reference requires. QC (PCA, clustering, total-TPM proxy, outlier called out) and a group-size-aware low-expression filter are present, though the threshold is left as an example. The design is ~condition without an explicit reference level, and the |logFC| cutoff is applied post hoc rather than via treat. Enrichment was not asked and is added anyway with no explicit ORA universe, collection versions, or set-size window; versions are also absent from the report spec."
+}

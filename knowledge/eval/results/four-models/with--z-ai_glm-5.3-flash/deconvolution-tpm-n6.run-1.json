@@ -1,0 +1,232 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "deconvolution-tpm-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T05:11:38.729Z",
+  "elapsedMs": 114540,
+  "outcome": "error",
+  "error": "Plan generation failed: Provider call failed for analysis:eval-four-models-with-deconvolution-tpm-n6-1: Upstream error from NextBit: upstream model did not return a valid tool call for the requested tool_choice",
+  "usage": {
+    "inputTokens": 144423,
+    "outputTokens": 1320,
+    "cacheReadInputTokens": 89280,
+    "reasoningTokens": 323
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "PCA/MDS on log2 TPM with sample distance heatmap and detected genes",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "TPM floor filter",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "immunedeconv multi-method: EPIC + quanTIseq + MCP-counter + xCell",
+            "package": "immunedeconv",
+            "parameters": [
+              {
+                "name": "interface",
+                "value": "immunedeconv"
+              },
+              {
+                "name": "input_scale",
+                "value": "tpm_linear"
+              },
+              {
+                "name": "consensus",
+                "value": "two_or_more_methods_agree"
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "group comparison of per-sample cell scores, t-test with BH adjustment",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjust",
+                "value": "BH"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducibility record",
+            "package": "",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version, annotation_release"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "method": "PCA/MDS on log2 TPM with sample distance heatmap and detected genes",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ],
+            "step_type": "qc_sample_structure"
+          },
+          {
+            "method": "TPM floor filter",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ],
+            "step_type": "filter_low_counts"
+          },
+          {
+            "method": "immunedeconv multi-method: EPIC + quanTIseq + MCP-counter + xCell",
+            "package": "immunedeconv",
+            "parameters": [
+              {
+                "name": "interface",
+                "value": "immunedeconv"
+              },
+              {
+                "name": "input_scale",
+                "value": "tpm_linear"
+              },
+              {
+                "name": "consensus",
+                "value": "two_or_more_methods_agree"
+              }
+            ],
+            "step_type": "deconvolution"
+          },
+          {
+            "method": "EPIC absolute cell fractions from TPM with an uncharacterized fraction",
+            "package": "EPIC",
+            "parameters": [
+              {
+                "name": "input_scale",
+                "value": "tpm_linear"
+              }
+            ],
+            "step_type": "deconvolution"
+          },
+          {
+            "method": "Reproducibility record",
+            "package": "",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version, annotation_release"
+              }
+            ],
+            "step_type": "report"
+          }
+        ]
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

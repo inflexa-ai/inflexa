@@ -1,0 +1,511 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "zebrafish-two-group-n3",
+  "run": 1,
+  "startedAt": "2026-09-07T00:39:42.142Z",
+  "elapsedMs": 115837,
+  "outcome": "plan_submitted",
+  "planId": "pln-9a707cb0",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and DESeq2 differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group is the minimum for dispersion estimation: the test is valid but underpowered, and a small or empty significant set is a plausible, reportable outcome — not a reason to relax the FDR threshold.",
+          "Whole-larvae pools average across every tissue, so tissue-restricted responses are diluted and effect sizes are compressed.",
+          "A single batch with no replicate blocking means any handling artefact is perfectly confounded with condition; state this rather than treating the contrast as clean.",
+          "Salmon gene-symbol rows may contain duplicated or placeholder symbols — check for duplicate row names before building the DESeqDataSet."
+        ],
+        "context": "Bulk RNA-seq, Danio rerio whole larvae, drug exposure vs control. 3 vs 3, unpaired, single batch, raw integer gene-level Salmon counts on the Ensembl Danio rerio annotation. Gene identifiers are symbols, not Ensembl IDs. DESeq2 1.52.0 and apeglm 1.34.0 are installed.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap",
+          "ComplexHeatmap",
+          "matrixStats"
+        ],
+        "question": "After confirming the 6 whole-larvae pools separate by condition and no pool is an outlier, which genes are differentially expressed between the 3 treated and 3 control zebrafish larvae pools?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2 with design ~condition and set the control group as the reference level; do not re-code the contrast implicitly.",
+          "Read the actual condition labels from metadata.csv rather than assuming names; report them verbatim.",
+          "Pre-filter genes before testing (e.g. count >= 10 in at least 3 samples) and report how many genes remain of the 12,000.",
+          "Use apeglm shrinkage for the reported effect sizes used in ranking, and keep the unshrunken log2FoldChange in the table alongside it.",
+          "Report adjusted p-values from BH with independent filtering; do not report nominal p-values as significance.",
+          "Emit the results table as CSV keyed by gene symbol, plus the VST matrix, for downstream steps."
+        ],
+        "description": "Load /eval-four-models-without-zebrafish-two-group-n3-1/data/inputs/counts/counts.csv (12,000 gene-symbol rows x 6 sample columns; first column is the gene symbol) and /eval-four-models-without-zebrafish-two-group-n3-1/data/inputs/metadata/metadata.csv (6 rows: sample id + condition), align the metadata sample order to the count matrix columns and fail loudly on any mismatch. Report per-sample library size and number of detected genes. Build a DESeqDataSet with design ~condition, setting the control group as the reference level so positive log2FoldChange means up in treated. Pre-filter to genes with a minimum count in at least 3 samples (the smallest group size). Run VST and produce a PCA plot and a sample-sample correlation/distance heatmap to check whether treated vs control is the dominant axis of variation and whether any single pool is an outlier. Run DESeq() (Wald test, condition treated vs control) with independent filtering and BH adjustment, and compute apeglm-shrunken log2 fold changes for ranking. Write out: the full results table (gene symbol, baseMean, log2FoldChange, shrunken LFC, lfcSE, stat, pvalue, padj) as CSV, the VST matrix, the dispersion-estimate plot, the p-value histogram, and the QC plots. State the exact condition labels found in the metadata in the output summary.",
+        "acceptance_criteria": [
+          "A results CSV exists with one row per tested gene and columns for baseMean, log2FoldChange, shrunken LFC, pvalue and padj.",
+          "The number of genes retained after filtering, and the exact condition labels used for the contrast, are reported.",
+          "PCA and sample-distance plots are produced and the text states whether condition is the dominant source of variation and whether any pool looks aberrant.",
+          "Dispersion-estimate plot and p-value histogram are produced, and the summary comments on whether the dispersion fit and p-value distribution look well behaved at n=3 per group.",
+          "The count of genes at padj < 0.05 (and, separately, padj < 0.1) is reported."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DE gene ranking, visualisation and Entrez mapping",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If the significant set at padj < 0.05 is very small, do not pad it by loosening the threshold silently — report both thresholds and label which is which.",
+          "Unmapped placeholder symbols are enriched among poorly characterised, often zebrafish-specific genes, so their loss is not random with respect to biology."
+        ],
+        "context": "Downstream of T1S1. Zebrafish Ensembl gene symbols from Salmon include many placeholder-style names (si:, zgc:, CABZ, BX/CU clone-based) that have no Entrez mapping; the loss must be quantified because it silently biases every gene-set test that follows.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "org.Dr.eg.db",
+          "AnnotationDbi",
+          "EnhancedVolcano",
+          "ggplot2",
+          "pheatmap",
+          "dplyr"
+        ],
+        "question": "Which specific genes are up- and down-regulated in treated zebrafish larvae, and what fraction of the 12,000 Salmon gene symbols can be mapped to Entrez IDs for enrichment?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use org.Dr.eg.db for symbol-to-Entrez mapping — do not use a human or mouse annotation on this zebrafish data.",
+          "Report the symbol-to-Entrez mapping rate as an explicit percentage for both the background and the significant gene set, and name example unmapped symbols.",
+          "Define the enrichment background as the genes actually tested by DESeq2 after filtering, not all 12,000 input rows.",
+          "Handle many-to-one and one-to-many symbol/Entrez mappings explicitly (state the deduplication rule used).",
+          "Export both the significant gene lists and the full preranked list for the enrichment track."
+        ],
+        "description": "Take the DESeq2 results table from T1S1 and produce the gene-level answer. Rank significant genes (padj < 0.05) by shrunken log2 fold change and split into up- and down-regulated lists; write both as CSV with baseMean, shrunken LFC and padj. Produce a volcano plot labelling the top genes by padj, and a heatmap of the top ~40 genes by padj using the VST matrix with samples annotated by condition. Map all gene symbols in the tested set to Entrez IDs using the zebrafish organism annotation package (org.Dr.eg.db) and report the mapping rate for (a) the full tested background and (b) the significant set; write the mapped tables out for the enrichment steps. Explicitly list examples of unmapped symbols. Also export a preranked vector (gene symbol and Entrez ID with the shrunken LFC, or -log10(p)*sign(LFC) if requested) covering all tested genes, for GSEA.",
+        "acceptance_criteria": [
+          "Up- and down-regulated gene lists at padj < 0.05 exist as CSV files with effect sizes, or the step reports explicitly that the set is empty at that threshold and provides the padj < 0.1 lists instead.",
+          "A volcano plot and a top-gene VST heatmap are produced.",
+          "Symbol-to-Entrez mapping rate is reported numerically for background and significant sets, with example unmapped symbols.",
+          "A preranked gene list covering all tested genes is written out for GSEA."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Zebrafish GO and Reactome enrichment (ORA + GSEA)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Zebrafish GO annotation is substantially sparser and more electronically-inferred than human, so absent enrichment is weak evidence of absent biology.",
+          "GO is a nested hierarchy: significant parent and child terms are not independent findings and must be collapsed before any count is reported.",
+          "If ORA returns nothing at FDR<0.05, that is a real result given n=3 — report the GSEA outcome rather than dropping to nominal p-values.",
+          "The Reactome GMT covers all species in one file; failing to filter to Danio rerio would silently mix orthologous sets from other organisms."
+        ],
+        "context": "The reference census shows NO zebrafish-specific gene-set collection staged: WikiPathways is human/mouse/rat, all MSigDB collections are human/mouse, and no zebrafish ortholog mapping table is present. Reactome's staged GMT is the one multi-species resource that carries Danio rerio sets natively, and org.Dr.eg.db supplies native zebrafish GO annotation without any external file. This is why no cross-species ortholog projection is planned — it would add mapping loss and species-mismatch error for no gain.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Dr.eg.db",
+          "fgsea",
+          "enrichplot",
+          "rrvgo",
+          "GO.db",
+          "AnnotationDbi",
+          "ggplot2",
+          "dplyr",
+          "data.table"
+        ],
+        "question": "Which Danio rerio GO terms and Reactome pathways are enriched among the genes changed by drug exposure, both by over-representation of the significant set and by preranked GSEA over all tested genes?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use zebrafish-native gene sets only: org.Dr.eg.db GO annotation, and the Reactome collection filtered to Danio rerio via its pathway index. Do NOT run human or mouse gene sets against this zebrafish data, and do not silently substitute a human collection.",
+          "Resolve reference data by what it IS (a multi-species Reactome pathway GMT with its species index) against the environment's reference store at run time; verify the file is present before use.",
+          "If the Danio rerio subset of the Reactome collection cannot be resolved or yields too few sets to test, report that clearly and proceed with GO-only enrichment rather than substituting another species — the GO analysis alone still answers the pathway question.",
+          "Use the DESeq2 tested-gene set as the ORA background, never the whole genome or all 12,000 input rows.",
+          "Run preranked GSEA on the full ranked list in addition to ORA, because at n=3 per group the cutoff-based significant set may be too small for a meaningful over-representation test.",
+          "Report the size of the query gene universe that actually overlaps the gene-set collection; a low overlap invalidates the enrichment statistics and must be stated."
+        ],
+        "description": "Run gene-set analysis on the T1S2 outputs using zebrafish-native resources only. (1) GO: clusterProfiler enrichGO and gseGO against the zebrafish organism annotation database (org.Dr.eg.db), BP and MF branches, with the tested-gene background from T1S2, BH adjustment, and a minimum/maximum gene-set size (e.g. 10-500). (2) Reactome: resolve the staged Reactome pathway gene-set collection and its companion pathway index against the environment's reference store; the GMT is multi-species in one file, so restrict it to Danio rerio by joining the index on the species column before testing, and confirm how many zebrafish sets survive the filter. Run both ORA (significant genes vs tested background) and preranked GSEA (fgsea on the full shrunken-LFC ranking from T1S2) against the zebrafish Reactome sets. Note the identifier space of the Reactome GMT (gene symbols) and match it to the query accordingly, reporting the overlap between the query gene universe and the union of set members. Collapse redundant GO terms (rrvgo or simplify) before reporting. Write all enrichment tables as CSV plus dotplot/ridgeplot summaries.",
+        "acceptance_criteria": [
+          "GO ORA and GO GSEA result tables exist with term, set size, gene ratio / NES, p-value and BH-adjusted p-value.",
+          "The Reactome analysis either produces zebrafish-filtered ORA and GSEA tables with the number of Danio rerio sets tested reported, or explicitly reports that the zebrafish subset was unavailable and that GO-only results are given.",
+          "The overlap between the query gene universe and the tested gene-set members is reported numerically.",
+          "Redundant GO terms are collapsed and the reported term list is de-duplicated.",
+          "At least one summary figure (dotplot or equivalent) is produced per collection tested."
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Reconciled biological synthesis",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The strongest honest outcome from a 3v3 whole-larvae experiment is a hypothesis-generating list, not an established mechanism; the writing must reflect that.",
+          "Avoid narrative coherence bias — if the enriched terms do not form one story, say so rather than selecting the subset that does."
+        ],
+        "context": "Final interpretive step. All numbers must come from the T1S2 and T2S1 outputs; nothing new is computed beyond joining, tabulating and plotting them.",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "dplyr",
+          "tidyr",
+          "pheatmap",
+          "ComplexHeatmap",
+          "knitr"
+        ],
+        "question": "Taken together, what coherent biological response to the drug exposure do the differentially expressed genes and enriched pathways support in zebrafish larvae, and how strong is that evidence at n=3 per group?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "synthesis",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Every claim must trace to a specific number in the T1S2 or T2S1 output tables; do not introduce results not produced by earlier steps.",
+          "Report pathway findings only where the leading-edge / overlap gene count is stated alongside them.",
+          "Mark ORA-only or GSEA-only findings as weaker than concordant ones.",
+          "Include an explicit limitations section covering n=3 power, the single-batch confound, whole-larvae averaging, and annotation mapping loss.",
+          "Do not infer the compound's mechanism of action or any therapeutic implication — the input metadata does not identify the compound, dose or exposure duration."
+        ],
+        "description": "Integrate the T1S2 gene-level result with the T2S1 GO and Reactome enrichment. Produce a short written synthesis that: names the top up- and down-regulated genes with their effect sizes and adjusted p-values; states which pathway themes are supported by BOTH the ORA and the preranked GSEA versus only one of them; identifies for each headline pathway claim how many leading-edge genes drive it and whether those genes are individually significant; and separates observation from interpretation. Include a summary table of the concordant findings and a figure combining the top pathways with their leading-edge gene effect sizes. Close with an explicit limitations paragraph covering the n=3 design, the single-batch confound, whole-larvae tissue averaging, the symbol-to-Entrez mapping loss quantified in T1S2, and the sparseness of zebrafish pathway annotation. Do not speculate about the compound's mechanism or about druggability — the metadata carries only a condition label and no compound identity, dose or exposure information.",
+        "acceptance_criteria": [
+          "A written synthesis exists that names specific genes and pathways with their statistics.",
+          "Concordance between ORA and GSEA is stated per pathway theme.",
+          "Leading-edge / overlap gene counts accompany each reported pathway.",
+          "A limitations section is present and covers power, batch confounding, tissue averaging and annotation loss.",
+          "A combined summary table and at least one integrated figure are produced."
+        ]
+      }
+    ],
+    "title": "Zebrafish larvae drug-treated vs control DE + pathways",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single bulk RNA-seq experiment: /data/inputs/counts/counts.csv, 12,000 gene-symbol rows x 6 sample columns (first column is the gene symbol, so 7 columns total), raw integer Salmon gene-level counts on the Ensembl Danio rerio annotation, paired with /data/inputs/metadata/metadata.csv (6 rows x 2 columns: sample id + condition). The design is 3 treated vs 3 control whole-larvae pools, unpaired, single batch. The research question has exactly two parts, so the plan has two dependent stages plus one interpretive stage.\n\nT1S1 does QC and the differential expression test in one place because the dataset is tiny (6 samples) and the two are inseparable in DESeq2: library-size/detection summary, VST-based PCA and sample-correlation clustering to check that the treated/control split is the dominant structure and to catch an outlier pool, then DESeq2 Wald on ~condition with control as reference level, independent filtering, BH FDR, and apeglm-shrunken LFCs for ranking. DESeq2 (1.52.0) and apeglm (1.34.0) are both installed. n=3/group is the minimum for dispersion estimation — the analysis is legitimate but underpowered, so the step must report the dispersion fit and state power honestly rather than lean on a nominal p-value cutoff.\n\nT1S2 turns the result table into the gene-level answer: ranked significant genes at FDR<0.05, a directional split, volcano and top-gene heatmap on VST counts, and a symbol-to-Entrez mapping through org.Dr.eg.db (installed, 3.22.0) that reports the mapping rate — Salmon/Ensembl zebrafish symbols include many si:/zgc:/CABZ-style placeholder names that will not map, and the fraction that drops is itself a caveat on every downstream enrichment.\n\nT2S1 answers the pathway half. The reference census shows NO zebrafish gene-set collection staged: WikiPathways is human/mouse/rat only, MSigDB is human/mouse only, and there is no zebrafish ortholog table. What IS staged and species-complete is Reactome (ReactomePathways.gmt covers every Reactome species in one file, with ReactomePathways.txt as the species index) — so the primary enrichment is native Danio rerio Reactome sets, filtered by joining the index on 'Danio rerio', with no cross-species mapping and therefore no ortholog-loss artefact. Alongside it, clusterProfiler's enrichGO/gseGO against org.Dr.eg.db gives native zebrafish GO, which needs no external file at all. Both ORA (on the FDR<0.05 set against the expressed-gene background — not all 12,000 rows) and preranked GSEA (on the full shrunken-LFC ranking, which does not depend on any DE cutoff and is the more robust readout at n=3) are run, because with six samples the cutoff-based list may be short or empty and GSEA is then the only informative test.\n\nT2S2 is the honest synthesis: reconcile ORA against GSEA, collapse the redundant parent/child GO blocks, and state explicitly which conclusions rest on how many genes. No drug-target, biomarker, or safety steps are planned — the metadata carries only a condition label, with no compound identity, dose, exposure, or outcome data, so any such step could only speculate."
+  },
+  "usage": {
+    "inputTokens": 668868,
+    "outputTokens": 7597,
+    "cacheCreationInputTokens": 128656,
+    "cacheReadInputTokens": 540080,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "zebrafish"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "org.Dr.eg.db",
+          "clusterProfiler",
+          "fgsea",
+          "gseapy",
+          "apeglm",
+          "EnhancedVolcano",
+          "pydeseq2",
+          "babelgene",
+          "biomaRt",
+          "msigdbr"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways",
+        "limit": 60
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gmt",
+        "limit": 60
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "danio",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ortholog",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome",
+        "limit": 20
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed/reactome-pathways/current"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "GO.db",
+          "org.Dr.eg.db",
+          "clusterProfiler",
+          "DOSE",
+          "enrichplot",
+          "ashr",
+          "PoiClaClu",
+          "ComplexHeatmap",
+          "rrvgo",
+          "decoupleR",
+          "GSVA",
+          "KEGGREST"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Zebrafish larvae drug-treated vs control DE + pathways",
+          "analytical_narrative": "The input is a single bulk RNA-seq experiment: /data/inputs/counts/counts.csv, 12,000 gene-symbol rows x 6 sample columns (first column is the gene symbol, so 7 columns total), raw integer Salmon gene-level counts on the Ensembl Danio rerio annotation, paired with /data/inputs/metadata/metadata.csv (6 rows x 2 columns: sample id + condition). The design is 3 treated vs 3 control whole-larvae pools, unpaired, single batch. The research question has exactly two parts, so the plan has two dependent stages plus one interpretive stage.\n\nT1S1 does QC and the differential expression test in one place because the dataset is tiny (6 samples) and the two are inseparable in DESeq2: library-size/detection summary, VST-based PCA and sample-correlation clustering to check that the treated/control split is the dominant structure and to catch an outlier pool, then DESeq2 Wald on ~condition with control as reference level, independent filtering, BH FDR, and apeglm-shrunken LFCs for ranking. DESeq2 (1.52.0) and apeglm (1.34.0) are both installed. n=3/group is the minimum for dispersion estimation — the analysis is legitimate but underpowered, so the step must report the dispersion fit and state power honestly rather than lean on a nominal p-value cutoff.\n\nT1S2 turns the result table into the gene-level answer: ranked significant genes at FDR<0.05, a directional split, volcano and top-gene heatmap on VST counts, and a symbol-to-Entrez mapping through org.Dr.eg.db (installed, 3.22.0) that reports the mapping rate — Salmon/Ensembl zebrafish symbols include many si:/zgc:/CABZ-style placeholder names that will not map, and the fraction that drops is itself a caveat on every downstream enrichment.\n\nT2S1 answers the pathway half. The reference census shows NO zebrafish gene-set collection staged: WikiPathways is human/mouse/rat only, MSigDB is human/mouse only, and there is no zebrafish ortholog table. What IS staged and species-complete is Reactome (ReactomePathways.gmt covers every Reactome species in one file, with ReactomePathways.txt as the species index) — so the primary enrichment is native Danio rerio Reactome sets, filtered by joining the index on 'Danio rerio', with no cross-species mapping and therefore no ortholog-loss artefact. Alongside it, clusterProfiler's enrichGO/gseGO against org.Dr.eg.db gives native zebrafish GO, which needs no external file at all. Both ORA (on the FDR<0.05 set against the expressed-gene background — not all 12,000 rows) and preranked GSEA (on the full shrunken-LFC ranking, which does not depend on any DE cutoff and is the more robust readout at n=3) are run, because with six samples the cutoff-based list may be short or empty and GSEA is then the only informative test.\n\nT2S2 is the honest synthesis: reconcile ORA against GSEA, collapse the redundant parent/child GO blocks, and state explicitly which conclusions rest on how many genes. No drug-target, biomarker, or safety steps are planned — the metadata carries only a condition label, with no compound identity, dose, exposure, or outcome data, so any such step could only speculate.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and DESeq2 differential expression",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "After confirming the 6 whole-larvae pools separate by condition and no pool is an outlier, which genes are differentially expressed between the 3 treated and 3 control zebrafish larvae pools?",
+              "description": "Load /eval-four-models-without-zebrafish-two-group-n3-1/data/inputs/counts/counts.csv (12,000 gene-symbol rows x 6 sample columns; first column is the gene symbol) and /eval-four-models-without-zebrafish-two-group-n3-1/data/inputs/metadata/metadata.csv (6 rows: sample id + condition), align the metadata sample order to the count matrix columns and fail loudly on any mismatch. Report per-sample library size and number of detected genes. Build a DESeqDataSet with design ~condition, setting the control group as the reference level so positive log2FoldChange means up in treated. Pre-filter to genes with a minimum count in at least 3 samples (the smallest group size). Run VST and produce a PCA plot and a sample-sample correlation/distance heatmap to check whether treated vs control is the dominant axis of variation and whether any single pool is an outlier. Run DESeq() (Wald test, condition treated vs control) with independent filtering and BH adjustment, and compute apeglm-shrunken log2 fold changes for ranking. Write out: the full results table (gene symbol, baseMean, log2FoldChange, shrunken LFC, lfcSE, stat, pvalue, padj) as CSV, the VST matrix, the dispersion-estimate plot, the p-value histogram, and the QC plots. State the exact condition labels found in the metadata in the output summary.",
+              "context": "Bulk RNA-seq, Danio rerio whole larvae, drug exposure vs control. 3 vs 3, unpaired, single batch, raw integer gene-level Salmon counts on the Ensembl Danio rerio annotation. Gene identifiers are symbols, not Ensembl IDs. DESeq2 1.52.0 and apeglm 1.34.0 are installed.",
+              "constraints": [
+                "Use DESeq2 with design ~condition and set the control group as the reference level; do not re-code the contrast implicitly.",
+                "Read the actual condition labels from metadata.csv rather than assuming names; report them verbatim.",
+                "Pre-filter genes before testing (e.g. count >= 10 in at least 3 samples) and report how many genes remain of the 12,000.",
+                "Use apeglm shrinkage for the reported effect sizes used in ranking, and keep the unshrunken log2FoldChange in the table alongside it.",
+                "Report adjusted p-values from BH with independent filtering; do not report nominal p-values as significance.",
+                "Emit the results table as CSV keyed by gene symbol, plus the VST matrix, for downstream steps."
+              ],
+              "acceptance_criteria": [
+                "A results CSV exists with one row per tested gene and columns for baseMean, log2FoldChange, shrunken LFC, pvalue and padj.",
+                "The number of genes retained after filtering, and the exact condition labels used for the contrast, are reported.",
+                "PCA and sample-distance plots are produced and the text states whether condition is the dominant source of variation and whether any pool looks aberrant.",
+                "Dispersion-estimate plot and p-value histogram are produced, and the summary comments on whether the dispersion fit and p-value distribution look well behaved at n=3 per group.",
+                "The count of genes at padj < 0.05 (and, separately, padj < 0.1) is reported."
+              ],
+              "caveats": [
+                "n=3 per group is the minimum for dispersion estimation: the test is valid but underpowered, and a small or empty significant set is a plausible, reportable outcome — not a reason to relax the FDR threshold.",
+                "Whole-larvae pools average across every tissue, so tissue-restricted responses are diluted and effect sizes are compressed.",
+                "A single batch with no replicate blocking means any handling artefact is perfectly confounded with condition; state this rather than treating the contrast as clean.",
+                "Salmon gene-symbol rows may contain duplicated or placeholder symbols — check for duplicate row names before building the DESeqDataSet."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "pheatmap",
+                "ComplexHeatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DE gene ranking, visualisation and Entrez mapping",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which specific genes are up- and down-regulated in treated zebrafish larvae, and what fraction of the 12,000 Salmon gene symbols can be mapped to Entrez IDs for enrichment?",
+              "description": "Take the DESeq2 results table from T1S1 and produce the gene-level answer. Rank significant genes (padj < 0.05) by shrunken log2 fold change and split into up- and down-regulated lists; write both as CSV with baseMean, shrunken LFC and padj. Produce a volcano plot labelling the top genes by padj, and a heatmap of the top ~40 genes by padj using the VST matrix with samples annotated by condition. Map all gene symbols in the tested set to Entrez IDs using the zebrafish organism annotation package (org.Dr.eg.db) and report the mapping rate for (a) the full tested background and (b) the significant set; write the mapped tables out for the enrichment steps. Explicitly list examples of unmapped symbols. Also export a preranked vector (gene symbol and Entrez ID with the shrunken LFC, or -log10(p)*sign(LFC) if requested) covering all tested genes, for GSEA.",
+              "context": "Downstream of T1S1. Zebrafish Ensembl gene symbols from Salmon include many placeholder-style names (si:, zgc:, CABZ, BX/CU clone-based) that have no Entrez mapping; the loss must be quantified because it silently biases every gene-set test that follows.",
+              "constraints": [
+                "Use org.Dr.eg.db for symbol-to-Entrez mapping — do not use a human or mouse annotation on this zebrafish data.",
+                "Report the symbol-to-Entrez mapping rate as an explicit percentage for both the background and the significant gene set, and name example unmapped symbols.",
+                "Define the enrichment background as the genes actually tested by DESeq2 after filtering, not all 12,000 input rows.",
+                "Handle many-to-one and one-to-many symbol/Entrez mappings explicitly (state the deduplication rule used).",
+                "Export both the significant gene lists and the full preranked list for the enrichment track."
+              ],
+              "acceptance_criteria": [
+                "Up- and down-regulated gene lists at padj < 0.05 exist as CSV files with effect sizes, or the step reports explicitly that the set is empty at that threshold and provides the padj < 0.1 lists instead.",
+                "A volcano plot and a top-gene VST heatmap are produced.",
+                "Symbol-to-Entrez mapping rate is reported numerically for background and significant sets, with example unmapped symbols.",
+                "A preranked gene list covering all tested genes is written out for GSEA."
+              ],
+              "caveats": [
+                "If the significant set at padj < 0.05 is very small, do not pad it by loosening the threshold silently — report both thresholds and label which is which.",
+                "Unmapped placeholder symbols are enriched among poorly characterised, often zebrafish-specific genes, so their loss is not random with respect to biology."
+              ],
+              "packages": [
+                "DESeq2",
+                "org.Dr.eg.db",
+                "AnnotationDbi",
+                "EnhancedVolcano",
+                "ggplot2",
+                "pheatmap",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Zebrafish GO and Reactome enrichment (ORA + GSEA)",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which Danio rerio GO terms and Reactome pathways are enriched among the genes changed by drug exposure, both by over-representation of the significant set and by preranked GSEA over all tested genes?",
+              "description": "Run gene-set analysis on the T1S2 outputs using zebrafish-native resources only. (1) GO: clusterProfiler enrichGO and gseGO against the zebrafish organism annotation database (org.Dr.eg.db), BP and MF branches, with the tested-gene background from T1S2, BH adjustment, and a minimum/maximum gene-set size (e.g. 10-500). (2) Reactome: resolve the staged Reactome pathway gene-set collection and its companion pathway index against the environment's reference store; the GMT is multi-species in one file, so restrict it to Danio rerio by joining the index on the species column before testing, and confirm how many zebrafish sets survive the filter. Run both ORA (significant genes vs tested background) and preranked GSEA (fgsea on the full shrunken-LFC ranking from T1S2) against the zebrafish Reactome sets. Note the identifier space of the Reactome GMT (gene symbols) and match it to the query accordingly, reporting the overlap between the query gene universe and the union of set members. Collapse redundant GO terms (rrvgo or simplify) before reporting. Write all enrichment tables as CSV plus dotplot/ridgeplot summaries.",
+              "context": "The reference census shows NO zebrafish-specific gene-set collection staged: WikiPathways is human/mouse/rat, all MSigDB collections are human/mouse, and no zebrafish ortholog mapping table is present. Reactome's staged GMT is the one multi-species resource that carries Danio rerio sets natively, and org.Dr.eg.db supplies native zebrafish GO annotation without any external file. This is why no cross-species ortholog projection is planned — it would add mapping loss and species-mismatch error for no gain.",
+              "constraints": [
+                "Use zebrafish-native gene sets only: org.Dr.eg.db GO annotation, and the Reactome collection filtered to Danio rerio via its pathway index. Do NOT run human or mouse gene sets against this zebrafish data, and do not silently substitute a human collection.",
+                "Resolve reference data by what it IS (a multi-species Reactome pathway GMT with its species index) against the environment's reference store at run time; verify the file is present before use.",
+                "If the Danio rerio subset of the Reactome collection cannot be resolved or yields too few sets to test, report that clearly and proceed with GO-only enrichment rather than substituting another species — the GO analysis alone still answers the pathway question.",
+                "Use the DESeq2 tested-gene set as the ORA background, never the whole genome or all 12,000 input rows.",
+                "Run preranked GSEA on the full ranked list in addition to ORA, because at n=3 per group the cutoff-based significant set may be too small for a meaningful over-representation test.",
+                "Report the size of the query gene universe that actually overlaps the gene-set collection; a low overlap invalidates the enrichment statistics and must be stated."
+              ],
+              "acceptance_criteria": [
+                "GO ORA and GO GSEA result tables exist with term, set size, gene ratio / NES, p-value and BH-adjusted p-value.",
+                "The Reactome analysis either produces zebrafish-filtered ORA and GSEA tables with the number of Danio rerio sets tested reported, or explicitly reports that the zebrafish subset was unavailable and that GO-only results are given.",
+                "The overlap between the query gene universe and the tested gene-set members is reported numerically.",
+                "Redundant GO terms are collapsed and the reported term list is de-duplicated.",
+                "At least one summary figure (dotplot or equivalent) is produced per collection tested."
+              ],
+              "caveats": [
+                "Zebrafish GO annotation is substantially sparser and more electronically-inferred than human, so absent enrichment is weak evidence of absent biology.",
+                "GO is a nested hierarchy: significant parent and child terms are not independent findings and must be collapsed before any count is reported.",
+                "If ORA returns nothing at FDR<0.05, that is a real result given n=3 — report the GSEA outcome rather than dropping to nominal p-values.",
+                "The Reactome GMT covers all species in one file; failing to filter to Danio rerio would silently mix orthologous sets from other organisms."
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Dr.eg.db",
+                "fgsea",
+                "enrichplot",
+                "rrvgo",
+                "GO.db",
+                "AnnotationDbi",
+                "ggplot2",
+                "dplyr",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Reconciled biological synthesis",
+              "track": "T2",
+              "step_type": "synthesis",
+              "question": "Taken together, what coherent biological response to the drug exposure do the differentially expressed genes and enriched pathways support in zebrafish larvae, and how strong is that evidence at n=3 per group?",
+              "description": "Integrate the T1S2 gene-level result with the T2S1 GO and Reactome enrichment. Produce a short written synthesis that: names the top up- and down-regulated genes with their effect sizes and adjusted p-values; states which pathway themes are supported by BOTH the ORA and the preranked GSEA versus only one of them; identifies for each headline pathway claim how many leading-edge genes drive it and whether those genes are individually significant; and separates observation from interpretation. Include a summary table of the concordant findings and a figure combining the top pathways with their leading-edge gene effect sizes. Close with an explicit limitations paragraph covering the n=3 design, the single-batch confound, whole-larvae tissue averaging, the symbol-to-Entrez mapping loss quantified in T1S2, and the sparseness of zebrafish pathway annotation. Do not speculate about the compound's mechanism or about druggability — the metadata carries only a condition label and no compound identity, dose or exposure information.",
+              "context": "Final interpretive step. All numbers must come from the T1S2 and T2S1 outputs; nothing new is computed beyond joining, tabulating and plotting them.",
+              "constraints": [
+                "Every claim must trace to a specific number in the T1S2 or T2S1 output tables; do not introduce results not produced by earlier steps.",
+                "Report pathway findings only where the leading-edge / overlap gene count is stated alongside them.",
+                "Mark ORA-only or GSEA-only findings as weaker than concordant ones.",
+                "Include an explicit limitations section covering n=3 power, the single-batch confound, whole-larvae averaging, and annotation mapping loss.",
+                "Do not infer the compound's mechanism of action or any therapeutic implication — the input metadata does not identify the compound, dose or exposure duration."
+              ],
+              "acceptance_criteria": [
+                "A written synthesis exists that names specific genes and pathways with their statistics.",
+                "Concordance between ORA and GSEA is stated per pathway theme.",
+                "Leading-edge / overlap gene counts accompany each reported pathway.",
+                "A limitations section is present and covers power, batch confounding, tissue averaging and annotation loss.",
+                "A combined summary table and at least one integrated figure are produced."
+              ],
+              "caveats": [
+                "The strongest honest outcome from a 3v3 whole-larvae experiment is a hypothesis-generating list, not an established mechanism; the writing must reflect that.",
+                "Avoid narrative coherence bias — if the enriched terms do not form one story, say so rather than selecting the subset that does."
+              ],
+              "packages": [
+                "ggplot2",
+                "dplyr",
+                "tidyr",
+                "pheatmap",
+                "ComplexHeatmap",
+                "knitr"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

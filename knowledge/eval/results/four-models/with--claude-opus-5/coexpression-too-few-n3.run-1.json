@@ -1,0 +1,1119 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "coexpression-too-few-n3",
+  "run": 1,
+  "startedAt": "2026-09-06T23:27:16.822Z",
+  "elapsedMs": 170408,
+  "outcome": "plan_submitted",
+  "planId": "pln-7f5e8acf",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 3 samples per group a PCA is dominated by the two or three largest sources of variance and cannot distinguish a batch from a treatment effect",
+          "A sample-distance heatmap over 6 samples has 15 pairwise distances and no clustering claim from it is stable"
+        ],
+        "context": "Human liver bulk RNA-seq, raw gene-level Salmon counts, 3 treated vs 3 control, unpaired, single batch. With 6 samples one aberrant sample can create an entire spurious module downstream, so the structure check comes first and its output gates the interpretation of every later step.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the 6 human liver samples in counts.csv group by treated vs control, and does any of the 3 treated or 3 control samples sit apart from its group before any module is built?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Raw counts, so sample structure QC runs before any model: blind VST, PCA on the top 500 variable genes, sample distance heatmap, per R-0033.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2 vst() with blind=TRUE — the transform must not use the design",
+          "Compute the PCA on the 500 most variable genes",
+          "Do not drop any sample at this step; report outliers, do not remove them without stating the reason",
+          "Do not pre-scale, log, or normalize the counts before building the DESeqDataSet"
+        ],
+        "description": "Load /eval-four-models-with-coexpression-too-few-n3-1/data/inputs/counts/counts.csv (12,000 genes x 6 samples, gene symbol in the first column) and /eval-four-models-with-coexpression-too-few-n3-1/data/inputs/metadata/metadata.csv (6 rows, condition column). Verify the sample columns of the count matrix match the metadata rows exactly and abort with a clear message if they do not. Build a DESeqDataSet with ~condition, apply the variance stabilizing transformation blind to the design, and produce: PCA on the 500 most variable genes coloured by condition, a Euclidean sample-distance heatmap, per-sample library sizes, and per-sample detected-gene counts. Write the blind VST matrix to disk for the downstream steps. Report which principal component, if any, separates treated from control and the fraction of variance it carries.",
+        "acceptance_criteria": [
+          "Count matrix columns and metadata rows are confirmed to match one-to-one, with the sample count reported as 6 (3 treated, 3 control)",
+          "PCA plot on the top 500 variable genes, sample-distance heatmap, and library-size barplot are written to disk",
+          "The percent variance of PC1 and PC2 is reported, and whether the primary axis separates the two conditions",
+          "Any sample that does not group with its condition is named explicitly, or the absence of such a sample is stated",
+          "The blind VST matrix is saved for reuse by downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count filter and size factors",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Gene symbols are the only identifier available in counts.csv; duplicate symbols must be resolved by a stated rule (for example, keep the higher-expressed row) and the number collapsed reported"
+        ],
+        "context": "The filter is deliberately minimal: a heavy pre-filter would remove genes that carry real module signal and would change the gene universe used later. Normalization stays inside DESeq2 as size factors rather than being applied as a pre-scaling of counts.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which of the 12,000 genes are expressed well enough across the 6 liver samples to carry a usable correlation or module score, and what are the median-of-ratios size factors?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1"
+          ],
+          "reason": "Minimal pre-filter of 10 counts in the smallest group size (R-0002/R-0029) with median-of-ratios normalization inside the model (R-0026).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count = 10, min_samples = 3 (the smallest group size)",
+          "Use DESeq2 estimateSizeFactors (median-of-ratios); do not substitute CPM or TPM scaling",
+          "Keep the filter minimal — do not add a variance or expression-percentile filter at this step"
+        ],
+        "description": "Starting from the DESeqDataSet of T1S1, keep a gene only if it reaches at least 10 counts in at least 3 samples — 3 being the smallest group size. Estimate median-of-ratios size factors with DESeq2 and recompute the blind VST on the filtered matrix. Emit the filtered VST matrix, the filtered raw count matrix, the size factor per sample, and the list of retained gene symbols, which becomes the universe for every enrichment step in this plan. Report the number of genes in and out of the filter.",
+        "acceptance_criteria": [
+          "The number of genes retained out of 12,000 is reported, together with the filter rule (>=10 counts in >=3 samples)",
+          "Median-of-ratios size factors are reported for all 6 samples, and any sample whose size factor departs strongly from 1 is named",
+          "A filtered VST matrix and the retained gene-symbol list are written to disk and are the declared inputs for T2S1 and T4S1",
+          "No count values are scaled or transformed outside the DESeq2 size-factor mechanism"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Prior-network modules from STRING",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The STRING graph is not liver-specific and not condition-specific; a module in it may be inactive in this tissue",
+          "STRING confidence scores aggregate several evidence channels including text mining, so a high-confidence edge is not necessarily a physical interaction",
+          "Genes absent from the network cannot join any module regardless of their expression behaviour"
+        ],
+        "context": "The cohort holds 6 samples in two groups of 3. A Pearson or biweight correlation estimated over 6 observations has a confidence interval spanning most of the [-1,1] range, so modules detected de novo from this matrix would encode sampling noise rather than shared regulation. Taking the graph from prior knowledge removes the estimation step entirely; the expression data is then used only to score the modules, which is a 6-observation task the data can support. This is the substitution the knowledge service prescribes for a cohort below 15 samples.",
+        "maxSteps": 200,
+        "packages": [
+          "igraph",
+          "data.table"
+        ],
+        "question": "Which modules do the genes expressed in these liver samples form when module structure is taken from a prior human protein-association network instead of being estimated from only 6 samples?",
+        "grounding": {
+          "claims": [
+            "R-0140@3faf",
+            "R-0121@5f27",
+            "R-0123@5521"
+          ],
+          "reason": "Flagged by R-0140: 6 samples is below the 15-sample floor for a de novo co-expression network, so the flag outcome too_few_samples_prior_network_or_stop is obeyed by taking the STRING prior network as the module structure; R-0123 sets the 0.7 confidence cut.",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Take the module structure from the prior network; do not derive it from the correlation of the 6 samples",
+          "Use combined_score >= 700 as the high-confidence cut and state it",
+          "Read the links file with a space delimiter, and join the info file to translate protein ids to gene symbols before intersecting with the expression matrix",
+          "min_module_size = 30",
+          "Fix and record the random seed for community detection",
+          "Do not claim a module is a pathway — a module here is a set of genes connected in a prior association graph"
+        ],
+        "description": "Build the module structure from a prior source rather than from the 6-sample correlation matrix. Resolve, from the environment's reference data, a human protein-protein association network with confidence scores and its accompanying identifier-to-gene-symbol mapping (STRING v12.0 for Homo sapiens is present in the reference store as a gzipped links file and a separate info file). Note the links file is space-delimited despite its .txt name and its nodes are taxid-prefixed Ensembl protein ids, so the info file must be joined to recover gene symbols. Apply the conventional high-confidence cut combined_score >= 700, collapse the duplicated reciprocal edges, and induce the subgraph on the expressed gene symbols from T1S2. Detect communities on that subgraph (Leiden or Louvain on the undirected graph, seed fixed and stated), keep communities with at least 30 member genes, and emit a gene-to-module table with module sizes and the within-module degree of each gene as its hub ranking. Report the number of expressed genes that mapped into the network and the number that did not.",
+        "acceptance_criteria": [
+          "The plain statement that the cohort has 6 samples (3 treated, 3 control) and that a de novo co-expression network was not used as the primary module source appears in the step output",
+          "The network source, its version, the confidence cutoff (>=700), the node count and the unique-edge count of the induced subgraph are reported",
+          "The number and share of T1S2 expressed genes that mapped to a network node is reported, along with the unmapped count",
+          "A gene-to-module table with module id, size, and per-gene within-module degree is written to disk",
+          "Modules smaller than 30 genes are excluded and the number excluded is reported",
+          "The community-detection algorithm, its resolution, and the random seed are stated",
+          "If no suitable prior human interaction network is resolvable in the environment, the step stops and reports that, rather than falling back to a de novo correlation network"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Module scores and treated-vs-control association",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Six samples give no power to separate a treatment effect from inter-individual variation; a module that separates the groups here may be tracking a single donor",
+          "A module eigengene whose PC1 explains little variance is not a coherent summary of its genes and its association test should be read as noise",
+          "Modules overlap in membership through shared genes, so their tests are correlated and BH is conservative in a way that is hard to quantify here"
+        ],
+        "context": "This is the step that answers 'which modules track the treatment'. The module definition is fixed by prior knowledge in T2S1, so the only quantity estimated from the 6 samples is one score per sample per module — 6 observations for a two-group comparison, which is a legitimate if underpowered test. The permutation floor is a hard property of the design and must be reported, not worked around.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats",
+          "ggplot2"
+        ],
+        "question": "Which of the prior-network modules show a per-sample score that separates the 3 treated from the 3 control liver samples?",
+        "grounding": {
+          "claims": [
+            "R-0139@0008",
+            "R-0134@0f16",
+            "R-0151@c88b"
+          ],
+          "reason": "Module eigengenes correlated with the condition trait and hub ranking follow R-0139; the per-sample score compared between groups with BH across scores follows R-0134; the required reporting elements follow R-0151.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Report the exact permutation p-value over all 10 label assignments as the primary inferential statistic",
+          "Apply Benjamini-Hochberg across modules and report both raw and adjusted values",
+          "Center genes before computing the eigengene, and report the variance explained by PC1 for each module",
+          "Fix and record the random seed",
+          "Frame every result as an association in this 6-sample cohort, never as a validated treatment-responsive module"
+        ],
+        "description": "Score every module from T2S1 in every sample from the filtered blind VST matrix of T1S2. Use two scoring routes and report both: the first principal component of the gene-centred VST values of the module's members (an eigengene, with its sign fixed so it correlates positively with the module's mean expression, and the variance it explains reported), and a rank-based per-sample score that does not depend on the other samples. For each module test treated vs control on the score: report the difference in means, the exact two-sided permutation p-value over all 10 possible 3-vs-3 label assignments, and the Benjamini-Hochberg adjusted value across modules. Rank modules by effect size and report the top modules with their member genes and hub genes. State in the output that with 3 versus 3 the smallest attainable exact permutation p-value is 0.1, so no module can reach a conventional significance threshold by permutation, and that any parametric p-value below that floor reflects the distributional assumption and not the evidence in the data.",
+        "acceptance_criteria": [
+          "A module-by-sample score matrix for all 6 samples is written to disk for both scoring routes",
+          "For every module: mean score by condition, difference, exact permutation p-value, and BH-adjusted value across modules",
+          "The statement that the exact permutation p-value floor for 3 vs 3 is 0.1 appears in the output alongside the results table",
+          "Modules are ranked by effect size, and the top-ranked modules are listed with their sizes and highest-degree member genes",
+          "The two scoring routes are compared, and any module whose ranking disagrees between them is flagged as unstable",
+          "No module is described as significantly associated with treatment on the basis of a parametric p-value alone"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Functional annotation of treatment-tracking modules",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "A STRING community is enriched for the annotations that built its edges, so annotation-driven circularity inflates apparent coherence",
+          "Over-representation on a module defined by a prior network is descriptive; it carries no information about the treatment on its own"
+        ],
+        "context": "Modules from T2S1 are numbered communities in a protein-association graph. This step gives them names, which is what makes the T2S2 ranking readable. It is annotation, not inference — enrichment of a module says what the module is about, not that the treatment engaged it.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ],
+        "question": "What biological processes do the prior-network modules whose scores separate treated from control liver samples correspond to?",
+        "grounding": {
+          "claims": [
+            "R-0046@a0ac",
+            "R-0048@500d",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0101@06c8",
+            "R-0054@801e"
+          ],
+          "reason": "Over-representation with the tested genes as the universe (R-0046, R-0054), hallmark before GO for human (R-0048), the 15-500 set size window (R-0047), redundancy collapse (R-0052), and symbol-to-Entrez mapping with the unmapped share reported (R-0101).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S2"
+        ],
+        "constraints": [
+          "Universe = the genes retained by T1S2, not the genome and not the full annotation",
+          "Run hallmark first, then GO biological process; do not report KEGG",
+          "min gene set size 15, max 500, after intersecting each set with the universe",
+          "Do not interpret an enriched module as an activated pathway"
+        ],
+        "description": "Take the gene-to-module table from T2S1 and the module ranking from T2S2. For the top-ranked modules by effect size, run an over-representation test of the module's member genes against human hallmark gene sets and against GO biological process sets, using the T1S2 expressed-gene list as the universe — never the whole genome or the whole annotation. Map gene symbols to the identifier space of the collections with the human organism annotation package and report the share of symbols that failed to map or mapped many-to-one. Restrict to gene sets with 15 to 500 members after intersection with the universe. Collapse redundant significant sets that share most of their genes and report one representative per group, keeping the full table as a supplement. Both the hallmark and GO collections for human are present in the environment's reference data; if either is absent, report that and proceed with the one that is present.",
+        "acceptance_criteria": [
+          "The universe is the expressed-gene list from T1S2 and its size is stated in the output",
+          "Gene set size window 15-500 after intersection with the universe is applied and stated",
+          "The share of module gene symbols that did not map to the collection identifier space is reported, with the annotation package version",
+          "Each top module has an enrichment table with BH-adjusted p-values and a short representative label",
+          "Redundant overlapping sets are collapsed and one representative per group is reported, with the full table kept as a supplement",
+          "The collection name and version are named in the output; an absent collection is reported rather than silently substituted"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "De novo WGCNA as an instability diagnostic",
+        "agent": "network-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "With 6 samples the correlation matrix has 5 degrees of freedom and the scale-free fit criterion often fails to be reachable at any power",
+          "Dynamic tree cut will return modules on pure noise, so a non-empty module list is not evidence that modules exist",
+          "An eigengene-condition correlation from 3 vs 3 is near-deterministic in magnitude and carries essentially no inferential content"
+        ],
+        "context": "The knowledge service flags a de novo co-expression network on a cohort below 15 samples and prescribes a prior network instead, which T2 implements. This step exists so the claim is demonstrated on this dataset rather than asserted: it quantifies how far the de novo modules move when a single sample is removed. That number is the evidence for why T2 is the primary track.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "dynamicTreeCut",
+          "fastcluster"
+        ],
+        "question": "What does a signed WGCNA network built directly on these 6 liver samples produce, and how unstable are those modules under resampling?",
+        "grounding": {
+          "claims": [
+            "R-0140@3faf",
+            "R-0139@0008"
+          ],
+          "reason": "R-0140 forbids a de novo co-expression network as the result at 6 samples; the step is retained only as a labelled instability diagnostic with leave-one-out overlap, while the WGCNA parameters follow R-0139 (signed, fit 0.8, minModuleSize 30, mergeCutHeight 0.25, kME hubs).",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "networkType = signed",
+          "min_module_size = 30, merge_cut_height = 0.25",
+          "Select the soft threshold as the lowest power reaching a scale-free fit of about 0.8; if no power reaches it, say so and report the power used instead of silently taking the grid maximum",
+          "Rank genes within a module by kME",
+          "Fix and record the random seed",
+          "Label every output of this step as an instability diagnostic; do not carry its modules into T3S1 or into the conclusions"
+        ],
+        "description": "Run the de novo analysis the question literally asks for, and report it as a diagnostic rather than as a result. On the filtered blind VST matrix from T1S2, run a signed WGCNA: pickSoftThreshold across a standard power grid, report the scale-free topology fit index and mean connectivity at every power and whether any power reaches a fit of 0.8, build the signed adjacency and topological overlap, cut the dendrogram with dynamic tree cut at minModuleSize 30, merge eigengenes at mergeCutHeight 0.25, and compute module eigengenes and kME. Then assess stability: repeat the whole module construction on leave-one-sample-out subsets (6 runs) and report, for each full-data module, the mean Jaccard overlap with its best-matching module across the 6 runs. Also correlate each eigengene with the treated/control indicator and give the exact permutation p-value. Lead the step output with the sample count and the explicit finding that a correlation network over 6 samples is unstable, and place the leave-one-out overlaps immediately beside every module so the reader sees the instability with the modules. Do not present these modules as the answer to the research question; the prior-network modules from T2S1 and T2S2 are the answer.",
+        "acceptance_criteria": [
+          "The step output opens with n=6 (3 treated, 3 control) and the statement that these modules are a diagnostic, not the plan's answer",
+          "The soft-threshold table is reported for every power tried, with the scale-free fit index and mean connectivity, and it is stated explicitly whether any power reaches fit >= 0.8",
+          "Module count, module sizes, and the gene-to-module assignment for the full-data run are written to disk",
+          "Leave-one-sample-out stability is reported as a mean best-match Jaccard per module across 6 runs, printed in the same table as the module sizes",
+          "Eigengene-condition correlations carry exact permutation p-values and the 0.1 floor for 3 vs 3 is stated",
+          "The output states that modules with low leave-one-out overlap are sampling artefacts and must not be interpreted biologically"
+        ]
+      },
+      {
+        "id": "T5S1",
+        "name": "Consolidated co-expression report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T5",
+        "status": "pending",
+        "caveats": [
+          "The report must not present the plan's workaround as though it recovered the power the design lacks"
+        ],
+        "context": "The synthesizing report is where the gap between what was asked and what 6 samples can support has to be stated plainly, so a reader does not carry a module list forward as if it were validated.",
+        "maxSteps": 200,
+        "packages": [
+          "rmarkdown",
+          "knitr",
+          "ggplot2"
+        ],
+        "question": "Which modules do the genes of these 6 human liver samples form, which of them track the drug treatment, and what does this cohort license the reader to conclude?",
+        "grounding": {
+          "claims": [
+            "R-0151@c88b",
+            "R-0086@becf",
+            "R-0017@8a47"
+          ],
+          "reason": "The co-expression report contents follow R-0151 and the reproducibility record follows R-0086; the power caution at 3 replicates per group follows R-0017.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S2",
+          "T3S1",
+          "T4S1"
+        ],
+        "constraints": [
+          "State the sample count next to every module result",
+          "Report the network type, the confidence cutoff, module sizes, the full gene-to-module table, module membership, and the module-condition associations with adjusted p-values",
+          "Include the reproducibility record: sessionInfo, seeds, package versions, collection and network versions, annotation release",
+          "Describe a module as a group of genes connected in a prior network or correlated in this cohort — never as a proven pathway",
+          "Do not soften or omit the underpowering; it is the central finding about this design"
+        ],
+        "description": "Consolidate T1S1, T1S2, T2S1, T2S2, T3S1, and T4S1 into one report. Lead with the design constraint: 3 treated versus 3 control, 6 samples total, which is below the threshold at which a co-expression network can be estimated from the expression alone, and the consequence — module structure was taken from a prior human protein-association network and the expression was used only to score and test those modules. Then give the prior-network result: node and edge counts, the confidence cutoff, the module table with sizes and hub genes, the module-by-sample score matrix, the treated-vs-control differences with exact permutation and BH-adjusted p-values, and the functional label of each top module with its collection and version. Then give the de novo WGCNA diagnostic beside it, with the soft-threshold fit and the leave-one-out Jaccard overlaps, as the evidence for why it is not the primary result. Close with an explicit limitations section: the permutation floor of 0.1 at 3 vs 3, the absence of any independent replication, the fact that a module-condition association here cannot be separated from inter-individual variation, and the sample count restated. Carry the reproducibility record: sessionInfo, package versions, every random seed used, the reference collection and network versions, and the annotation release.",
+        "acceptance_criteria": [
+          "The sample count (6; 3 treated, 3 control) appears beside every module claim in the report",
+          "The prior-network module table, the module score matrix, the association statistics with exact permutation and BH-adjusted p-values, and the functional labels are all present",
+          "The de novo WGCNA diagnostic including leave-one-out Jaccard overlaps is reported and explicitly marked as not the answer",
+          "A limitations section states the 3-vs-3 permutation p-value floor of 0.1, the lack of replication, and the confounding of treatment with donor",
+          "The reproducibility record carries sessionInfo, package versions, all seeds, and the version of every reference collection and network used",
+          "No module is described as a validated treatment-responsive module or as a proven pathway"
+        ]
+      }
+    ],
+    "title": "Liver drug-treatment co-expression modules on a prior network (n=6)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks which co-expression modules the genes form across the samples and which of those modules track treatment. The input is a 12,000-gene x 6-sample raw Salmon count matrix (counts.csv, gene symbols in the first column) with a 6-row metadata table carrying one condition column: 3 treated vs 3 control human liver samples, unpaired, single batch. Six samples is the binding constraint. A correlation coefficient estimated across 6 samples has a standard error large enough that the correlation matrix is dominated by noise; a de novo WGCNA network built on this cohort would produce modules that are an artefact of sampling variance, and the eigengene-condition correlation would be near-deterministic because with 3-vs-3 any gene set separating the groups gives r close to 1 with only 10 distinct permutations (minimum achievable exact p = 0.1). The knowledge service returns the same verdict as a hard flag (R-0140, fewer than 15 samples: do not build a co-expression network from the expression alone; use a prior network or ask for a larger cohort), and the drafted-step check refuses every de novo alternative. The plan therefore does not build a de novo correlation network as the primary result. It substitutes structure that does not have to be estimated from 6 samples: the STRING v12.0 human protein association graph at the conventional high-confidence cut (combined_score >= 700), whose communities define the modules, with the expression used only to score each module per sample and to ask whether that score separates treated from control. Track 1 prepares the matrix exactly as the count rules require: sample-structure QC on the blind VST (PCA on the top 500 variable genes, sample distance heatmap, library sizes) so an outlier or a mislabelled sample is seen before any module claim, then the minimal pre-filter of 10 counts in at least 3 samples (the smallest group size) with median-of-ratios size factors inside DESeq2 rather than pre-scaled counts. Track 2 builds the prior-network modules and tests them: STRING subgraph over the expressed genes, community detection, per-sample module scores on the VST matrix, and a two-group test per module with BH across modules. Because n=3 per group, the module-condition test is reported with exact permutation p-values where possible and framed as an association in this cohort, not a validated module. Track 3 annotates the modules that move with hallmark and GO gene sets using the expressed genes as the universe, so a module gets a biological name rather than a number. Track 4 runs the de novo signed WGCNA network the question literally asks for, but as an explicitly labelled instability diagnostic — soft threshold, module sizes, and a subsample-stability assessment reported beside the prior-network modules, with the finding that any module-treatment correlation from 6 samples is uninterpretable stated in the output rather than discovered by the reader. The report consolidates both, states the sample count next to every module, and carries the reproducibility record. The honest headline of this plan is that the cohort cannot answer the question as asked; the plan extracts what 6 samples can legitimately support and says plainly what it cannot."
+  },
+  "usage": {
+    "inputTokens": 497479,
+    "outputTokens": 13217,
+    "cacheCreationInputTokens": 155474,
+    "cacheReadInputTokens": 341933,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "WGCNA",
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pyWGCNA",
+          "ComplexHeatmap",
+          "dynamicTreeCut",
+          "fastcluster"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string",
+        "limit": 20
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "limit": 20
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA on top 500 variable genes, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low count filter: at least 10 counts in at least 3 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors and blind VST",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "STRING prior-network module detection on the treated-vs-control expression, with a descriptive WGCNA-style signed correlation module run reported as exploratory only",
+            "package": "WGCNA",
+            "parameters": [
+              {
+                "name": "network_type",
+                "value": "signed"
+              },
+              {
+                "name": "min_module_size",
+                "value": 30
+              },
+              {
+                "name": "merge_cut_height",
+                "value": 0.25
+              },
+              {
+                "name": "soft_threshold_criterion",
+                "value": "scale_free_fit_index_0.8"
+              },
+              {
+                "name": "hub_ranking",
+                "value": "module_membership_kME"
+              }
+            ],
+            "outcome": "too_few_samples_prior_network_or_stop"
+          },
+          {
+            "step_type": "enrichment",
+            "method": "Over-representation of each module's genes against MSigDB Hallmark and GO BP with the tested genes as universe",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "min_set_size",
+                "value": 15
+              },
+              {
+                "name": "max_set_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Co-expression report with sample count, module sizes, gene-module table, eigengene-condition association with BH adjustment, and reproducibility record",
+            "parameters": [
+              {
+                "name": "coexpression_report",
+                "value": "n_samples,n_genes,network_type,module_sizes,gene_module_table,module_membership,eigengene_trait_correlations,adjusted_p_values"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA on top 500 variable genes, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low count filter: at least 10 counts in at least 3 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors and blind VST",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "Prior-network modules: STRING v12.0 high-confidence PPI subgraph of the expressed genes, community detection on the prior graph, module scores per sample",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "combined_score_cutoff",
+                "value": 700
+              },
+              {
+                "name": "min_module_size",
+                "value": 30
+              }
+            ],
+            "outcome": "too_few_samples_prior_network_or_stop"
+          },
+          {
+            "step_type": "enrichment",
+            "method": "Over-representation analysis with an explicit universe",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "min_set_size",
+                "value": 15
+              },
+              {
+                "name": "max_set_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Co-expression report with sample count, module sizes, gene-module table, module score-condition association with BH adjustment, and reproducibility record",
+            "parameters": [
+              {
+                "name": "coexpression_report",
+                "value": "n_samples,n_genes,network_type,module_sizes,gene_module_table,module_membership,eigengene_trait_correlations,adjusted_p_values"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "coexpression",
+            "method": "WGCNA signed co-expression network with module eigengenes and module membership",
+            "package": "WGCNA",
+            "parameters": [
+              {
+                "name": "network_type",
+                "value": "signed"
+              },
+              {
+                "name": "soft_threshold_criterion",
+                "value": "scale_free_fit_index_0.8"
+              },
+              {
+                "name": "module_detection",
+                "value": "topological_overlap_dynamic_tree_cut"
+              },
+              {
+                "name": "hub_ranking",
+                "value": "module_membership_kME"
+              },
+              {
+                "name": "min_module_size",
+                "value": 30
+              },
+              {
+                "name": "merge_cut_height",
+                "value": 0.25
+              }
+            ],
+            "outcome": "too_few_samples_prior_network_or_stop"
+          },
+          {
+            "step_type": "enrichment",
+            "method": "Over-representation analysis with an explicit universe",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "min_set_size",
+                "value": 15
+              },
+              {
+                "name": "max_set_size",
+                "value": 500
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treatment co-expression modules on a prior network (n=6)",
+          "analytical_narrative": "The question asks which co-expression modules the genes form across the samples and which of those modules track treatment. The input is a 12,000-gene x 6-sample raw Salmon count matrix (counts.csv, gene symbols in the first column) with a 6-row metadata table carrying one condition column: 3 treated vs 3 control human liver samples, unpaired, single batch. Six samples is the binding constraint. A correlation coefficient estimated across 6 samples has a standard error large enough that the correlation matrix is dominated by noise; a de novo WGCNA network built on this cohort would produce modules that are an artefact of sampling variance, and the eigengene-condition correlation would be near-deterministic because with 3-vs-3 any gene set separating the groups gives r close to 1 with only 10 distinct permutations (minimum achievable exact p = 0.1). The knowledge service returns the same verdict as a hard flag (R-0140, fewer than 15 samples: do not build a co-expression network from the expression alone; use a prior network or ask for a larger cohort), and the drafted-step check refuses every de novo alternative. The plan therefore does not build a de novo correlation network as the primary result. It substitutes structure that does not have to be estimated from 6 samples: the STRING v12.0 human protein association graph at the conventional high-confidence cut (combined_score >= 700), whose communities define the modules, with the expression used only to score each module per sample and to ask whether that score separates treated from control. Track 1 prepares the matrix exactly as the count rules require: sample-structure QC on the blind VST (PCA on the top 500 variable genes, sample distance heatmap, library sizes) so an outlier or a mislabelled sample is seen before any module claim, then the minimal pre-filter of 10 counts in at least 3 samples (the smallest group size) with median-of-ratios size factors inside DESeq2 rather than pre-scaled counts. Track 2 builds the prior-network modules and tests them: STRING subgraph over the expressed genes, community detection, per-sample module scores on the VST matrix, and a two-group test per module with BH across modules. Because n=3 per group, the module-condition test is reported with exact permutation p-values where possible and framed as an association in this cohort, not a validated module. Track 3 annotates the modules that move with hallmark and GO gene sets using the expressed genes as the universe, so a module gets a biological name rather than a number. Track 4 runs the de novo signed WGCNA network the question literally asks for, but as an explicitly labelled instability diagnostic — soft threshold, module sizes, and a subsample-stability assessment reported beside the prior-network modules, with the finding that any module-treatment correlation from 6 samples is uninterpretable stated in the output rather than discovered by the reader. The report consolidates both, states the sample count next to every module, and carries the reproducibility record. The honest headline of this plan is that the cohort cannot answer the question as asked; the plan extracts what 6 samples can legitimately support and says plainly what it cannot.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 human liver samples in counts.csv group by treated vs control, and does any of the 3 treated or 3 control samples sit apart from its group before any module is built?",
+              "description": "Load /eval-four-models-with-coexpression-too-few-n3-1/data/inputs/counts/counts.csv (12,000 genes x 6 samples, gene symbol in the first column) and /eval-four-models-with-coexpression-too-few-n3-1/data/inputs/metadata/metadata.csv (6 rows, condition column). Verify the sample columns of the count matrix match the metadata rows exactly and abort with a clear message if they do not. Build a DESeqDataSet with ~condition, apply the variance stabilizing transformation blind to the design, and produce: PCA on the 500 most variable genes coloured by condition, a Euclidean sample-distance heatmap, per-sample library sizes, and per-sample detected-gene counts. Write the blind VST matrix to disk for the downstream steps. Report which principal component, if any, separates treated from control and the fraction of variance it carries.",
+              "context": "Human liver bulk RNA-seq, raw gene-level Salmon counts, 3 treated vs 3 control, unpaired, single batch. With 6 samples one aberrant sample can create an entire spurious module downstream, so the structure check comes first and its output gates the interpretation of every later step.",
+              "acceptance_criteria": [
+                "Count matrix columns and metadata rows are confirmed to match one-to-one, with the sample count reported as 6 (3 treated, 3 control)",
+                "PCA plot on the top 500 variable genes, sample-distance heatmap, and library-size barplot are written to disk",
+                "The percent variance of PC1 and PC2 is reported, and whether the primary axis separates the two conditions",
+                "Any sample that does not group with its condition is named explicitly, or the absence of such a sample is stated",
+                "The blind VST matrix is saved for reuse by downstream steps"
+              ],
+              "constraints": [
+                "Use DESeq2 vst() with blind=TRUE — the transform must not use the design",
+                "Compute the PCA on the 500 most variable genes",
+                "Do not drop any sample at this step; report outliers, do not remove them without stating the reason",
+                "Do not pre-scale, log, or normalize the counts before building the DESeqDataSet"
+              ],
+              "caveats": [
+                "With 3 samples per group a PCA is dominated by the two or three largest sources of variance and cannot distinguish a batch from a treatment effect",
+                "A sample-distance heatmap over 6 samples has 15 pairwise distances and no clustering claim from it is stable"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Raw counts, so sample structure QC runs before any model: blind VST, PCA on the top 500 variable genes, sample distance heatmap, per R-0033."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count filter and size factors",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12,000 genes are expressed well enough across the 6 liver samples to carry a usable correlation or module score, and what are the median-of-ratios size factors?",
+              "description": "Starting from the DESeqDataSet of T1S1, keep a gene only if it reaches at least 10 counts in at least 3 samples — 3 being the smallest group size. Estimate median-of-ratios size factors with DESeq2 and recompute the blind VST on the filtered matrix. Emit the filtered VST matrix, the filtered raw count matrix, the size factor per sample, and the list of retained gene symbols, which becomes the universe for every enrichment step in this plan. Report the number of genes in and out of the filter.",
+              "context": "The filter is deliberately minimal: a heavy pre-filter would remove genes that carry real module signal and would change the gene universe used later. Normalization stays inside DESeq2 as size factors rather than being applied as a pre-scaling of counts.",
+              "acceptance_criteria": [
+                "The number of genes retained out of 12,000 is reported, together with the filter rule (>=10 counts in >=3 samples)",
+                "Median-of-ratios size factors are reported for all 6 samples, and any sample whose size factor departs strongly from 1 is named",
+                "A filtered VST matrix and the retained gene-symbol list are written to disk and are the declared inputs for T2S1 and T4S1",
+                "No count values are scaled or transformed outside the DESeq2 size-factor mechanism"
+              ],
+              "constraints": [
+                "min_count = 10, min_samples = 3 (the smallest group size)",
+                "Use DESeq2 estimateSizeFactors (median-of-ratios); do not substitute CPM or TPM scaling",
+                "Keep the filter minimal — do not add a variance or expression-percentile filter at this step"
+              ],
+              "caveats": [
+                "Gene symbols are the only identifier available in counts.csv; duplicate symbols must be resolved by a stated rule (for example, keep the higher-expressed row) and the number collapsed reported"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Minimal pre-filter of 10 counts in the smallest group size (R-0002/R-0029) with median-of-ratios normalization inside the model (R-0026)."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Prior-network modules from STRING",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which modules do the genes expressed in these liver samples form when module structure is taken from a prior human protein-association network instead of being estimated from only 6 samples?",
+              "description": "Build the module structure from a prior source rather than from the 6-sample correlation matrix. Resolve, from the environment's reference data, a human protein-protein association network with confidence scores and its accompanying identifier-to-gene-symbol mapping (STRING v12.0 for Homo sapiens is present in the reference store as a gzipped links file and a separate info file). Note the links file is space-delimited despite its .txt name and its nodes are taxid-prefixed Ensembl protein ids, so the info file must be joined to recover gene symbols. Apply the conventional high-confidence cut combined_score >= 700, collapse the duplicated reciprocal edges, and induce the subgraph on the expressed gene symbols from T1S2. Detect communities on that subgraph (Leiden or Louvain on the undirected graph, seed fixed and stated), keep communities with at least 30 member genes, and emit a gene-to-module table with module sizes and the within-module degree of each gene as its hub ranking. Report the number of expressed genes that mapped into the network and the number that did not.",
+              "context": "The cohort holds 6 samples in two groups of 3. A Pearson or biweight correlation estimated over 6 observations has a confidence interval spanning most of the [-1,1] range, so modules detected de novo from this matrix would encode sampling noise rather than shared regulation. Taking the graph from prior knowledge removes the estimation step entirely; the expression data is then used only to score the modules, which is a 6-observation task the data can support. This is the substitution the knowledge service prescribes for a cohort below 15 samples.",
+              "acceptance_criteria": [
+                "The plain statement that the cohort has 6 samples (3 treated, 3 control) and that a de novo co-expression network was not used as the primary module source appears in the step output",
+                "The network source, its version, the confidence cutoff (>=700), the node count and the unique-edge count of the induced subgraph are reported",
+                "The number and share of T1S2 expressed genes that mapped to a network node is reported, along with the unmapped count",
+                "A gene-to-module table with module id, size, and per-gene within-module degree is written to disk",
+                "Modules smaller than 30 genes are excluded and the number excluded is reported",
+                "The community-detection algorithm, its resolution, and the random seed are stated",
+                "If no suitable prior human interaction network is resolvable in the environment, the step stops and reports that, rather than falling back to a de novo correlation network"
+              ],
+              "constraints": [
+                "Take the module structure from the prior network; do not derive it from the correlation of the 6 samples",
+                "Use combined_score >= 700 as the high-confidence cut and state it",
+                "Read the links file with a space delimiter, and join the info file to translate protein ids to gene symbols before intersecting with the expression matrix",
+                "min_module_size = 30",
+                "Fix and record the random seed for community detection",
+                "Do not claim a module is a pathway — a module here is a set of genes connected in a prior association graph"
+              ],
+              "caveats": [
+                "The STRING graph is not liver-specific and not condition-specific; a module in it may be inactive in this tissue",
+                "STRING confidence scores aggregate several evidence channels including text mining, so a high-confidence edge is not necessarily a physical interaction",
+                "Genes absent from the network cannot join any module regardless of their expression behaviour"
+              ],
+              "packages": [
+                "igraph",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 16
+              },
+              "agent": "network-agent",
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0140@3faf",
+                  "R-0121@5f27",
+                  "R-0123@5521"
+                ],
+                "reason": "Flagged by R-0140: 6 samples is below the 15-sample floor for a de novo co-expression network, so the flag outcome too_few_samples_prior_network_or_stop is obeyed by taking the STRING prior network as the module structure; R-0123 sets the 0.7 confidence cut."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Module scores and treated-vs-control association",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which of the prior-network modules show a per-sample score that separates the 3 treated from the 3 control liver samples?",
+              "description": "Score every module from T2S1 in every sample from the filtered blind VST matrix of T1S2. Use two scoring routes and report both: the first principal component of the gene-centred VST values of the module's members (an eigengene, with its sign fixed so it correlates positively with the module's mean expression, and the variance it explains reported), and a rank-based per-sample score that does not depend on the other samples. For each module test treated vs control on the score: report the difference in means, the exact two-sided permutation p-value over all 10 possible 3-vs-3 label assignments, and the Benjamini-Hochberg adjusted value across modules. Rank modules by effect size and report the top modules with their member genes and hub genes. State in the output that with 3 versus 3 the smallest attainable exact permutation p-value is 0.1, so no module can reach a conventional significance threshold by permutation, and that any parametric p-value below that floor reflects the distributional assumption and not the evidence in the data.",
+              "context": "This is the step that answers 'which modules track the treatment'. The module definition is fixed by prior knowledge in T2S1, so the only quantity estimated from the 6 samples is one score per sample per module — 6 observations for a two-group comparison, which is a legitimate if underpowered test. The permutation floor is a hard property of the design and must be reported, not worked around.",
+              "acceptance_criteria": [
+                "A module-by-sample score matrix for all 6 samples is written to disk for both scoring routes",
+                "For every module: mean score by condition, difference, exact permutation p-value, and BH-adjusted value across modules",
+                "The statement that the exact permutation p-value floor for 3 vs 3 is 0.1 appears in the output alongside the results table",
+                "Modules are ranked by effect size, and the top-ranked modules are listed with their sizes and highest-degree member genes",
+                "The two scoring routes are compared, and any module whose ranking disagrees between them is flagged as unstable",
+                "No module is described as significantly associated with treatment on the basis of a parametric p-value alone"
+              ],
+              "constraints": [
+                "Report the exact permutation p-value over all 10 label assignments as the primary inferential statistic",
+                "Apply Benjamini-Hochberg across modules and report both raw and adjusted values",
+                "Center genes before computing the eigengene, and report the variance explained by PC1 for each module",
+                "Fix and record the random seed",
+                "Frame every result as an association in this 6-sample cohort, never as a validated treatment-responsive module"
+              ],
+              "caveats": [
+                "Six samples give no power to separate a treatment effect from inter-individual variation; a module that separates the groups here may be tracking a single donor",
+                "A module eigengene whose PC1 explains little variance is not a coherent summary of its genes and its association test should be read as noise",
+                "Modules overlap in membership through shared genes, so their tests are correlated and BH is conservative in a way that is hard to quantify here"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0139@0008",
+                  "R-0134@0f16",
+                  "R-0151@c88b"
+                ],
+                "reason": "Module eigengenes correlated with the condition trait and hub ranking follow R-0139; the per-sample score compared between groups with BH across scores follows R-0134; the required reporting elements follow R-0151."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Functional annotation of treatment-tracking modules",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "What biological processes do the prior-network modules whose scores separate treated from control liver samples correspond to?",
+              "description": "Take the gene-to-module table from T2S1 and the module ranking from T2S2. For the top-ranked modules by effect size, run an over-representation test of the module's member genes against human hallmark gene sets and against GO biological process sets, using the T1S2 expressed-gene list as the universe — never the whole genome or the whole annotation. Map gene symbols to the identifier space of the collections with the human organism annotation package and report the share of symbols that failed to map or mapped many-to-one. Restrict to gene sets with 15 to 500 members after intersection with the universe. Collapse redundant significant sets that share most of their genes and report one representative per group, keeping the full table as a supplement. Both the hallmark and GO collections for human are present in the environment's reference data; if either is absent, report that and proceed with the one that is present.",
+              "context": "Modules from T2S1 are numbered communities in a protein-association graph. This step gives them names, which is what makes the T2S2 ranking readable. It is annotation, not inference — enrichment of a module says what the module is about, not that the treatment engaged it.",
+              "acceptance_criteria": [
+                "The universe is the expressed-gene list from T1S2 and its size is stated in the output",
+                "Gene set size window 15-500 after intersection with the universe is applied and stated",
+                "The share of module gene symbols that did not map to the collection identifier space is reported, with the annotation package version",
+                "Each top module has an enrichment table with BH-adjusted p-values and a short representative label",
+                "Redundant overlapping sets are collapsed and one representative per group is reported, with the full table kept as a supplement",
+                "The collection name and version are named in the output; an absent collection is reported rather than silently substituted"
+              ],
+              "constraints": [
+                "Universe = the genes retained by T1S2, not the genome and not the full annotation",
+                "Run hallmark first, then GO biological process; do not report KEGG",
+                "min gene set size 15, max 500, after intersecting each set with the universe",
+                "Do not interpret an enriched module as an activated pathway"
+              ],
+              "caveats": [
+                "A STRING community is enriched for the annotations that built its edges, so annotation-driven circularity inflates apparent coherence",
+                "Over-representation on a module defined by a prior network is descriptive; it carries no information about the treatment on its own"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0046@a0ac",
+                  "R-0048@500d",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0101@06c8",
+                  "R-0054@801e"
+                ],
+                "reason": "Over-representation with the tested genes as the universe (R-0046, R-0054), hallmark before GO for human (R-0048), the 15-500 set size window (R-0047), redundancy collapse (R-0052), and symbol-to-Entrez mapping with the unmapped share reported (R-0101)."
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "De novo WGCNA as an instability diagnostic",
+              "track": "T4",
+              "step_type": "analysis",
+              "question": "What does a signed WGCNA network built directly on these 6 liver samples produce, and how unstable are those modules under resampling?",
+              "description": "Run the de novo analysis the question literally asks for, and report it as a diagnostic rather than as a result. On the filtered blind VST matrix from T1S2, run a signed WGCNA: pickSoftThreshold across a standard power grid, report the scale-free topology fit index and mean connectivity at every power and whether any power reaches a fit of 0.8, build the signed adjacency and topological overlap, cut the dendrogram with dynamic tree cut at minModuleSize 30, merge eigengenes at mergeCutHeight 0.25, and compute module eigengenes and kME. Then assess stability: repeat the whole module construction on leave-one-sample-out subsets (6 runs) and report, for each full-data module, the mean Jaccard overlap with its best-matching module across the 6 runs. Also correlate each eigengene with the treated/control indicator and give the exact permutation p-value. Lead the step output with the sample count and the explicit finding that a correlation network over 6 samples is unstable, and place the leave-one-out overlaps immediately beside every module so the reader sees the instability with the modules. Do not present these modules as the answer to the research question; the prior-network modules from T2S1 and T2S2 are the answer.",
+              "context": "The knowledge service flags a de novo co-expression network on a cohort below 15 samples and prescribes a prior network instead, which T2 implements. This step exists so the claim is demonstrated on this dataset rather than asserted: it quantifies how far the de novo modules move when a single sample is removed. That number is the evidence for why T2 is the primary track.",
+              "acceptance_criteria": [
+                "The step output opens with n=6 (3 treated, 3 control) and the statement that these modules are a diagnostic, not the plan's answer",
+                "The soft-threshold table is reported for every power tried, with the scale-free fit index and mean connectivity, and it is stated explicitly whether any power reaches fit >= 0.8",
+                "Module count, module sizes, and the gene-to-module assignment for the full-data run are written to disk",
+                "Leave-one-sample-out stability is reported as a mean best-match Jaccard per module across 6 runs, printed in the same table as the module sizes",
+                "Eigengene-condition correlations carry exact permutation p-values and the 0.1 floor for 3 vs 3 is stated",
+                "The output states that modules with low leave-one-out overlap are sampling artefacts and must not be interpreted biologically"
+              ],
+              "constraints": [
+                "networkType = signed",
+                "min_module_size = 30, merge_cut_height = 0.25",
+                "Select the soft threshold as the lowest power reaching a scale-free fit of about 0.8; if no power reaches it, say so and report the power used instead of silently taking the grid maximum",
+                "Rank genes within a module by kME",
+                "Fix and record the random seed",
+                "Label every output of this step as an instability diagnostic; do not carry its modules into T3S1 or into the conclusions"
+              ],
+              "caveats": [
+                "With 6 samples the correlation matrix has 5 degrees of freedom and the scale-free fit criterion often fails to be reachable at any power",
+                "Dynamic tree cut will return modules on pure noise, so a non-empty module list is not evidence that modules exist",
+                "An eigengene-condition correlation from 3 vs 3 is near-deterministic in magnitude and carries essentially no inferential content"
+              ],
+              "packages": [
+                "WGCNA",
+                "dynamicTreeCut",
+                "fastcluster"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 16
+              },
+              "agent": "network-agent",
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0140@3faf",
+                  "R-0139@0008"
+                ],
+                "reason": "R-0140 forbids a de novo co-expression network as the result at 6 samples; the step is retained only as a labelled instability diagnostic with leave-one-out overlap, while the WGCNA parameters follow R-0139 (signed, fit 0.8, minModuleSize 30, mergeCutHeight 0.25, kME hubs)."
+              }
+            },
+            {
+              "id": "T5S1",
+              "name": "Consolidated co-expression report",
+              "track": "T5",
+              "step_type": "report",
+              "question": "Which modules do the genes of these 6 human liver samples form, which of them track the drug treatment, and what does this cohort license the reader to conclude?",
+              "description": "Consolidate T1S1, T1S2, T2S1, T2S2, T3S1, and T4S1 into one report. Lead with the design constraint: 3 treated versus 3 control, 6 samples total, which is below the threshold at which a co-expression network can be estimated from the expression alone, and the consequence — module structure was taken from a prior human protein-association network and the expression was used only to score and test those modules. Then give the prior-network result: node and edge counts, the confidence cutoff, the module table with sizes and hub genes, the module-by-sample score matrix, the treated-vs-control differences with exact permutation and BH-adjusted p-values, and the functional label of each top module with its collection and version. Then give the de novo WGCNA diagnostic beside it, with the soft-threshold fit and the leave-one-out Jaccard overlaps, as the evidence for why it is not the primary result. Close with an explicit limitations section: the permutation floor of 0.1 at 3 vs 3, the absence of any independent replication, the fact that a module-condition association here cannot be separated from inter-individual variation, and the sample count restated. Carry the reproducibility record: sessionInfo, package versions, every random seed used, the reference collection and network versions, and the annotation release.",
+              "context": "The synthesizing report is where the gap between what was asked and what 6 samples can support has to be stated plainly, so a reader does not carry a module list forward as if it were validated.",
+              "acceptance_criteria": [
+                "The sample count (6; 3 treated, 3 control) appears beside every module claim in the report",
+                "The prior-network module table, the module score matrix, the association statistics with exact permutation and BH-adjusted p-values, and the functional labels are all present",
+                "The de novo WGCNA diagnostic including leave-one-out Jaccard overlaps is reported and explicitly marked as not the answer",
+                "A limitations section states the 3-vs-3 permutation p-value floor of 0.1, the lack of replication, and the confounding of treatment with donor",
+                "The reproducibility record carries sessionInfo, package versions, all seeds, and the version of every reference collection and network used",
+                "No module is described as a validated treatment-responsive module or as a proven pathway"
+              ],
+              "constraints": [
+                "State the sample count next to every module result",
+                "Report the network type, the confidence cutoff, module sizes, the full gene-to-module table, module membership, and the module-condition associations with adjusted p-values",
+                "Include the reproducibility record: sessionInfo, seeds, package versions, collection and network versions, annotation release",
+                "Describe a module as a group of genes connected in a prior network or correlated in this cohort — never as a proven pathway",
+                "Do not soften or omit the underpowering; it is the central finding about this design"
+              ],
+              "caveats": [
+                "The report must not present the plan's workaround as though it recovered the power the design lacks"
+              ],
+              "packages": [
+                "rmarkdown",
+                "knitr",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T2S2",
+                "T3S1",
+                "T4S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0151@c88b",
+                  "R-0086@becf",
+                  "R-0017@8a47"
+                ],
+                "reason": "The co-expression report contents follow R-0151 and the reproducibility record follows R-0086; the power caution at 3 replicates per group follows R-0017."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

@@ -1,0 +1,310 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "star-counts-n3",
+  "run": 1,
+  "startedAt": "2026-09-06T21:23:34.406Z",
+  "elapsedMs": 47501,
+  "outcome": "plan_submitted",
+  "planId": "pln-79df34ed",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, QC, and filter counts/metadata",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group is small; flag if any QC metric suggests a sample should be treated cautiously, but do not drop samples without clear justification"
+        ],
+        "context": "Input files: /eval-four-models-without-star-counts-n3-1/data/inputs/counts/counts.csv (12000 x 7: gene symbol column + 6 sample columns) and /eval-four-models-without-star-counts-n3-1/data/inputs/metadata/metadata.csv (6 rows x 2 columns: sample, condition). Counts are raw integers from STAR/featureCounts — no transcript-level quantification involved, so no tximport or effective-length correction is needed.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "S4Vectors"
+        ],
+        "question": "Do the raw STAR/featureCounts gene counts (12000 genes x 6 samples) and the sample metadata (condition: treated vs control) align correctly, and which genes pass a minimum-expression filter before differential testing?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not apply any normalization at this stage beyond inspecting library sizes — normalization is DESeq2's internal responsibility in the next step",
+          "Treat gene symbol column as row names/identifiers, not a data column"
+        ],
+        "acceptance_criteria": [
+          "Sample names in counts.csv columns match sample IDs in metadata.csv rows exactly (order or explicit reindexing checked)",
+          "Confirms 3 treated and 3 control samples as stated in the design",
+          "Reports total genes before/after a low-count filter (e.g. require count >=10 in at least 3 samples, the smallest group size)",
+          "Outputs a filtered counts matrix and matched metadata table for downstream DESeq2 use",
+          "Reports basic library size per sample and flags any sample as an outlier if library size deviates >3x from the median"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Small sample size limits power to detect modest effect sizes; do not overstate confidence in the exact gene list boundary",
+          "No paired structure or known confounders were reported — if metadata reveals additional variables (e.g. sex, sequencing lane) not currently listed, escalate rather than silently ignoring them"
+        ],
+        "context": "Single batch, unpaired 3 vs 3 design (treated vs control) on liver tissue, raw integer STAR/featureCounts gene-level counts. No additional covariates (age, sex, batch) reported in metadata, so the model uses condition alone.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which of the 12000 profiled liver genes are significantly differentially expressed between treated (n=3) and control (n=3) samples, using a negative-binomial model on raw STAR/featureCounts counts?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use raw filtered counts (not pre-normalized values) as DESeq2 input — DESeq2 performs its own size-factor normalization internally",
+          "Report both unshrunken and shrunken log2FoldChange; use the shrunken estimate for ranking/visualization",
+          "State explicitly that with n=3 per group, statistical power is limited and borderline (padj 0.05-0.1) genes should be interpreted cautiously"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 model specified as ~condition with condition releveled so control is the reference level",
+          "Wald test used for the treated-vs-control contrast; independent filtering (default DESeq2 behavior) applied on the results",
+          "Log2 fold-change shrinkage applied (apeglm or ashr) for a stable ranked gene list, given the small n=3/3 design",
+          "Output table includes gene, baseMean, log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue, padj for all filtered genes",
+          "Significant DE genes reported at padj < 0.05 (and separately a more permissive padj < 0.1 sensitivity check), with counts of up- vs down-regulated genes",
+          "PCA plot (on variance-stabilized/rlog-transformed data) and sample-distance heatmap produced to confirm treated/control separation and check for outliers or batch structure"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment on the DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "GO-BP results will show correlated/redundant blocks of significant terms due to ontology nesting — collapse or note this rather than presenting raw term counts as independent discoveries",
+          "Hallmark and WikiPathways sets are much smaller/coarser than GO-BP; interpret convergence across collections as stronger evidence than a hit in only one"
+        ],
+        "context": "Gene identifiers in the counts matrix are human gene symbols (HGNC), matching the identifier space of the staged human pathway gene set files: MSigDB hallmark (50 sets), MSigDB GO-BP (7,538 sets), WikiPathways human (HGNC symbols), and MSigDB canonical pathways (KEGG MEDICUS/BioCarta/PID, 1,146 sets total) — all confirmed present under the managed reference store for Homo sapiens.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which biological pathways and processes are over-represented among genes differentially expressed between treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Match gene identifiers by symbol; do not attempt cross-species set matching",
+          "Use BH (Benjamini-Hochberg) multiple-testing correction consistently across collections"
+        ],
+        "acceptance_criteria": [
+          "Runs both an over-representation analysis (ORA) on significant DE genes (padj<0.05, split into up- and down-regulated) and a GSEA-style ranked analysis on the full gene list ranked by shrunken log2FoldChange (or DESeq2 stat)",
+          "Uses human-specific gene sets: MSigDB Hallmark, MSigDB GO Biological Process, WikiPathways human, and MSigDB canonical pathways (KEGG MEDICUS/BioCarta/PID) — all confirmed present in the environment for Homo sapiens",
+          "Reports top enriched terms per collection with adjusted p-values (BH-corrected), gene ratios, and leading-edge/contributing genes",
+          "Explicitly notes GO-BP hierarchical redundancy (parent/child terms sharing members) rather than reporting raw term counts as independent findings",
+          "If the DE gene list from T2S1 is empty or very small (e.g., <10 genes at padj<0.05), reports this explicitly and falls back to reporting GSEA on the full ranked list only"
+        ]
+      }
+    ],
+    "title": "Liver drug treatment vs control DE + pathway analysis",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The dataset is a bulk RNA-seq liver study with a simple 3 vs 3 unpaired, single-batch design (treated vs control), raw integer gene-level counts already produced by STAR/featureCounts (12000 genes x 6 samples in counts.csv, sample metadata in metadata.csv). Because counts come from featureCounts and not from a transcript-level quantifier (e.g. Salmon/kallisto), no tximport/gene-length-scaled-TPM step is needed or appropriate — the counts matrix goes directly into a count-based negative-binomial DE model. DESeq2 is the standard, well-supported tool for this (available in the sandbox) and handles the small n=3/3 design appropriately with its shrinkage estimators. The plan: (1) load and QC the counts/metadata, confirm sample-to-condition mapping and filter low-count genes; (2) run DESeq2 with condition (treated vs control) as the sole factor, given single batch and no other covariates reported, applying independent filtering, Wald test, and log2FC shrinkage (apeglm/ashr) for a robust ranked and thresholded gene list; (3) visualize results (volcano, PCA, sample-distance heatmap) for QC and interpretability; (4) run pathway enrichment (over-representation and/or GSEA) on the DE result using human hallmark, GO-BP, WikiPathways, and MSigDB canonical pathway gene sets staged in the environment, to give biological context to the DE gene list. No translational/clinical/PK data or explicit drug-target question is present in the research question beyond 'drug treatment' as a condition label, so no additional translational-safety or drug-repurposing steps are added speculatively."
+  },
+  "usage": {
+    "inputTokens": 328732,
+    "outputTokens": 3760,
+    "cacheCreationInputTokens": 87253,
+    "cacheReadInputTokens": 241395,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human gene annotation gtf"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "EnhancedVolcano",
+          "fgsea",
+          "clusterProfiler",
+          "apeglm",
+          "ashr"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug treatment vs control DE + pathway analysis",
+          "analytical_narrative": "The dataset is a bulk RNA-seq liver study with a simple 3 vs 3 unpaired, single-batch design (treated vs control), raw integer gene-level counts already produced by STAR/featureCounts (12000 genes x 6 samples in counts.csv, sample metadata in metadata.csv). Because counts come from featureCounts and not from a transcript-level quantifier (e.g. Salmon/kallisto), no tximport/gene-length-scaled-TPM step is needed or appropriate — the counts matrix goes directly into a count-based negative-binomial DE model. DESeq2 is the standard, well-supported tool for this (available in the sandbox) and handles the small n=3/3 design appropriately with its shrinkage estimators. The plan: (1) load and QC the counts/metadata, confirm sample-to-condition mapping and filter low-count genes; (2) run DESeq2 with condition (treated vs control) as the sole factor, given single batch and no other covariates reported, applying independent filtering, Wald test, and log2FC shrinkage (apeglm/ashr) for a robust ranked and thresholded gene list; (3) visualize results (volcano, PCA, sample-distance heatmap) for QC and interpretability; (4) run pathway enrichment (over-representation and/or GSEA) on the DE result using human hallmark, GO-BP, WikiPathways, and MSigDB canonical pathway gene sets staged in the environment, to give biological context to the DE gene list. No translational/clinical/PK data or explicit drug-target question is present in the research question beyond 'drug treatment' as a condition label, so no additional translational-safety or drug-repurposing steps are added speculatively.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, QC, and filter counts/metadata",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the raw STAR/featureCounts gene counts (12000 genes x 6 samples) and the sample metadata (condition: treated vs control) align correctly, and which genes pass a minimum-expression filter before differential testing?",
+              "acceptance_criteria": [
+                "Sample names in counts.csv columns match sample IDs in metadata.csv rows exactly (order or explicit reindexing checked)",
+                "Confirms 3 treated and 3 control samples as stated in the design",
+                "Reports total genes before/after a low-count filter (e.g. require count >=10 in at least 3 samples, the smallest group size)",
+                "Outputs a filtered counts matrix and matched metadata table for downstream DESeq2 use",
+                "Reports basic library size per sample and flags any sample as an outlier if library size deviates >3x from the median"
+              ],
+              "packages": [
+                "DESeq2",
+                "S4Vectors"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input files: /eval-four-models-without-star-counts-n3-1/data/inputs/counts/counts.csv (12000 x 7: gene symbol column + 6 sample columns) and /eval-four-models-without-star-counts-n3-1/data/inputs/metadata/metadata.csv (6 rows x 2 columns: sample, condition). Counts are raw integers from STAR/featureCounts — no transcript-level quantification involved, so no tximport or effective-length correction is needed.",
+              "constraints": [
+                "Do not apply any normalization at this stage beyond inspecting library sizes — normalization is DESeq2's internal responsibility in the next step",
+                "Treat gene symbol column as row names/identifiers, not a data column"
+              ],
+              "caveats": [
+                "n=3 per group is small; flag if any QC metric suggests a sample should be treated cautiously, but do not drop samples without clear justification"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 profiled liver genes are significantly differentially expressed between treated (n=3) and control (n=3) samples, using a negative-binomial model on raw STAR/featureCounts counts?",
+              "acceptance_criteria": [
+                "DESeq2 model specified as ~condition with condition releveled so control is the reference level",
+                "Wald test used for the treated-vs-control contrast; independent filtering (default DESeq2 behavior) applied on the results",
+                "Log2 fold-change shrinkage applied (apeglm or ashr) for a stable ranked gene list, given the small n=3/3 design",
+                "Output table includes gene, baseMean, log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue, padj for all filtered genes",
+                "Significant DE genes reported at padj < 0.05 (and separately a more permissive padj < 0.1 sensitivity check), with counts of up- vs down-regulated genes",
+                "PCA plot (on variance-stabilized/rlog-transformed data) and sample-distance heatmap produced to confirm treated/control separation and check for outliers or batch structure"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Single batch, unpaired 3 vs 3 design (treated vs control) on liver tissue, raw integer STAR/featureCounts gene-level counts. No additional covariates (age, sex, batch) reported in metadata, so the model uses condition alone.",
+              "constraints": [
+                "Use raw filtered counts (not pre-normalized values) as DESeq2 input — DESeq2 performs its own size-factor normalization internally",
+                "Report both unshrunken and shrunken log2FoldChange; use the shrunken estimate for ranking/visualization",
+                "State explicitly that with n=3 per group, statistical power is limited and borderline (padj 0.05-0.1) genes should be interpreted cautiously"
+              ],
+              "caveats": [
+                "Small sample size limits power to detect modest effect sizes; do not overstate confidence in the exact gene list boundary",
+                "No paired structure or known confounders were reported — if metadata reveals additional variables (e.g. sex, sequencing lane) not currently listed, escalate rather than silently ignoring them"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment on the DE gene list",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological pathways and processes are over-represented among genes differentially expressed between treated and control liver samples?",
+              "acceptance_criteria": [
+                "Runs both an over-representation analysis (ORA) on significant DE genes (padj<0.05, split into up- and down-regulated) and a GSEA-style ranked analysis on the full gene list ranked by shrunken log2FoldChange (or DESeq2 stat)",
+                "Uses human-specific gene sets: MSigDB Hallmark, MSigDB GO Biological Process, WikiPathways human, and MSigDB canonical pathways (KEGG MEDICUS/BioCarta/PID) — all confirmed present in the environment for Homo sapiens",
+                "Reports top enriched terms per collection with adjusted p-values (BH-corrected), gene ratios, and leading-edge/contributing genes",
+                "Explicitly notes GO-BP hierarchical redundancy (parent/child terms sharing members) rather than reporting raw term counts as independent findings",
+                "If the DE gene list from T2S1 is empty or very small (e.g., <10 genes at padj<0.05), reports this explicitly and falls back to reporting GSEA on the full ranked list only"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Gene identifiers in the counts matrix are human gene symbols (HGNC), matching the identifier space of the staged human pathway gene set files: MSigDB hallmark (50 sets), MSigDB GO-BP (7,538 sets), WikiPathways human (HGNC symbols), and MSigDB canonical pathways (KEGG MEDICUS/BioCarta/PID, 1,146 sets total) — all confirmed present under the managed reference store for Homo sapiens.",
+              "constraints": [
+                "Match gene identifiers by symbol; do not attempt cross-species set matching",
+                "Use BH (Benjamini-Hochberg) multiple-testing correction consistently across collections"
+              ],
+              "caveats": [
+                "GO-BP results will show correlated/redundant blocks of significant terms due to ontology nesting — collapse or note this rather than presenting raw term counts as independent discoveries",
+                "Hallmark and WikiPathways sets are much smaller/coarser than GO-BP; interpret convergence across collections as stronger evidence than a hit in only one"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

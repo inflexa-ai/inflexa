@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: filterByExpr matched to the group size of 6, TMM log2-CPM/VST as the continuous input, GSVA ssGSEA with the correct Gaussian kernel plus singscore as a second rank estimator, limma ~condition on the 50 x 12 score matrix with BH over 50 sets and mean differences with CIs, and sample_01 kept with a 12- vs 11-sample sensitivity arm rather than silently dropped. QC is comprehensive (library sizes, PCA, correlation, RLE, depth-condition confound check) and the DESeq2/fgsea track is framed as a cross-read, not as the per-sample answer. Gaps: the MSigDB Hallmark version is never named, the fgsea ranking metric is left as 'shrunken LFC or Wald stat', eBayes trend for the score matrix is not mentioned, the heatmap does not state row scaling, and package versions are not requested in the report."
+}

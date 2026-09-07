@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly targets the genotype:treatment interaction coefficient in a PyDESeq2 full-factorial fit with explicit WT/vehicle reference levels, derives both within-genotype simple effects from the same fit (with a stated relevel fallback if the API cannot build the KO contrast), and adds a full-vs-additive model comparison, all in Python. QC covers library sizes, PCA coloured by each design variable, correlation clustering, and a stated no-removal policy for n=4; the filter (>=10 counts in >=4 samples) is tied to the smallest group; normalization is median-of-ratios inside the model with VST used only for exploration. BH at stated alphas, shrinkage restricted to simple-effect reporting, and Cook's/independent-filtering behaviour are all explicit. Enrichment is preranked on the unshrunken Wald statistic with named human collections, size bounds, permutations and seed, though collection versions are not required to be recorded; the report step is thorough on design, counts, power and caveats but does not explicitly require software versions."
+}

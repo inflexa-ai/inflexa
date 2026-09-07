@@ -1,0 +1,865 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "paired-3groups-n4",
+  "run": 1,
+  "startedAt": "2026-09-07T03:18:55.314Z",
+  "elapsedMs": 199711,
+  "outcome": "plan_submitted",
+  "planId": "pln-ce4eba17",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 12 samples, PCA axes can mix subject and condition; report both colorings rather than forcing one story"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "Do the 12 blood samples (4 subjects x control/treated_a/treated_b) cluster by condition and pair by subject, and is any sample an outlier before testing?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC on raw counts: blind vst, PCA on top 500 genes, sample distances, library sizes, per R-0033@40bf",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500",
+          "transform = vst_blind (blind to design for QC)",
+          "No test or model fitting in this step"
+        ],
+        "description": "Variance-stabilizing transform (blind), PCA on the top 500 variable genes, sample distance heatmap, and library size summary, colored by condition and by subject, to verify the within-subject pairing structure and flag outliers before any test.",
+        "acceptance_criteria": [
+          "Blind vst applied on the raw counts of counts.csv with metadata.csv as colData",
+          "PCA on the 500 most variable genes, colored by condition and by subject, saved as PNG/PDF",
+          "Sample-to-sample Euclidean distance heatmap and library-size table produced",
+          "Written verdict: does the primary axis track subject or condition; any sample departing from its subject-condition cell is named"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 paired model and three contrasts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Input is already gene-level integer counts summed from Salmon; no transcript-level quant files exist in this analysis, so tximport length-scaled offsets (R-0018) cannot be applied - state this in the output",
+          "With 4 subjects per condition, power is limited; a null result is not evidence of no effect",
+          "treated_a vs treated_b tests a difference between treatments, which is a different (and harder) question than either treatment vs control"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ashr"
+        ],
+        "question": "Which genes change within a subject under treated_a vs control, treated_b vs control, and do treated_a and treated_b differ from each other (treated_b vs treated_a)?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0060@0ff9",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0069@b1c3",
+            "R-0011@233b",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0040@8061",
+            "R-0009@f54e",
+            "R-0061@bcab",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "Paired 3-group design: subject block + DESeq2 LRT then per-contrast Wald with ashr shrinkage, per R-0069@b1c3 and R-0011@233b; tximport offsets not applicable because only the gene-level count matrix exists",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-multigroup@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count = 10, min_samples = smallest_group_size (4)",
+          "filter_policy = minimal_then_independent",
+          "size_factors = median_of_ratios computed inside DESeq2; no external normalization",
+          "reference_level = explicit (control), reference_level_policy = explicit_and_reported",
+          "contrast_form = factor_numerator_denominator; one named contrast per comparison",
+          "test = LRT_then_pairwise_Wald; full ~ subject + condition; reduced ~ subject",
+          "count_outlier_policy = flag_and_report_na (n=4 per cell, so Cook's flagging is active)",
+          "lfc_shrink = ashr for every contrast (contrasts are not single coefficients)",
+          "adjustment = BH, alpha = 0.05, independent_filtering = true, adjustment_scope = within_contrast, pvalue_histogram = inspect_before_adjustment"
+        ],
+        "description": "Pre-filter, DESeq2 size-factor normalization, paired design ~ subject + condition with control as explicit reference; DESeq2 LRT (~ subject + condition vs ~ subject) for any within-subject condition effect, then Wald results for the three named contrasts (treated_a vs control, treated_b vs control, treated_b vs treated_a), ashr shrinkage per contrast, BH at alpha 0.05 within contrast with independent filtering, p-value histogram check, and Cook's outlier NA accounting.",
+        "acceptance_criteria": [
+          "Counts loaded from counts.csv, joined 1:1 to the 12 rows of metadata.csv; gene x sample dimension verified",
+          "Genes kept only with >=10 counts in >=4 samples (smallest group size); counts never pre-scaled; median-of-ratios size factors computed by DESeq2",
+          "condition relevelled so control is the explicit reference; design ~ subject + condition fitted",
+          "LRT run: full ~ subject + condition vs reduced ~ subject; per-contrast Wald results extracted with named contrasts: condition treated_a vs control, condition treated_b vs control, condition treated_b vs treated_a",
+          "ashr lfcShrunken estimates produced for each of the three contrasts; unshrunken log2FoldChange, shrunken estimate, and lfcSE all retained",
+          "BH within each contrast at alpha 0.05 passed to results() with independent filtering on; p-value histogram per contrast inspected and described before trusting padj",
+          "Number of genes with NA p-values from Cook's-distance outlier flagging reported separately from independent-filtering NAs"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "limma-voom robustness overlap",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "limma assumes a single correlation for all genes, which is an approximation for the subject block; agreement is the point, not the limma p-values themselves",
+          "At n=4 per group the two methods disagree most at low counts; report the disagreement rate rather than hiding it"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Do the same genes stay significant under an independent method (limma-voom with duplicateCorrelation on the same ~ subject + condition design)?",
+        "grounding": {
+          "claims": [
+            "R-0069@b1c3",
+            "R-0001@9a17"
+          ],
+          "reason": "Second-method robustness via a permitted alternative for the blocked design (limma-voom + duplicateCorrelation per R-0069@b1c3), feeding the overlap report of R-0042@54e1; edgeR QL was rejected by knowledge_check for this paired situation",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "test = voom_duplicateCorrelation",
+          "design = ~ subject + condition, blocking_factor = subject",
+          "Same filtered gene set and same contrasts as T1S2",
+          "adjustment scope = within_contrast, alpha = 0.05"
+        ],
+        "description": "Independent second method for the robustness check: limma-voom with duplicateCorrelation on the subject block, same design and contrasts, and a per-contrast overlap table with the DESeq2 significant sets (R-0042: intersection = high-confidence set, method-only genes = secondary).",
+        "acceptance_criteria": [
+          "voom applied to the same filtered count matrix with the same design ~ subject + condition; duplicateCorrelation estimated on subject and iterated once",
+          "Per-contrast moderated t results for treated_a vs control, treated_b vs control, treated_b vs treated_a; BH within contrast at alpha 0.05",
+          "Per contrast: count of significant genes by each method and the size of the intersection reported in a table; intersection labelled high-confidence, method-specific genes listed as secondary with the method named",
+          "Union not presented as the result"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Report and responder summary",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 4 subjects, treat the responder lists as hypotheses for validation, not confirmed biology",
+          "Genes with NA padj (outlier-flagged or filtered) are listed with the cause, not dropped silently"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which genes respond to treated_a, to treated_b, to both, and which differ between the two treatments - with full methods, thresholds, diagnostics, and reproducibility record?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "Report fields, dual effect columns, shrunken ranking, MA/dispersion diagnostics, method-overlap robustness, and reproducibility record per the report rules returned for this situation",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "report_fields = method, versions, design, thresholds, n_tested, n_de, session_info",
+          "effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE",
+          "rank_genes_by = shrunken_log2FoldChange",
+          "fit_diagnostics = ma_plot, dispersion_plot",
+          "robustness = overlap_of_two_methods",
+          "Contrast label printed beside every padj and every gene list"
+        ],
+        "description": "Final report: per-contrast tables (unshrunken + ashr-shrunken LFC, lfcSE, padj), MA and dispersion diagnostics, the DESeq2-vs-limma robustness overlap, a responder classification across the two treatments (A-only, B-only, shared, A-vs-B different), and the reproducibility record with session info and seed.",
+        "acceptance_criteria": [
+          "Header block states: method (DESeq2 LRT + Wald, limma-voom second method), package versions, design ~ subject + condition, reference level control, all three named contrasts, thresholds (padj < 0.05), n_tested after filtering, n_DE per contrast",
+          "MA plot and dispersion plot of the DESeq2 fit placed before the gene tables, with one line each on what they show",
+          "Per-contrast gene tables with columns log2FoldChange (unshrunken), shrunken log2FC (ashr, estimator named in header), lfcSE, stat, pvalue, padj; genes ranked by the shrunken LFC; p-values from the unshrunken fit",
+          "Responder classification from the DESeq2 results: genes significant in treated_a vs control only, treated_b vs control only, both (shared response), plus the treated_b vs treated_a significant set and its overlap with each; counts for every class",
+          "Overlap table against the limma-voom results: intersection labelled high-confidence; method-specific genes listed as secondary",
+          "Reproducibility record stored with the results: sessionInfo, package versions, random seed (set in the script), and the statement that the input is gene-level Salmon-summed counts without length offsets"
+        ]
+      }
+    ],
+    "title": "Paired 3-condition DE: treatment A/B vs control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is 12 human blood samples: 4 subjects, each measured under control, treated_a, and treated_b (12000 genes x 13 columns in counts.csv, first column gene symbol; metadata.csv holds subject and condition). The question is which genes respond to either treatment within a subject and whether the two treatments differ from each other. Because each subject contributes one sample to every condition, the subject is a blocking factor that must precede condition in the design, removing between-subject variance and making every comparison within-subject. The plan follows the returned procedure: blind-vst sample-structure QC; a minimal low-count pre-filter; DESeq2 median-of-ratios size factors with no pre-scaling; a DESeq2 LRT (~ subject + condition vs ~ subject) to find any gene that differs among the three conditions within subjects, followed by three named Wald contrasts (treated_a vs control, treated_b vs control, treated_b vs treated_a) with control as the explicitly set reference level; ashr shrinkage (the contrasts are not single coefficients, so apeglm does not apply); BH adjustment within each contrast at alpha 0.05 with independent filtering and a p-value histogram check; a limma-voom duplicateCorrelation pass as the independent second method for the robustness overlap; and a report carrying shrunken and unshrunken LFC, fit diagnostics, and the responder classification (A-only, B-only, shared, A-vs-B-different). Caveat stated up front: the input is already a gene-level integer count matrix summed from Salmon, and no transcript-level quant files exist in this analysis, so tximport length-scaled offsets (rule R-0018) cannot be applied; differential transcript usage is out of scope and the report will state this. With n=4 subjects per condition, power is limited and Cook's-distance outlier flagging will set some p-values to NA; flagged genes are reported, not silently dropped."
+  },
+  "usage": {
+    "inputTokens": 223759,
+    "outputTokens": 7736,
+    "cacheReadInputTokens": 64512,
+    "reasoningTokens": 2207
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 3,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": true,
+        "blocking_factor": "subject",
+        "batch": "none",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 3,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": true,
+        "blocking_factor": "subject",
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst blind transform, PCA on top 500 variable genes, sample distance heatmap, library size summary",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with at least 10 counts in at least the smallest group size (4) samples; minimal pre-filter, independent filtering later",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 4
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors inside the model; counts not pre-scaled",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "Design ~ subject + condition with control set as explicit reference level; named contrasts condition treated_a vs control, treated_b vs control, treated_b vs treated_a",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "contrast_plan",
+                "value": "one_named_contrast_per_comparison"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 LRT full ~ subject + condition vs reduced ~ subject, then per-contrast Wald tests; Cook's outlier flagging kept, NA p-values reported",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "LRT_then_pairwise_Wald"
+              },
+              {
+                "name": "full",
+                "value": "~ subject + condition"
+              },
+              {
+                "name": "reduced",
+                "value": "~ subject"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "ashr lfcShrink per contrast (contrasts are not single coefficients)",
+            "package": "ashr",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "ashr"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg within each contrast at alpha 0.05 with DESeq2 independent filtering; p-value histogram inspected before adjustment",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "adjustment_scope",
+                "value": "within_contrast"
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "edgeR quasi-likelihood F-test on the same filtered counts with design ~ subject + condition as a robustness check; report overlap with DESeq2 significant genes per contrast",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "quasi_likelihood_F"
+              },
+              {
+                "name": "design",
+                "value": "~ subject + condition"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Report per contrast: unshrunken and ashr-shrunken log2FC with lfcSE, padj, ranked on shrunken LFC; MA and dispersion plots; responder overlap summary (A-only, B-only, shared, A-vs-B); session info and seed",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de, session_info"
+              },
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange, shrunken_log2FoldChange, lfcSE"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              },
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot, dispersion_plot"
+              },
+              {
+                "name": "robustness",
+                "value": "overlap_of_two_methods"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 3,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": true,
+        "blocking_factor": "subject",
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst blind transform, PCA on top 500 variable genes, sample distance heatmap, library size summary",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with at least 10 counts in at least the smallest group size (4) samples; minimal pre-filter, independent filtering later",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 4
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors inside the model; counts not pre-scaled",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "Design ~ subject + condition; reference level set with an explicit call (control as reference, stated in the report); named contrasts as factor numerator denominator: treated_a vs control, treated_b vs control, treated_b vs treated_a",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "contrast_plan",
+                "value": "one_named_contrast_per_comparison"
+              },
+              {
+                "name": "reference_level_policy",
+                "value": "explicit_and_reported"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 LRT full ~ subject + condition vs reduced ~ subject, then per-contrast Wald tests; Cook's outlier flagging kept, NA p-values reported",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "LRT_then_pairwise_Wald"
+              },
+              {
+                "name": "full",
+                "value": "~ subject + condition"
+              },
+              {
+                "name": "reduced",
+                "value": "~ subject"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "ashr lfcShrink per contrast (contrasts are not single coefficients)",
+            "package": "ashr",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "ashr"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg within each contrast at alpha 0.05 with DESeq2 independent filtering; p-value histogram inspected before adjustment",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "adjustment_scope",
+                "value": "within_contrast"
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom with duplicateCorrelation on the same filtered counts, design ~ subject + condition, as the independent second method for the robustness overlap; report overlap with DESeq2 significant genes per contrast",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "voom_duplicateCorrelation"
+              },
+              {
+                "name": "design",
+                "value": "~ subject + condition"
+              },
+              {
+                "name": "blocking_factor",
+                "value": "subject"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Report per contrast: unshrunken and ashr-shrunken log2FC with lfcSE, padj, ranked on shrunken LFC; MA and dispersion plots; responder overlap summary (A-only, B-only, shared, A-vs-B); session info and seed",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de, session_info"
+              },
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange, shrunken_log2FoldChange, lfcSE"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              },
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot, dispersion_plot"
+              },
+              {
+                "name": "robustness",
+                "value": "overlap_of_two_methods"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Paired 3-condition DE: treatment A/B vs control",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The dataset is 12 human blood samples: 4 subjects, each measured under control, treated_a, and treated_b (12000 genes x 13 columns in counts.csv, first column gene symbol; metadata.csv holds subject and condition). The question is which genes respond to either treatment within a subject and whether the two treatments differ from each other. Because each subject contributes one sample to every condition, the subject is a blocking factor that must precede condition in the design, removing between-subject variance and making every comparison within-subject. The plan follows the returned procedure: blind-vst sample-structure QC; a minimal low-count pre-filter; DESeq2 median-of-ratios size factors with no pre-scaling; a DESeq2 LRT (~ subject + condition vs ~ subject) to find any gene that differs among the three conditions within subjects, followed by three named Wald contrasts (treated_a vs control, treated_b vs control, treated_b vs treated_a) with control as the explicitly set reference level; ashr shrinkage (the contrasts are not single coefficients, so apeglm does not apply); BH adjustment within each contrast at alpha 0.05 with independent filtering and a p-value histogram check; a limma-voom duplicateCorrelation pass as the independent second method for the robustness overlap; and a report carrying shrunken and unshrunken LFC, fit diagnostics, and the responder classification (A-only, B-only, shared, A-vs-B-different). Caveat stated up front: the input is already a gene-level integer count matrix summed from Salmon, and no transcript-level quant files exist in this analysis, so tximport length-scaled offsets (rule R-0018) cannot be applied; differential transcript usage is out of scope and the report will state this. With n=4 subjects per condition, power is limited and Cook's-distance outlier flagging will set some p-values to NA; flagged genes are reported, not silently dropped.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "agent": "bulk-transcriptomics-agent",
+              "packages": [
+                "DESeq2",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "question": "Do the 12 blood samples (4 subjects x control/treated_a/treated_b) cluster by condition and pair by subject, and is any sample an outlier before testing?",
+              "acceptance_criteria": [
+                "Blind vst applied on the raw counts of counts.csv with metadata.csv as colData",
+                "PCA on the 500 most variable genes, colored by condition and by subject, saved as PNG/PDF",
+                "Sample-to-sample Euclidean distance heatmap and library-size table produced",
+                "Written verdict: does the primary axis track subject or condition; any sample departing from its subject-condition cell is named"
+              ],
+              "constraints": [
+                "n_top_genes = 500",
+                "transform = vst_blind (blind to design for QC)",
+                "No test or model fitting in this step"
+              ],
+              "caveats": [
+                "With only 12 samples, PCA axes can mix subject and condition; report both colorings rather than forcing one story"
+              ],
+              "description": "Variance-stabilizing transform (blind), PCA on the top 500 variable genes, sample distance heatmap, and library size summary, colored by condition and by subject, to verify the within-subject pairing structure and flag outliers before any test.",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC on raw counts: blind vst, PCA on top 500 genes, sample distances, library sizes, per R-0033@40bf"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 paired model and three contrasts",
+              "track": "T1",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "packages": [
+                "DESeq2",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "question": "Which genes change within a subject under treated_a vs control, treated_b vs control, and do treated_a and treated_b differ from each other (treated_b vs treated_a)?",
+              "acceptance_criteria": [
+                "Counts loaded from counts.csv, joined 1:1 to the 12 rows of metadata.csv; gene x sample dimension verified",
+                "Genes kept only with >=10 counts in >=4 samples (smallest group size); counts never pre-scaled; median-of-ratios size factors computed by DESeq2",
+                "condition relevelled so control is the explicit reference; design ~ subject + condition fitted",
+                "LRT run: full ~ subject + condition vs reduced ~ subject; per-contrast Wald results extracted with named contrasts: condition treated_a vs control, condition treated_b vs control, condition treated_b vs treated_a",
+                "ashr lfcShrunken estimates produced for each of the three contrasts; unshrunken log2FoldChange, shrunken estimate, and lfcSE all retained",
+                "BH within each contrast at alpha 0.05 passed to results() with independent filtering on; p-value histogram per contrast inspected and described before trusting padj",
+                "Number of genes with NA p-values from Cook's-distance outlier flagging reported separately from independent-filtering NAs"
+              ],
+              "constraints": [
+                "min_count = 10, min_samples = smallest_group_size (4)",
+                "filter_policy = minimal_then_independent",
+                "size_factors = median_of_ratios computed inside DESeq2; no external normalization",
+                "reference_level = explicit (control), reference_level_policy = explicit_and_reported",
+                "contrast_form = factor_numerator_denominator; one named contrast per comparison",
+                "test = LRT_then_pairwise_Wald; full ~ subject + condition; reduced ~ subject",
+                "count_outlier_policy = flag_and_report_na (n=4 per cell, so Cook's flagging is active)",
+                "lfc_shrink = ashr for every contrast (contrasts are not single coefficients)",
+                "adjustment = BH, alpha = 0.05, independent_filtering = true, adjustment_scope = within_contrast, pvalue_histogram = inspect_before_adjustment"
+              ],
+              "caveats": [
+                "Input is already gene-level integer counts summed from Salmon; no transcript-level quant files exist in this analysis, so tximport length-scaled offsets (R-0018) cannot be applied - state this in the output",
+                "With 4 subjects per condition, power is limited; a null result is not evidence of no effect",
+                "treated_a vs treated_b tests a difference between treatments, which is a different (and harder) question than either treatment vs control"
+              ],
+              "description": "Pre-filter, DESeq2 size-factor normalization, paired design ~ subject + condition with control as explicit reference; DESeq2 LRT (~ subject + condition vs ~ subject) for any within-subject condition effect, then Wald results for the three named contrasts (treated_a vs control, treated_b vs control, treated_b vs treated_a), ashr shrinkage per contrast, BH at alpha 0.05 within contrast with independent filtering, p-value histogram check, and Cook's outlier NA accounting.",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0060@0ff9",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0069@b1c3",
+                  "R-0011@233b",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0040@8061",
+                  "R-0009@f54e",
+                  "R-0061@bcab",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-multigroup@1.0.0",
+                "reason": "Paired 3-group design: subject block + DESeq2 LRT then per-contrast Wald with ashr shrinkage, per R-0069@b1c3 and R-0011@233b; tximport offsets not applicable because only the gene-level count matrix exists"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "limma-voom robustness overlap",
+              "track": "T1",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "question": "Do the same genes stay significant under an independent method (limma-voom with duplicateCorrelation on the same ~ subject + condition design)?",
+              "acceptance_criteria": [
+                "voom applied to the same filtered count matrix with the same design ~ subject + condition; duplicateCorrelation estimated on subject and iterated once",
+                "Per-contrast moderated t results for treated_a vs control, treated_b vs control, treated_b vs treated_a; BH within contrast at alpha 0.05",
+                "Per contrast: count of significant genes by each method and the size of the intersection reported in a table; intersection labelled high-confidence, method-specific genes listed as secondary with the method named",
+                "Union not presented as the result"
+              ],
+              "constraints": [
+                "test = voom_duplicateCorrelation",
+                "design = ~ subject + condition, blocking_factor = subject",
+                "Same filtered gene set and same contrasts as T1S2",
+                "adjustment scope = within_contrast, alpha = 0.05"
+              ],
+              "caveats": [
+                "limma assumes a single correlation for all genes, which is an approximation for the subject block; agreement is the point, not the limma p-values themselves",
+                "At n=4 per group the two methods disagree most at low counts; report the disagreement rate rather than hiding it"
+              ],
+              "description": "Independent second method for the robustness check: limma-voom with duplicateCorrelation on the subject block, same design and contrasts, and a per-contrast overlap table with the DESeq2 significant sets (R-0042: intersection = high-confidence set, method-only genes = secondary).",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0069@b1c3",
+                  "R-0001@9a17"
+                ],
+                "reason": "Second-method robustness via a permitted alternative for the blocked design (limma-voom + duplicateCorrelation per R-0069@b1c3), feeding the overlap report of R-0042@54e1; edgeR QL was rejected by knowledge_check for this paired situation"
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Report and responder summary",
+              "track": "T1",
+              "step_type": "report",
+              "agent": "bulk-transcriptomics-agent",
+              "packages": [
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "question": "Which genes respond to treated_a, to treated_b, to both, and which differ between the two treatments - with full methods, thresholds, diagnostics, and reproducibility record?",
+              "acceptance_criteria": [
+                "Header block states: method (DESeq2 LRT + Wald, limma-voom second method), package versions, design ~ subject + condition, reference level control, all three named contrasts, thresholds (padj < 0.05), n_tested after filtering, n_DE per contrast",
+                "MA plot and dispersion plot of the DESeq2 fit placed before the gene tables, with one line each on what they show",
+                "Per-contrast gene tables with columns log2FoldChange (unshrunken), shrunken log2FC (ashr, estimator named in header), lfcSE, stat, pvalue, padj; genes ranked by the shrunken LFC; p-values from the unshrunken fit",
+                "Responder classification from the DESeq2 results: genes significant in treated_a vs control only, treated_b vs control only, both (shared response), plus the treated_b vs treated_a significant set and its overlap with each; counts for every class",
+                "Overlap table against the limma-voom results: intersection labelled high-confidence; method-specific genes listed as secondary",
+                "Reproducibility record stored with the results: sessionInfo, package versions, random seed (set in the script), and the statement that the input is gene-level Salmon-summed counts without length offsets"
+              ],
+              "constraints": [
+                "report_fields = method, versions, design, thresholds, n_tested, n_de, session_info",
+                "effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE",
+                "rank_genes_by = shrunken_log2FoldChange",
+                "fit_diagnostics = ma_plot, dispersion_plot",
+                "robustness = overlap_of_two_methods",
+                "Contrast label printed beside every padj and every gene list"
+              ],
+              "caveats": [
+                "With 4 subjects, treat the responder lists as hypotheses for validation, not confirmed biology",
+                "Genes with NA padj (outlier-flagged or filtered) are listed with the cause, not dropped silently"
+              ],
+              "description": "Final report: per-contrast tables (unshrunken + ashr-shrunken LFC, lfcSE, padj), MA and dispersion diagnostics, the DESeq2-vs-limma robustness overlap, a responder classification across the two treatments (A-only, B-only, shared, A-vs-B different), and the reproducibility record with session info and seed.",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "Report fields, dual effect columns, shrunken ranking, MA/dispersion diagnostics, method-overlap robustness, and reproducibility record per the report rules returned for this situation"
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

@@ -1,0 +1,901 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "de-plus-tf-activity-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T04:42:10.423Z",
+  "elapsedMs": 273489,
+  "outcome": "plan_submitted",
+  "planId": "pln-43faf355",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (blind vst, PCA, distances)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 vs 6 samples and no batch in the design, PC1 separating by condition is expected if the treatment effect is strong; a sample outside its group is reported, not removed, unless QC metrics corroborate a technical failure"
+        ],
+        "context": "Inputs: /eval-four-models-with-de-plus-tf-activity-n6-1/data/inputs/counts/counts.csv (raw integer gene-level counts from Salmon, 12000 x 13, first column gene symbol) and metadata.csv (12 x 2, condition column with the aldosterone-treated and vehicle levels). Single batch, unpaired.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 12 kidney samples separate by condition (aldosterone-treated vs vehicle), and is any sample a technical outlier before the DE test runs?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)"
+        ],
+        "description": "Blind vst on the raw counts, PCA on the top 500 variable genes, sample distance heatmap, and library-size check to confirm the 12 samples (6 aldosterone-treated, 6 vehicle) group by condition and that no sample is a technical outlier before testing.",
+        "acceptance_criteria": [
+          "vst applied blind to design on the raw count matrix; PCA on top 500 most variable genes colored by condition",
+          "Sample-to-sample Euclidean distance heatmap colored by condition and reported batch variable",
+          "Library-size bar plot; samples with depth far below the median flagged",
+          "Explicit statement of whether samples cluster by aldosterone-vs-vehicle and whether any sample is an outlier"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DE: DESeq2 Wald on aldosterone-treated vs vehicle + apeglm shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The model_design rule prescribes tximport length-scaled TPM/offsets for Salmon quantifications (R-0018@a472), but only a gene-level count matrix exists here — no transcript-level quant.sf files — so the length offset cannot be applied and the counts are used directly; differential transcript usage is out of scope for this matrix and the limitation is stated in the report",
+          "With 6 replicates per cell (below the 7-replicate threshold), DESeq2 flags count outliers by Cook's distance and sets those genes' p-values to NA; report the count of such genes separately from the independent-filtering NAs",
+          "Gene symbols may contain duplicates after the pre-filter; detect and resolve or report them before modeling"
+        ],
+        "context": "Counts: /eval-four-models-with-de-plus-tf-activity-n6-1/data/inputs/counts/counts.csv (gene symbols x 12 samples, raw integers from Salmon). Metadata: metadata.csv with condition = aldosterone-treated vs vehicle, 6 vs 6, unpaired, single batch. DESeq2 1.52.0 and apeglm 1.34.0 are installed.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes change between aldosterone-treated and vehicle samples (padj < 0.05, BH with independent filtering)?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with apeglm shrinkage for 2 groups x 6 replicates on raw counts, per R-0001@9a17",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)",
+          "filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)",
+          "filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)",
+          "normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)",
+          "model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+          "model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)",
+          "differential_expression: count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)",
+          "differential_expression: test = Wald (doi:10.1186/s13059-014-0550-8)",
+          "shrink_lfc: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)",
+          "multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+          "multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)",
+          "multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)",
+          "multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+          "multiple_testing: independent_filtering = true (doi:10.1073/pnas.0914005107)",
+          "multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)"
+        ],
+        "description": "Minimal low-count pre-filter, DESeq2 median-of-ratios normalization, Wald test of aldosterone-treated vs vehicle, apeglm shrinkage, BH at alpha 0.05 with independent filtering, and a full DE results table plus p-value histogram and MA/dispersion diagnostics.",
+        "acceptance_criteria": [
+          "Reference level of the condition factor set explicitly to vehicle; contrast stated as factor(numerator=treated, denominator=vehicle) so positive log2FC means higher in aldosterone-treated",
+          "Minimal pre-filter applied: gene kept only if it has >=10 counts in at least 6 samples; filtered count matrix saved for the edgeR step",
+          "DESeq2 size factors computed (median-of-ratios); no pre-normalized or scaled counts enter the model",
+          "Wald test run; number of genes tested after filtering, number of significant genes at padj<0.05, and number of Cook's-outlier NA p-values reported separately",
+          "apeglm-shrunken log2FC computed; results table carries unshrunken log2FC, shrunken log2FC, lfcSE, stat, pvalue, padj",
+          "Unadjusted p-value histogram produced and its shape reported before the BH adjustment is trusted",
+          "Full results table written to CSV sorted by shrunken log2FC; volcano plot and MA plot produced"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR quasi-likelihood robustness check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "TMM scaling factors take the place of DESeq2 size factors; keep the edgeR normalization and model self-contained in this step"
+        ],
+        "context": "edgeR 4.10.3 is installed. Input is the filtered count matrix saved by T1S2; 6 vs 6 is in the replicate range where DESeq2 and edgeR QL each call some genes the other does not.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Which of the aldosterone-vs-vehicle DE calls are also significant under edgeR quasi-likelihood, i.e. which genes form the high-confidence DE set?",
+        "grounding": {
+          "claims": [
+            "R-0001@9a17",
+            "R-0042@54e1"
+          ],
+          "reason": "Second method on the same counts and design for robustness; intersection is the high-confidence set per R-0042@54e1",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "differential_expression: test = Wald (doi:10.1186/s13059-014-0550-8)",
+          "normalize: size_factors = TMM on the edgeR path (doi:10.1186/s13059-014-0550-8)"
+        ],
+        "description": "Robustness check: edgeR quasi-likelihood F-test on the same filtered counts, reporting the number of significant genes from each method and the size of the DESeq2/edgeR intersection, which becomes the high-confidence DE set.",
+        "acceptance_criteria": [
+          "edgeR QL F-test run on the same filtered counts with matching design and contrast direction (positive log2FC = higher in treated)",
+          "Counts of significant genes at FDR<0.05 from each method and the size of the intersection reported side by side",
+          "Intersection written as the high-confidence DE set; single-method genes written as a secondary set with the method named; the union NOT presented as the result",
+          "Concordance summary (e.g. sign agreement among significant genes) included"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment: fgsea on Hallmark + WikiPathways",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If fewer than about 50 genes pass padj<0.05, do not run an over-representation test on that short list — the ranked method on the full list is the only enrichment, and the size of the significant list is stated in the report",
+          "An enrichment result is method-dependent; sets are hypotheses for follow-up, not proven findings"
+        ],
+        "context": "Gene set data is provisioned in the reference store, not in the analysis inputs: an MSigDB Hallmark human GMT (symbols) and a WikiPathways human GMT, 2026.07.10, HGNC symbols. Both are symbol-keyed, matching counts.csv. fgsea 1.38.0 is installed. Disputed metric (R-0108): the plan chooses the Wald statistic — signed and scaled by its standard error — as the ranking metric; state this beside the collection releases.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase"
+        ],
+        "question": "Which pathways shift coordinately between aldosterone-treated and vehicle kidney samples?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "fgsea preranked GSEA on the Wald statistic with Hallmark + WikiPathways follow-up per R-0107@976c and R-0165@e456; metric side chosen: Wald statistic (R-0108)",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "enrichment: rank_metric = stat (doi:10.1101/060012)",
+          "enrichment: rank_metric_not = unshrunken_log2_fold_change_alone, signed_p_value_with_ties (doi:10.1186/s12859-017-1674-0)",
+          "enrichment: collapse_redundant = true (doi:10.1101/060012)",
+          "enrichment: min_size = 15 (doi:10.1073/pnas.0506580102)",
+          "enrichment: max_size = 500 (doi:10.1073/pnas.0506580102)",
+          "enrichment: bias_note = length_and_expression (doi:10.1186/s13059-015-0761-7)",
+          "enrichment: universe = tested_genes (doi:10.1371/journal.pcbi.1009935)",
+          "enrichment: gsea_input = full_ranked_list (doi:10.1073/pnas.0506580102)",
+          "enrichment: rank_metric_choice = stated_in_plan (rule:R-0108)",
+          "enrichment: gene_set_collection = msigdb_hallmark_human (doi:10.1016/j.cels.2015.12.004)",
+          "enrichment: follow_up = wikipathways (doi:10.1038/s41596-018-0103-9)",
+          "enrichment: further_collections = wikipathways (doi:10.1093/nar/gkz1031)",
+          "enrichment: collection_release_statement = release_per_collection (rule:R-0165)"
+        ],
+        "description": "Rank every tested gene by the DESeq2 Wald statistic and run fgsea preranked GSEA against the MSigDB Hallmark human gene sets, followed by the WikiPathways human collection as the second, more pathway-specific collection, each with its release stated.",
+        "acceptance_criteria": [
+          "Every tested gene ranked by the DESeq2 Wald statistic (stat), full list passed to fgsea; the metric choice (Wald statistic over signed -log10 p or shrunken log2FC) stated in the output",
+          "Gene sets kept in the 15-500 member window after intersecting with the tested gene list; size window and universe reported",
+          "Significant sets reported per collection at padj<0.05 with NES; redundant sets collapsed into one representative per overlapping group with the full table kept as supplement",
+          "Leading-edge genes per significant set listed with their member statistics and overlaps between sets noted",
+          "Release of each collection (MSigDB Hallmark 2026.1, WikiPathways 2026.07.10) stated beside its results; unmapped-gene share reported",
+          "If the reference store lacks a collection, that collection is reported absent and the step still returns Hallmark results rather than failing"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "TF activity: decoupleR ulm on CollecTRI",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A prior network is the same for every tissue: a TF active only in kidney can be missed and a silent target adds noise — state this limitation (R-0114@9db7)",
+          "With 12 samples no regulatory network is inferred from the expression itself; CollecTRI/DoRothEA priors are the only sound source (R-0121@5f27)",
+          "A TF activity is an inference from its targets' statistics, not proof of binding; a promoter-motif complement is possible but not required here"
+        ],
+        "context": "Regulon data is provisioned in the reference store: CollecTRI human 2.0 regulons (CSV, source TF symbol / target gene symbol / signed weight) and DoRothEA human rda (tf, confidence, target, mor) as the signed alternative. Both are symbol-keyed, matching counts.csv. R decoupleR 2.17.0 (Bioconductor) is installed; the python decoupler 2.2.0 package is also present if the step is written in Python via rpy2-free CSV loading.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupleR"
+        ],
+        "question": "Which transcription factors sit behind the aldosterone-vs-vehicle expression changes, and are they more or less active in the treated kidney?",
+        "grounding": {
+          "claims": [
+            "R-0111@b668",
+            "R-0113@7a4d",
+            "R-0114@9db7",
+            "R-0121@5f27"
+          ],
+          "reason": "decoupleR ulm on the contrast statistic with CollecTRI regulons per R-0111@b668; DoRothEA A-C as alternative per R-0113@7a4d",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-decoupler-tf-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "activity",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "tf_activity: network_source = prior_knowledge_network_only (doi:10.1093/bioinformatics/btw216)",
+          "tf_activity: regulon_preference = collectri_first (doi:10.1093/nar/gkad841)",
+          "tf_activity: activity_method = ulm (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: activity_input = contrast_statistic_all_tested_genes (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: regulon_collection = collectri_human (doi:10.1093/nar/gkad841)",
+          "tf_activity: min_regulon_size = 5 (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: edge_sign = keep_mode_of_regulation (doi:10.1093/nar/gkad841)",
+          "tf_activity: alternative_regulon = dorothea_confidence_A_to_C (doi:10.1101/gr.240663.118)"
+        ],
+        "description": "Infer transcription-factor activities from the aldosterone-vs-vehicle contrast: decoupleR univariate linear model on the Wald statistics of all tested genes with the CollecTRI human regulons (signed edges), DoRothEA A-C as the alternative regulon set for robustness.",
+        "acceptance_criteria": [
+          "decoupleR ulm run on the Wald statistics of ALL tested genes (not the significant subset) with signed CollecTRI edges; min regulon size 5",
+          "Number of TFs tested and number passing significance reported; positive/negative activities per TF listed",
+          "DoRothEA A-C run as the alternative regulon set; overlap of significant TFs between CollecTRI and DoRothEA reported",
+          "High-confidence DE genes that are direct targets of the top-activated TFs tabulated, linking the TF result to the DE result",
+          "If the CollecTRI reference is absent from the store, the step falls back to DoRothEA A-C (provisioned) and reports the substitution instead of failing"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Integrated report of DE, robustness, pathways, and TF activities",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "State that the Salmon-derived counts were already gene-level, so the tximport length-offset correction was not applicable and differential transcript usage is out of scope",
+          "Present enrichment sets and TF activities as hypotheses consistent with the DE result, not as independent proofs"
+        ],
+        "context": "Consumes the artifacts of T1S1-T1S3, T2S1, and T2S2: QC plots, DESeq2 results table, edgeR comparison, fgsea tables, TF activity tables. Dataset: 12,000 genes x 12 samples, aldosterone-treated vs vehicle kidney, human.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What changed between aldosterone-treated and vehicle kidney samples, which transcription factors sit behind it, and how reproducible is each call?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report consolidates all tracks; ungrounded skeleton entry kept with the report rules as claims",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+          "report: leading_edge = per_significant_set (doi:10.1073/pnas.0506580102)",
+          "report: enrichment_caveat = method_dependence (doi:10.1093/bib/bbz158)",
+          "report: enrichment_report = database, version, rank_metric, universe, size_window (doi:10.1371/journal.pcbi.1009935)",
+          "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+          "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+          "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)",
+          "report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)",
+          "report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)"
+        ],
+        "description": "Consolidate the DE table (high-confidence intersection of DESeq2 and edgeR QL), fit diagnostics, enrichment results, and TF activities into one report with methods, versions, design, thresholds, tested/DE counts, leading edges, and a reproducibility record.",
+        "acceptance_criteria": [
+          "Report carries method, package versions, design formula, contrast, thresholds, n tested, n DE per method, and session info with the seed",
+          "Gene table carries unshrunken log2FC, shrunken (apeglm) log2FC, and lfcSE per gene, ranked on the shrunken value; p-values from the unshrunken fit",
+          "MA plot and dispersion plot precede the gene tables, with one line on what each shows",
+          "Two-method comparison table: DESeq2-only, edgeR-only, and intersection gene sets; intersection presented as high-confidence",
+          "Enrichment and TF-activity sections state database, release, rank metric, universe, size window, method and multiple-testing correction, plus the method-dependence caveat",
+          "All tables written as CSV alongside the figures; NA causes (Cook's outlier vs independent filter) quantified in the DE section"
+        ]
+      }
+    ],
+    "title": "Aldosterone vs vehicle kidney DE + TF activity",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is a small, clean human kidney bulk RNA-seq experiment: 12,000 genes x 12 samples, 6 aldosterone-treated vs 6 vehicle controls, unpaired, single batch, raw gene-level counts already summarized from Salmon. The question has two parts: which genes change (differential expression), and which transcription factors sit behind those changes (regulator activity). The plan runs the grounded procedure for this situation (n=6/group, counts, no batch confounding): blind sample-structure QC before any test; a minimal low-count pre-filter; median-of-ratios size factors inside the DESeq2 negative-binomial model with a Wald test, apeglm-shrunk fold changes and BH at alpha 0.05 with independent filtering; an edgeR quasi-likelihood run on the same counts as the second method, with the intersection reported as the high-confidence DE set; fgsea preranked GSEA on the full Wald-statistic-ranked list against MSigDB Hallmark and WikiPathways human; and decoupleR ulm TF activity on the Wald statistics of all tested genes against the CollecTRI human regulons (DoRothEA A-C as a signed alternative). Because counts are already gene-level and no transcript-level quantification files exist, the tximport length-offset step is not applicable — this limitation is stated in the report rather than silently dropped. Enrichment and TF-activity keys are HGNC symbols, matching the gene symbols in counts.csv and both GMT/regulon resources, so no cross-identifier mapping is needed; the unmapped share is still reported."
+  },
+  "usage": {
+    "inputTokens": 234553,
+    "outputTokens": 8365,
+    "cacheReadInputTokens": 132608,
+    "reasoningTokens": 1582
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "extra_analyses": [
+          "tf_activity"
+        ],
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri",
+        "limit": 10
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea",
+        "limit": 10
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test with apeglm log fold change shrinkage",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "edgeR quasi-likelihood F-test robustness check",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "quasi_likelihood"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "gsea_input",
+                "value": "full_ranked_list"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "Transcription factor activity with decoupleR ulm on the CollecTRI regulons",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "activity_input",
+                "value": "contrast_statistic_all_tested_genes"
+              },
+              {
+                "name": "regulon_collection",
+                "value": "collectri_human"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The dataset is a small, clean human kidney bulk RNA-seq experiment: 12,000 genes x 12 samples, 6 aldosterone-treated vs 6 vehicle controls, unpaired, single batch, raw gene-level counts already summarized from Salmon. The question has two parts: which genes change (differential expression), and which transcription factors sit behind those changes (regulator activity). The plan runs the grounded procedure for this situation (n=6/group, counts, no batch confounding): blind sample-structure QC before any test; a minimal low-count pre-filter; median-of-ratios size factors inside the DESeq2 negative-binomial model with a Wald test, apeglm-shrunk fold changes and BH at alpha 0.05 with independent filtering; an edgeR quasi-likelihood run on the same counts as the second method, with the intersection reported as the high-confidence DE set; fgsea preranked GSEA on the full Wald-statistic-ranked list against MSigDB Hallmark and WikiPathways human; and decoupleR ulm TF activity on the Wald statistics of all tested genes against the CollecTRI human regulons (DoRothEA A-C as a signed alternative). Because counts are already gene-level and no transcript-level quantification files exist, the tximport length-offset step is not applicable — this limitation is stated in the report rather than silently dropped. Enrichment and TF-activity keys are HGNC symbols, matching the gene symbols in counts.csv and both GMT/regulon resources, so no cross-identifier mapping is needed; the unmapped share is still reported.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "vst applied blind to design on the raw count matrix; PCA on top 500 most variable genes colored by condition",
+                "Sample-to-sample Euclidean distance heatmap colored by condition and reported batch variable",
+                "Library-size bar plot; samples with depth far below the median flagged",
+                "Explicit statement of whether samples cluster by aldosterone-vs-vehicle and whether any sample is an outlier"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+                "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)"
+              ],
+              "caveats": [
+                "With 6 vs 6 samples and no batch in the design, PC1 separating by condition is expected if the treatment effect is strong; a sample outside its group is reported, not removed, unless QC metrics corroborate a technical failure"
+              ],
+              "context": "Inputs: /eval-four-models-with-de-plus-tf-activity-n6-1/data/inputs/counts/counts.csv (raw integer gene-level counts from Salmon, 12000 x 13, first column gene symbol) and metadata.csv (12 x 2, condition column with the aldosterone-treated and vehicle levels). Single batch, unpaired.",
+              "depends_on": [],
+              "description": "Blind vst on the raw counts, PCA on the top 500 variable genes, sample distance heatmap, and library-size check to confirm the 12 samples (6 aldosterone-treated, 6 vehicle) group by condition and that no sample is a technical outlier before testing.",
+              "grounding": {
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded",
+                "template": "tpl-qc-eda@1.0.0"
+              },
+              "id": "T1S1",
+              "name": "Sample structure QC (blind vst, PCA, distances)",
+              "packages": [
+                "DESeq2"
+              ],
+              "question": "Do the 12 kidney samples separate by condition (aldosterone-treated vs vehicle), and is any sample a technical outlier before the DE test runs?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "qc",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Reference level of the condition factor set explicitly to vehicle; contrast stated as factor(numerator=treated, denominator=vehicle) so positive log2FC means higher in aldosterone-treated",
+                "Minimal pre-filter applied: gene kept only if it has >=10 counts in at least 6 samples; filtered count matrix saved for the edgeR step",
+                "DESeq2 size factors computed (median-of-ratios); no pre-normalized or scaled counts enter the model",
+                "Wald test run; number of genes tested after filtering, number of significant genes at padj<0.05, and number of Cook's-outlier NA p-values reported separately",
+                "apeglm-shrunken log2FC computed; results table carries unshrunken log2FC, shrunken log2FC, lfcSE, stat, pvalue, padj",
+                "Unadjusted p-value histogram produced and its shape reported before the BH adjustment is trusted",
+                "Full results table written to CSV sorted by shrunken log2FC; volcano plot and MA plot produced"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)",
+                "filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)",
+                "filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)",
+                "normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)",
+                "model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+                "model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)",
+                "differential_expression: count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)",
+                "differential_expression: test = Wald (doi:10.1186/s13059-014-0550-8)",
+                "shrink_lfc: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)",
+                "multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+                "multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)",
+                "multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)",
+                "multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+                "multiple_testing: independent_filtering = true (doi:10.1073/pnas.0914005107)",
+                "multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)"
+              ],
+              "caveats": [
+                "The model_design rule prescribes tximport length-scaled TPM/offsets for Salmon quantifications (R-0018@a472), but only a gene-level count matrix exists here — no transcript-level quant.sf files — so the length offset cannot be applied and the counts are used directly; differential transcript usage is out of scope for this matrix and the limitation is stated in the report",
+                "With 6 replicates per cell (below the 7-replicate threshold), DESeq2 flags count outliers by Cook's distance and sets those genes' p-values to NA; report the count of such genes separately from the independent-filtering NAs",
+                "Gene symbols may contain duplicates after the pre-filter; detect and resolve or report them before modeling"
+              ],
+              "context": "Counts: /eval-four-models-with-de-plus-tf-activity-n6-1/data/inputs/counts/counts.csv (gene symbols x 12 samples, raw integers from Salmon). Metadata: metadata.csv with condition = aldosterone-treated vs vehicle, 6 vs 6, unpaired, single batch. DESeq2 1.52.0 and apeglm 1.34.0 are installed.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Minimal low-count pre-filter, DESeq2 median-of-ratios normalization, Wald test of aldosterone-treated vs vehicle, apeglm shrinkage, BH at alpha 0.05 with independent filtering, and a full DE results table plus p-value histogram and MA/dispersion diagnostics.",
+              "grounding": {
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "reason": "DESeq2 Wald test with apeglm shrinkage for 2 groups x 6 replicates on raw counts, per R-0001@9a17",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded",
+                "template": "tpl-deseq2-two-group@1.0.0"
+              },
+              "id": "T1S2",
+              "name": "DE: DESeq2 Wald on aldosterone-treated vs vehicle + apeglm shrinkage",
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "question": "Which genes change between aldosterone-treated and vehicle samples (padj < 0.05, BH with independent filtering)?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "edgeR QL F-test run on the same filtered counts with matching design and contrast direction (positive log2FC = higher in treated)",
+                "Counts of significant genes at FDR<0.05 from each method and the size of the intersection reported side by side",
+                "Intersection written as the high-confidence DE set; single-method genes written as a secondary set with the method named; the union NOT presented as the result",
+                "Concordance summary (e.g. sign agreement among significant genes) included"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "differential_expression: test = Wald (doi:10.1186/s13059-014-0550-8)",
+                "normalize: size_factors = TMM on the edgeR path (doi:10.1186/s13059-014-0550-8)"
+              ],
+              "caveats": [
+                "TMM scaling factors take the place of DESeq2 size factors; keep the edgeR normalization and model self-contained in this step"
+              ],
+              "context": "edgeR 4.10.3 is installed. Input is the filtered count matrix saved by T1S2; 6 vs 6 is in the replicate range where DESeq2 and edgeR QL each call some genes the other does not.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Robustness check: edgeR quasi-likelihood F-test on the same filtered counts, reporting the number of significant genes from each method and the size of the DESeq2/edgeR intersection, which becomes the high-confidence DE set.",
+              "grounding": {
+                "claims": [
+                  "R-0001@9a17",
+                  "R-0042@54e1"
+                ],
+                "reason": "Second method on the same counts and design for robustness; intersection is the high-confidence set per R-0042@54e1",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded"
+              },
+              "id": "T1S3",
+              "name": "edgeR quasi-likelihood robustness check",
+              "packages": [
+                "edgeR"
+              ],
+              "question": "Which of the aldosterone-vs-vehicle DE calls are also significant under edgeR quasi-likelihood, i.e. which genes form the high-confidence DE set?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Every tested gene ranked by the DESeq2 Wald statistic (stat), full list passed to fgsea; the metric choice (Wald statistic over signed -log10 p or shrunken log2FC) stated in the output",
+                "Gene sets kept in the 15-500 member window after intersecting with the tested gene list; size window and universe reported",
+                "Significant sets reported per collection at padj<0.05 with NES; redundant sets collapsed into one representative per overlapping group with the full table kept as supplement",
+                "Leading-edge genes per significant set listed with their member statistics and overlaps between sets noted",
+                "Release of each collection (MSigDB Hallmark 2026.1, WikiPathways 2026.07.10) stated beside its results; unmapped-gene share reported",
+                "If the reference store lacks a collection, that collection is reported absent and the step still returns Hallmark results rather than failing"
+              ],
+              "agent": "enrichment-agent",
+              "constraints": [
+                "enrichment: rank_metric = stat (doi:10.1101/060012)",
+                "enrichment: rank_metric_not = unshrunken_log2_fold_change_alone, signed_p_value_with_ties (doi:10.1186/s12859-017-1674-0)",
+                "enrichment: collapse_redundant = true (doi:10.1101/060012)",
+                "enrichment: min_size = 15 (doi:10.1073/pnas.0506580102)",
+                "enrichment: max_size = 500 (doi:10.1073/pnas.0506580102)",
+                "enrichment: bias_note = length_and_expression (doi:10.1186/s13059-015-0761-7)",
+                "enrichment: universe = tested_genes (doi:10.1371/journal.pcbi.1009935)",
+                "enrichment: gsea_input = full_ranked_list (doi:10.1073/pnas.0506580102)",
+                "enrichment: rank_metric_choice = stated_in_plan (rule:R-0108)",
+                "enrichment: gene_set_collection = msigdb_hallmark_human (doi:10.1016/j.cels.2015.12.004)",
+                "enrichment: follow_up = wikipathways (doi:10.1038/s41596-018-0103-9)",
+                "enrichment: further_collections = wikipathways (doi:10.1093/nar/gkz1031)",
+                "enrichment: collection_release_statement = release_per_collection (rule:R-0165)"
+              ],
+              "caveats": [
+                "If fewer than about 50 genes pass padj<0.05, do not run an over-representation test on that short list — the ranked method on the full list is the only enrichment, and the size of the significant list is stated in the report",
+                "An enrichment result is method-dependent; sets are hypotheses for follow-up, not proven findings"
+              ],
+              "context": "Gene set data is provisioned in the reference store, not in the analysis inputs: an MSigDB Hallmark human GMT (symbols) and a WikiPathways human GMT, 2026.07.10, HGNC symbols. Both are symbol-keyed, matching counts.csv. fgsea 1.38.0 is installed. Disputed metric (R-0108): the plan chooses the Wald statistic — signed and scaled by its standard error — as the ranking metric; state this beside the collection releases.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Rank every tested gene by the DESeq2 Wald statistic and run fgsea preranked GSEA against the MSigDB Hallmark human gene sets, followed by the WikiPathways human collection as the second, more pathway-specific collection, each with its release stated.",
+              "grounding": {
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "reason": "fgsea preranked GSEA on the Wald statistic with Hallmark + WikiPathways follow-up per R-0107@976c and R-0165@e456; metric side chosen: Wald statistic (R-0108)",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded",
+                "template": "tpl-fgsea-preranked@1.0.0"
+              },
+              "id": "T2S1",
+              "name": "Pathway enrichment: fgsea on Hallmark + WikiPathways",
+              "packages": [
+                "fgsea",
+                "GSEABase"
+              ],
+              "question": "Which pathways shift coordinately between aldosterone-treated and vehicle kidney samples?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "enrichment",
+              "track": "T2"
+            },
+            {
+              "acceptance_criteria": [
+                "decoupleR ulm run on the Wald statistics of ALL tested genes (not the significant subset) with signed CollecTRI edges; min regulon size 5",
+                "Number of TFs tested and number passing significance reported; positive/negative activities per TF listed",
+                "DoRothEA A-C run as the alternative regulon set; overlap of significant TFs between CollecTRI and DoRothEA reported",
+                "High-confidence DE genes that are direct targets of the top-activated TFs tabulated, linking the TF result to the DE result",
+                "If the CollecTRI reference is absent from the store, the step falls back to DoRothEA A-C (provisioned) and reports the substitution instead of failing"
+              ],
+              "agent": "enrichment-agent",
+              "constraints": [
+                "tf_activity: network_source = prior_knowledge_network_only (doi:10.1093/bioinformatics/btw216)",
+                "tf_activity: regulon_preference = collectri_first (doi:10.1093/nar/gkad841)",
+                "tf_activity: activity_method = ulm (doi:10.1093/bioadv/vbac016)",
+                "tf_activity: activity_input = contrast_statistic_all_tested_genes (doi:10.1093/bioadv/vbac016)",
+                "tf_activity: regulon_collection = collectri_human (doi:10.1093/nar/gkad841)",
+                "tf_activity: min_regulon_size = 5 (doi:10.1093/bioadv/vbac016)",
+                "tf_activity: edge_sign = keep_mode_of_regulation (doi:10.1093/nar/gkad841)",
+                "tf_activity: alternative_regulon = dorothea_confidence_A_to_C (doi:10.1101/gr.240663.118)"
+              ],
+              "caveats": [
+                "A prior network is the same for every tissue: a TF active only in kidney can be missed and a silent target adds noise — state this limitation (R-0114@9db7)",
+                "With 12 samples no regulatory network is inferred from the expression itself; CollecTRI/DoRothEA priors are the only sound source (R-0121@5f27)",
+                "A TF activity is an inference from its targets' statistics, not proof of binding; a promoter-motif complement is possible but not required here"
+              ],
+              "context": "Regulon data is provisioned in the reference store: CollecTRI human 2.0 regulons (CSV, source TF symbol / target gene symbol / signed weight) and DoRothEA human rda (tf, confidence, target, mor) as the signed alternative. Both are symbol-keyed, matching counts.csv. R decoupleR 2.17.0 (Bioconductor) is installed; the python decoupler 2.2.0 package is also present if the step is written in Python via rpy2-free CSV loading.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Infer transcription-factor activities from the aldosterone-vs-vehicle contrast: decoupleR univariate linear model on the Wald statistics of all tested genes with the CollecTRI human regulons (signed edges), DoRothEA A-C as the alternative regulon set for robustness.",
+              "grounding": {
+                "claims": [
+                  "R-0111@b668",
+                  "R-0113@7a4d",
+                  "R-0114@9db7",
+                  "R-0121@5f27"
+                ],
+                "reason": "decoupleR ulm on the contrast statistic with CollecTRI regulons per R-0111@b668; DoRothEA A-C as alternative per R-0113@7a4d",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded",
+                "template": "tpl-decoupler-tf-activity@1.0.0"
+              },
+              "id": "T2S2",
+              "name": "TF activity: decoupleR ulm on CollecTRI",
+              "packages": [
+                "decoupleR"
+              ],
+              "question": "Which transcription factors sit behind the aldosterone-vs-vehicle expression changes, and are they more or less active in the treated kidney?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "activity",
+              "track": "T2"
+            },
+            {
+              "acceptance_criteria": [
+                "Report carries method, package versions, design formula, contrast, thresholds, n tested, n DE per method, and session info with the seed",
+                "Gene table carries unshrunken log2FC, shrunken (apeglm) log2FC, and lfcSE per gene, ranked on the shrunken value; p-values from the unshrunken fit",
+                "MA plot and dispersion plot precede the gene tables, with one line on what each shows",
+                "Two-method comparison table: DESeq2-only, edgeR-only, and intersection gene sets; intersection presented as high-confidence",
+                "Enrichment and TF-activity sections state database, release, rank metric, universe, size window, method and multiple-testing correction, plus the method-dependence caveat",
+                "All tables written as CSV alongside the figures; NA causes (Cook's outlier vs independent filter) quantified in the DE section"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+                "report: leading_edge = per_significant_set (doi:10.1073/pnas.0506580102)",
+                "report: enrichment_caveat = method_dependence (doi:10.1093/bib/bbz158)",
+                "report: enrichment_report = database, version, rank_metric, universe, size_window (doi:10.1371/journal.pcbi.1009935)",
+                "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+                "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+                "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)",
+                "report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)",
+                "report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)"
+              ],
+              "caveats": [
+                "State that the Salmon-derived counts were already gene-level, so the tximport length-offset correction was not applicable and differential transcript usage is out of scope",
+                "Present enrichment sets and TF activities as hypotheses consistent with the DE result, not as independent proofs"
+              ],
+              "context": "Consumes the artifacts of T1S1-T1S3, T2S1, and T2S2: QC plots, DESeq2 results table, edgeR comparison, fgsea tables, TF activity tables. Dataset: 12,000 genes x 12 samples, aldosterone-treated vs vehicle kidney, human.",
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T2S1",
+                "T2S2"
+              ],
+              "description": "Consolidate the DE table (high-confidence intersection of DESeq2 and edgeR QL), fit diagnostics, enrichment results, and TF activities into one report with methods, versions, design, thresholds, tested/DE counts, leading edges, and a reproducibility record.",
+              "grounding": {
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report consolidates all tracks; ungrounded skeleton entry kept with the report rules as claims",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded"
+              },
+              "id": "T1S4",
+              "name": "Integrated report of DE, robustness, pathways, and TF activities",
+              "packages": [],
+              "question": "What changed between aldosterone-treated and vehicle kidney samples, which transcription factors sit behind it, and how reproducible is each call?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "report",
+              "track": "T1"
+            }
+          ],
+          "title": "Aldosterone vs vehicle kidney DE + TF activity"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

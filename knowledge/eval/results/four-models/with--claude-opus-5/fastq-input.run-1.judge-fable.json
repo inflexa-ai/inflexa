@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 1,
+    "low_count_filter": 1,
+    "normalization": 1,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 2
+  },
+  "rationale": "The planner correctly recognized that raw paired-end FASTQs with no quantifier and no index cannot be tested, and stopped with a clear, design-specific question naming Salmon/kallisto/STAR and a GRCh38 reference, which matches the reference outcome; it did not invent a count matrix. It omitted the annotation version from the question and did not state the conditional downstream plan (DESeq2/edgeR, BH at 0.05, low-power caveat for n=3 per group), so nothing is stated about QC, filtering, normalization, formula/contrast, or FDR/shrinkage. Enrichment is correctly absent. Reporting content is essentially limited to the clarification itself."
+}

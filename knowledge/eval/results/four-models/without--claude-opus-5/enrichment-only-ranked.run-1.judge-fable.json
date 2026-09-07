@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly consumes the existing DESeq2 table rather than redoing DE, runs preranked fgsea multilevel on the full 12,000-gene list with an explicitly stated ranking metric (Wald stat first, with justified fallbacks and a warning about shrunken LFC), against the named human Hallmark collection with MSigDB version, fgsea version, fixed seed, size window, BH at 0.05 across the 50 sets, and per-set leading edges. It handles independent-filtering NAs and duplicates explicitly, resolves the sign convention against metadata, and quantifies sample_01's depth deficit with a stated policy for interpreting low-base_mean-driven hits. Minor gaps: minSize=10 rather than 15, no PCA/sample-distance view of the count matrix (arguably beyond scope here), and normalization/formula criteria are only indirectly addressed since DE is not re-run. Reporting is thorough, with tested/significant counts, parameters, and design caveats named."
+}

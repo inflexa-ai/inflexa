@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan targets exactly the interaction coefficient of a full ~genotype + treatment + genotype:treatment DESeq2 fit, with explicit WT/vehicle reference levels, an LRT against the additive reduced model, and a cell-means ~group refit for the within-genotype simple effects and a verified difference-of-differences contrast; this matches the reference precisely. QC (library sizes, VST PCA by genotype and treatment, sample distances, dispersion) precedes inference with a stated keep-but-flag outlier policy, normalization is size factors on raw counts inside the model, and BH at alpha 0.05 with apeglm/ashr shrinkage reserved for effect-size ranking is stated. The filter (>=10 counts in >=4 samples) is sensible but its tie to the smallest group size is not spelled out, the enrichment step names collections, metric, size window and seed but no collection version, and the report does not commit to stating package versions, which costs a point or two on those criteria."
+}

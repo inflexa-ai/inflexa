@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 3,
+    "low_count_filter": 1,
+    "normalization": 1,
+    "model_formula_contrasts": 2,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 2
+  },
+  "rationale": "The planner reached the correct outcome: it recognized that a gene-level count matrix cannot answer an isoform-switch question and stopped to request the per-sample Salmon quant.sf files or a transcript-level matrix with a tx2gene map, without inventing a transcript matrix or misreporting DE genes as switches; it did not ask for the annotation version. It also acknowledged sample_01's ~4x-low library size, which counts as a minimal QC concern but not a stated QC procedure. Because no plan was submitted, nothing is stated about the downstream DTU method (DRIMSeq/DEXSeq with tximport scaledTPM, dmFilter, gene- and transcript-level tests, stageR at overall FDR 0.05), normalization, filtering, multiple-testing control, or report content, so those criteria score near zero on what is stated. Enrichment is not warranted and is correctly absent."
+}

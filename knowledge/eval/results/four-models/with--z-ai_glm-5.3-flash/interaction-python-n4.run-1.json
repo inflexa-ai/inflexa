@@ -1,0 +1,232 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "interaction-python-n4",
+  "run": 1,
+  "startedAt": "2026-09-07T04:13:18.105Z",
+  "elapsedMs": 123129,
+  "outcome": "error",
+  "error": "Plan generation failed: Provider call failed for analysis:eval-four-models-with-interaction-python-n4-1: Upstream error from NextBit: upstream model did not return a valid tool call for the requested tool_choice",
+  "usage": {
+    "inputTokens": 158039,
+    "outputTokens": 1779,
+    "cacheReadInputTokens": 95744,
+    "reasoningTokens": 655
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 4,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "preferred_language": "python",
+        "extra_analyses": [
+          "pathway_activity"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 4,
+        "n_per_group_min": 4,
+        "n_per_group_max": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "PyDESeq2 vst-equivalent QC: median-of-ratios normalized counts, log2 transform, PCA on top 500 variance genes, sample distance heatmap",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "log2_normalized_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "minimal pre-filter: keep genes with >=10 counts in >=4 samples (smallest group size)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 4
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "design '~genotype + treatment + genotype:treatment', reference levels WT and vehicle set explicitly",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "design_terms",
+                "value": "genotype,treatment,genotype:treatment"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "PyDESeq2 Wald test on interaction coefficient genotypeKO.treatmentdrug plus simple effects (drug effect in WT, drug effect in KO)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "interaction"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg at alpha 0.05 within each contrast",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "decoupler-Python: per-contrast statistics, gene-set activity via ulm on WikiPathways human gene sets (15-500 member window), per contrast",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "gene_sets",
+                "value": "wikipathways_human_gmt"
+              },
+              {
+                "name": "min_set_size",
+                "value": 15
+              },
+              {
+                "name": "max_set_size",
+                "value": 500
+              },
+              {
+                "name": "per_contrast",
+                "value": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "n_groups": 4,
+        "n_per_group_max": 4,
+        "n_per_group_min": 4,
+        "organism": "human",
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "preferred_language": "python",
+        "question": "differential_expression",
+        "steps": [
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg false discovery rate with independent filtering (PyDESeq2 DeseqStats padj)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "Pathway activity with decoupleR mlm on the PROGENy footprint model",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "fallback_gene_sets",
+                "value": "wikipathways_human_gmt_local"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

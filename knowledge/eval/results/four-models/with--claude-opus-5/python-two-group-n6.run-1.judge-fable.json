@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every axis: PyDESeq2 Wald test with median-of-ratios normalization inside the model, ~condition with control explicitly set as reference and the contrast named, BH at a stated alpha with independent filtering and apeglm-style shrinkage kept beside the unshrunken estimate, and no R anywhere. QC is concrete and design-specific (library sizes, detected genes, size factors, blind-VST PCA and distance heatmap, an explicit keep/inspect/report policy for sample_01 plus a sensitivity re-run). The pre-filter (>=10 counts in >=6 samples) is minimal and justified by the smallest group size, though slightly stricter than strictly necessary given independent filtering. Enrichment uses gseapy prerank on the full list ranked by the Wald statistic, MSigDB Hallmark with version 2026.1, 15-500 size window, fixed seed, and the report section enumerates methods, versions, design, thresholds, tested/significant counts, diagnostics and caveats."
+}

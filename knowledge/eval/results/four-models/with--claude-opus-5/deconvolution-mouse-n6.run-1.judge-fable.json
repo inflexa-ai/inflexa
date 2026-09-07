@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every decisive point: it rejects the human references (EPIC, quanTIseq, MCP-counter, CIBERSORT) for mouse symbols, runs mMCP-counter 1.1.0 on a linear CPM matrix, states that scores are comparable only within a population, tests each population between groups on the 12 mice as units with BH across the populations and effect sizes with CIs, and keeps sample_01 with its depth reported and inspected on PCA and the score matrix. QC, the minimal 10-in-6 filter, median-of-ratios size factors, the explicit isotype reference level and contrast direction, and the marker-share reporting are all stated. Minor deductions: limma on ~11 population scores is a slightly unusual stand-in for the reference's t-test/Wilcoxon, and no alpha is named for the BH threshold. Enrichment is correctly omitted and the report section names versions, marker resources, marker coverage, and the interpretive limits."
+}

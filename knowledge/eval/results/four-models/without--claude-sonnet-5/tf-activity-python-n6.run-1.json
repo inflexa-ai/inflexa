@@ -1,0 +1,542 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "tf-activity-python-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T21:47:58.548Z",
+  "elapsedMs": 76213,
+  "outcome": "plan_submitted",
+  "planId": "pln-969f394b",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 differential expression, aldosterone vs vehicle",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Verify metadata.csv condition column values (e.g. 'aldosterone'/'vehicle') and their exact factor level names before setting the DESeq2 reference level.",
+          "12x12000 counts matrix is small; this step is fast and memory-light."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes are differentially expressed in aldosterone-treated vs vehicle-treated kidney samples (6 vs 6, unpaired)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "PyDESeq2 DeseqDataSet + DeseqStats run with condition as the design factor, contrast treated vs control",
+          "Output table has one row per gene with baseMean, log2FoldChange, stat (Wald statistic), pvalue, padj for all ~12000 genes",
+          "Genes with all-zero counts are filtered before fitting",
+          "Output saved as a CSV usable by all four downstream TF-inference steps"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "TF activity via CollecTRI + decoupler ULM",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The provisioned CollecTRI file is CSV not the package's built-in omnipath fetch — read directly and pass as net to decoupler, renaming columns to source/target/weight if needed.",
+          "Confirm gene symbols in counts match HGNC symbols used in CollecTRI; unmatched symbols simply drop out silently."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Using the DE statistic (Wald stat) from T1S1 as the gene-level signature, which transcription factors have the most significantly shifted activity per the CollecTRI literature-curated regulon network?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "CollecTRI human regulon network loaded from the provisioned reference file (source/target/weight CSV) — do not re-derive from decoupler's online omnipath call, use the staged file",
+          "decoupler dc.mt.ulm (or equivalent univariate linear model) run on the single-contrast DE stat vector against the CollecTRI network with a minimum target filter (tmin>=5)",
+          "Output ranks all TFs by ULM score and adjusted p-value",
+          "Top 6 activated (positive score) and top 6 repressed (negative score) TFs reported by significance"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "TF activity via DoRothEA (confidence A-C) + decoupler",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "dorothea_hs.rda is an R object; load via rpy2 (robjects.r['load']) rather than assuming a Python-native reader exists.",
+          "DoRothEA and CollecTRI overlap substantially in TF-target edges but are not identical resources — report both independently rather than merging silently."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "rpy2"
+        ],
+        "question": "Using the same DE statistic as T1S1, which TFs show shifted activity per the DoRothEA A-C confidence regulons, as an independent check on the CollecTRI-based call?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DoRothEA human regulons loaded from the provisioned .rda file via rpy2 (R object dorothea_hs), filtered to confidence levels A, B, C",
+          "Columns renamed tf/target/mor -> source/target/weight for decoupler compatibility",
+          "decoupler ULM (or MLM) run on the DE stat vector against this network with tmin>=5",
+          "Output ranks all TFs by score and adjusted p-value; top 6 activated and top 6 repressed TFs reported"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "TF target-set enrichment via MSigDB GTRD ChIP-seq sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GTRD sets mean 'TF binds near TSS', not 'TF regulates' — do not present this as equivalent evidence to the signed regulon results from T2S1/T2S2.",
+          "506 sets tested; apply FDR correction across the full test, not per-subset."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which TFs' ChIP-seq-derived (GTRD) bound-target gene sets are significantly enriched among genes ranked by the aldosterone-vs-vehicle DE statistic, as an unsigned orthogonal check on the curated-regulon calls?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "MSigDB C3 TFT GTRD gmt file (506 TF target sets, HGNC symbols) loaded from the provisioned reference",
+          "Pre-ranked GSEA (gseapy prerank or equivalent) run on genes ranked by the DE Wald stat against the GTRD TF sets",
+          "Output reports NES and FDR q-value per TF gene set",
+          "Top 6 TFs by positive NES and top 6 by negative NES reported, noting these sets carry no activation/repression sign (binding only) so direction reflects target-gene expression shift, not TF-mode-of-action"
+        ]
+      },
+      {
+        "id": "T2S4",
+        "name": "Hub TF identification via STRING PPI network neighborhood",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Full STRING file is ~6.9M directed edge rows before dedup and ~83MB gzipped — load with combined_score>=700 filter applied while streaming/reading to avoid holding the unfiltered file in memory.",
+          "Every STRING edge appears twice (both directions); build an undirected graph so edges aren't double-counted.",
+          "Restrict centrality computation to the induced subgraph on DE genes only, not the full 16,200-protein high-confidence graph, to keep this tractable and interpretable."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "networkx",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Among the significantly DE genes (padj<0.05) from T1S1, which transcription factors are topological hubs (high-degree, high-confidence STRING interactors) of the DE gene set, providing a network-topology line of evidence independent of any curated TF-target annotation?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "STRING human network loaded from the provisioned protein.links file, restricted to combined_score>=700, joined to gene symbols via the protein.info file",
+          "Subnetwork induced by the significantly DE gene set (padj<0.05) constructed; known human TFs within this list identified using the CollecTRI or DoRothEA source-gene lists already retrieved as the TF reference set",
+          "Degree / betweenness centrality computed for each TF node within the DE-gene induced subnetwork",
+          "Top 6 TFs by centrality reported, with the caveat that this measures connectivity among DE genes, not causal regulatory direction"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Consensus ranking of TF drivers across four methods",
+        "agent": "network-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Do not average scores across methods with incompatible scales (ULM z-like scores vs GSEA NES vs centrality) — aggregate by rank, not raw score, to avoid a scale-driven bias.",
+          "State explicitly that GTRD and STRING evidence lack directional/causal interpretation and should be read as corroborating, not primary, evidence for the final TF list."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Combining CollecTRI-ULM, DoRothEA-ULM, GTRD-GSEA, and STRING-hub-centrality evidence, which 6 transcription factors most consistently and strongly explain the aldosterone-vs-vehicle response, and where do the four methods disagree?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1",
+          "T2S2",
+          "T2S3",
+          "T2S4"
+        ],
+        "acceptance_criteria": [
+          "All four method outputs (T2S1-T2S4) merged on TF gene symbol into one table with each method's rank/score/significance side by side",
+          "A rank-aggregation score (e.g. mean or median rank across methods that returned a call for that TF) computed per TF",
+          "Final report lists top 6 consensus TFs overall, plus separately notes any TF that ranks top-6 in only one method (flagged as method-specific, not consensus)",
+          "Direction (activated vs repressed in aldosterone-treated) reported per TF using the signed methods (T2S1, T2S2) since T2S3/T2S4 do not carry reliable sign"
+        ]
+      }
+    ],
+    "title": "Aldosterone vs vehicle kidney: TF activity drivers via 4 models",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "Design: 6 aldosterone-treated vs 6 vehicle kidney samples, unpaired single-batch bulk RNA-seq (raw Salmon gene counts, 12000 genes x 12 samples). The question asks which TFs drive the treated-vs-control response, framed against an eval that names 'four models without TF activity' — the intended comparison is across multiple TF-inference approaches so the differences/robustness of the call are visible, not a single black-box answer. Step 1 runs a standard PyDESeq2 differential expression (treated vs control, Wald test) on the raw counts to get a stable gene-level statistic (t-stat/stat column, log2FC, padj) that all downstream TF methods consume as their bulk signature — this avoids re-deriving DE per method and keeps the comparison of TF methods apples-to-apples on the same input signature. Steps 2-5 then infer TF activity from that single DE signature using four distinct network priors/algorithms available in this environment: (a) decoupler ULM against CollecTRI (literature-curated, signed, largest human coverage — decoupler's own recommended default), (b) decoupler ULM/MLM against DoRothEA confidence A-C regulons (independent curated resource, different edge set, gives a check on CollecTRI-driven calls), (c) a GSEA/ORA-style enrichment of the DE gene ranking against the MSigDB C3 GTRD transcription-factor-target sets (ChIP-seq-derived, unsigned, orthogonal evidence type — 'is this TF's bound targets shifted', independent of curated literature regulons), and (d) a network-diffusion / neighborhood-enrichment style approach using the STRING PPI network to identify hub regulators among the DE genes (network topology evidence, independent of any curated TF-target annotation). Step 6 integrates the four TF activity/enrichment outputs into one ranked consensus table (rank aggregation across methods) and reports the top 6 TFs per direction (activated / repressed) as requested, explicitly flagging where the four methods agree vs disagree so the user sees method-dependent robustness rather than a single unqualified answer."
+  },
+  "usage": {
+    "inputTokens": 1287641,
+    "outputTokens": 5493,
+    "cacheCreationInputTokens": 156738,
+    "cacheReadInputTokens": 1130699,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "pydeseq2",
+          "gseapy",
+          "blitzgsea"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/decoupler",
+        "query": "TF activity inference from bulk RNA-seq differential expression using CollecTRI, ulm/mlm method, contrast t-statistics"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "pydeseq2",
+        "query": "DESeq2 python two group differential expression workflow"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/pydeseq2",
+        "query": "DeseqDataSet DeseqStats two group design condition treated vs control workflow"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "MSigDB C3 TFT legacy motif"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "aldosterone kidney transcription factor NR3C2 mineralocorticoid receptor renal transcriptome",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene symbol id mapping human GTF"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wgcna network coexpression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "RcisTarget motif"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "trrust"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulatory-networks",
+        "limit": 50
+      }
+    },
+    {
+      "name": "report_blocker",
+      "input": {
+        "reason": "placeholder"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Aldosterone vs vehicle kidney: TF activity drivers via 4 models",
+          "analytical_narrative": "Design: 6 aldosterone-treated vs 6 vehicle kidney samples, unpaired single-batch bulk RNA-seq (raw Salmon gene counts, 12000 genes x 12 samples). The question asks which TFs drive the treated-vs-control response, framed against an eval that names 'four models without TF activity' — the intended comparison is across multiple TF-inference approaches so the differences/robustness of the call are visible, not a single black-box answer. Step 1 runs a standard PyDESeq2 differential expression (treated vs control, Wald test) on the raw counts to get a stable gene-level statistic (t-stat/stat column, log2FC, padj) that all downstream TF methods consume as their bulk signature — this avoids re-deriving DE per method and keeps the comparison of TF methods apples-to-apples on the same input signature. Steps 2-5 then infer TF activity from that single DE signature using four distinct network priors/algorithms available in this environment: (a) decoupler ULM against CollecTRI (literature-curated, signed, largest human coverage — decoupler's own recommended default), (b) decoupler ULM/MLM against DoRothEA confidence A-C regulons (independent curated resource, different edge set, gives a check on CollecTRI-driven calls), (c) a GSEA/ORA-style enrichment of the DE gene ranking against the MSigDB C3 GTRD transcription-factor-target sets (ChIP-seq-derived, unsigned, orthogonal evidence type — 'is this TF's bound targets shifted', independent of curated literature regulons), and (d) a network-diffusion / neighborhood-enrichment style approach using the STRING PPI network to identify hub regulators among the DE genes (network topology evidence, independent of any curated TF-target annotation). Step 6 integrates the four TF activity/enrichment outputs into one ranked consensus table (rank aggregation across methods) and reports the top 6 TFs per direction (activated / repressed) as requested, explicitly flagging where the four methods agree vs disagree so the user sees method-dependent robustness rather than a single unqualified answer.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DESeq2 differential expression, aldosterone vs vehicle",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed in aldosterone-treated vs vehicle-treated kidney samples (6 vs 6, unpaired)?",
+              "acceptance_criteria": [
+                "PyDESeq2 DeseqDataSet + DeseqStats run with condition as the design factor, contrast treated vs control",
+                "Output table has one row per gene with baseMean, log2FoldChange, stat (Wald statistic), pvalue, padj for all ~12000 genes",
+                "Genes with all-zero counts are filtered before fitting",
+                "Output saved as a CSV usable by all four downstream TF-inference steps"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Verify metadata.csv condition column values (e.g. 'aldosterone'/'vehicle') and their exact factor level names before setting the DESeq2 reference level.",
+                "12x12000 counts matrix is small; this step is fast and memory-light."
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "TF activity via CollecTRI + decoupler ULM",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Using the DE statistic (Wald stat) from T1S1 as the gene-level signature, which transcription factors have the most significantly shifted activity per the CollecTRI literature-curated regulon network?",
+              "acceptance_criteria": [
+                "CollecTRI human regulon network loaded from the provisioned reference file (source/target/weight CSV) — do not re-derive from decoupler's online omnipath call, use the staged file",
+                "decoupler dc.mt.ulm (or equivalent univariate linear model) run on the single-contrast DE stat vector against the CollecTRI network with a minimum target filter (tmin>=5)",
+                "Output ranks all TFs by ULM score and adjusted p-value",
+                "Top 6 activated (positive score) and top 6 repressed (negative score) TFs reported by significance"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "The provisioned CollecTRI file is CSV not the package's built-in omnipath fetch — read directly and pass as net to decoupler, renaming columns to source/target/weight if needed.",
+                "Confirm gene symbols in counts match HGNC symbols used in CollecTRI; unmatched symbols simply drop out silently."
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "TF activity via DoRothEA (confidence A-C) + decoupler",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Using the same DE statistic as T1S1, which TFs show shifted activity per the DoRothEA A-C confidence regulons, as an independent check on the CollecTRI-based call?",
+              "acceptance_criteria": [
+                "DoRothEA human regulons loaded from the provisioned .rda file via rpy2 (R object dorothea_hs), filtered to confidence levels A, B, C",
+                "Columns renamed tf/target/mor -> source/target/weight for decoupler compatibility",
+                "decoupler ULM (or MLM) run on the DE stat vector against this network with tmin>=5",
+                "Output ranks all TFs by score and adjusted p-value; top 6 activated and top 6 repressed TFs reported"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "rpy2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "dorothea_hs.rda is an R object; load via rpy2 (robjects.r['load']) rather than assuming a Python-native reader exists.",
+                "DoRothEA and CollecTRI overlap substantially in TF-target edges but are not identical resources — report both independently rather than merging silently."
+              ]
+            },
+            {
+              "id": "T2S3",
+              "name": "TF target-set enrichment via MSigDB GTRD ChIP-seq sets",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which TFs' ChIP-seq-derived (GTRD) bound-target gene sets are significantly enriched among genes ranked by the aldosterone-vs-vehicle DE statistic, as an unsigned orthogonal check on the curated-regulon calls?",
+              "acceptance_criteria": [
+                "MSigDB C3 TFT GTRD gmt file (506 TF target sets, HGNC symbols) loaded from the provisioned reference",
+                "Pre-ranked GSEA (gseapy prerank or equivalent) run on genes ranked by the DE Wald stat against the GTRD TF sets",
+                "Output reports NES and FDR q-value per TF gene set",
+                "Top 6 TFs by positive NES and top 6 by negative NES reported, noting these sets carry no activation/repression sign (binding only) so direction reflects target-gene expression shift, not TF-mode-of-action"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "GTRD sets mean 'TF binds near TSS', not 'TF regulates' — do not present this as equivalent evidence to the signed regulon results from T2S1/T2S2.",
+                "506 sets tested; apply FDR correction across the full test, not per-subset."
+              ]
+            },
+            {
+              "id": "T2S4",
+              "name": "Hub TF identification via STRING PPI network neighborhood",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Among the significantly DE genes (padj<0.05) from T1S1, which transcription factors are topological hubs (high-degree, high-confidence STRING interactors) of the DE gene set, providing a network-topology line of evidence independent of any curated TF-target annotation?",
+              "acceptance_criteria": [
+                "STRING human network loaded from the provisioned protein.links file, restricted to combined_score>=700, joined to gene symbols via the protein.info file",
+                "Subnetwork induced by the significantly DE gene set (padj<0.05) constructed; known human TFs within this list identified using the CollecTRI or DoRothEA source-gene lists already retrieved as the TF reference set",
+                "Degree / betweenness centrality computed for each TF node within the DE-gene induced subnetwork",
+                "Top 6 TFs by centrality reported, with the caveat that this measures connectivity among DE genes, not causal regulatory direction"
+              ],
+              "packages": [
+                "networkx",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "Full STRING file is ~6.9M directed edge rows before dedup and ~83MB gzipped — load with combined_score>=700 filter applied while streaming/reading to avoid holding the unfiltered file in memory.",
+                "Every STRING edge appears twice (both directions); build an undirected graph so edges aren't double-counted.",
+                "Restrict centrality computation to the induced subgraph on DE genes only, not the full 16,200-protein high-confidence graph, to keep this tractable and interpretable."
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Consensus ranking of TF drivers across four methods",
+              "track": "T3",
+              "step_type": "analysis",
+              "question": "Combining CollecTRI-ULM, DoRothEA-ULM, GTRD-GSEA, and STRING-hub-centrality evidence, which 6 transcription factors most consistently and strongly explain the aldosterone-vs-vehicle response, and where do the four methods disagree?",
+              "acceptance_criteria": [
+                "All four method outputs (T2S1-T2S4) merged on TF gene symbol into one table with each method's rank/score/significance side by side",
+                "A rank-aggregation score (e.g. mean or median rank across methods that returned a call for that TF) computed per TF",
+                "Final report lists top 6 consensus TFs overall, plus separately notes any TF that ranks top-6 in only one method (flagged as method-specific, not consensus)",
+                "Direction (activated vs repressed in aldosterone-treated) reported per TF using the signed methods (T2S1, T2S2) since T2S3/T2S4 do not carry reliable sign"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2",
+                "T2S3",
+                "T2S4"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "Do not average scores across methods with incompatible scales (ULM z-like scores vs GSEA NES vs centrality) — aggregate by rank, not raw score, to avoid a scale-driven bias.",
+                "State explicitly that GTRD and STRING evidence lack directional/causal interpretation and should be read as corroborating, not primary, evidence for the final TF list."
+              ]
+            }
+          ],
+          "created_at": "2026-09-07T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

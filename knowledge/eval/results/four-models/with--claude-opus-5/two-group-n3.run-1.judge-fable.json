@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every substantive point: DESeq2 Wald on raw counts with median-of-ratios inside the model, a minimal >=10-in->=3 filter tied to the smallest group, ~condition with control releveled as reference and the contrast named, BH at 0.05 with apeglm shrinkage, and an explicit statement that power is low at n=3 without loosening alpha. Blind-VST PCA, sample-distance heatmap and library sizes precede the test, but the outlier policy stops at 'name it, do not remove it' with no stated downstream action (e.g., sensitivity refit), so QC is slightly short of a full policy. The edgeR QL intersection as the 'high-confidence' set is defensible but compounds conservatism at three replicates and is not part of the reference method, hence a minor deduction on fit. Enrichment is correctly omitted with justification, and the report specification is complete including versions, counts tested and significant, NA accounting, and the tximport length-offset caveat."
+}

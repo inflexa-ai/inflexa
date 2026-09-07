@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 size factors and blind VST, a minimal filter (>=10 counts in >=6 samples, tied to the smallest group), UCell rank-based scoring over the named Hallmark collection with per-signature gene coverage reported, and a per-signature two-group t-test with BH across the 50 signatures and group means/direction reported. QC is concrete for this dataset, keeps sample_01 with a stated keep/inspect policy and a sensitivity re-run. The contrast is stated only as a t-test on condition without an explicit design formula or reference level, and the 'Welch t-test = limma-equivalent' claim is loose; a row-scaled score heatmap annotated by condition is not planned. Otherwise reporting covers versions, thresholds, counts, and the n=6 power caveat."
+}

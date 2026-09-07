@@ -1,0 +1,548 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "strandedness-unknown-n3",
+  "run": 1,
+  "startedAt": "2026-09-06T21:15:42.546Z",
+  "elapsedMs": 99446,
+  "outcome": "plan_submitted",
+  "planId": "pln-e5ec8ddb",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Count matrix and metadata QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "This is a sanity check on the counts already provided, not a re-alignment or re-quantification — no FASTQ/BAM is available in this environment to redo counting",
+          "Do not silently drop samples on the basis of this QC; report anomalies and let the DE step account for them explicitly if needed"
+        ],
+        "context": "Raw integer gene-level counts from STAR/featureCounts, 12000 genes x 6 samples (3 treated, 3 control), single batch, unpaired. The data context explicitly flags uncertainty about whether the counts are correct, so basic count-level sanity checks must be run before modeling.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Are the 12000x6 raw counts internally consistent (library sizes, gene detection, zero-inflation, sample correlation) with the 3 treated vs 3 control design in metadata.csv, and is there any technical anomaly suggesting the counts are unreliable?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports per-sample library size (total counts), number of genes with zero counts across all samples, and number of genes detected (count>0) per sample",
+          "Reports a sample-sample correlation/clustering (e.g. on log-CPM) to check that replicates group by condition and no sample is an outlier",
+          "Flags any sample whose library size or detection rate deviates >2x from the group median as a QC concern",
+          "Confirms metadata.csv sample IDs match counts.csv column names exactly, and reports the 3v3 group assignment used downstream"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Antisense/overlapping-gene strandedness ambiguity flag",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "GTF is ~125MB gzipped; parse gene-level records only (feature type 'gene') rather than loading all exon/transcript records, to keep this tractable",
+          "Gene symbol matching between the GTF (gene_name field) and the counts.csv first column may have partial mismatches (versioned IDs, symbol synonyms) — report the join rate",
+          "This step produces an annotation flag, not a strandedness determination; do not overstate its conclusiveness"
+        ],
+        "context": "The library strandedness was not recorded at counting time. No aligned reads (BAM) or RSeQC-style tool is available in this sandbox to directly infer strandedness from reads, so the check must be done at the annotation level: identify genes whose loci overlap an antisense neighbor, since these are the genes whose featureCounts values would differ most between stranded and unstranded settings. Use the GENCODE human v50 GTF (GRCh38, chr-prefixed contigs) staged in this environment.",
+        "maxSteps": 200,
+        "packages": [
+          "rtracklayer",
+          "GenomicFeatures",
+          "data.table"
+        ],
+        "question": "Which of the 12000 profiled genes sit in antisense or overlapping genomic loci (per GENCODE v50 GRCh38 annotation), making their count values sensitive to the unknown library strandedness, and are there patterns in the count data consistent with unstranded (or stranded) counting?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 12
+        },
+        "step_type": "annotation",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Produces a gene-level flag table marking which of the 12000 genes overlap another annotated gene on the opposite strand, using the GENCODE v50 GTF gene coordinates and strand field",
+          "Reports the fraction of the 12000-gene panel that is antisense-ambiguous, for comparison against the ~19% genome-wide figure reported in Zhao et al. 2015 (PMID 26334759)",
+          "States explicitly that this analysis cannot determine which strandedness protocol was used at counting — it only identifies which genes' DE calls are most exposed to that unresolved uncertainty",
+          "Output is a gene list/table consumable by the DE step (T2S1) to annotate ambiguous hits"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group is small; treat marginal p-values (e.g. padj between 0.05 and 0.1) as suggestive, not confirmed",
+          "Do not attempt to re-run featureCounts with a guessed strand setting — the raw counts are the only input and cannot be recomputed here",
+          "Report both the raw DE gene list and the strandedness-ambiguity-flagged subset separately, so downstream enrichment is not silently contaminated by low-confidence calls"
+        ],
+        "context": "n=3 per group, unpaired, single batch — DESeq2's negative-binomial model with default Wald test and BH correction is appropriate. Only 6 samples total, so a robust/independent-filtering default should be used rather than any custom low-power modification.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "pandas"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between the 3 treated and 3 control liver samples (unpaired, single batch, raw STAR/featureCounts counts)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Runs DESeq2 with the two-group design (~condition) on raw integer counts, treated vs control as the contrast",
+          "Reports a full results table (log2FoldChange, p-value, BH-adjusted p-value/padj) for all 12000 genes, plus a subset table of genes at padj<0.05",
+          "Includes a PCA or sample-distance plot to visually confirm the treated/control grouping seen in the QC step (T1S1)",
+          "Cross-references the DE results against the antisense-ambiguity flag from T1S2: reports, for the significant gene set, how many fall in the ambiguous/overlapping-gene category and flags those explicitly as lower-confidence given the unknown strandedness",
+          "States the strandedness caveat directly in the results narrative: because strand setting at counting is unknown, genes overlapping an antisense neighbor may show inflated, deflated, or spurious counts, and their DE calls should be interpreted cautiously regardless of statistical significance"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "3",
+        "status": "pending",
+        "caveats": [
+          "With only 12000 genes profiled (not full transcriptome) and n=3 per group, enrichment power is limited — report this explicitly rather than treating any single pathway hit as confirmed mechanism",
+          "If the antisense-ambiguous gene set is significantly enriched among DE hits, state this as evidence the strandedness uncertainty may be materially affecting the biological conclusions, not just individual gene calls"
+        ],
+        "context": "Human liver gene expression, treated vs control DE list from T2S1. Reactome pathway gene sets, MSigDB Hallmark human gene sets, and WikiPathways human gene sets are staged in this environment and organism-matched (Homo sapiens).",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which biological pathways/processes are enriched among the genes differentially expressed between treated and control liver samples, and is the antisense-ambiguous gene set disproportionately represented among the significant DE hits (a possible strandedness-artifact signal)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Runs over-representation or GSEA-style enrichment (e.g. fgsea or clusterProfiler) on the DESeq2 result ranked by log2FoldChange or signed -log10(p), against Reactome pathways, MSigDB Hallmark, and WikiPathways human gene sets staged in this environment",
+          "Reports top enriched pathways/gene sets with adjusted p-values (BH/FDR) for the treated-vs-control contrast",
+          "Tests whether the antisense-ambiguous gene set (from T1S2) is over-represented among the significant DE genes (e.g. Fisher's exact test) and reports the result as a caveat on the enrichment findings, not as a biological conclusion",
+          "Clearly separates pathway hits driven predominantly by ambiguous/overlapping genes from those driven by unambiguous genes"
+        ]
+      }
+    ],
+    "title": "Liver drug-treatment DE with strandedness QC gate",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The count matrix (12000 genes x 6 samples, 3 treated vs 3 control, unpaired, single batch, STAR/featureCounts gene-level integer counts) is the sole quantitative input, and the data profile itself flags two problems that must be resolved before any differential-expression call can be trusted: (1) the library strandedness used at counting was never recorded, and (2) there is explicit uncertainty about whether the counts are correct. Because no BAM/FASTQ files, no strand-specific QC tool (RSeQC infer_experiment.py is not installed, and no aligned reads are staged), and no re-counting pipeline are available in this environment, strandedness cannot be re-verified experimentally from raw reads — it can only be interrogated indirectly from the gene-level counts already provided. Track 1 therefore runs a diagnostic step that uses the GENCODE human GTF (v50, GRCh38) to identify antisense/overlapping-gene pairs among the 12000 profiled genes and checks whether their count patterns are consistent with a stranded vs unstranded protocol (Zhao et al. 2015, PMID 26334759, showed ~19% of human genes overlap antisense and that unstranded counting measurably inflates/confounds their apparent expression) — this cannot prove which protocol was used, but it can flag genes whose DE calls are least trustworthy given the ambiguity, and it performs basic count sanity QC (library size, gene detection rate, duplicate/zero-inflation checks) to address the second uncertainty. Track 2 then runs the actual DE analysis with DESeq2 on raw counts (the standard, protocol-robust approach that does not require strand information for the primary contrast, since strandedness affects the counting of overlapping/antisense loci specifically, not the global count validity), explicitly flagging any DE hits that fall in the antisense-ambiguous gene set identified in track 1 as lower-confidence. Track 3 contextualizes the resulting DE gene list with pathway enrichment (Reactome, MSigDB Hallmark, WikiPathways human, all staged for human) to give a biologically interpretable readout of what the treatment does in liver, and reports separately whether the ambiguous-gene set is enriched among the DE hits, which would itself be a warning sign of a strandedness artifact."
+  },
+  "usage": {
+    "inputTokens": 1945730,
+    "outputTokens": 6431,
+    "cacheCreationInputTokens": 116988,
+    "cacheReadInputTokens": 1828358,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human gene annotation GTF"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human",
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "liver"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtf annotation exon length"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "normal-expression",
+        "category": "normal-expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "",
+        "category": "normal-expression",
+        "limit": 50
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/gencode-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/gencode-human/50"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtex"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "fgsea",
+          "rnanorm",
+          "pheatmap",
+          "EnhancedVolcano"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "Rsubread",
+          "GenomicFeatures",
+          "rtracklayer",
+          "org.Hs.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "AnnotationDbi"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq library strandedness unknown detect infer_experiment featureCounts",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq strand-specific library detection quality control salmon",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "infer_experiment.py RSeQC strandedness inference",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSeQC quality control RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "rseqc"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "salmon"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "bam"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pysam",
+          "Rsamtools"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "biotools",
+          "featurecounts"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "star"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "samtools"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "language": "cli"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "language": "cli",
+        "limit": 200
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {}
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtex tissue expression"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "pydeseq2 python differential expression bulk RNA-seq",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "strand-specific RNA sequencing artifacts gene counting antisense",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "strand specific RNA-seq protocol comparison gene expression quantification",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "26334759"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treatment DE with strandedness QC gate",
+          "analytical_narrative": "The count matrix (12000 genes x 6 samples, 3 treated vs 3 control, unpaired, single batch, STAR/featureCounts gene-level integer counts) is the sole quantitative input, and the data profile itself flags two problems that must be resolved before any differential-expression call can be trusted: (1) the library strandedness used at counting was never recorded, and (2) there is explicit uncertainty about whether the counts are correct. Because no BAM/FASTQ files, no strand-specific QC tool (RSeQC infer_experiment.py is not installed, and no aligned reads are staged), and no re-counting pipeline are available in this environment, strandedness cannot be re-verified experimentally from raw reads — it can only be interrogated indirectly from the gene-level counts already provided. Track 1 therefore runs a diagnostic step that uses the GENCODE human GTF (v50, GRCh38) to identify antisense/overlapping-gene pairs among the 12000 profiled genes and checks whether their count patterns are consistent with a stranded vs unstranded protocol (Zhao et al. 2015, PMID 26334759, showed ~19% of human genes overlap antisense and that unstranded counting measurably inflates/confounds their apparent expression) — this cannot prove which protocol was used, but it can flag genes whose DE calls are least trustworthy given the ambiguity, and it performs basic count sanity QC (library size, gene detection rate, duplicate/zero-inflation checks) to address the second uncertainty. Track 2 then runs the actual DE analysis with DESeq2 on raw counts (the standard, protocol-robust approach that does not require strand information for the primary contrast, since strandedness affects the counting of overlapping/antisense loci specifically, not the global count validity), explicitly flagging any DE hits that fall in the antisense-ambiguous gene set identified in track 1 as lower-confidence. Track 3 contextualizes the resulting DE gene list with pathway enrichment (Reactome, MSigDB Hallmark, WikiPathways human, all staged for human) to give a biologically interpretable readout of what the treatment does in liver, and reports separately whether the ambiguous-gene set is enriched among the DE hits, which would itself be a warning sign of a strandedness artifact.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Count matrix and metadata QC",
+              "track": "1",
+              "step_type": "qc",
+              "question": "Are the 12000x6 raw counts internally consistent (library sizes, gene detection, zero-inflation, sample correlation) with the 3 treated vs 3 control design in metadata.csv, and is there any technical anomaly suggesting the counts are unreliable?",
+              "acceptance_criteria": [
+                "Reports per-sample library size (total counts), number of genes with zero counts across all samples, and number of genes detected (count>0) per sample",
+                "Reports a sample-sample correlation/clustering (e.g. on log-CPM) to check that replicates group by condition and no sample is an outlier",
+                "Flags any sample whose library size or detection rate deviates >2x from the group median as a QC concern",
+                "Confirms metadata.csv sample IDs match counts.csv column names exactly, and reports the 3v3 group assignment used downstream"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level counts from STAR/featureCounts, 12000 genes x 6 samples (3 treated, 3 control), single batch, unpaired. The data context explicitly flags uncertainty about whether the counts are correct, so basic count-level sanity checks must be run before modeling.",
+              "caveats": [
+                "This is a sanity check on the counts already provided, not a re-alignment or re-quantification — no FASTQ/BAM is available in this environment to redo counting",
+                "Do not silently drop samples on the basis of this QC; report anomalies and let the DE step account for them explicitly if needed"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Antisense/overlapping-gene strandedness ambiguity flag",
+              "track": "1",
+              "step_type": "annotation",
+              "question": "Which of the 12000 profiled genes sit in antisense or overlapping genomic loci (per GENCODE v50 GRCh38 annotation), making their count values sensitive to the unknown library strandedness, and are there patterns in the count data consistent with unstranded (or stranded) counting?",
+              "acceptance_criteria": [
+                "Produces a gene-level flag table marking which of the 12000 genes overlap another annotated gene on the opposite strand, using the GENCODE v50 GTF gene coordinates and strand field",
+                "Reports the fraction of the 12000-gene panel that is antisense-ambiguous, for comparison against the ~19% genome-wide figure reported in Zhao et al. 2015 (PMID 26334759)",
+                "States explicitly that this analysis cannot determine which strandedness protocol was used at counting — it only identifies which genes' DE calls are most exposed to that unresolved uncertainty",
+                "Output is a gene list/table consumable by the DE step (T2S1) to annotate ambiguous hits"
+              ],
+              "packages": [
+                "rtracklayer",
+                "GenomicFeatures",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 12
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "The library strandedness was not recorded at counting time. No aligned reads (BAM) or RSeQC-style tool is available in this sandbox to directly infer strandedness from reads, so the check must be done at the annotation level: identify genes whose loci overlap an antisense neighbor, since these are the genes whose featureCounts values would differ most between stranded and unstranded settings. Use the GENCODE human v50 GTF (GRCh38, chr-prefixed contigs) staged in this environment.",
+              "caveats": [
+                "GTF is ~125MB gzipped; parse gene-level records only (feature type 'gene') rather than loading all exon/transcript records, to keep this tractable",
+                "Gene symbol matching between the GTF (gene_name field) and the counts.csv first column may have partial mismatches (versioned IDs, symbol synonyms) — report the join rate",
+                "This step produces an annotation flag, not a strandedness determination; do not overstate its conclusiveness"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "2",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are differentially expressed between the 3 treated and 3 control liver samples (unpaired, single batch, raw STAR/featureCounts counts)?",
+              "acceptance_criteria": [
+                "Runs DESeq2 with the two-group design (~condition) on raw integer counts, treated vs control as the contrast",
+                "Reports a full results table (log2FoldChange, p-value, BH-adjusted p-value/padj) for all 12000 genes, plus a subset table of genes at padj<0.05",
+                "Includes a PCA or sample-distance plot to visually confirm the treated/control grouping seen in the QC step (T1S1)",
+                "Cross-references the DE results against the antisense-ambiguity flag from T1S2: reports, for the significant gene set, how many fall in the ambiguous/overlapping-gene category and flags those explicitly as lower-confidence given the unknown strandedness",
+                "States the strandedness caveat directly in the results narrative: because strand setting at counting is unknown, genes overlapping an antisense neighbor may show inflated, deflated, or spurious counts, and their DE calls should be interpreted cautiously regardless of statistical significance"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "n=3 per group, unpaired, single batch — DESeq2's negative-binomial model with default Wald test and BH correction is appropriate. Only 6 samples total, so a robust/independent-filtering default should be used rather than any custom low-power modification.",
+              "caveats": [
+                "n=3 per group is small; treat marginal p-values (e.g. padj between 0.05 and 0.1) as suggestive, not confirmed",
+                "Do not attempt to re-run featureCounts with a guessed strand setting — the raw counts are the only input and cannot be recomputed here",
+                "Report both the raw DE gene list and the strandedness-ambiguity-flagged subset separately, so downstream enrichment is not silently contaminated by low-confidence calls"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment of DE genes",
+              "track": "3",
+              "step_type": "enrichment",
+              "question": "Which biological pathways/processes are enriched among the genes differentially expressed between treated and control liver samples, and is the antisense-ambiguous gene set disproportionately represented among the significant DE hits (a possible strandedness-artifact signal)?",
+              "acceptance_criteria": [
+                "Runs over-representation or GSEA-style enrichment (e.g. fgsea or clusterProfiler) on the DESeq2 result ranked by log2FoldChange or signed -log10(p), against Reactome pathways, MSigDB Hallmark, and WikiPathways human gene sets staged in this environment",
+                "Reports top enriched pathways/gene sets with adjusted p-values (BH/FDR) for the treated-vs-control contrast",
+                "Tests whether the antisense-ambiguous gene set (from T1S2) is over-represented among the significant DE genes (e.g. Fisher's exact test) and reports the result as a caveat on the enrichment findings, not as a biological conclusion",
+                "Clearly separates pathway hits driven predominantly by ambiguous/overlapping genes from those driven by unambiguous genes"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "context": "Human liver gene expression, treated vs control DE list from T2S1. Reactome pathway gene sets, MSigDB Hallmark human gene sets, and WikiPathways human gene sets are staged in this environment and organism-matched (Homo sapiens).",
+              "caveats": [
+                "With only 12000 genes profiled (not full transcriptome) and n=3 per group, enrichment power is limited — report this explicitly rather than treating any single pathway hit as confirmed mechanism",
+                "If the antisense-ambiguous gene set is significantly enriched among DE hits, state this as evidence the strandedness uncertainty may be materially affecting the biological conclusions, not just individual gene calls"
+              ]
+            }
+          ],
+          "created_at": "2026-09-07T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

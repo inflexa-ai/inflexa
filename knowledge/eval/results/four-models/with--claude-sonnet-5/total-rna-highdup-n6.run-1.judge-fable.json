@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses to remove duplicates without UMIs, keeps sample_01 with an explicit reported decision, and specifies DESeq2 Wald with ~condition, reference control, a justified >=10-in->=6 filter, median-of-ratios inside the model, apeglm shrinkage and BH at 0.05. The QC falls short of the reference on the library-type-specific diagnostics: it never names the per-sample rRNA fraction, mitochondrial fraction, or intronic share that would explain the duplication, and it does not state whether rRNA/mito genes are removed from the matrix before normalization. Enrichment was not asked for; the added ORA is technically sound (tested-gene universe, 15-500 window, per-collection BH) but is justified by an opaque 'knowledge check' rather than the design, and 'Reactome current' is not a version. The report step is complete on method, versions, thresholds, counts and caveats."
+}

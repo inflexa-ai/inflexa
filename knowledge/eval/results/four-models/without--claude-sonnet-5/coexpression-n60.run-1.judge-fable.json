@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 5,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly uses VST input, a signed WGCNA network with scale-free fit R^2>=0.8 and the fit curve reported, dynamic tree cut, eigengene-trait correlation on a 0/1 coded condition with BH correction, kME hub genes, and ORA against human Hallmark/WikiPathways with the profiled genes as the universe. It falls short of the reference by running the network on all ~12000 genes rather than the top variable subset, omitting the minimum module size and the eigengene-merge threshold, leaving the low-count filter unspecified ('e.g., mean count or CPM'), stating no alpha for the module FDR, omitting gene significance alongside kME for hubs, and not versioning the gene set collections or giving a size window. QC is present (PCA/clustering and a sample dendrogram) but library sizes and coloring by condition are not stated and the outlier policy is loose. The whole-blood deconvolution confound check is a sensible, design-specific addition."
+}

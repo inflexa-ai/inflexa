@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: the primary test is a DESeq2 LRT of ~ condition + time + condition:time against ~ condition + time, with explicit reference levels, per-time-point ashr-shrunken interaction contrasts, simple effects, and an independent edgeR QL joint F-test as robustness. QC is a blind-VST PCA, distance heatmap and library-size plot with a stated no-drop-here policy; filtering is minimal and tied to the smallest cell size; normalization stays inside both models. BH at alpha 0.05 is passed to results() with shrinkage only for reported effects, and the report enumerates methods, versions, design, thresholds, tested/significant counts, power caveat and seed. Enrichment is optional and correctly scoped (tested-gene universe, 15-500 window, named human collection, version and seed), though ranking a preranked GSEA on an unsigned omnibus statistic is a mild stretch that the plan itself acknowledges; the outlier policy could be marginally more concrete."
+}

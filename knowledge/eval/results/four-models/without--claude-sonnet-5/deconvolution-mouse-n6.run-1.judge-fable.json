@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly chooses the species-matched mMCP-counter on a linear CPM/TPM matrix, refuses to fabricate gene lengths, keeps sample_01 with a mandatory leave-one-out check, uses Wilcoxon per population with BH and an effect size, and states that scores are not fractions, though it never says scores are incomparable across populations and the narrative name-drops ConsensusTME, a human tool. QC covers library sizes and PCA/correlation with an explicit outlier policy but does not state colouring by condition. No low-count filter policy is stated at all, no alpha is named, and tool versions are absent from the report specification. Step 3 adds an ssGSEA/singscore corroboration on MSigDB M7 that the plan itself admits is not a cell-type marker collection, with no version given; it is unwarranted padding that the reference omits."
+}

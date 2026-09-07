@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 7,
+    "low_count_filter": 4,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan fits DESeq2 on the counts as delivered and explicitly forbids re-counting; the substitute annotation-level antisense flag is honest about its limits but rests on the incorrect claim that a wrong strand setting only affects overlapping loci, when it in fact corrupts counts globally, so the core requirement of inferring strandedness before trusting the counts is not met. Sample QC (library sizes, detection, correlation, PCA, a no-silent-drop policy) is reasonably specified, and the ~condition design with a treated-vs-control contrast and BH at 0.05 is explicit, though the reference level, an explicit low-count prefilter, size-factor normalization, and actual use of apeglm shrinkage for the reported effect are never stated. Enrichment is added although not asked, with an unresolved ORA/GSEA choice, an ambiguous ranking metric, no universe, no collection versions and no size window. The report lists design, thresholds and the low-power caveat but omits versions."
+}

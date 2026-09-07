@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: GSVA on VST (Gaussian kernel) over a named Hallmark release (2026.1) with a 15–500 size window, limma ~condition on the score matrix with BH at 0.05, and a row-clustered ComplexHeatmap annotated by condition and by sample_01's QC flag; sample_01 is kept with an explicit evidence-tied policy. QC, filter (>=10 counts in >=6 samples), DESeq2 size-factor normalization, explicit control reference and contrast, apeglm shrinkage, and a full reproducibility record are all stated. Minor deductions: the companion DESeq2/PROGENy/UCell layers are extras beyond the per-sample score question (UCell is a single-cell tool of debatable fit for bulk), and the GSVA overlap-reporting acceptance is phrased oddly, but nothing is incorrect for the 6v6 unpaired single-batch design."
+}

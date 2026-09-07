@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 5,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan gets the core structure right: variance decomposition on VST values (not raw counts) via per-gene lm with type-II SS across condition, sex, and age, with the residual, noisiness caveat at n=12, and a covariate cross-tabulation; then DESeq2 on raw counts with ~ sex + age + condition. It invents a 'without variancePartition' constraint that is not in the task, omits age centering and the reference level, and gives no fold-change shrinkage (apeglm), with an optional log2FC threshold left vague. The low-count filter is an unspecified CPM/count threshold rather than filterByExpr with justification, no outlier or shallow-sample policy is stated, and no package versions are named. Enrichment was not asked for and is added anyway without a universe, collection version, or size window."
+}

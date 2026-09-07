@@ -1,0 +1,329 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "log-normalized-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T04:12:24.036Z",
+  "elapsedMs": 54051,
+  "outcome": "plan_submitted",
+  "planId": "pln-27edae05",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Values are already log2(TPM+1): do not transform again"
+        ],
+        "context": "Input: /eval-four-models-with-log-normalized-n6-1/data/inputs/expression/log_expr.csv (12000 x 13) and metadata.csv (12 x 2), condition = treated vs control.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats"
+        ],
+        "question": "Do the 12 samples cluster by treated vs control, and are there outliers or processing structure that the design must name?",
+        "grounding": {
+          "claims": [
+            "R-0071@e4e2"
+          ],
+          "reason": "Sample structure QC on already-log values per R-0071@e4e2",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the log2 values as delivered; do not re-transform (rule R-0071)",
+          "n_top_genes = 500",
+          "No count-model variance stabilizing transform"
+        ],
+        "description": "PCA/MDS on the most variable genes, sample distance heatmap, and detected-gene counts, colored by condition, to confirm the 6v6 treated/control structure holds no outliers or hidden batch before fitting limma.",
+        "acceptance_criteria": [
+          "PCA/MDS plot on the 500 most variable genes colored by condition",
+          "Sample distance heatmap and per-sample detected-gene counts",
+          "Outlier samples and any condition-unrelated structure explicitly named before the model"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma DE: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "No counts exist; fold changes come from log-abundance means, not shrunken count models — no LFC shrinkage is applied",
+          "TPM from a single protocol; not comparable across library protocols"
+        ],
+        "context": "log_expr.csv is log2(TPM+1), 12000 genes x 12 samples; metadata.csv maps sample -> condition (treated/control). Single batch, no covariates.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats"
+        ],
+        "question": "Which genes differ between treated and control muscle samples (treated vs control logFC, BH-adjusted p < 0.05)?",
+        "grounding": {
+          "claims": [
+            "R-0072@881a",
+            "R-0073@8b36",
+            "R-0036@9786",
+            "R-0093@4fa4",
+            "R-0004@a06d",
+            "R-0037@e6d8",
+            "R-0043@4f55",
+            "R-0044@1777"
+          ],
+          "reason": "TPM/log input forbids count models; limma trend+robust on log values per R-0004/R-0093",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-limma-trend-logvalues@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: min_abundance_tpm = 1, min_samples = smallest group size = 6 (rule R-0072)",
+          "normalization: log2_plus_1_only — no size-factor or TMM renormalization (rule R-0073)",
+          "model_design: explicit reference level = control; contrast named as factor, treated, control so positive logFC means higher in treated (rule R-0036)",
+          "differential_expression: limma eBayes with trend=TRUE and robust=TRUE (rules R-0093, R-0004)",
+          "multiple_testing: BH via topTable adjust.method=BH; selection by adjusted p-value, not raw p or fold change alone (rules R-0043, R-0044); LFC threshold handled by test-against-threshold policy (rule R-0037) — report genes passing adj.P.Val < 0.05 and flag those additionally exceeding |log2FC| > 1 descriptively"
+        ],
+        "description": "Filter low-abundance genes, fit limma (~condition, reference = control) with trend=TRUE and robust=TRUE, contrast treated vs control, BH-adjust and produce the DE gene table.",
+        "acceptance_criteria": [
+          "Filter keeps genes with abundance >= 1 TPM (2^-1 on log2 scale after +1 offset handled correctly) in >= 6 samples; kept-gene count reported",
+          "limma fit with trend=TRUE, robust=TRUE, explicit reference level (control) and named contrast treated vs control",
+          "Full results table with logFC, t, P.Value, adj.P.Val (BH); DE set defined as adj.P.Val < 0.05",
+          "Counts of genes tested and DE (up and down) reported"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DE report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What are the final treated-vs-control DE results and the full reproducibility record?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "Reproducibility record and required report fields per R-0041/R-0086",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "reproducibility_record = session_info, seed, package_versions (rules R-0041, R-0086)",
+          "report_fields = method, versions, design, thresholds, n_tested, n_de, session_info"
+        ],
+        "description": "Written DE report with method, versions, design, thresholds, n tested, n DE (up/down), volcano plot and top-gene heatmap, plus session info.",
+        "acceptance_criteria": [
+          "Report names method, package versions, design formula and contrast, thresholds, n_tested, n_DE",
+          "sessionInfo and seed attached",
+          "Volcano and top-gene heatmap delivered beside the tables"
+        ]
+      }
+    ],
+    "title": "Treated vs control muscle DE via limma on log2-TPM",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The core facility delivered log2(TPM+1) values for 12,000 genes across 12 muscle samples (6 treated vs 6 control), unpaired, single batch. Count-based models (DESeq2/edgeR/voom) are forbidden on normalized abundances (rule R-0004), so differential expression uses limma on the log values with trend=TRUE and robust empirical Bayes (R-0093). Sample structure QC (PCA/MDS, distances) precedes the fit; low-abundance genes are filtered (>= 1 TPM equivalent in at least 6 samples) before the model so the BH adjustment runs over tested genes only; selection is by BH-adjusted p-value (R-0043/R-0044). The report carries method, versions, design, thresholds, n tested, n DE, and session info."
+  },
+  "usage": {
+    "inputTokens": 88050,
+    "outputTokens": 1942,
+    "cacheReadInputTokens": 35008,
+    "reasoningTokens": 56
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The core facility delivered log2(TPM+1) values for 12,000 genes across 12 muscle samples (6 treated vs 6 control), unpaired, single batch. Count-based models (DESeq2/edgeR/voom) are forbidden on normalized abundances (rule R-0004), so differential expression uses limma on the log values with trend=TRUE and robust empirical Bayes (R-0093). Sample structure QC (PCA/MDS, distances) precedes the fit; low-abundance genes are filtered (>= 1 TPM equivalent in at least 6 samples) before the model so the BH adjustment runs over tested genes only; selection is by BH-adjusted p-value (R-0043/R-0044). The report carries method, versions, design, thresholds, n tested, n DE, and session info.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "PCA/MDS plot on the 500 most variable genes colored by condition",
+                "Sample distance heatmap and per-sample detected-gene counts",
+                "Outlier samples and any condition-unrelated structure explicitly named before the model"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Values are already log2(TPM+1): do not transform again"
+              ],
+              "context": "Input: /eval-four-models-with-log-normalized-n6-1/data/inputs/expression/log_expr.csv (12000 x 13) and metadata.csv (12 x 2), condition = treated vs control.",
+              "constraints": [
+                "Use the log2 values as delivered; do not re-transform (rule R-0071)",
+                "n_top_genes = 500",
+                "No count-model variance stabilizing transform"
+              ],
+              "depends_on": [],
+              "description": "PCA/MDS on the most variable genes, sample distance heatmap, and detected-gene counts, colored by condition, to confirm the 6v6 treated/control structure holds no outliers or hidden batch before fitting limma.",
+              "grounding": {
+                "claims": [
+                  "R-0071@e4e2"
+                ],
+                "reason": "Sample structure QC on already-log values per R-0071@e4e2",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded",
+                "template": "tpl-qc-log-abundance@1.0.0"
+              },
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "packages": [
+                "limma",
+                "matrixStats"
+              ],
+              "question": "Do the 12 samples cluster by treated vs control, and are there outliers or processing structure that the design must name?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "qc",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Filter keeps genes with abundance >= 1 TPM (2^-1 on log2 scale after +1 offset handled correctly) in >= 6 samples; kept-gene count reported",
+                "limma fit with trend=TRUE, robust=TRUE, explicit reference level (control) and named contrast treated vs control",
+                "Full results table with logFC, t, P.Value, adj.P.Val (BH); DE set defined as adj.P.Val < 0.05",
+                "Counts of genes tested and DE (up and down) reported"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "No counts exist; fold changes come from log-abundance means, not shrunken count models — no LFC shrinkage is applied",
+                "TPM from a single protocol; not comparable across library protocols"
+              ],
+              "context": "log_expr.csv is log2(TPM+1), 12000 genes x 12 samples; metadata.csv maps sample -> condition (treated/control). Single batch, no covariates.",
+              "constraints": [
+                "filter_low_counts: min_abundance_tpm = 1, min_samples = smallest group size = 6 (rule R-0072)",
+                "normalization: log2_plus_1_only — no size-factor or TMM renormalization (rule R-0073)",
+                "model_design: explicit reference level = control; contrast named as factor, treated, control so positive logFC means higher in treated (rule R-0036)",
+                "differential_expression: limma eBayes with trend=TRUE and robust=TRUE (rules R-0093, R-0004)",
+                "multiple_testing: BH via topTable adjust.method=BH; selection by adjusted p-value, not raw p or fold change alone (rules R-0043, R-0044); LFC threshold handled by test-against-threshold policy (rule R-0037) — report genes passing adj.P.Val < 0.05 and flag those additionally exceeding |log2FC| > 1 descriptively"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Filter low-abundance genes, fit limma (~condition, reference = control) with trend=TRUE and robust=TRUE, contrast treated vs control, BH-adjust and produce the DE gene table.",
+              "grounding": {
+                "claims": [
+                  "R-0072@881a",
+                  "R-0073@8b36",
+                  "R-0036@9786",
+                  "R-0093@4fa4",
+                  "R-0004@a06d",
+                  "R-0037@e6d8",
+                  "R-0043@4f55",
+                  "R-0044@1777"
+                ],
+                "reason": "TPM/log input forbids count models; limma trend+robust on log values per R-0004/R-0093",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded",
+                "template": "tpl-limma-trend-logvalues@1.0.0"
+              },
+              "id": "T1S2",
+              "name": "limma DE: treated vs control",
+              "packages": [
+                "limma",
+                "matrixStats"
+              ],
+              "question": "Which genes differ between treated and control muscle samples (treated vs control logFC, BH-adjusted p < 0.05)?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Report names method, package versions, design formula and contrast, thresholds, n_tested, n_DE",
+                "sessionInfo and seed attached",
+                "Volcano and top-gene heatmap delivered beside the tables"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [],
+              "constraints": [
+                "reproducibility_record = session_info, seed, package_versions (rules R-0041, R-0086)",
+                "report_fields = method, versions, design, thresholds, n_tested, n_de, session_info"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Written DE report with method, versions, design, thresholds, n tested, n DE (up/down), volcano plot and top-gene heatmap, plus session info.",
+              "grounding": {
+                "claims": [
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "Reproducibility record and required report fields per R-0041/R-0086",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "status": "grounded"
+              },
+              "id": "T1S3",
+              "name": "DE report",
+              "packages": [],
+              "question": "What are the final treated-vs-control DE results and the full reproducibility record?",
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "step_type": "report",
+              "track": "T1"
+            }
+          ],
+          "title": "Treated vs control muscle DE via limma on log2-TPM"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

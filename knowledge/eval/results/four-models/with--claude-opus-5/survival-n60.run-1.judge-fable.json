@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: it audits events, censoring, and median follow-up before modelling, scores the fixed 20-gene signature with UCell on TMM log2-CPM with explicit reporting of how many of the 20 genes are present, and fits a Cox model with the standardized continuous score plus condition, checks proportional hazards with scaled Schoenfeld residuals with a stated stratified or time-varying remedy, and keeps tertile Kaplan-Meier curves as illustration only. QC is design-specific (PCA, distances, library sizes, coloured by condition and event, flag-not-drop policy), the filterByExpr threshold is justified by the group size, and TMM is applied inside the CPM computation with no pre-scaling. Minor deductions: the plan reports the Wald p rather than the likelihood ratio p specified in the reference, and the several secondary tests (condition comparison, interaction, log-rank) are labelled exploratory but without any stated multiplicity handling. Enrichment is correctly and explicitly omitted, and the report specification is complete with versions, seed, input dimensions, event accounting, and limitations."
+}

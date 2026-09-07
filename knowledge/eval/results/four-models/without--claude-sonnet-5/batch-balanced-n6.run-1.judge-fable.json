@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference: DESeq2 Wald on raw counts with ~ batch + condition, control as reference, no interaction, and an explicit rejection of pre-model batch adjustment. QC includes library sizes and a vst PCA colored by condition and shaped by batch, but sample-distance clustering and a concrete exclusion policy for an outlier are absent. BH at alpha 0.05 and apeglm/ashr shrinkage are stated, though shrinkage is tied to plots rather than clearly to the reported effect; the low-count filter is appropriately minimal (DESeq2 defaults plus independent filtering). Enrichment uses an explicit tested-gene universe and states the GSEA ranking metric, but lacks a WikiPathways version and size window; the report omits package versions."
+}

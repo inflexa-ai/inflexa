@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: DESeq2 Wald under ~condition with control explicitly releveled, a minimal >=10-in-6 filter tied to the smallest group, size factors inside the model, apeglm shrinkage beside unshrunken estimates, BH at 0.05, and the full Wald statistic vector fed to decoupleR mlm with the human PROGENy top-500 model and BH across the 14 pathways. QC is blind VST PCA and distance heatmap with library sizes, sample_01 kept by default with an explicit keep/drop reason and a with/without sensitivity check on the pathway ranking. The footprint-versus-membership distinction is stated repeatedly and correctly, and the per-sample mlm/limma score matrix gives the replicate-consistency heatmap. The only minor gap is that the PROGENy resource is resolved from a 'current' path so its version is promised rather than named up front; the CollecTRI and STRING steps are additive and do not confuse the pathway-activity answer."
+}

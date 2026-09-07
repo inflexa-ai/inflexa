@@ -1,0 +1,1032 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "zebrafish-two-group-n3",
+  "run": 1,
+  "startedAt": "2026-09-06T23:13:50.316Z",
+  "elapsedMs": 174709,
+  "outcome": "plan_submitted",
+  "planId": "pln-ae64426d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 3 samples per group a PCA is fragile: apparent separation on 6 points is not evidence of a treatment effect, and its absence does not exclude one",
+          "No batch or technical covariate exists in the metadata, so a technical driver of PC1 cannot be identified or ruled out from these data"
+        ],
+        "context": "Raw integer gene-level counts from Salmon on the Ensembl Danio rerio annotation, whole larvae pools, drug exposure vs control. The metadata carries condition only — there is no batch, sex, or timepoint column to colour by, so condition is the sole annotation available for the plots. With 6 samples total this QC is the only opportunity to catch a label swap or a failed library before inference.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the 6 zebrafish larvae pools separate by condition (treated vs control), and does any of the 3+3 samples look like an outlier or a mislabel before any test is fitted?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Raw count matrix: blind VST, PCA on the 500 top-variance genes, and a sample-distance heatmap are the required pre-model sample-structure QC per R-0033.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the blind variance stabilizing transformation (blind=TRUE) for QC — do not use design-aware transformation for the exploratory plots",
+          "Use exactly the top 500 most variable genes for the PCA",
+          "Do not drop, impute, or renormalize any sample or gene in this step; QC is descriptive only",
+          "Report counts.csv row and column dimensions as loaded, and state how the gene-symbol column was handled (including any duplicate symbols)"
+        ],
+        "description": "Load /eval-four-models-with-zebrafish-two-group-n3-1/data/inputs/counts/counts.csv (12,000 genes x 6 samples, first column gene symbol) and /eval-four-models-with-zebrafish-two-group-n3-1/data/inputs/metadata/metadata.csv (6 rows, condition column). Verify the sample columns of the count matrix match the metadata rows exactly and in a stated order. Build a DESeqDataSet with design ~condition, apply the variance stabilizing transformation blind to the design, and produce: per-sample library sizes and detected-gene counts, PCA on the 500 most variable genes coloured by condition with the percent variance on each axis, a Euclidean sample-distance heatmap, and a boxplot of the VST values per sample. Report whether PC1 separates treated from control or whether a single sample dominates it.",
+        "acceptance_criteria": [
+          "Count matrix column names and metadata sample identifiers are confirmed to match, and the matching is reported explicitly",
+          "Library size, detected-gene count, and VST value distribution reported per sample for all 6 samples",
+          "PCA on the top 500 variable genes and a sample-distance heatmap are produced, both labelled by condition, with percent variance stated for PC1 and PC2",
+          "A written statement of whether the samples group by condition and whether any sample departs from its group, with no sample removed at this stage"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test, treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "At 3 replicates per group the test recovers only a minority of true differences, concentrated at large fold changes; a gene absent from the significant list is not shown to be unchanged",
+          "No length offset is carried (tximport is not installed and only a gene-level matrix was supplied), so a change driven purely by isoform usage can appear as a gene-level change",
+          "With no batch or covariate in the metadata, any handling difference that tracks with treatment is indistinguishable from drug effect"
+        ],
+        "context": "12,000 gene-level Salmon counts, 3 treated vs 3 control whole-larvae pools, unpaired, single batch, no covariates. Salmon-derived counts would ideally enter via tximport with average-transcript-length offsets, but only a summarized gene-level CSV is provided and tximport is not installed in this environment — the step therefore takes the gene-level matrix as given and must state that the length offset is absent, which leaves gene-level calls vulnerable to isoform-usage shifts.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between treated and control zebrafish larvae pools at BH-adjusted p < 0.05, and what fold changes can a 3-vs-3 design realistically detect?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0162@ed74",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0017@8a47",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "Two-group unpaired counts with 3 replicates per group: DESeq2 Wald with apeglm shrinkage and BH plus independent filtering (R-0001, R-0009, R-0010), minimal pre-filter (R-0029/R-0002), explicit reference level (R-0036), power statement required at n=3 (R-0162, R-0017). R-0018's tximport offsets are stated as unmet because only a gene-level matrix was supplied and tximport is absent.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not pre-normalize, scale, or log-transform the counts before DESeq2 — size factors are estimated inside the model",
+          "Pre-filter is minimal (min_count=10, min_samples=3) and independent filtering does the rest; do not raise the pre-filter threshold",
+          "alpha passed to results() must equal the reporting cutoff of 0.05",
+          "Select differentially expressed genes by adjusted p-value only — never by raw p-value and never by fold change alone",
+          "Keep the Cook's-distance outlier behaviour on (default); do not disable it",
+          "Use apeglm with coef= for the treated-vs-control coefficient; if apeglm cannot take the coefficient, use ashr and state the substitution",
+          "Write the complete tested-gene results table (not only the significant genes) to disk — the enrichment step requires the full ranked list"
+        ],
+        "description": "Fit the differential expression model on the raw counts. Pre-filter minimally: keep a gene with at least 10 counts in at least 3 samples (the smallest group size). Build the DESeqDataSet with design ~condition, setting the control level explicitly as the reference with relevel — do not rely on alphabetical ordering. Let DESeq2 estimate median-of-ratios size factors internally; do not pre-scale, CPM-transform, or otherwise normalize the counts before the model. Run the Wald test and extract the contrast as the triple (condition, treated, control) so a positive log2 fold change means higher in treated. Shrink that coefficient with apeglm and keep both the unshrunken and shrunken log2 fold change plus lfcSE in the output table. Call results with alpha=0.05 and independent filtering on. Before reading the adjusted p-values, plot the histogram of raw p-values and state its shape. Report separately: genes filtered out by the pre-filter, genes with NA p-values from the Cook's-distance count-outlier flag (DESeq2 flags rather than replaces at 3 replicates per cell), and genes with NA adjusted p-values from independent filtering. Before the gene tables, state the expected power of this design: RNASeqPower and PROPER are not installed, so compute it from the closed-form relation between the observed per-sample depth, the fitted dispersions (biological coefficient of variation), the fold change and alpha, and report the fold change detectable at 80% power with n=3 per group. Write the full results table (all tested genes) and the significant subset to disk.",
+        "acceptance_criteria": [
+          "Reference level is set to the control condition by an explicit relevel call, and the contrast is reported as (condition, treated, control) with the direction of a positive log2FC stated",
+          "Number of genes retained after the >=10 counts in >=3 samples pre-filter is reported against the 12,000 input genes",
+          "Results table contains, per gene: baseMean, unshrunken log2FoldChange, lfcSE, apeglm-shrunken log2FoldChange, stat (Wald), pvalue, padj",
+          "Raw p-value histogram is produced and its shape described before any adjusted-p-value interpretation",
+          "Counts of NA p-values from the outlier flag and NA padj from independent filtering are reported separately",
+          "An expected-power statement for n=3 per group appears before the gene tables, naming the dispersion estimate and depth it was computed from, and naming that RNASeqPower/PROPER were unavailable",
+          "Number of genes with padj < 0.05 is reported; if zero, that is reported as the result and no threshold is loosened"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR quasi-likelihood cross-check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Disagreement between the two methods grows at low counts and low replicate numbers; a method-unique gene is a weaker call, not a false one",
+          "Both methods share the same three-replicate limitation, so concordance does not add power — it only removes method-specific artefacts"
+        ],
+        "context": "At three replicates per group the two count models agree on most genes but disagree measurably at low counts, so the overlap rather than the union is the defensible primary gene list for this dataset.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "Which of the treated-vs-control calls survive a second count model, and how large is the DESeq2 / edgeR quasi-likelihood intersection at 3 replicates per group?",
+        "grounding": {
+          "claims": [
+            "R-0001@9a17",
+            "R-0042@54e1"
+          ],
+          "reason": "edgeR quasi-likelihood is the named second method for a robustness check at 2-11 replicates (R-0001); R-0042 requires reporting per-method counts and the intersection as the high-confidence set rather than the union.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the same pre-filtered matrix and the same ~condition design as T1S2 so the comparison is like-for-like",
+          "Use glmQLFit/glmQLFTest — not the exactTest or the likelihood-ratio test",
+          "Adjust with BH at 0.05, matching T1S2"
+        ],
+        "description": "Refit the same contrast with the edgeR quasi-likelihood F-test on the same pre-filtered count matrix: DGEList, TMM normalization factors, estimateDisp on the ~condition design, glmQLFit, glmQLFTest for treated vs control, BH adjustment at 0.05. Report the number of significant genes from edgeR, the number from DESeq2 (T1S2), and the size and membership of the intersection. Present the intersection as the high-confidence set and the method-unique genes as a labelled secondary set naming which method called them. Produce a scatter of the two log2 fold-change estimates and a concordance summary (sign agreement, rank correlation of the test statistics).",
+        "acceptance_criteria": [
+          "edgeR QL run on the identical filtered gene set and identical design as T1S2, with TMM factors",
+          "Significant-gene counts reported for each method separately plus the intersection size",
+          "Intersection reported as the high-confidence set; method-unique genes reported separately with the calling method named",
+          "Union is NOT presented as the result",
+          "Log2 fold-change concordance between methods quantified (sign agreement and rank correlation)"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Zebrafish to human ortholog bridge",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The teleost whole-genome duplication means many zebrafish genes have two co-orthologs of one human gene; whichever resolution rule is chosen discards real signal, and the report must say so",
+          "Genes with no human ortholog are silently invisible to every human collection — this is a systematic, not random, loss and biases enrichment toward conserved processes"
+        ],
+        "context": "The organism is Danio rerio. The knowledge procedure and the reference census agree that no curated zebrafish gene-set collection exists here, so pathway interpretation must go either through human orthologs or through the zebrafish GO annotation. This step builds the first route and quantifies its cost, because every downstream pathway claim inherits the mapping loss.",
+        "maxSteps": 200,
+        "packages": [
+          "org.Dr.eg.db",
+          "AnnotationDbi",
+          "babelgene",
+          "dplyr"
+        ],
+        "question": "How many of the tested zebrafish genes map to a human ortholog, and what fraction of the ranked list is lost before any human gene-set collection can be used?",
+        "grounding": {
+          "claims": [
+            "R-0050@0763",
+            "R-0081@5c95"
+          ],
+          "reason": "Organism other than human or mouse: no curated collection is served, so the plan must map to human orthologs or use GO, and must name the annotation source, identifier space, and mapped share (R-0050, R-0081).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "annotation",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Never write a download into the script — the sandbox has no network; use only installed annotation packages and staged reference files",
+          "Do not substitute a mouse or rat mapping for a zebrafish one under any circumstances",
+          "Preserve the DESeq2 Wald statistic unchanged through the mapping; do not recompute or rescale it",
+          "Report gene counts at every stage (tested, symbol-resolved, ortholog-mapped, retained after multiplicity rule)"
+        ],
+        "description": "Build the identifier bridge the enrichment needs. Starting from the full tested-gene table of T1S2 (zebrafish gene symbols on the Ensembl Danio rerio annotation), resolve each symbol to a zebrafish Entrez/Ensembl identifier using the installed zebrafish organism annotation package, then map to human orthologs using the ortholog resource available in this environment. Confirm what the reference store actually holds before committing: the reference store's pathway category carries human, mouse and rat collections but no zebrafish collection, and no zebrafish-human ortholog table is catalogued — so the mapping must come from an installed annotation package (org.Dr.eg.db, and babelgene if it covers Danio rerio) rather than from a staged file, and no step may attempt a network download. Keep one-to-one orthologs; where a zebrafish gene has multiple human orthologs or a human gene has multiple zebrafish paralogs (the teleost genome duplication makes this common), apply one stated resolution rule and report how many genes each rule affected. Emit two artifacts: (1) the tested-gene table annotated with the human ortholog symbol where one exists, carrying the Wald statistic through unchanged, and (2) a mapping report giving the number of tested genes, the number mapped, the mapped share, the number dropped for no ortholog, and the number dropped or collapsed by the multiplicity rule. If neither installed package resolves zebrafish-to-human orthologs, stop and report that plainly rather than substituting a species-mismatched mapping — the native-GO branch of T2S2 still runs in that case.",
+        "acceptance_criteria": [
+          "Mapped share reported as an explicit number and percentage of the tested genes from T1S2",
+          "Ortholog source named with its package version; the resolution rule for one-to-many and many-to-one mappings stated and its effect counted",
+          "Annotated ranked table written with the Wald statistic preserved for every mapped gene",
+          "If no zebrafish-human ortholog resource resolves in this environment, the step reports that explicitly and does not substitute a different species' mapping"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Preranked GSEA and native zebrafish GO",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are method-dependent: a ranked test and an over-representation test on the same data give different lists, so every set is a hypothesis for follow-up, not a finding",
+          "Gene length and expression level bias which genes reach significance, which is one reason the ranked test on the full list is preferred here",
+          "The ortholog branch inherits the mapping loss quantified in T2S1 and is biased toward conserved processes; the native GO branch is limited by the comparative thinness of zebrafish GO annotation. Neither is a clean answer and the report must say which limit applies to which result",
+          "With few or no significantly changed genes, GSEA can still return significant sets from coordinated weak shifts — such a set is weaker evidence than one supported by individually significant genes"
+        ],
+        "context": "The ranking metric is a disputed choice and this plan states it: the DESeq2 Wald statistic, because it scales the effect by its uncertainty. The signed -log10 p-value was rejected because p-values tie at the top of the list and the top-of-list order then becomes arbitrary; the shrunken log2 fold change was rejected because it discards the uncertainty scaling that the ranked test depends on. The shrunken LFC is still used for ranking the gene table and the plots in T3S1. The reference store holds human hallmark (h.all 2026.1), human GO (c5.go.bp/cc/mf 2026.1), human WikiPathways (2026.07.10), and human canonical pathways (KEGG-MEDICUS/BioCarta/PID 2026.1) — all HGNC symbols, hence the ortholog step. No zebrafish collection is staged, which is why branch B builds its sets from the installed annotation package instead.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Dr.eg.db",
+          "AnnotationDbi",
+          "GSEABase",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which pathways and biological processes are coordinately shifted between treated and control zebrafish larvae, on the full ranked gene list rather than on a thresholded subset?",
+        "grounding": {
+          "claims": [
+            "R-0107@976c",
+            "R-0050@0763",
+            "R-0097@a38e",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0045@f652",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "Preranked fgsea on the full tested list is the default enrichment method (R-0107, R-0045); the disputed ranking metric (R-0108) is resolved here in favour of the Wald statistic per R-0099; non-human organism forces the ortholog-or-GO route with its limit stated (R-0050); size window, universe and collapsing follow R-0047, R-0046, R-0052.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Never threshold the ranked list before the GSEA",
+          "Rank by the Wald statistic — not by the unshrunken log2 fold change alone and not by a signed p-value",
+          "Universe for any set-based test is the tested genes, never the whole genome or the whole annotation",
+          "Do not use a mouse or rat collection on zebrafish-derived symbols under any circumstances",
+          "Use only staged reference collections and installed annotation packages — no network access, no downloads",
+          "If a named collection is absent from the reference store at run time, report its absence and continue with the collections that are present; do not silently substitute"
+        ],
+        "description": "Run fgsea preranked on the complete tested-gene list from T1S2, ranked by the DESeq2 Wald statistic (the 'stat' column). Two branches, both reported: (A) Ortholog branch — using the human-ortholog-annotated table from T2S1, test against the human hallmark collection, the human GO Biological Process collection, and the human canonical pathway collections (WikiPathways and the KEGG-MEDICUS/BioCarta/PID MSigDB sets) available in the reference store, naming each collection and its version. (B) Native branch — using the zebrafish symbols directly, test GO Biological Process gene sets built from the installed zebrafish organism annotation package, so that a result exists that pays no ortholog toll. In both branches: intersect each set with the tested genes first, then apply the 15-500 gene size window; adjust across sets with BH; set and record the random seed for the permutations. Collapse redundant significant sets (fgsea's collapsePathways or equivalent overlap grouping) and report one representative per group with the full table kept as a supplement. For each reported set give the normalized enrichment score, adjusted p-value, set size after intersection, and the leading-edge genes with their gene-level Wald statistic, marking leading-edge overlap between reported sets. Finally, report where branch A and branch B agree and where they do not. Do not run an over-representation test on the significant gene list if fewer than 50 genes pass padj < 0.05; state the size of the significant list either way.",
+        "acceptance_criteria": [
+          "GSEA run on the FULL tested-gene list, not on a padj- or fold-change-thresholded subset",
+          "Ranking metric explicitly reported as the DESeq2 Wald statistic, with the rejected alternatives named",
+          "Both the ortholog branch and the native zebrafish GO branch are executed and reported; if the ortholog bridge failed in T2S1, that is stated and branch B alone is reported",
+          "Gene set size window of 15-500 applied AFTER intersecting each set with the tested genes, and the window reported",
+          "Each collection named with its version; BH adjustment across sets; permutation seed recorded",
+          "Redundant significant sets collapsed, one representative reported per group, full table retained as supplement",
+          "Leading-edge genes listed per reported significant set with their gene-level statistic, and leading-edge overlap between reported sets marked",
+          "Size of the padj<0.05 gene list stated; no ORA run on a list of fewer than 50 genes",
+          "Agreement and disagreement between the ortholog branch and the native GO branch summarized"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Consolidated report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "A gene absent from the significant list is not demonstrated to be unchanged at this sample size",
+          "Pathway-level results rest on either an ortholog map with quantified loss or a comparatively thin zebrafish GO annotation; neither supports a strong mechanistic claim from 3 pools per group"
+        ],
+        "context": "This is the deliverable the research question is answered from. Two constraints shape it: rank the gene table by the shrunken fold change (the unshrunken estimate puts noisy low-count genes on top), but remember the enrichment ranked by the Wald statistic — the two rankings serve different purposes and the report should not conflate them.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2",
+          "knitr"
+        ],
+        "question": "What is the defensible answer to 'which genes differ between treated and control zebrafish larvae, and which pathways do they point to', and what does the 3-vs-3 design not permit us to say?",
+        "grounding": {
+          "claims": [
+            "R-0094@6849",
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0081@5c95",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report contents follow the procedure's report step: power statement first at n=3 (R-0094), MA and dispersion diagnostics (R-0087), shrunken and unshrunken effect columns with ranking on the shrunken value (R-0085), method/version/design/threshold record (R-0041), enrichment provenance and method-dependence (R-0051, R-0055), non-human annotation reporting (R-0081), leading edge per set (R-0105), reproducibility record (R-0086).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T2S2"
+        ],
+        "constraints": [
+          "Rank the gene table and draw the plots on the shrunken log2 fold change, never on the unshrunken estimate alone",
+          "Keep the p-values from the unshrunken fit — shrinkage does not change the test",
+          "Do not present the union of DESeq2 and edgeR calls as the result",
+          "Do not make a mechanistic, druggability, or safety claim: the profile carries no compound identity, dose, or timepoint",
+          "State plainly if the number of genes at padj<0.05 is zero or very small — do not compensate by relaxing the threshold or by switching to raw p-values"
+        ],
+        "description": "Assemble one report from T1S1, T1S2, T1S3, T2S1 and T2S2, in this order. Open with the power statement at n=3 per group from T1S2 — the fold change detectable at 80% power and the fraction of true differences a design this size recovers — before any gene table, so the reader meets the limitation first. Then the fit diagnostics: MA plot on the shrunken fold changes and the dispersion-estimate plot, with a sentence on what each shows. Then the design record: method, package versions, design formula ~condition, the contrast (condition, treated, control), the alpha and BH threshold, the number of genes tested after filtering out of 12,000, and the number differentially expressed. Then the gene table, ranked by the shrunken log2 fold change, carrying unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, Wald stat, pvalue and padj per gene, with the shrinkage estimator named in the header. Add a volcano plot and a heatmap of VST values for the top genes. Report the DESeq2/edgeR intersection from T1S3 as the high-confidence set. Then the pathway section: for each branch, the collection and its version, the ranking metric, the universe, the size window, the permutation seed, the collapsed representative sets with NES/padj/size, and the leading-edge genes per set. State the annotation source, its release, the identifier space of the genes, the ortholog map and the mapped share from T2S1. Close with a limitations paragraph and a reproducibility record: sessionInfo, every package version, the seed, and the collection versions, stored with the results.",
+        "acceptance_criteria": [
+          "Power statement at 3 replicates per group appears before the gene tables",
+          "MA plot and dispersion plot both present, each with a stated reading",
+          "Design record present: method, package versions, ~condition formula, the (condition, treated, control) contrast, thresholds, genes tested after filtering out of 12,000, and number of DE genes",
+          "Gene table ranked by the apeglm-shrunken log2 fold change and carrying unshrunken log2FoldChange, shrunken log2FoldChange, and lfcSE per gene, with the estimator named",
+          "DESeq2/edgeR overlap reported as the high-confidence set",
+          "Pathway section names each collection with its version, the Wald-statistic ranking metric, the tested-gene universe, the 15-500 size window, and the permutation seed; leading-edge genes listed per reported set",
+          "Annotation source, release, identifier space, ortholog map and mapped share stated",
+          "Explicit statement that enrichment results are method-dependent and that each set is a hypothesis",
+          "Limitations paragraph covering n=3 power, the absent length offset, the single-batch/no-covariate design, and the ortholog mapping loss",
+          "Reproducibility record (sessionInfo, package versions, seed, collection versions) stored alongside the results"
+        ]
+      }
+    ],
+    "title": "Zebrafish larvae treated vs control DE + pathways",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single gene-level Salmon count matrix (12,000 genes x 6 samples plus the gene-symbol column) for Danio rerio whole larvae, with a 6x2 sample table giving one condition column: 3 treated vs 3 control pools, unpaired, one batch. The research question is two-part — which genes differ, and which pathways they point to — so the plan is a straight DESeq2 two-group contrast followed by a preranked gene-set enrichment, with the interpretive work forced to stay inside what n=3 per group can support.\n\nT1S1 runs the sample-structure QC before any test: blind VST, PCA on the 500 most variable genes, sample-distance heatmap, library sizes. With 6 samples this is the only chance to see a swapped label or an outlier pool, and there is no batch column to check against, so condition is the only annotation available. T1S2 fits the model: minimal pre-filter (>=10 counts in >=3 samples, the smallest group size), median-of-ratios size factors estimated inside DESeq2 (the counts are NOT pre-normalized), design ~condition with the control level set explicitly as the reference, Wald test, apeglm shrinkage of the treated-vs-control coefficient, BH with independent filtering at alpha 0.05, and a p-value histogram inspected before the adjustment. It also states the expected power at 3 vs 3 up front — RNASeqPower and PROPER are not installed, so the statement comes from a closed-form calculation using the observed depth and the DESeq2 dispersion estimates. T1S3 repeats the contrast with the edgeR quasi-likelihood F-test on TMM factors and reports the intersection as the high-confidence set; at three replicates the two count models disagree most, so the overlap is the honest primary result and the method-unique genes are secondary.\n\nThe enrichment path is where the organism costs us. No zebrafish gene-set collection is staged in the reference store — the pathway category holds human, mouse and rat WikiPathways and human/mouse MSigDB only, and no zebrafish-human ortholog table is catalogued. T2S1 therefore builds the ortholog bridge itself from the installed zebrafish annotation package and reports the mapped share and the genes lost, because every enrichment claim downstream inherits that loss. T2S2 runs fgsea preranked on the full tested gene list ranked by the DESeq2 Wald statistic — chosen over the signed p-value (which ties at the top) and over the shrunken LFC (which drops the uncertainty scaling) — against the human hallmark, GO BP and canonical-pathway collections in the store, with a 15-500 size window on the intersected sets, BH across sets, redundant sets collapsed, and leading-edge genes listed. As a native-annotation cross-check that does not pay the ortholog toll, the same step runs a zebrafish GO term enrichment built from the installed org.Dr.eg.db, and reports where the two paths agree. T3S1 consolidates: power statement first, then fit diagnostics, then the gene tables and the pathway tables with every version pinned.\n\nWhat this design cannot do is also part of the plan. Three pools per group finds only a minority of true differences, biased toward large fold changes; an absent gene is not an unchanged gene. There is no batch variable to adjust and no covariate, so a pool-level handling difference confounded with treatment would be indistinguishable from drug effect and can only be flagged, not removed. The metadata carries no dose, timepoint or compound identity in the profile, so the plan makes no mechanistic or translational claim about the drug."
+  },
+  "usage": {
+    "inputTokens": 640897,
+    "outputTokens": 13561,
+    "cacheCreationInputTokens": 192212,
+    "cacheReadInputTokens": 448601,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "other",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "zebrafish"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways",
+        "limit": 60
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Dr.eg.db",
+          "fgsea",
+          "clusterProfiler",
+          "biomaRt",
+          "babelgene",
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "tximport",
+          "GO.db",
+          "AnnotationDbi",
+          "msigdbr"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways",
+        "limit": 30
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "ortholog",
+        "limit": 30
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark human",
+        "limit": 20
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Dr.eg.db",
+          "GOSemSim",
+          "goseq",
+          "GSEABase",
+          "rrvgo",
+          "enrichplot",
+          "EnhancedVolcano",
+          "ashr",
+          "pheatmap",
+          "ComplexHeatmap"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb",
+        "limit": 30
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "other",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA on top 500 variable genes, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with at least 10 counts in at least 3 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors inside the DESeq2 model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ condition with explicit reference level control; contrast condition treated vs control; expected-power statement from closed-form calculation at n=3/group",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "power_plan",
+                "value": "expected_power_from_replicates_depth_and_dispersion"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              },
+              {
+                "name": "power_caution",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "edgeR quasi-likelihood F-test as robustness second method",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "TMM"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering, p-value histogram inspected",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "annotation",
+            "method": "Zebrafish gene symbol to human one-to-one ortholog mapping for enrichment; report mapped share",
+            "package": "org.Dr.eg.db"
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the DESeq2 Wald statistic against human-ortholog-mapped hallmark, GO BP and WikiPathways/KEGG-MEDICUS sets",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "gsea_input",
+                "value": "full_ranked_list"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Consolidated report: power statement, fit diagnostics, DESeq2/edgeR overlap, gene tables with shrunken and unshrunken LFC, leading-edge genes, annotation and collection versions, sessionInfo and seed",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method,versions,design,thresholds,n_tested,n_de,session_info"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Zebrafish larvae treated vs control DE + pathways",
+          "analytical_narrative": "The input is a single gene-level Salmon count matrix (12,000 genes x 6 samples plus the gene-symbol column) for Danio rerio whole larvae, with a 6x2 sample table giving one condition column: 3 treated vs 3 control pools, unpaired, one batch. The research question is two-part — which genes differ, and which pathways they point to — so the plan is a straight DESeq2 two-group contrast followed by a preranked gene-set enrichment, with the interpretive work forced to stay inside what n=3 per group can support.\n\nT1S1 runs the sample-structure QC before any test: blind VST, PCA on the 500 most variable genes, sample-distance heatmap, library sizes. With 6 samples this is the only chance to see a swapped label or an outlier pool, and there is no batch column to check against, so condition is the only annotation available. T1S2 fits the model: minimal pre-filter (>=10 counts in >=3 samples, the smallest group size), median-of-ratios size factors estimated inside DESeq2 (the counts are NOT pre-normalized), design ~condition with the control level set explicitly as the reference, Wald test, apeglm shrinkage of the treated-vs-control coefficient, BH with independent filtering at alpha 0.05, and a p-value histogram inspected before the adjustment. It also states the expected power at 3 vs 3 up front — RNASeqPower and PROPER are not installed, so the statement comes from a closed-form calculation using the observed depth and the DESeq2 dispersion estimates. T1S3 repeats the contrast with the edgeR quasi-likelihood F-test on TMM factors and reports the intersection as the high-confidence set; at three replicates the two count models disagree most, so the overlap is the honest primary result and the method-unique genes are secondary.\n\nThe enrichment path is where the organism costs us. No zebrafish gene-set collection is staged in the reference store — the pathway category holds human, mouse and rat WikiPathways and human/mouse MSigDB only, and no zebrafish-human ortholog table is catalogued. T2S1 therefore builds the ortholog bridge itself from the installed zebrafish annotation package and reports the mapped share and the genes lost, because every enrichment claim downstream inherits that loss. T2S2 runs fgsea preranked on the full tested gene list ranked by the DESeq2 Wald statistic — chosen over the signed p-value (which ties at the top) and over the shrunken LFC (which drops the uncertainty scaling) — against the human hallmark, GO BP and canonical-pathway collections in the store, with a 15-500 size window on the intersected sets, BH across sets, redundant sets collapsed, and leading-edge genes listed. As a native-annotation cross-check that does not pay the ortholog toll, the same step runs a zebrafish GO term enrichment built from the installed org.Dr.eg.db, and reports where the two paths agree. T3S1 consolidates: power statement first, then fit diagnostics, then the gene tables and the pathway tables with every version pinned.\n\nWhat this design cannot do is also part of the plan. Three pools per group finds only a minority of true differences, biased toward large fold changes; an absent gene is not an unchanged gene. There is no batch variable to adjust and no covariate, so a pool-level handling difference confounded with treatment would be indistinguishable from drug effect and can only be flagged, not removed. The metadata carries no dose, timepoint or compound identity in the profile, so the plan makes no mechanistic or translational claim about the drug.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 zebrafish larvae pools separate by condition (treated vs control), and does any of the 3+3 samples look like an outlier or a mislabel before any test is fitted?",
+              "description": "Load /eval-four-models-with-zebrafish-two-group-n3-1/data/inputs/counts/counts.csv (12,000 genes x 6 samples, first column gene symbol) and /eval-four-models-with-zebrafish-two-group-n3-1/data/inputs/metadata/metadata.csv (6 rows, condition column). Verify the sample columns of the count matrix match the metadata rows exactly and in a stated order. Build a DESeqDataSet with design ~condition, apply the variance stabilizing transformation blind to the design, and produce: per-sample library sizes and detected-gene counts, PCA on the 500 most variable genes coloured by condition with the percent variance on each axis, a Euclidean sample-distance heatmap, and a boxplot of the VST values per sample. Report whether PC1 separates treated from control or whether a single sample dominates it.",
+              "context": "Raw integer gene-level counts from Salmon on the Ensembl Danio rerio annotation, whole larvae pools, drug exposure vs control. The metadata carries condition only — there is no batch, sex, or timepoint column to colour by, so condition is the sole annotation available for the plots. With 6 samples total this QC is the only opportunity to catch a label swap or a failed library before inference.",
+              "acceptance_criteria": [
+                "Count matrix column names and metadata sample identifiers are confirmed to match, and the matching is reported explicitly",
+                "Library size, detected-gene count, and VST value distribution reported per sample for all 6 samples",
+                "PCA on the top 500 variable genes and a sample-distance heatmap are produced, both labelled by condition, with percent variance stated for PC1 and PC2",
+                "A written statement of whether the samples group by condition and whether any sample departs from its group, with no sample removed at this stage"
+              ],
+              "constraints": [
+                "Use the blind variance stabilizing transformation (blind=TRUE) for QC — do not use design-aware transformation for the exploratory plots",
+                "Use exactly the top 500 most variable genes for the PCA",
+                "Do not drop, impute, or renormalize any sample or gene in this step; QC is descriptive only",
+                "Report counts.csv row and column dimensions as loaded, and state how the gene-symbol column was handled (including any duplicate symbols)"
+              ],
+              "caveats": [
+                "With 3 samples per group a PCA is fragile: apparent separation on 6 points is not evidence of a treatment effect, and its absence does not exclude one",
+                "No batch or technical covariate exists in the metadata, so a technical driver of PC1 cannot be identified or ruled out from these data"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Raw count matrix: blind VST, PCA on the 500 top-variance genes, and a sample-distance heatmap are the required pre-model sample-structure QC per R-0033."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test, treated vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated and control zebrafish larvae pools at BH-adjusted p < 0.05, and what fold changes can a 3-vs-3 design realistically detect?",
+              "description": "Fit the differential expression model on the raw counts. Pre-filter minimally: keep a gene with at least 10 counts in at least 3 samples (the smallest group size). Build the DESeqDataSet with design ~condition, setting the control level explicitly as the reference with relevel — do not rely on alphabetical ordering. Let DESeq2 estimate median-of-ratios size factors internally; do not pre-scale, CPM-transform, or otherwise normalize the counts before the model. Run the Wald test and extract the contrast as the triple (condition, treated, control) so a positive log2 fold change means higher in treated. Shrink that coefficient with apeglm and keep both the unshrunken and shrunken log2 fold change plus lfcSE in the output table. Call results with alpha=0.05 and independent filtering on. Before reading the adjusted p-values, plot the histogram of raw p-values and state its shape. Report separately: genes filtered out by the pre-filter, genes with NA p-values from the Cook's-distance count-outlier flag (DESeq2 flags rather than replaces at 3 replicates per cell), and genes with NA adjusted p-values from independent filtering. Before the gene tables, state the expected power of this design: RNASeqPower and PROPER are not installed, so compute it from the closed-form relation between the observed per-sample depth, the fitted dispersions (biological coefficient of variation), the fold change and alpha, and report the fold change detectable at 80% power with n=3 per group. Write the full results table (all tested genes) and the significant subset to disk.",
+              "context": "12,000 gene-level Salmon counts, 3 treated vs 3 control whole-larvae pools, unpaired, single batch, no covariates. Salmon-derived counts would ideally enter via tximport with average-transcript-length offsets, but only a summarized gene-level CSV is provided and tximport is not installed in this environment — the step therefore takes the gene-level matrix as given and must state that the length offset is absent, which leaves gene-level calls vulnerable to isoform-usage shifts.",
+              "acceptance_criteria": [
+                "Reference level is set to the control condition by an explicit relevel call, and the contrast is reported as (condition, treated, control) with the direction of a positive log2FC stated",
+                "Number of genes retained after the >=10 counts in >=3 samples pre-filter is reported against the 12,000 input genes",
+                "Results table contains, per gene: baseMean, unshrunken log2FoldChange, lfcSE, apeglm-shrunken log2FoldChange, stat (Wald), pvalue, padj",
+                "Raw p-value histogram is produced and its shape described before any adjusted-p-value interpretation",
+                "Counts of NA p-values from the outlier flag and NA padj from independent filtering are reported separately",
+                "An expected-power statement for n=3 per group appears before the gene tables, naming the dispersion estimate and depth it was computed from, and naming that RNASeqPower/PROPER were unavailable",
+                "Number of genes with padj < 0.05 is reported; if zero, that is reported as the result and no threshold is loosened"
+              ],
+              "constraints": [
+                "Do not pre-normalize, scale, or log-transform the counts before DESeq2 — size factors are estimated inside the model",
+                "Pre-filter is minimal (min_count=10, min_samples=3) and independent filtering does the rest; do not raise the pre-filter threshold",
+                "alpha passed to results() must equal the reporting cutoff of 0.05",
+                "Select differentially expressed genes by adjusted p-value only — never by raw p-value and never by fold change alone",
+                "Keep the Cook's-distance outlier behaviour on (default); do not disable it",
+                "Use apeglm with coef= for the treated-vs-control coefficient; if apeglm cannot take the coefficient, use ashr and state the substitution",
+                "Write the complete tested-gene results table (not only the significant genes) to disk — the enrichment step requires the full ranked list"
+              ],
+              "caveats": [
+                "At 3 replicates per group the test recovers only a minority of true differences, concentrated at large fold changes; a gene absent from the significant list is not shown to be unchanged",
+                "No length offset is carried (tximport is not installed and only a gene-level matrix was supplied), so a change driven purely by isoform usage can appear as a gene-level change",
+                "With no batch or covariate in the metadata, any handling difference that tracks with treatment is indistinguishable from drug effect"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0162@ed74",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0017@8a47",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Two-group unpaired counts with 3 replicates per group: DESeq2 Wald with apeglm shrinkage and BH plus independent filtering (R-0001, R-0009, R-0010), minimal pre-filter (R-0029/R-0002), explicit reference level (R-0036), power statement required at n=3 (R-0162, R-0017). R-0018's tximport offsets are stated as unmet because only a gene-level matrix was supplied and tximport is absent."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "edgeR quasi-likelihood cross-check",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the treated-vs-control calls survive a second count model, and how large is the DESeq2 / edgeR quasi-likelihood intersection at 3 replicates per group?",
+              "description": "Refit the same contrast with the edgeR quasi-likelihood F-test on the same pre-filtered count matrix: DGEList, TMM normalization factors, estimateDisp on the ~condition design, glmQLFit, glmQLFTest for treated vs control, BH adjustment at 0.05. Report the number of significant genes from edgeR, the number from DESeq2 (T1S2), and the size and membership of the intersection. Present the intersection as the high-confidence set and the method-unique genes as a labelled secondary set naming which method called them. Produce a scatter of the two log2 fold-change estimates and a concordance summary (sign agreement, rank correlation of the test statistics).",
+              "context": "At three replicates per group the two count models agree on most genes but disagree measurably at low counts, so the overlap rather than the union is the defensible primary gene list for this dataset.",
+              "acceptance_criteria": [
+                "edgeR QL run on the identical filtered gene set and identical design as T1S2, with TMM factors",
+                "Significant-gene counts reported for each method separately plus the intersection size",
+                "Intersection reported as the high-confidence set; method-unique genes reported separately with the calling method named",
+                "Union is NOT presented as the result",
+                "Log2 fold-change concordance between methods quantified (sign agreement and rank correlation)"
+              ],
+              "constraints": [
+                "Use the same pre-filtered matrix and the same ~condition design as T1S2 so the comparison is like-for-like",
+                "Use glmQLFit/glmQLFTest — not the exactTest or the likelihood-ratio test",
+                "Adjust with BH at 0.05, matching T1S2"
+              ],
+              "caveats": [
+                "Disagreement between the two methods grows at low counts and low replicate numbers; a method-unique gene is a weaker call, not a false one",
+                "Both methods share the same three-replicate limitation, so concordance does not add power — it only removes method-specific artefacts"
+              ],
+              "packages": [
+                "edgeR",
+                "DESeq2",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0001@9a17",
+                  "R-0042@54e1"
+                ],
+                "reason": "edgeR quasi-likelihood is the named second method for a robustness check at 2-11 replicates (R-0001); R-0042 requires reporting per-method counts and the intersection as the high-confidence set rather than the union."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Zebrafish to human ortholog bridge",
+              "track": "T2",
+              "step_type": "annotation",
+              "question": "How many of the tested zebrafish genes map to a human ortholog, and what fraction of the ranked list is lost before any human gene-set collection can be used?",
+              "description": "Build the identifier bridge the enrichment needs. Starting from the full tested-gene table of T1S2 (zebrafish gene symbols on the Ensembl Danio rerio annotation), resolve each symbol to a zebrafish Entrez/Ensembl identifier using the installed zebrafish organism annotation package, then map to human orthologs using the ortholog resource available in this environment. Confirm what the reference store actually holds before committing: the reference store's pathway category carries human, mouse and rat collections but no zebrafish collection, and no zebrafish-human ortholog table is catalogued — so the mapping must come from an installed annotation package (org.Dr.eg.db, and babelgene if it covers Danio rerio) rather than from a staged file, and no step may attempt a network download. Keep one-to-one orthologs; where a zebrafish gene has multiple human orthologs or a human gene has multiple zebrafish paralogs (the teleost genome duplication makes this common), apply one stated resolution rule and report how many genes each rule affected. Emit two artifacts: (1) the tested-gene table annotated with the human ortholog symbol where one exists, carrying the Wald statistic through unchanged, and (2) a mapping report giving the number of tested genes, the number mapped, the mapped share, the number dropped for no ortholog, and the number dropped or collapsed by the multiplicity rule. If neither installed package resolves zebrafish-to-human orthologs, stop and report that plainly rather than substituting a species-mismatched mapping — the native-GO branch of T2S2 still runs in that case.",
+              "context": "The organism is Danio rerio. The knowledge procedure and the reference census agree that no curated zebrafish gene-set collection exists here, so pathway interpretation must go either through human orthologs or through the zebrafish GO annotation. This step builds the first route and quantifies its cost, because every downstream pathway claim inherits the mapping loss.",
+              "acceptance_criteria": [
+                "Mapped share reported as an explicit number and percentage of the tested genes from T1S2",
+                "Ortholog source named with its package version; the resolution rule for one-to-many and many-to-one mappings stated and its effect counted",
+                "Annotated ranked table written with the Wald statistic preserved for every mapped gene",
+                "If no zebrafish-human ortholog resource resolves in this environment, the step reports that explicitly and does not substitute a different species' mapping"
+              ],
+              "constraints": [
+                "Never write a download into the script — the sandbox has no network; use only installed annotation packages and staged reference files",
+                "Do not substitute a mouse or rat mapping for a zebrafish one under any circumstances",
+                "Preserve the DESeq2 Wald statistic unchanged through the mapping; do not recompute or rescale it",
+                "Report gene counts at every stage (tested, symbol-resolved, ortholog-mapped, retained after multiplicity rule)"
+              ],
+              "caveats": [
+                "The teleost whole-genome duplication means many zebrafish genes have two co-orthologs of one human gene; whichever resolution rule is chosen discards real signal, and the report must say so",
+                "Genes with no human ortholog are silently invisible to every human collection — this is a systematic, not random, loss and biases enrichment toward conserved processes"
+              ],
+              "packages": [
+                "org.Dr.eg.db",
+                "AnnotationDbi",
+                "babelgene",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0050@0763",
+                  "R-0081@5c95"
+                ],
+                "reason": "Organism other than human or mouse: no curated collection is served, so the plan must map to human orthologs or use GO, and must name the annotation source, identifier space, and mapped share (R-0050, R-0081)."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Preranked GSEA and native zebrafish GO",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which pathways and biological processes are coordinately shifted between treated and control zebrafish larvae, on the full ranked gene list rather than on a thresholded subset?",
+              "description": "Run fgsea preranked on the complete tested-gene list from T1S2, ranked by the DESeq2 Wald statistic (the 'stat' column). Two branches, both reported: (A) Ortholog branch — using the human-ortholog-annotated table from T2S1, test against the human hallmark collection, the human GO Biological Process collection, and the human canonical pathway collections (WikiPathways and the KEGG-MEDICUS/BioCarta/PID MSigDB sets) available in the reference store, naming each collection and its version. (B) Native branch — using the zebrafish symbols directly, test GO Biological Process gene sets built from the installed zebrafish organism annotation package, so that a result exists that pays no ortholog toll. In both branches: intersect each set with the tested genes first, then apply the 15-500 gene size window; adjust across sets with BH; set and record the random seed for the permutations. Collapse redundant significant sets (fgsea's collapsePathways or equivalent overlap grouping) and report one representative per group with the full table kept as a supplement. For each reported set give the normalized enrichment score, adjusted p-value, set size after intersection, and the leading-edge genes with their gene-level Wald statistic, marking leading-edge overlap between reported sets. Finally, report where branch A and branch B agree and where they do not. Do not run an over-representation test on the significant gene list if fewer than 50 genes pass padj < 0.05; state the size of the significant list either way.",
+              "context": "The ranking metric is a disputed choice and this plan states it: the DESeq2 Wald statistic, because it scales the effect by its uncertainty. The signed -log10 p-value was rejected because p-values tie at the top of the list and the top-of-list order then becomes arbitrary; the shrunken log2 fold change was rejected because it discards the uncertainty scaling that the ranked test depends on. The shrunken LFC is still used for ranking the gene table and the plots in T3S1. The reference store holds human hallmark (h.all 2026.1), human GO (c5.go.bp/cc/mf 2026.1), human WikiPathways (2026.07.10), and human canonical pathways (KEGG-MEDICUS/BioCarta/PID 2026.1) — all HGNC symbols, hence the ortholog step. No zebrafish collection is staged, which is why branch B builds its sets from the installed annotation package instead.",
+              "acceptance_criteria": [
+                "GSEA run on the FULL tested-gene list, not on a padj- or fold-change-thresholded subset",
+                "Ranking metric explicitly reported as the DESeq2 Wald statistic, with the rejected alternatives named",
+                "Both the ortholog branch and the native zebrafish GO branch are executed and reported; if the ortholog bridge failed in T2S1, that is stated and branch B alone is reported",
+                "Gene set size window of 15-500 applied AFTER intersecting each set with the tested genes, and the window reported",
+                "Each collection named with its version; BH adjustment across sets; permutation seed recorded",
+                "Redundant significant sets collapsed, one representative reported per group, full table retained as supplement",
+                "Leading-edge genes listed per reported significant set with their gene-level statistic, and leading-edge overlap between reported sets marked",
+                "Size of the padj<0.05 gene list stated; no ORA run on a list of fewer than 50 genes",
+                "Agreement and disagreement between the ortholog branch and the native GO branch summarized"
+              ],
+              "constraints": [
+                "Never threshold the ranked list before the GSEA",
+                "Rank by the Wald statistic — not by the unshrunken log2 fold change alone and not by a signed p-value",
+                "Universe for any set-based test is the tested genes, never the whole genome or the whole annotation",
+                "Do not use a mouse or rat collection on zebrafish-derived symbols under any circumstances",
+                "Use only staged reference collections and installed annotation packages — no network access, no downloads",
+                "If a named collection is absent from the reference store at run time, report its absence and continue with the collections that are present; do not silently substitute"
+              ],
+              "caveats": [
+                "Enrichment results are method-dependent: a ranked test and an over-representation test on the same data give different lists, so every set is a hypothesis for follow-up, not a finding",
+                "Gene length and expression level bias which genes reach significance, which is one reason the ranked test on the full list is preferred here",
+                "The ortholog branch inherits the mapping loss quantified in T2S1 and is biased toward conserved processes; the native GO branch is limited by the comparative thinness of zebrafish GO annotation. Neither is a clean answer and the report must say which limit applies to which result",
+                "With few or no significantly changed genes, GSEA can still return significant sets from coordinated weak shifts — such a set is weaker evidence than one supported by individually significant genes"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "org.Dr.eg.db",
+                "AnnotationDbi",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0107@976c",
+                  "R-0050@0763",
+                  "R-0097@a38e",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0045@f652",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0",
+                "reason": "Preranked fgsea on the full tested list is the default enrichment method (R-0107, R-0045); the disputed ranking metric (R-0108) is resolved here in favour of the Wald statistic per R-0099; non-human organism forces the ortholog-or-GO route with its limit stated (R-0050); size window, universe and collapsing follow R-0047, R-0046, R-0052."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Consolidated report",
+              "track": "T3",
+              "step_type": "report",
+              "question": "What is the defensible answer to 'which genes differ between treated and control zebrafish larvae, and which pathways do they point to', and what does the 3-vs-3 design not permit us to say?",
+              "description": "Assemble one report from T1S1, T1S2, T1S3, T2S1 and T2S2, in this order. Open with the power statement at n=3 per group from T1S2 — the fold change detectable at 80% power and the fraction of true differences a design this size recovers — before any gene table, so the reader meets the limitation first. Then the fit diagnostics: MA plot on the shrunken fold changes and the dispersion-estimate plot, with a sentence on what each shows. Then the design record: method, package versions, design formula ~condition, the contrast (condition, treated, control), the alpha and BH threshold, the number of genes tested after filtering out of 12,000, and the number differentially expressed. Then the gene table, ranked by the shrunken log2 fold change, carrying unshrunken log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, Wald stat, pvalue and padj per gene, with the shrinkage estimator named in the header. Add a volcano plot and a heatmap of VST values for the top genes. Report the DESeq2/edgeR intersection from T1S3 as the high-confidence set. Then the pathway section: for each branch, the collection and its version, the ranking metric, the universe, the size window, the permutation seed, the collapsed representative sets with NES/padj/size, and the leading-edge genes per set. State the annotation source, its release, the identifier space of the genes, the ortholog map and the mapped share from T2S1. Close with a limitations paragraph and a reproducibility record: sessionInfo, every package version, the seed, and the collection versions, stored with the results.",
+              "context": "This is the deliverable the research question is answered from. Two constraints shape it: rank the gene table by the shrunken fold change (the unshrunken estimate puts noisy low-count genes on top), but remember the enrichment ranked by the Wald statistic — the two rankings serve different purposes and the report should not conflate them.",
+              "acceptance_criteria": [
+                "Power statement at 3 replicates per group appears before the gene tables",
+                "MA plot and dispersion plot both present, each with a stated reading",
+                "Design record present: method, package versions, ~condition formula, the (condition, treated, control) contrast, thresholds, genes tested after filtering out of 12,000, and number of DE genes",
+                "Gene table ranked by the apeglm-shrunken log2 fold change and carrying unshrunken log2FoldChange, shrunken log2FoldChange, and lfcSE per gene, with the estimator named",
+                "DESeq2/edgeR overlap reported as the high-confidence set",
+                "Pathway section names each collection with its version, the Wald-statistic ranking metric, the tested-gene universe, the 15-500 size window, and the permutation seed; leading-edge genes listed per reported set",
+                "Annotation source, release, identifier space, ortholog map and mapped share stated",
+                "Explicit statement that enrichment results are method-dependent and that each set is a hypothesis",
+                "Limitations paragraph covering n=3 power, the absent length offset, the single-batch/no-covariate design, and the ortholog mapping loss",
+                "Reproducibility record (sessionInfo, package versions, seed, collection versions) stored alongside the results"
+              ],
+              "constraints": [
+                "Rank the gene table and draw the plots on the shrunken log2 fold change, never on the unshrunken estimate alone",
+                "Keep the p-values from the unshrunken fit — shrinkage does not change the test",
+                "Do not present the union of DESeq2 and edgeR calls as the result",
+                "Do not make a mechanistic, druggability, or safety claim: the profile carries no compound identity, dose, or timepoint",
+                "State plainly if the number of genes at padj<0.05 is zero or very small — do not compensate by relaxing the threshold or by switching to raw p-values"
+              ],
+              "caveats": [
+                "A gene absent from the significant list is not demonstrated to be unchanged at this sample size",
+                "Pathway-level results rest on either an ortholog map with quantified loss or a comparatively thin zebrafish GO annotation; neither supports a strong mechanistic claim from 3 pools per group"
+              ],
+              "packages": [
+                "DESeq2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2",
+                "knitr"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0094@6849",
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0081@5c95",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report contents follow the procedure's report step: power statement first at n=3 (R-0094), MA and dispersion diagnostics (R-0087), shrunken and unshrunken effect columns with ranking on the shrunken value (R-0085), method/version/design/threshold record (R-0041), enrichment provenance and method-dependence (R-0051, R-0055), non-human annotation reporting (R-0081), leading edge per set (R-0105), reproducibility record (R-0086)."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

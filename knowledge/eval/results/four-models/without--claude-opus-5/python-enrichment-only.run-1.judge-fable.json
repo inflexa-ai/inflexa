@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses to refit DESeq2 and builds a full-list preranked GSEA in gseapy on a signed statistic (Wald stat, fallback signed -log10 p) with explicit NA, duplicate, tie and infinite-value handling, a fixed seed, a local human Hallmark GMT, and reporting of NES/FDR/leading edge for all 50 sets. It falls short of the reference by not naming the MSigDB version, not stating the 15–500 set-size window (only a soft warning about <15 members), and not fixing the permutation count at ≥1000. The added ORA cross-check uses an explicit 12,000-gene universe and local GMT (not the enrichr web service), so it is not wrong per se, but it is threshold-dependent redundancy the reference discourages. QC, filtering, normalization and model criteria are largely inapplicable to an enrichment-only task; the plan handles them by stating the pre-filtered universe, the contrast direction, BH correction and the sample_01 low-depth caveat rather than running new diagnostics."
+}

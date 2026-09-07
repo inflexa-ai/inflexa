@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: EPIC and quanTIseq on the unfiltered linear TPM matrix with an explicit ban on log input, MCP-counter and xCell labelled as scores not fractions and not compared across populations, followed by a per-cell-type test (limma with a Wilcoxon check) with BH across cell types within each method and effect sizes with intervals. QC on log2(TPM+1) with PCA, distances and detected-gene counts keeps sample_01 with a stated policy and a leave-one-out sensitivity check; the 1 TPM in >=6 samples filter is justified by group size and applied only to the scoring matrix. Design formula, reference level and contrast are explicit; gene-level enrichment is correctly omitted and signature coverage is reported per set. Minor gaps: the EPIC reference profile choice (tumor vs blood) is not specified beyond a statement to report the match, and MCP-counter is fed linear TPM via immunedeconv rather than log2(TPM+1) as in the reference, though that is what the interface expects."
+}

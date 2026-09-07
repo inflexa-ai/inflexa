@@ -1,0 +1,257 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "batch-balanced-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T21:05:17.330Z",
+  "elapsedMs": 33009,
+  "outcome": "plan_submitted",
+  "planId": "pln-beead3e3",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, QC, and confirm design structure",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not assume sample order in counts.csv matches metadata.csv row order — join explicitly on sample ID",
+          "12000 x 13 CSV includes the gene-symbol column as column 1; confirm it is excluded from the numeric count matrix before any arithmetic"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the raw counts.csv (12000 genes x 12 samples) and metadata.csv (12 samples x condition, batch) match the profiled design of 6 treated vs 6 control with two batches balanced across condition, and are the counts suitable for DESeq2 (non-negative integers, no missing samples)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the raw integer counts as provided; do not pre-normalize before DESeq2, which requires raw counts"
+        ],
+        "acceptance_criteria": [
+          "Counts matrix loaded with gene symbols as row names and all 12 sample columns matching metadata sample IDs exactly",
+          "Cross-tabulation of condition x batch reported explicitly, confirming 3 treated + 3 control (or the actual observed split) per batch",
+          "Library size and gene-count distribution per sample reported; any sample with markedly divergent library size flagged",
+          "Genes with zero counts across all samples identified and reported (not yet filtered, filtering happens in DESeq2 step)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Batch-adjusted differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group and only two batches, do not additionally attempt a batch:condition interaction term — there is no power to estimate it; batch is included only as an additive covariate",
+          "Use apeglm or ashr shrinkage (not the default normal shrinkage) for log2FoldChange reporting used in the volcano/MA plots to avoid inflated fold changes for low-count genes",
+          "12000 input genes is a pre-filtered/reduced gene set (not whole-transcriptome ~20k+); do not apply additional aggressive low-count filtering beyond DESeq2 defaults, or too few genes may remain testable"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which genes are differentially expressed between treated and control kidney samples when batch (two known processing batches) is included as a covariate in the model?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design formula must be ~ batch + condition, not ~ condition alone, since batch is a known confounder even though it is balanced",
+          "Report both raw and BH-adjusted p-values for the full gene list, not only the significant subset"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run with design ~ batch + condition on raw integer counts, condition releveled so control is the reference level",
+          "Treated-vs-control contrast extracted with independent filtering (default alpha=0.05) and Benjamini-Hochberg FDR correction",
+          "Results table reports gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj for all tested genes, sorted by padj",
+          "Significant gene list defined at padj < 0.05 (report count of significant genes; if fewer than 10 genes are significant, state this as a low-power finding rather than reinterpreting the threshold)",
+          "PCA plot of variance-stabilized (vst) counts colored by condition and shaped by batch produced, to visually confirm batch is a secondary axis of variation relative to condition",
+          "MA plot and a volcano plot of the treated-vs-control contrast produced",
+          "Dispersion estimates plot produced to confirm model fit is reasonable for this sample size"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the treated-vs-control gene signature",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Gene symbol casing/format in the WikiPathways GMT (HGNC) must match the counts.csv gene symbol column; normalize case before matching",
+          "The GMT's first field is '%'-delimited (name, WikiPathways ID, species) and must be split to obtain a readable pathway name before reporting"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control kidney samples (batch-adjusted DESeq2 result)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Do not use a non-human WikiPathways GMT (rat/mouse) as a substitute for missing human data"
+        ],
+        "acceptance_criteria": [
+          "Enrichment run separately for up-regulated (positive log2FC, padj<0.05) and down-regulated (negative log2FC, padj<0.05) significant genes against the full tested gene list as background",
+          "If the significant gene count from T1S2 is very small (e.g., <15 genes per direction), report this explicitly and additionally run a pre-ranked GSEA using the full DESeq2 stat column against WikiPathways human gene sets as a more powered complement",
+          "Pathway gene sets are the WikiPathways human GMT resolved from the environment's reference store at run time; if the resource is unexpectedly absent, report the gap rather than substituting a different-species pathway set",
+          "Output table includes pathway name, WikiPathways ID, overlap size, gene ratio, p-value, and BH-adjusted p-value, sorted by adjusted p-value",
+          "Top enriched pathways (adjusted p<0.05, or top 20 by p-value if none pass FDR) reported with the member DE genes driving each"
+        ]
+      }
+    ],
+    "title": "Batch-adjusted DESeq2 DE: treated vs control kidney",
+    "created_at": "2026-09-07",
+    "analytical_narrative": "The design is a clean 2x2: 12 kidney samples, 6 treated vs 6 control, with two known processing batches balanced across conditions (i.e., batch is not confounded with condition). This is the textbook case for a paired-factor design in DESeq2 using ~batch + condition, which removes batch-driven variance from the model without needing an empirical batch-correction tool like ComBat/SVA (those are for when batch structure is unknown or unbalanced — here it is known and balanced, so modeling it directly is more appropriate and preserves valid inference). The pipeline is: (1) load and QC the raw counts/metadata, confirm the 6v6 balanced-batch structure exactly as profiled; (2) run DESeq2 with the batch-adjusted design, extract the treated-vs-control contrast with independent filtering and a fixed FDR threshold, and produce standard diagnostic and result visualizations; (3) take the resulting significant gene list into WikiPathways human pathway enrichment to give the DE signature biological context. Each step operates on a single primary data object (count matrix -> DESeq2 results -> gene list -> pathway enrichment) and is routed to the matching agent."
+  },
+  "usage": {
+    "inputTokens": 87161,
+    "outputTokens": 2765,
+    "cacheCreationInputTokens": 68853,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Batch-adjusted DESeq2 DE: treated vs control kidney",
+          "analytical_narrative": "The design is a clean 2x2: 12 kidney samples, 6 treated vs 6 control, with two known processing batches balanced across conditions (i.e., batch is not confounded with condition). This is the textbook case for a paired-factor design in DESeq2 using ~batch + condition, which removes batch-driven variance from the model without needing an empirical batch-correction tool like ComBat/SVA (those are for when batch structure is unknown or unbalanced — here it is known and balanced, so modeling it directly is more appropriate and preserves valid inference). The pipeline is: (1) load and QC the raw counts/metadata, confirm the 6v6 balanced-batch structure exactly as profiled; (2) run DESeq2 with the batch-adjusted design, extract the treated-vs-control contrast with independent filtering and a fixed FDR threshold, and produce standard diagnostic and result visualizations; (3) take the resulting significant gene list into WikiPathways human pathway enrichment to give the DE signature biological context. Each step operates on a single primary data object (count matrix -> DESeq2 results -> gene list -> pathway enrichment) and is routed to the matching agent.",
+          "created_at": "2026-09-07",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, QC, and confirm design structure",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the raw counts.csv (12000 genes x 12 samples) and metadata.csv (12 samples x condition, batch) match the profiled design of 6 treated vs 6 control with two batches balanced across condition, and are the counts suitable for DESeq2 (non-negative integers, no missing samples)?",
+              "acceptance_criteria": [
+                "Counts matrix loaded with gene symbols as row names and all 12 sample columns matching metadata sample IDs exactly",
+                "Cross-tabulation of condition x batch reported explicitly, confirming 3 treated + 3 control (or the actual observed split) per batch",
+                "Library size and gene-count distribution per sample reported; any sample with markedly divergent library size flagged",
+                "Genes with zero counts across all samples identified and reported (not yet filtered, filtering happens in DESeq2 step)"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do not assume sample order in counts.csv matches metadata.csv row order — join explicitly on sample ID",
+                "12000 x 13 CSV includes the gene-symbol column as column 1; confirm it is excluded from the numeric count matrix before any arithmetic"
+              ],
+              "constraints": [
+                "Use the raw integer counts as provided; do not pre-normalize before DESeq2, which requires raw counts"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Batch-adjusted differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between treated and control kidney samples when batch (two known processing batches) is included as a covariate in the model?",
+              "acceptance_criteria": [
+                "DESeq2 run with design ~ batch + condition on raw integer counts, condition releveled so control is the reference level",
+                "Treated-vs-control contrast extracted with independent filtering (default alpha=0.05) and Benjamini-Hochberg FDR correction",
+                "Results table reports gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj for all tested genes, sorted by padj",
+                "Significant gene list defined at padj < 0.05 (report count of significant genes; if fewer than 10 genes are significant, state this as a low-power finding rather than reinterpreting the threshold)",
+                "PCA plot of variance-stabilized (vst) counts colored by condition and shaped by batch produced, to visually confirm batch is a secondary axis of variation relative to condition",
+                "MA plot and a volcano plot of the treated-vs-control contrast produced",
+                "Dispersion estimates plot produced to confirm model fit is reasonable for this sample size"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=6 per group and only two batches, do not additionally attempt a batch:condition interaction term — there is no power to estimate it; batch is included only as an additive covariate",
+                "Use apeglm or ashr shrinkage (not the default normal shrinkage) for log2FoldChange reporting used in the volcano/MA plots to avoid inflated fold changes for low-count genes",
+                "12000 input genes is a pre-filtered/reduced gene set (not whole-transcriptome ~20k+); do not apply additional aggressive low-count filtering beyond DESeq2 defaults, or too few genes may remain testable"
+              ],
+              "constraints": [
+                "Design formula must be ~ batch + condition, not ~ condition alone, since batch is a known confounder even though it is balanced",
+                "Report both raw and BH-adjusted p-values for the full gene list, not only the significant subset"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of the treated-vs-control gene signature",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control kidney samples (batch-adjusted DESeq2 result)?",
+              "acceptance_criteria": [
+                "Enrichment run separately for up-regulated (positive log2FC, padj<0.05) and down-regulated (negative log2FC, padj<0.05) significant genes against the full tested gene list as background",
+                "If the significant gene count from T1S2 is very small (e.g., <15 genes per direction), report this explicitly and additionally run a pre-ranked GSEA using the full DESeq2 stat column against WikiPathways human gene sets as a more powered complement",
+                "Pathway gene sets are the WikiPathways human GMT resolved from the environment's reference store at run time; if the resource is unexpectedly absent, report the gap rather than substituting a different-species pathway set",
+                "Output table includes pathway name, WikiPathways ID, overlap size, gene ratio, p-value, and BH-adjusted p-value, sorted by adjusted p-value",
+                "Top enriched pathways (adjusted p<0.05, or top 20 by p-value if none pass FDR) reported with the member DE genes driving each"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Gene symbol casing/format in the WikiPathways GMT (HGNC) must match the counts.csv gene symbol column; normalize case before matching",
+                "The GMT's first field is '%'-delimited (name, WikiPathways ID, species) and must be split to obtain a readable pathway name before reporting"
+              ],
+              "constraints": [
+                "Do not use a non-human WikiPathways GMT (rat/mouse) as a substitute for missing human data"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

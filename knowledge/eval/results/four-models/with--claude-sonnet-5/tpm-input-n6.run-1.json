@@ -1,0 +1,864 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "tpm-input-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T20:29:18.587Z",
+  "elapsedMs": 96606,
+  "outcome": "plan_submitted",
+  "planId": "pln-e12b1482",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on log2(TPM+1)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Only a TPM table was delivered — no raw counts or quantification directories, so this QC operates on abundance values, not counts",
+          "TPM values are only comparable within this single delivered protocol; do not compare to any external TPM source"
+        ],
+        "context": "Input is /data/inputs/abundance/tpm.csv (12000 genes x 12 samples TPM from Salmon, no raw counts kept) and /data/inputs/metadata/metadata.csv (12 samples: condition = lesional/control, 6 each, unpaired, single batch).",
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Do the 6 lesional and 6 control skin samples separate by condition on PCA/MDS of log2(TPM+1) values, and are there outlier samples or unexpected structure before modelling?",
+        "grounding": {
+          "claims": [
+            "R-0071@e4e2"
+          ],
+          "reason": "TPM input requires QC on log2(value+1), not a count-based VST, per R-0071",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Transform TPM to log2(value+1) before any QC plot; do not apply a count-based variance-stabilizing transform",
+          "Use the 500 most variable genes for the PCA/MDS per default guide practice"
+        ],
+        "acceptance_criteria": [
+          "PCA or MDS plot colored by condition (lesional vs control) produced from log2(TPM+1) of the top 500 most variable genes",
+          "Sample-sample distance heatmap produced",
+          "Per-sample detected-gene count (TPM>0) reported",
+          "Any sample that does not cluster with its labeled condition is flagged explicitly, not silently dropped"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Filter low-abundance genes and fit limma model for lesional vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "No raw counts or quantification directories were delivered, so gene-level length-scaled offset correction (tximport) cannot be applied; this is a known limitation of the delivered data, not a step choice",
+          "Any inference here is TPM-based and cannot be cross-validated against an isoform-level or count-based reanalysis without the original quantification files"
+        ],
+        "context": "12000 x 12 TPM matrix, salmon gene-level, no raw counts delivered. Design: 6 lesional vs 6 control, unpaired, single batch — no batch term needed.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between psoriasis lesional and control skin (6 vs 6, unpaired), using a linear model appropriate for TPM abundance data?",
+        "grounding": {
+          "claims": [
+            "R-0072@881a",
+            "R-0073@8b36",
+            "R-0036@9786",
+            "R-0093@4fa4",
+            "R-0004@a06d",
+            "R-0037@e6d8",
+            "R-0043@4f55",
+            "R-0044@1777"
+          ],
+          "reason": "TPM/FPKM input forbids count models; limma trend+robust on log2(TPM+1) with explicit reference level and BH-adjusted selection is the only permitted method, confirmed by knowledge_check",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-limma-trend-logvalues@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not use DESeq2, edgeR, or voom on this TPM table — count-based models assume integer counts with negative-binomial variance and TPM breaks that assumption",
+          "Explicitly set factor reference level to control and name the contrast lesional-control",
+          "Apply the fold-change threshold test, if any, inside the model (e.g., limma treat), not as a post-hoc filter on the point estimate"
+        ],
+        "acceptance_criteria": [
+          "Genes retained only if TPM >= 1 in at least 6 samples (the smaller group size); number of genes before/after filter reported",
+          "log2(TPM+1) used as the sole normalization — no TMM/size-factor renormalization applied",
+          "limma lmFit/eBayes with trend=TRUE and robust=TRUE fit on the filtered log2(TPM+1) matrix",
+          "Condition factor has an explicit reference level (control) and the contrast is named lesional-control so a positive logFC means higher in lesional",
+          "Full topTable output (logFC, adjusted p-value, t-statistic) exported for every tested gene",
+          "Genes selected as DE only by BH-adjusted p-value < 0.05, not by raw p-value or fold-change alone"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Over-representation analysis of DE genes against Hallmark and canonical pathway collections",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "No MSigDB Reactome GMT was found staged in this reference store at plan time; WikiPathways and KEGG MEDICUS/BioCarta/PID substitute for it — report this gap rather than silently treating WikiPathways as Reactome",
+          "GO Biological Process is a nested hierarchy — expect correlated blocks of significant parent/child terms, collapse before reporting a term count"
+        ],
+        "context": "Input is the DE gene table (logFC, adjusted p-value) from the limma fit on the 12-sample lesional vs control TPM comparison. Reference gene sets confirmed present in the environment: MSigDB Hallmark human (h.all.v2026.1.Hs.symbols.gmt, 50 sets), MSigDB GO BP/CC/MF human (c5.go.*.v2026.1.Hs.symbols.gmt), MSigDB canonical pathways human (KEGG MEDICUS/BioCarta/PID, c2.cp.*.v2026.1.Hs.symbols.gmt), and WikiPathways human (wikipathways_Homo_sapiens.gmt, 2026.07.10). No MSigDB Reactome (C2:CP:REACTOME) or KEGG legacy collection is staged in this environment — use WikiPathways and the staged KEGG MEDICUS subset as the closest available substitutes and state this substitution in the report.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler"
+        ],
+        "question": "Which biological pathways and processes are over-represented among the genes differentially expressed between lesional and control psoriatic skin?",
+        "grounding": {
+          "claims": [
+            "R-0048@500d",
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0052@620a"
+          ],
+          "reason": "Knowledge check rejected preranked GSEA for this situation; over-representation with an explicit universe is the permitted enrichment method",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use an explicit universe = the tested gene set from T1S2, per over-representation best practice — never the whole genome",
+          "Preranked/GSEA-style enrichment on the full ranked list is not permitted for this design per the knowledge check; use over-representation analysis with a significance-thresholded gene list instead"
+        ],
+        "acceptance_criteria": [
+          "Universe set explicitly to the genes that passed the low-abundance filter and were tested in the limma model — not the whole genome or whole annotation",
+          "Over-representation test (e.g., clusterProfiler enricher / hypergeometric test) run first against the MSigDB Hallmark human gene sets (50 sets)",
+          "Gene sets restricted to 15-500 members among the tested genes before testing",
+          "Follow-up over-representation run against WikiPathways human and/or MSigDB canonical pathway (KEGG MEDICUS/BioCarta/PID) collections and GO Biological Process sets from the reference store",
+          "Redundant/overlapping significant sets collapsed to representative sets in the summary, full table kept as supplement",
+          "BH-adjusted p-values reported for enrichment results"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Pathway activity inference with decoupleR PROGENy footprint model",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "PROGENy gives 14 broad signalling pathways; a specific psoriasis mechanism (e.g., IL-17/IL-23 axis) may not map cleanly onto any single PROGENy pathway and should not be overclaimed from this output alone"
+        ],
+        "context": "PROGENy human pathway weight model (model_human_full.rda, 14 signalling pathways) confirmed present in the reference store. Input is the limma contrast statistics table (t-statistics/logFC per gene) for lesional vs control from T1S2.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupleR"
+        ],
+        "question": "Which signalling pathways (e.g., TNFa, NFkB, JAK-STAT-adjacent, hypoxia) show a shifted transcriptional footprint activity in lesional versus control skin, based on the limma contrast statistics?",
+        "grounding": {
+          "claims": [
+            "R-0123@5521",
+            "R-0115@1504",
+            "R-0122@08af"
+          ],
+          "reason": "Pathway activity via decoupleR mlm on PROGENy is the grounded method for this extra_analyses request; PROGENy human model confirmed present in reference store",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "pathway_activity",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use decoupleR mlm (multivariate linear model) as the primary activity estimator, ulm as secondary if run",
+          "Read the PROGENy score as a pathway footprint, not as expression of pathway member genes"
+        ],
+        "acceptance_criteria": [
+          "decoupleR mlm run on the limma moderated t-statistic (or logFC) of every tested gene from T1S2, not only the significant genes",
+          "PROGENy human footprint model used with the top 500 responsive genes per pathway, and the number stated",
+          "Activity scores per pathway reported as a footprint (interpretation: transcriptional response, not pathway-member expression)",
+          "Report states this is not topology-aware (SPIA is absent from the environment) and is a footprint enrichment, not a graph-based impact analysis"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Compile DE and pathway activity report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The TPM-only delivery is a genuine limitation stated up front, not something to be smoothed over in the narrative"
+        ],
+        "context": "Final synthesis step drawing on the DE table (T1S2), the over-representation results (T2S1), and the PROGENy pathway activity results (T2S2) for the 6 lesional vs 6 control psoriatic skin TPM cohort.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the reproducible, decision-ready summary of genes and pathways that differ between psoriasis lesional and control skin in this 6-vs-6 TPM-only cohort?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "Report step follows the reproducibility and reporting-fields rules from the knowledge base",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "Do not present the pathway activity or enrichment results as adding statistical power to the DE call — they are independent, complementary readouts"
+        ],
+        "acceptance_criteria": [
+          "Report states the method (limma trend+robust eBayes), package versions, the design formula and contrast (lesional vs control, control as reference), the abundance filter threshold (1 TPM in >=6 samples), the adjusted p-value cutoff (0.05), the number of genes tested after filtering, and the number of DE genes",
+          "Report states that only TPM data was available (no raw counts/quantification files), and how this constrained method choice (no DESeq2/edgeR/voom)",
+          "Report includes the over-representation results (Hallmark + WikiPathways/canonical pathways/GO) and the PROGENy pathway activity results as two complementary functional views",
+          "Reproducibility record included: sessionInfo, package versions, gene set collection versions (MSigDB 2026.1, WikiPathways 2026.07.10, PROGENy current)"
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control: limma DE + pathway activity",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "Only a gene-level TPM table (12000 genes x 12 samples: 6 lesional, 6 control skin) was delivered, with no raw counts or Salmon quantification directories. This rules out count-based models (DESeq2/edgeR/voom), which require integer counts with NB variance — the knowledge base flags this explicitly (R-0004). The sound path is: (1) QC sample structure on log2(TPM+1) values via PCA/MDS to confirm lesional vs control separation and rule out a technical outlier before modelling; (2) filter genes below 1 TPM in fewer than 6 samples (the smaller group size, both groups being 6); (3) log2(TPM+1) is itself the only normalization appropriate for already-abundance-scaled data — no size-factor or TMM renormalization; (4) fit a limma linear model (lmFit/eBayes with trend=TRUE, robust=TRUE) on log2(TPM+1) with an explicit reference level (control) and named contrast (lesional-control), since limma-on-log-values is the only permitted DE method for abundance data per the knowledge check; (5) select DE genes by BH-adjusted p-value, not raw p or fold-change alone; (6) run over-representation analysis (not preranked GSEA, which the knowledge check rejected for this design) using an explicit universe of tested genes against MSigDB Hallmark first, then GO/canonical pathway collections staged in the reference store; (7) infer signalling pathway activity with decoupleR mlm on the PROGENy human footprint model as a mechanistic-context companion to the DE list; (8) compile a report with the full reproducibility record (session info, package versions, thresholds, n tested/n DE, gene set collection versions). All steps operate on this specific 12-sample, single-batch, unpaired design; no batch correction is needed since batch is reported as a single batch."
+  },
+  "usage": {
+    "inputTokens": 1116971,
+    "outputTokens": 8418,
+    "cacheCreationInputTokens": 162212,
+    "cacheReadInputTokens": 954603,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "pathway_activity"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "psoriasis"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "progeny"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome go gene ontology human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "c2.cp.reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/msigdb-canonical-pathways-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/msigdb-canonical-pathways-human/2026.1"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome",
+        "limit": 30
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "log2(TPM+1) PCA/MDS sample structure QC",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low-abundance filter on TPM table",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "log2(TPM+1) transform only, no cross-protocol comparison",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma linear model (lmFit/eBayes, trend=TRUE, robust=TRUE) on log2(TPM+1), lesional vs control",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              },
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast",
+                "value": "lesional-control"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH adjustment via limma topTable",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "clusterProfiler / fgsea GSEA on full ranked gene list against MSigDB Hallmark, then Reactome/WikiPathways/GO",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "limma_t_statistic"
+              },
+              {
+                "name": "gene_set_min",
+                "value": 15
+              },
+              {
+                "name": "gene_set_max",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "decoupleR mlm on PROGENy human footprint model, top 500 responsive genes",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Structured DE + pathway report with reproducibility record",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "log2(TPM+1) PCA/MDS sample structure QC",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low-abundance filter on TPM table",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "log2(TPM+1) transform only, no cross-protocol comparison",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma linear model on log-scale expression values (lmFit/eBayes, trend=TRUE, robust=TRUE) on log2(TPM+1), lesional vs control",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              },
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast",
+                "value": "lesional-control"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH adjustment via limma topTable",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "Over-representation analysis (clusterProfiler enricher) with explicit universe of tested genes, against MSigDB Hallmark then GO/canonical pathways",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "gene_set_min",
+                "value": 15
+              },
+              {
+                "name": "gene_set_max",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "decoupleR mlm on PROGENy human footprint model, top 500 responsive genes",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Structured DE + pathway report with reproducibility record",
+            "parameters": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control: limma DE + pathway activity",
+          "analytical_narrative": "Only a gene-level TPM table (12000 genes x 12 samples: 6 lesional, 6 control skin) was delivered, with no raw counts or Salmon quantification directories. This rules out count-based models (DESeq2/edgeR/voom), which require integer counts with NB variance — the knowledge base flags this explicitly (R-0004). The sound path is: (1) QC sample structure on log2(TPM+1) values via PCA/MDS to confirm lesional vs control separation and rule out a technical outlier before modelling; (2) filter genes below 1 TPM in fewer than 6 samples (the smaller group size, both groups being 6); (3) log2(TPM+1) is itself the only normalization appropriate for already-abundance-scaled data — no size-factor or TMM renormalization; (4) fit a limma linear model (lmFit/eBayes with trend=TRUE, robust=TRUE) on log2(TPM+1) with an explicit reference level (control) and named contrast (lesional-control), since limma-on-log-values is the only permitted DE method for abundance data per the knowledge check; (5) select DE genes by BH-adjusted p-value, not raw p or fold-change alone; (6) run over-representation analysis (not preranked GSEA, which the knowledge check rejected for this design) using an explicit universe of tested genes against MSigDB Hallmark first, then GO/canonical pathway collections staged in the reference store; (7) infer signalling pathway activity with decoupleR mlm on the PROGENy human footprint model as a mechanistic-context companion to the DE list; (8) compile a report with the full reproducibility record (session info, package versions, thresholds, n tested/n DE, gene set collection versions). All steps operate on this specific 12-sample, single-batch, unpaired design; no batch correction is needed since batch is reported as a single batch.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on log2(TPM+1)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 6 lesional and 6 control skin samples separate by condition on PCA/MDS of log2(TPM+1) values, and are there outlier samples or unexpected structure before modelling?",
+              "acceptance_criteria": [
+                "PCA or MDS plot colored by condition (lesional vs control) produced from log2(TPM+1) of the top 500 most variable genes",
+                "Sample-sample distance heatmap produced",
+                "Per-sample detected-gene count (TPM>0) reported",
+                "Any sample that does not cluster with its labeled condition is flagged explicitly, not silently dropped"
+              ],
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input is /data/inputs/abundance/tpm.csv (12000 genes x 12 samples TPM from Salmon, no raw counts kept) and /data/inputs/metadata/metadata.csv (12 samples: condition = lesional/control, 6 each, unpaired, single batch).",
+              "constraints": [
+                "Transform TPM to log2(value+1) before any QC plot; do not apply a count-based variance-stabilizing transform",
+                "Use the 500 most variable genes for the PCA/MDS per default guide practice"
+              ],
+              "caveats": [
+                "Only a TPM table was delivered — no raw counts or quantification directories, so this QC operates on abundance values, not counts",
+                "TPM values are only comparable within this single delivered protocol; do not compare to any external TPM source"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0071@e4e2"
+                ],
+                "template": "tpl-qc-log-abundance@1.0.0",
+                "reason": "TPM input requires QC on log2(value+1), not a count-based VST, per R-0071"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Filter low-abundance genes and fit limma model for lesional vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are differentially expressed between psoriasis lesional and control skin (6 vs 6, unpaired), using a linear model appropriate for TPM abundance data?",
+              "acceptance_criteria": [
+                "Genes retained only if TPM >= 1 in at least 6 samples (the smaller group size); number of genes before/after filter reported",
+                "log2(TPM+1) used as the sole normalization — no TMM/size-factor renormalization applied",
+                "limma lmFit/eBayes with trend=TRUE and robust=TRUE fit on the filtered log2(TPM+1) matrix",
+                "Condition factor has an explicit reference level (control) and the contrast is named lesional-control so a positive logFC means higher in lesional",
+                "Full topTable output (logFC, adjusted p-value, t-statistic) exported for every tested gene",
+                "Genes selected as DE only by BH-adjusted p-value < 0.05, not by raw p-value or fold-change alone"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 x 12 TPM matrix, salmon gene-level, no raw counts delivered. Design: 6 lesional vs 6 control, unpaired, single batch — no batch term needed.",
+              "constraints": [
+                "Do not use DESeq2, edgeR, or voom on this TPM table — count-based models assume integer counts with negative-binomial variance and TPM breaks that assumption",
+                "Explicitly set factor reference level to control and name the contrast lesional-control",
+                "Apply the fold-change threshold test, if any, inside the model (e.g., limma treat), not as a post-hoc filter on the point estimate"
+              ],
+              "caveats": [
+                "No raw counts or quantification directories were delivered, so gene-level length-scaled offset correction (tximport) cannot be applied; this is a known limitation of the delivered data, not a step choice",
+                "Any inference here is TPM-based and cannot be cross-validated against an isoform-level or count-based reanalysis without the original quantification files"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0072@881a",
+                  "R-0073@8b36",
+                  "R-0036@9786",
+                  "R-0093@4fa4",
+                  "R-0004@a06d",
+                  "R-0037@e6d8",
+                  "R-0043@4f55",
+                  "R-0044@1777"
+                ],
+                "template": "tpl-limma-trend-logvalues@1.0.0",
+                "reason": "TPM/FPKM input forbids count models; limma trend+robust on log2(TPM+1) with explicit reference level and BH-adjusted selection is the only permitted method, confirmed by knowledge_check"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Over-representation analysis of DE genes against Hallmark and canonical pathway collections",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways and processes are over-represented among the genes differentially expressed between lesional and control psoriatic skin?",
+              "acceptance_criteria": [
+                "Universe set explicitly to the genes that passed the low-abundance filter and were tested in the limma model — not the whole genome or whole annotation",
+                "Over-representation test (e.g., clusterProfiler enricher / hypergeometric test) run first against the MSigDB Hallmark human gene sets (50 sets)",
+                "Gene sets restricted to 15-500 members among the tested genes before testing",
+                "Follow-up over-representation run against WikiPathways human and/or MSigDB canonical pathway (KEGG MEDICUS/BioCarta/PID) collections and GO Biological Process sets from the reference store",
+                "Redundant/overlapping significant sets collapsed to representative sets in the summary, full table kept as supplement",
+                "BH-adjusted p-values reported for enrichment results"
+              ],
+              "packages": [
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "context": "Input is the DE gene table (logFC, adjusted p-value) from the limma fit on the 12-sample lesional vs control TPM comparison. Reference gene sets confirmed present in the environment: MSigDB Hallmark human (h.all.v2026.1.Hs.symbols.gmt, 50 sets), MSigDB GO BP/CC/MF human (c5.go.*.v2026.1.Hs.symbols.gmt), MSigDB canonical pathways human (KEGG MEDICUS/BioCarta/PID, c2.cp.*.v2026.1.Hs.symbols.gmt), and WikiPathways human (wikipathways_Homo_sapiens.gmt, 2026.07.10). No MSigDB Reactome (C2:CP:REACTOME) or KEGG legacy collection is staged in this environment — use WikiPathways and the staged KEGG MEDICUS subset as the closest available substitutes and state this substitution in the report.",
+              "constraints": [
+                "Use an explicit universe = the tested gene set from T1S2, per over-representation best practice — never the whole genome",
+                "Preranked/GSEA-style enrichment on the full ranked list is not permitted for this design per the knowledge check; use over-representation analysis with a significance-thresholded gene list instead"
+              ],
+              "caveats": [
+                "No MSigDB Reactome GMT was found staged in this reference store at plan time; WikiPathways and KEGG MEDICUS/BioCarta/PID substitute for it — report this gap rather than silently treating WikiPathways as Reactome",
+                "GO Biological Process is a nested hierarchy — expect correlated blocks of significant parent/child terms, collapse before reporting a term count"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0048@500d",
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0052@620a"
+                ],
+                "reason": "Knowledge check rejected preranked GSEA for this situation; over-representation with an explicit universe is the permitted enrichment method"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Pathway activity inference with decoupleR PROGENy footprint model",
+              "track": "T2",
+              "step_type": "pathway_activity",
+              "question": "Which signalling pathways (e.g., TNFa, NFkB, JAK-STAT-adjacent, hypoxia) show a shifted transcriptional footprint activity in lesional versus control skin, based on the limma contrast statistics?",
+              "acceptance_criteria": [
+                "decoupleR mlm run on the limma moderated t-statistic (or logFC) of every tested gene from T1S2, not only the significant genes",
+                "PROGENy human footprint model used with the top 500 responsive genes per pathway, and the number stated",
+                "Activity scores per pathway reported as a footprint (interpretation: transcriptional response, not pathway-member expression)",
+                "Report states this is not topology-aware (SPIA is absent from the environment) and is a footprint enrichment, not a graph-based impact analysis"
+              ],
+              "packages": [
+                "decoupleR"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "PROGENy human pathway weight model (model_human_full.rda, 14 signalling pathways) confirmed present in the reference store. Input is the limma contrast statistics table (t-statistics/logFC per gene) for lesional vs control from T1S2.",
+              "constraints": [
+                "Use decoupleR mlm (multivariate linear model) as the primary activity estimator, ulm as secondary if run",
+                "Read the PROGENy score as a pathway footprint, not as expression of pathway member genes"
+              ],
+              "caveats": [
+                "PROGENy gives 14 broad signalling pathways; a specific psoriasis mechanism (e.g., IL-17/IL-23 axis) may not map cleanly onto any single PROGENy pathway and should not be overclaimed from this output alone"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0123@5521",
+                  "R-0115@1504",
+                  "R-0122@08af"
+                ],
+                "reason": "Pathway activity via decoupleR mlm on PROGENy is the grounded method for this extra_analyses request; PROGENy human model confirmed present in reference store"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Compile DE and pathway activity report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the reproducible, decision-ready summary of genes and pathways that differ between psoriasis lesional and control skin in this 6-vs-6 TPM-only cohort?",
+              "acceptance_criteria": [
+                "Report states the method (limma trend+robust eBayes), package versions, the design formula and contrast (lesional vs control, control as reference), the abundance filter threshold (1 TPM in >=6 samples), the adjusted p-value cutoff (0.05), the number of genes tested after filtering, and the number of DE genes",
+                "Report states that only TPM data was available (no raw counts/quantification files), and how this constrained method choice (no DESeq2/edgeR/voom)",
+                "Report includes the over-representation results (Hallmark + WikiPathways/canonical pathways/GO) and the PROGENy pathway activity results as two complementary functional views",
+                "Reproducibility record included: sessionInfo, package versions, gene set collection versions (MSigDB 2026.1, WikiPathways 2026.07.10, PROGENy current)"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Final synthesis step drawing on the DE table (T1S2), the over-representation results (T2S1), and the PROGENy pathway activity results (T2S2) for the 6 lesional vs 6 control psoriatic skin TPM cohort.",
+              "constraints": [
+                "Do not present the pathway activity or enrichment results as adding statistical power to the DE call — they are independent, complementary readouts"
+              ],
+              "caveats": [
+                "The TPM-only delivery is a genuine limitation stated up front, not something to be smoothed over in the narrative"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "Report step follows the reproducibility and reporting-fields rules from the knowledge base"
+              }
+            }
+          ],
+          "created_at": "2026-09-07T00:00:00Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference precisely: ~subject + condition with an LRT against ~subject as the omnibus test, three explicitly named factor/numerator/denominator contrasts with control set by relevel, ashr shrinkage justified for the non-coefficient treated_b vs treated_a contrast, BH at 0.05 with lfcThreshold inside results(), and an edgeR QL joint test as a like-for-like cross-check rather than separate subset fits. QC uses blind VST PCA colored by condition and shaped by subject with a stated no-drop/flag policy, the filter (10 counts in 4 samples) is minimal and tied to the smallest group size, and normalization stays inside both models. The enrichment step is well specified (full Wald-stat ranking, tested-gene universe, named human collections with releases, 15-500 window, seed) but was not requested by the task, and the edgeR step's filterByExpr on an already-filtered matrix is a small inconsistency. The report step names method, versions, design, thresholds, counts, and a thorough limitations paragraph including the missing length offset and per-contrast FDR scope."
+}

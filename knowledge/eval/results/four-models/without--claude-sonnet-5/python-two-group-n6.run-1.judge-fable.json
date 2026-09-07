@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 3,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly selects pydeseq2 on raw counts for a 6v6 unpaired single-batch design under the Python constraint, with size factors inside the model and a thorough, evidence-based QC policy for sample_01 (library sizes, detection, log-CPM PCA/correlation, Cook's distance, sensitivity rerun). It never states a minimal low-count filter, only a check for all-zero genes. The design is described as 'condition as the design factor' without an explicit formula or reference level, and the reference-vs-lesional direction is left implicit. No BH is named and no LFC shrinkage is applied despite pydeseq2 0.5.4 supporting it, while |log2FC|>1 is a post hoc cutoff. GSEA uses the full ranked list with a stated metric and a versioned Hallmark collection, but omits the 15-500 set-size window and a fixed seed."
+}

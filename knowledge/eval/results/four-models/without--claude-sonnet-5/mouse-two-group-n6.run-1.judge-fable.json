@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 6,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly matches the design: DESeq2 Wald on raw counts for 6 vs 6 unpaired single-batch mice, with sample_01 retained in the primary fit and an explicit drop-one sensitivity analysis, plus library size, detection, and PCA/correlation QC that flags the shallow sample. It uses the mouse-native MSigDB Hallmark collection and fgsea preranked on the full list ranked by Wald statistic, avoiding the human-set-on-mouse-symbols error, but names no collection version and no set size window. Weaknesses are the absence of any fold change shrinkage (apeglm), no explicit design formula or reference level, only a passing mention of independent filtering with no stated low-count prefilter, normalization left implicit rather than stated as size factors, and no package versions in the report."
+}

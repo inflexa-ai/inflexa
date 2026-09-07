@@ -1,0 +1,530 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "star-counts-n3",
+  "run": 1,
+  "startedAt": "2026-09-07T03:57:53.155Z",
+  "elapsedMs": 90515,
+  "outcome": "plan_submitted",
+  "planId": "pln-ba35d98e",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Input: /eval-four-models-with-star-counts-n3-1/data/inputs/counts/counts.csv (12000 genes x 7 columns: gene symbol + 6 samples, raw integer STAR+featureCounts counts) and metadata.csv (6 rows x 2 columns). Reference level: control.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "ggplot2"
+        ],
+        "question": "Do the 6 liver samples (3 treated, 3 control) group by condition, and is any sample an outlier?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Blind vst sample-structure QC per rule R-0033@40bf for a 6-sample count dataset",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "vst with blind=TRUE on the design, PCA on the 500 most variable genes, sample distance heatmap, library size summary (rule R-0033)",
+          "Color plots by condition"
+        ],
+        "acceptance_criteria": [
+          "PCA and distance heatmap PNGs colored by condition saved",
+          "Library sizes reported per sample",
+          "Outlier verdict stated: samples cluster by condition or not, and whether any sample departs from its group"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Same counts.csv and metadata.csv. Design ~ condition, unpaired, no batch term (single batch). Contrast named as factor numerator/denominator: treated over control. Counts are gene-level STAR+featureCounts integers: give them to the model as-is, no length correction, no tximport (rule R-0064).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "apeglm==1.34.0"
+        ],
+        "question": "Which genes are differentially expressed between treated and control (contrast: condition, treated vs control, reference level control)?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0147@aebe",
+            "R-0026@9ab1",
+            "R-0162@ed74",
+            "R-0036@9786",
+            "R-0064@92ec",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0017@8a47",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with apeglm shrinkage is the primary count-model method for raw STAR+featureCounts counts, 2 groups, n=3 per group, per rule R-0001@9a17; edgeR QL runs as the robustness second method",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Minimal pre-filter: keep genes with at least 10 counts in at least the smallest group size (3) samples (rules R-0029, R-0002)",
+          "Median-of-ratios size factors inside the model; do not scale or transform counts beforehand (rule R-0026)",
+          "GC-content and gene-length bias diagnostic: plot the log count ratio of each sample against the median sample against gene GC content and length; report whether a trend exists (rule R-0147 warn) — cqn/EDASeq are absent from this pool, so state the check result and continue or flag",
+          "Set the reference level of the condition factor explicitly to control before the model (rule R-0036)",
+          "Wald test; results() with alpha=0.05, independent filtering on; select by adjusted p-value < 0.05 (rules R-0010, R-0043)",
+          "Cook's distance outlier flagging stays on (cell size < 7): count and report genes with NA p-value from outliers separately (rule R-0039)",
+          "lfcShrink with apeglm; keep unshrunken log2FoldChange and lfcSE beside the shrunken value; rank and plot on the shrunken value (rule R-0009)",
+          "State the expected power for n=3 per group before the tables (rules R-0162, R-0017): most true DE genes at this size are missed, and those found mostly have |log2FC| > 1; do not loosen the threshold to compensate"
+        ],
+        "acceptance_criteria": [
+          "Full results table (all tested genes) with padj, unshrunken LFC, shrunken LFC, lfcSE",
+          "Counts of: genes tested after pre-filter, genes with NA padj from outlier flagging vs independent filtering, DE genes at padj < 0.05, and up/down split",
+          "MA plot and dispersion plot",
+          "GC/length bias diagnostic plot with a stated trend or no-trend verdict",
+          "Power statement for 3 vs 3 replicates"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR quasi-likelihood robustness check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Same counts.csv and metadata.csv, same pre-filter and design as T1S2. The edgeR QL F-test is the alternative of rule R-0001 and the robustness method of rule R-0042. It deviates from the sourced Wald default intentionally, as the second method of the robustness pair.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR==4.10.3"
+        ],
+        "question": "Do the same treated-vs-control calls hold under a second count model (edgeR QL F-test)?",
+        "grounding": {
+          "claims": [
+            "R-0001@9a17",
+            "R-0042@54e1"
+          ],
+          "reason": "edgeR quasi-likelihood F-test as the robustness second method per rules R-0001@9a17 and R-0042@54e1 (two-tool agreement check at low replicate number)",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "TMM normalization (edgeR's equivalent of the size factors), same design ~ condition, explicit control reference level",
+          "glmQLFit + glmQLFTest on the treated vs control contrast",
+          "Same BH alpha 0.05 selection rule",
+          "Report the number of DE genes from each method and the size of the intersection; treat the intersection as the high-confidence set and single-method genes as secondary, with the method named (rule R-0042)",
+          "Do not present the union as the result"
+        ],
+        "acceptance_criteria": [
+          "edgeR results table saved",
+          "Overlap table: n_DE per method, intersection size, and the per-method-only gene lists"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "DE report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Assembles the outputs of T1S1-T1S3 into the report.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the final treated-vs-control differential expression result, with the diagnostics and the caveats a reader needs?",
+        "grounding": {
+          "claims": [
+            "R-0094@6849",
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "Report step with fit diagnostics, power statement, and reproducibility record per rules R-0041@059a, R-0087@c53d, R-0094@6849",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Report names method, package versions, design formula and contrast, thresholds (padj < 0.05), number of genes tested, number of DE genes per method and their intersection (rule R-0041)",
+          "Gene table carries unshrunken log2FoldChange, shrunken log2FoldChange, and lfcSE; ranking and plots use the shrunken value; p-values come from the unshrunken fit (rule R-0085)",
+          "MA plot and dispersion plot appear before the gene tables (rule R-0087)",
+          "P-value histogram inspected before adjustment is reported beside the significance counts (rule R-0083)",
+          "Power statement: expected power at 3 vs 3 replicates, with the caution that an absent gene is not evidence of no effect (rules R-0094, R-0017)",
+          "Reproducibility record: sessionInfo, seeds, package versions, annotation release (rule R-0086)"
+        ],
+        "acceptance_criteria": [
+          "Written report with all required sections before the gene tables",
+          "High-confidence gene list = DESeq2 ∩ edgeR at padj < 0.05",
+          "All diagnostics and the power statement present"
+        ]
+      }
+    ],
+    "title": "Treated vs control liver DE (STAR counts)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is which genes differ between treated and control in a human liver bulk RNA-seq dataset with raw integer STAR+featureCounts gene counts, 3 treated vs 3 control, unpaired, single batch. Per the Inflexa procedure for this situation (raw counts, 2 groups, n=3/group, batch none), the plan is: (1) blind sample-structure QC on variance-stabilized values to check that samples group by condition and no outlier exists; (2) DESeq2 Wald test with median-of-ratios size factors, minimal 10-count pre-filter, explicit control reference level, apeglm LFC shrinkage, BH at alpha 0.05 with independent filtering — the counts go into the model as-is with no length correction and no tximport because they are already gene-level; (3) an edgeR quasi-likelihood F-test on the same counts as the robustness second method, reporting the intersection as the high-confidence set; (4) a report with MA and dispersion plots, a p-value histogram, and a power statement for n=3 per group. No enrichment is planned: the research question asks only for the differential gene list, and a GC/gene-length bias diagnostic (rule R-0147) is included as a caveat check because aligner counts carry no bias model."
+  },
+  "usage": {
+    "inputTokens": 157768,
+    "outputTokens": 3386,
+    "cacheReadInputTokens": 34944,
+    "reasoningTokens": 134
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst blind PCA + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test with apeglm lfcShrink",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              },
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "reference_level",
+                "value": "control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "edgeR quasi-likelihood F-test robustness overlap",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "qlf"
+              },
+              {
+                "name": "purpose",
+                "value": "robustness_overlap"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE report with MA plot, dispersion plot, p-value histogram, power statement",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de"
+              },
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot, dispersion_plot"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control liver DE (STAR counts)",
+          "analytical_narrative": "The question is which genes differ between treated and control in a human liver bulk RNA-seq dataset with raw integer STAR+featureCounts gene counts, 3 treated vs 3 control, unpaired, single batch. Per the Inflexa procedure for this situation (raw counts, 2 groups, n=3/group, batch none), the plan is: (1) blind sample-structure QC on variance-stabilized values to check that samples group by condition and no outlier exists; (2) DESeq2 Wald test with median-of-ratios size factors, minimal 10-count pre-filter, explicit control reference level, apeglm LFC shrinkage, BH at alpha 0.05 with independent filtering — the counts go into the model as-is with no length correction and no tximport because they are already gene-level; (3) an edgeR quasi-likelihood F-test on the same counts as the robustness second method, reporting the intersection as the high-confidence set; (4) a report with MA and dispersion plots, a p-value histogram, and a power statement for n=3 per group. No enrichment is planned: the research question asks only for the differential gene list, and a GC/gene-length bias diagnostic (rule R-0147) is included as a caveat check because aligner counts carry no bias model.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 liver samples (3 treated, 3 control) group by condition, and is any sample an outlier?",
+              "context": "Input: /eval-four-models-with-star-counts-n3-1/data/inputs/counts/counts.csv (12000 genes x 7 columns: gene symbol + 6 samples, raw integer STAR+featureCounts counts) and metadata.csv (6 rows x 2 columns). Reference level: control.",
+              "constraints": [
+                "vst with blind=TRUE on the design, PCA on the 500 most variable genes, sample distance heatmap, library size summary (rule R-0033)",
+                "Color plots by condition"
+              ],
+              "acceptance_criteria": [
+                "PCA and distance heatmap PNGs colored by condition saved",
+                "Library sizes reported per sample",
+                "Outlier verdict stated: samples cluster by condition or not, and whether any sample departs from its group"
+              ],
+              "packages": [
+                "DESeq2==1.52.0",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Blind vst sample-structure QC per rule R-0033@40bf for a 6-sample count dataset"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test treated vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated and control (contrast: condition, treated vs control, reference level control)?",
+              "context": "Same counts.csv and metadata.csv. Design ~ condition, unpaired, no batch term (single batch). Contrast named as factor numerator/denominator: treated over control. Counts are gene-level STAR+featureCounts integers: give them to the model as-is, no length correction, no tximport (rule R-0064).",
+              "constraints": [
+                "Minimal pre-filter: keep genes with at least 10 counts in at least the smallest group size (3) samples (rules R-0029, R-0002)",
+                "Median-of-ratios size factors inside the model; do not scale or transform counts beforehand (rule R-0026)",
+                "GC-content and gene-length bias diagnostic: plot the log count ratio of each sample against the median sample against gene GC content and length; report whether a trend exists (rule R-0147 warn) — cqn/EDASeq are absent from this pool, so state the check result and continue or flag",
+                "Set the reference level of the condition factor explicitly to control before the model (rule R-0036)",
+                "Wald test; results() with alpha=0.05, independent filtering on; select by adjusted p-value < 0.05 (rules R-0010, R-0043)",
+                "Cook's distance outlier flagging stays on (cell size < 7): count and report genes with NA p-value from outliers separately (rule R-0039)",
+                "lfcShrink with apeglm; keep unshrunken log2FoldChange and lfcSE beside the shrunken value; rank and plot on the shrunken value (rule R-0009)",
+                "State the expected power for n=3 per group before the tables (rules R-0162, R-0017): most true DE genes at this size are missed, and those found mostly have |log2FC| > 1; do not loosen the threshold to compensate"
+              ],
+              "acceptance_criteria": [
+                "Full results table (all tested genes) with padj, unshrunken LFC, shrunken LFC, lfcSE",
+                "Counts of: genes tested after pre-filter, genes with NA padj from outlier flagging vs independent filtering, DE genes at padj < 0.05, and up/down split",
+                "MA plot and dispersion plot",
+                "GC/length bias diagnostic plot with a stated trend or no-trend verdict",
+                "Power statement for 3 vs 3 replicates"
+              ],
+              "packages": [
+                "DESeq2==1.52.0",
+                "apeglm==1.34.0"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0147@aebe",
+                  "R-0026@9ab1",
+                  "R-0162@ed74",
+                  "R-0036@9786",
+                  "R-0064@92ec",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0017@8a47",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "DESeq2 Wald test with apeglm shrinkage is the primary count-model method for raw STAR+featureCounts counts, 2 groups, n=3 per group, per rule R-0001@9a17; edgeR QL runs as the robustness second method"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "edgeR quasi-likelihood robustness check",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the same treated-vs-control calls hold under a second count model (edgeR QL F-test)?",
+              "context": "Same counts.csv and metadata.csv, same pre-filter and design as T1S2. The edgeR QL F-test is the alternative of rule R-0001 and the robustness method of rule R-0042. It deviates from the sourced Wald default intentionally, as the second method of the robustness pair.",
+              "constraints": [
+                "TMM normalization (edgeR's equivalent of the size factors), same design ~ condition, explicit control reference level",
+                "glmQLFit + glmQLFTest on the treated vs control contrast",
+                "Same BH alpha 0.05 selection rule",
+                "Report the number of DE genes from each method and the size of the intersection; treat the intersection as the high-confidence set and single-method genes as secondary, with the method named (rule R-0042)",
+                "Do not present the union as the result"
+              ],
+              "acceptance_criteria": [
+                "edgeR results table saved",
+                "Overlap table: n_DE per method, intersection size, and the per-method-only gene lists"
+              ],
+              "packages": [
+                "edgeR==4.10.3"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0001@9a17",
+                  "R-0042@54e1"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "edgeR quasi-likelihood F-test as the robustness second method per rules R-0001@9a17 and R-0042@54e1 (two-tool agreement check at low replicate number)"
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "DE report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the final treated-vs-control differential expression result, with the diagnostics and the caveats a reader needs?",
+              "context": "Assembles the outputs of T1S1-T1S3 into the report.",
+              "constraints": [
+                "Report names method, package versions, design formula and contrast, thresholds (padj < 0.05), number of genes tested, number of DE genes per method and their intersection (rule R-0041)",
+                "Gene table carries unshrunken log2FoldChange, shrunken log2FoldChange, and lfcSE; ranking and plots use the shrunken value; p-values come from the unshrunken fit (rule R-0085)",
+                "MA plot and dispersion plot appear before the gene tables (rule R-0087)",
+                "P-value histogram inspected before adjustment is reported beside the significance counts (rule R-0083)",
+                "Power statement: expected power at 3 vs 3 replicates, with the caution that an absent gene is not evidence of no effect (rules R-0094, R-0017)",
+                "Reproducibility record: sessionInfo, seeds, package versions, annotation release (rule R-0086)"
+              ],
+              "acceptance_criteria": [
+                "Written report with all required sections before the gene tables",
+                "High-confidence gene list = DESeq2 ∩ edgeR at padj < 0.05",
+                "All diagnostics and the power statement present"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0094@6849",
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Report step with fit diagnostics, power statement, and reproducibility record per rules R-0041@059a, R-0087@c53d, R-0094@6849"
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

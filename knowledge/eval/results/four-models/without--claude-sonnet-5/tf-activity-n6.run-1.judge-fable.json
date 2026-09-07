@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 1,
+    "low_count_filter": 1,
+    "normalization": 4,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 4
+  },
+  "rationale": "The core route is right: DESeq2 on raw counts with ~condition, then decoupleR ulm on a signed genome-wide statistic against CollecTRI, with the inference-not-measurement caveat stated. But the plan leaves the statistical scaffolding unstated: no sample QC (PCA, distances, library sizes, outlier policy), no low count filter, no explicit size-factor normalization, no reference level, no named BH alpha for the DE step, no lfcShrink, and it permits unshrunken log2FC or wmean in place of the Wald statistic and ulm. The TF step omits minimum regulon size, regulon version, the number of regulators tested, and the mlm and per-sample activity cross-checks. The added WikiPathways step is ambiguous between ORA and GSEA with no universe, version, size window, or ranking metric, and the report lacks thresholds and tested/significant counts."
+}

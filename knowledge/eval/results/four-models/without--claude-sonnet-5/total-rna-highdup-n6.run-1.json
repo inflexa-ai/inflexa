@@ -1,0 +1,239 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "total-rna-highdup-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T21:24:45.225Z",
+  "elapsedMs": 32192,
+  "outcome": "plan_submitted",
+  "planId": "pln-a2881c13",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC diagnostics and outlier assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not deduplicate counts post-hoc — these are Salmon-quantified gene-level counts, not aligned reads, so naive duplicate removal is not applicable and would discard legitimate multi-mapping-resolved counts",
+          "A high duplication rate in non-UMI rRNA-depleted total RNA libraries is expected and does not by itself indicate a technical artifact; treat it as a caveat unless it structures with condition or PCs"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "ggplot2"
+        ],
+        "question": "Given the raw Salmon gene counts (12000 genes x 12 samples) and metadata (treated n=6 vs control n=6), what do library size distributions, sample-sample correlation/PCA, and duplication-rate metadata reveal about sample_01's low library size and the >60% duplication rate flagged in QC — do either create a confound with the treated/control grouping that must inform the DE model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports per-sample library size (total counts) and flags sample_01 quantitatively against the cohort median",
+          "Produces a PCA or hierarchical clustering plot of normalized counts (e.g., variance-stabilized or log-CPM) colored by condition, annotating sample_01",
+          "States explicitly whether duplication rate (from metadata/QC notes) correlates with library size, condition, or a PC axis",
+          "Delivers an explicit recommendation on whether sample_01 should be flagged as an outlier for Cook's-distance-based downstream handling, and whether duplication rate needs to be added as a covariate or only reported as a caveat"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per arm is modest power for detecting subtle expression changes; report this explicitly rather than implying comprehensive discovery",
+          "If sample_01 is retained despite its outlier library size, note that its inclusion may inflate dispersion estimates for genes it dominates"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between the 6 treated and 6 control heart samples, using DESeq2 on raw Salmon gene counts, informed by the QC step's findings on sample_01 and duplication rate?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Fits a DESeq2 model with condition (treated vs control) as the sole design term unless T1S1 established a technical covariate that structures with condition",
+          "Reports log2 fold change, p-value, and BH-adjusted p-value (padj) for every gene, with genes at padj < 0.05 called significant",
+          "Applies DESeq2's independent filtering and Cook's distance diagnostics; explicitly reports whether sample_01 is flagged as an outlier by Cook's distance and how its counts were handled (kept, flagged, or excluded with justification)",
+          "Produces an MA plot and a volcano plot annotating top DE genes",
+          "States the number of genes passing significance and effect-size thresholds, and reports these results as findings from an unpaired 6v6 design with n=6/arm, noting the statistical power limitation explicitly"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways gene sets are HGNC symbols; verify the counts.csv gene identifier column matches this space directly or requires no conversion",
+          "Do not interpret enrichment results as mechanistic proof — report as hypothesis-generating given the small sample size upstream"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes significantly different between treated and control heart samples (from T1S2)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the significant gene list (padj < 0.05, with |log2FC| threshold stated) from T1S2 as the query set against a human pathway gene-set collection",
+          "Reports enriched pathways with adjusted p-values (e.g., BH-corrected hypergeometric or GSEA), ranked by significance",
+          "If the WikiPathways human reference file is unavailable at run time, reports that fact and skips this step's output rather than fabricating pathway results",
+          "Cross-references the gene identifier space (HGNC symbols) between the DESeq2 output and the pathway gene sets before testing, and reports any symbols that fail to map"
+        ]
+      }
+    ],
+    "title": "Heart treated vs control DE with QC-aware DESeq2",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (Salmon gene-level counts, 12000 genes x 12 samples) from rRNA-depleted total RNA libraries, 6 treated vs 6 control, unpaired, single batch. Two QC flags directly threaten a standard DE workflow: (1) duplication rate >60% in most libraries, which for non-UMI total-RNA-seq data is expected to include a substantial fraction of true biological duplicates (high-expression transcripts, short/no-fragmentation-bias genes) rather than pure PCR artifact, so blind deduplication would discard real signal — the correct response is to leave the counts as-is (they came from Salmon quantification, not naive alignment dedup) but explicitly check for a duplication-count size-factor confound and consider it as a technical covariate if it tracks library size/composition; (2) sample_01 has a library size ~4x below the median, a strong outlier that can distort per-gene dispersion estimation and DESeq2 size-factor normalization if left unexamined. The plan therefore front-loads a QC/outlier-diagnostic step before the differential expression model, so the DE step's design and gene filtering are informed by what QC actually shows (e.g., whether sample_01 must be flagged as an outlier via Cook's distance, and whether duplication rate correlates with a PC axis that needs to be modeled or noted as a caveat rather than silently ignored). DESeq2 is used for count-based modeling given raw integer Salmon counts and unpaired 6v6 design; independent filtering and Cook's-distance outlier handling in DESeq2 provide a principled way to deal with the sample_01 outlier without ad hoc exclusion. Downstream, the significant gene list is tested for pathway enrichment against WikiPathways human gene sets (present in the reference store) to give the DEGs functional context relevant to heart/treatment biology. All steps operate on this dataset's actual files and condition labels only."
+  },
+  "usage": {
+    "inputTokens": 132107,
+    "outputTokens": 2749,
+    "cacheCreationInputTokens": 70486,
+    "cacheReadInputTokens": 61585,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "pydeseq2",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Heart treated vs control DE with QC-aware DESeq2",
+          "analytical_narrative": "The dataset is bulk RNA-seq (Salmon gene-level counts, 12000 genes x 12 samples) from rRNA-depleted total RNA libraries, 6 treated vs 6 control, unpaired, single batch. Two QC flags directly threaten a standard DE workflow: (1) duplication rate >60% in most libraries, which for non-UMI total-RNA-seq data is expected to include a substantial fraction of true biological duplicates (high-expression transcripts, short/no-fragmentation-bias genes) rather than pure PCR artifact, so blind deduplication would discard real signal — the correct response is to leave the counts as-is (they came from Salmon quantification, not naive alignment dedup) but explicitly check for a duplication-count size-factor confound and consider it as a technical covariate if it tracks library size/composition; (2) sample_01 has a library size ~4x below the median, a strong outlier that can distort per-gene dispersion estimation and DESeq2 size-factor normalization if left unexamined. The plan therefore front-loads a QC/outlier-diagnostic step before the differential expression model, so the DE step's design and gene filtering are informed by what QC actually shows (e.g., whether sample_01 must be flagged as an outlier via Cook's distance, and whether duplication rate correlates with a PC axis that needs to be modeled or noted as a caveat rather than silently ignored). DESeq2 is used for count-based modeling given raw integer Salmon counts and unpaired 6v6 design; independent filtering and Cook's-distance outlier handling in DESeq2 provide a principled way to deal with the sample_01 outlier without ad hoc exclusion. Downstream, the significant gene list is tested for pathway enrichment against WikiPathways human gene sets (present in the reference store) to give the DEGs functional context relevant to heart/treatment biology. All steps operate on this dataset's actual files and condition labels only.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC diagnostics and outlier assessment",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Given the raw Salmon gene counts (12000 genes x 12 samples) and metadata (treated n=6 vs control n=6), what do library size distributions, sample-sample correlation/PCA, and duplication-rate metadata reveal about sample_01's low library size and the >60% duplication rate flagged in QC — do either create a confound with the treated/control grouping that must inform the DE model?",
+              "acceptance_criteria": [
+                "Reports per-sample library size (total counts) and flags sample_01 quantitatively against the cohort median",
+                "Produces a PCA or hierarchical clustering plot of normalized counts (e.g., variance-stabilized or log-CPM) colored by condition, annotating sample_01",
+                "States explicitly whether duplication rate (from metadata/QC notes) correlates with library size, condition, or a PC axis",
+                "Delivers an explicit recommendation on whether sample_01 should be flagged as an outlier for Cook's-distance-based downstream handling, and whether duplication rate needs to be added as a covariate or only reported as a caveat"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Do not deduplicate counts post-hoc — these are Salmon-quantified gene-level counts, not aligned reads, so naive duplicate removal is not applicable and would discard legitimate multi-mapping-resolved counts",
+                "A high duplication rate in non-UMI rRNA-depleted total RNA libraries is expected and does not by itself indicate a technical artifact; treat it as a caveat unless it structures with condition or PCs"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are differentially expressed between the 6 treated and 6 control heart samples, using DESeq2 on raw Salmon gene counts, informed by the QC step's findings on sample_01 and duplication rate?",
+              "acceptance_criteria": [
+                "Fits a DESeq2 model with condition (treated vs control) as the sole design term unless T1S1 established a technical covariate that structures with condition",
+                "Reports log2 fold change, p-value, and BH-adjusted p-value (padj) for every gene, with genes at padj < 0.05 called significant",
+                "Applies DESeq2's independent filtering and Cook's distance diagnostics; explicitly reports whether sample_01 is flagged as an outlier by Cook's distance and how its counts were handled (kept, flagged, or excluded with justification)",
+                "Produces an MA plot and a volcano plot annotating top DE genes",
+                "States the number of genes passing significance and effect-size thresholds, and reports these results as findings from an unpaired 6v6 design with n=6/arm, noting the statistical power limitation explicitly"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=6 per arm is modest power for detecting subtle expression changes; report this explicitly rather than implying comprehensive discovery",
+                "If sample_01 is retained despite its outlier library size, note that its inclusion may inflate dispersion estimates for genes it dominates"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes significantly different between treated and control heart samples (from T1S2)?",
+              "acceptance_criteria": [
+                "Uses the significant gene list (padj < 0.05, with |log2FC| threshold stated) from T1S2 as the query set against a human pathway gene-set collection",
+                "Reports enriched pathways with adjusted p-values (e.g., BH-corrected hypergeometric or GSEA), ranked by significance",
+                "If the WikiPathways human reference file is unavailable at run time, reports that fact and skips this step's output rather than fabricating pathway results",
+                "Cross-references the gene identifier space (HGNC symbols) between the DESeq2 output and the pathway gene sets before testing, and reports any symbols that fail to map"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "WikiPathways gene sets are HGNC symbols; verify the counts.csv gene identifier column matches this space directly or requires no conversion",
+                "Do not interpret enrichment results as mechanistic proof — report as hypothesis-generating given the small sample size upstream"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

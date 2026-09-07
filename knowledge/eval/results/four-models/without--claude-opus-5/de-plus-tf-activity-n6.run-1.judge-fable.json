@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "DESeq2 Wald with ~condition, vehicle as reference, apeglm for the reported effect and the unshrunk Wald stat carried to decoupler ULM on CollecTRI with signed weights and BH is the correct core, and the design is described specifically for a 6v6 unpaired single-batch study. QC covers library sizes, VST PCA, distance heatmap and dispersion but the outlier policy stops at naming the sample; the low-count handling leans entirely on independent filtering of an already-reduced matrix without stating a minimal explicit filter, and normalization is implied rather than named as size factors. The narrative's 'shrunk-LFC/stat vector' phrasing is ambiguous even though the step constraints resolve it to the Wald stat; the plan omits the per-sample activity matrix with limma on the scores, uses a min regulon of 10 rather than 5, and states the network version will be reported rather than naming it, while the added WikiPathways GSEA/ORA is optional and properly universe-restricted. Reporting is fairly complete with caveats and counts, but DESeq2 version and the exact BH statement for the gene table are not spelled out."
+}

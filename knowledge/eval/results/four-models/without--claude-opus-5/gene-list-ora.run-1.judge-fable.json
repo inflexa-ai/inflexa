@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 5,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The enrichment core is exactly right: foreground padj<0.05 with |log2FC|>=1 stated (plus a relaxed set), universe restricted to non-NA-padj tested genes, GO BP via enrichGO/org.Hs.eg.db with BH, 10-500 size bounds, simplify at 0.7, up/down run separately, an MSigDB C5 cross-check, and a report of term, gene ratio, adjusted p and member genes with named versions and design caveats. The plan departs from the reference by re-fitting DESeq2 (Step 3) even though a results table is supplied; it is framed as a non-blocking sanity check on sample_01 rather than the answer, so the departure is mitigated but still costs on method fit. QC is present and specific (library sizes, size factors, VST PCA with sample_01 labelled, leave-one-out policy) but only within the optional re-fit; the low-count prefilter is left as 'state any prefilter applied' with no rule given, the reference level for ~condition is not fixed, and LFC shrinkage is not mentioned for the fold-change threshold."
+}

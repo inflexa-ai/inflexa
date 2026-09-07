@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on every load-bearing point: mMCPcounter as the sole species-matched estimator, explicit refusal of EPIC/quanTIseq/xCell/CIBERSORT and of ortholog or case-based mapping, CPM as the stated TPM surrogate, per-population marker coverage with a 50% flag, scores declared within-population comparable and never fractions, one Wilcoxon per population with BH and effect size, sample_01 retained by default with PCA coloured by condition and depth, and tool versions named. Weaknesses are minor: the Step 1 description of a 'log2(x+1) matrix on the linear scale' is internally muddled even though log2 CPM is what mMCPcounter takes; the DESeq2 reference level is implied by the contrast rather than declared; and the added DE/GSEA corroboration layer is more than the composition question requires, ranks on shrunken LFC rather than a test statistic, and omits gene-set size windows and collection versions. The Step 4 BH family mixing mMCPcounter and signature scores is acknowledged but somewhat dilutes the 'one test per population' structure."
+}

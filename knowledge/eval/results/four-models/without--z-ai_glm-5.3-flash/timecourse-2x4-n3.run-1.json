@@ -1,0 +1,369 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "timecourse-2x4-n3",
+  "run": 1,
+  "startedAt": "2026-09-07T05:45:08.819Z",
+  "elapsedMs": 277913,
+  "outcome": "plan_submitted",
+  "planId": "pln-9dd18cec",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Assemble DESeq2 dataset and QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "interaction-de",
+        "status": "pending",
+        "context": "Dataset: human cell-line bulk RNA-seq, salmon gene-level counts, 12,000 genes x 24 samples (counts.csv is 12,000 x 25 because the first column is the gene symbol). Metadata: condition x time (t0..t3) x 3 replicates. Goal of the overall analysis is genes with a treatment-specific time course (condition:time interaction).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap",
+          "data.table"
+        ],
+        "question": "Are the 24 salmon count columns and metadata rows consistent, and how do samples cluster by condition and time (t0..t3) in an unsupervised view before any differential testing?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "All 24 samples in metadata.csv matched 1:1 to count columns; any mismatch reported and resolved explicitly",
+          "Count matrix validated as non-negative integers; duplicate gene symbols and all-zero genes counted and dropped",
+          "PCA and library-size summaries produced, colored by condition and time, saved as artifacts"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Interaction model: LRT and per-timepoint Wald tests",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "interaction-de",
+        "status": "pending",
+        "context": "Same 24-sample human cell-line dataset; time (t0..t3) treated as a factor with t0 as reference, condition as the two-level treatment factor. Low-count genes filtered in T1S1.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes show a treatment-specific change over the four time points (significant condition:time interaction by LRT, full ~ condition + time + condition:time vs reduced ~ condition + time), and at which time points (t1, t2, t3 relative to t0) does the treatment effect differ from control per Wald interaction contrasts?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 fitted with ~ condition + time + condition:time; LRT result table produced for full vs reduced model",
+          "Per-timepoint interaction Wald contrast tables (treated-vs-control change at t1, t2, t3 relative to t0) produced with LFC, stat, p-value, BH padj",
+          "Counts of interaction-significant genes (padj < 0.05) reported for the LRT and each Wald contrast; results written as TSV"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Characterize interaction-gene response patterns",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "interaction-de",
+        "status": "pending",
+        "context": "Human cell-line time-course (t0..t3), 3 replicates per condition x time cell; interaction hits from T1S2 are expected to number tens to a few hundred given 24 samples and 12,000 genes.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ComplexHeatmap",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Among genes with a significant condition:time interaction, what temporal response patterns exist (e.g., early vs late divergence, sustained vs transient), and which genes are the strongest hits in each pattern?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "VST matrix for interaction-significant genes with condition and time annotations, heatmap artifact",
+          "Genes partitioned into interaction-profile clusters with cluster sizes and centroid direction summaries (early vs late divergence)",
+          "Ranked table of top interaction genes with LRT padj and per-timepoint Wald LFCs joined"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of treatment-specific temporal response",
+        "agent": "enrichment-agent",
+        "track": "pathway-enrichment",
+        "status": "pending",
+        "context": "Gene identifiers in counts.csv are HGNC gene symbols, matching the WikiPathways human GMT member format directly (no ID mapping needed). Input is the LRT ranking of all tested genes plus the significant set from T1S2.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which biological pathways are enriched among genes whose time course differs between treatment and control (fgsea on the LRT/Wald statistic ranking, plus ORA on the padj < 0.05 interaction set), using WikiPathways human gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "fgsea results over WikiPathways human pathways on the LRT-statistic ranking, with NES, padj, leading-edge genes",
+          "ORA results on the significant-interaction gene set with FDR-corrected pathway p-values",
+          "If the human GMT is absent from the reference store, the step reports that explicitly and returns only the ranked gene list instead of failing"
+        ]
+      }
+    ],
+    "title": "Treatment x time interaction DE in cell-line time course",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are salmon gene-level counts for 24 samples in a 2-condition x 4-time-point (t0..t3) cell-line time course with 3 replicates per condition-by-time cell (the counts matrix is 12,000 genes x 25 columns; the extra column is the gene-symbol index). The research question — which genes change over time differently under treatment beyond the shared time trend — is exactly the condition:time interaction in a factorial model. The plan therefore (1) assembles and sanity-checks the count matrix and metadata, (2) fits a DESeq2 model with design ~ condition + time + condition:time, testing the interaction by likelihood-ratio test against the reduced additive model and by per-timepoint Wald contrasts of the interaction coefficients, (3) characterizes the temporal shapes of the interaction hits (early vs late, transient vs sustained) on variance-stabilized values, and (4) tests the interaction gene set for pathway enrichment against WikiPathways human gene sets (HGNC symbols, matching the count matrix's gene-symbol identifiers). With 3 replicates per cell and 4 factor-level time, time is modeled as a factor, not a continuous covariate; the interaction LRT has 3 degrees of freedom. Power is modest at n=3 per cell, so results are reported with FDR control and effect sizes rather than p-values alone."
+  },
+  "usage": {
+    "inputTokens": 64689,
+    "outputTokens": 4416,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 1456
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-22T12:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "All 24 samples in metadata.csv matched 1:1 to count columns; any mismatch reported and resolved explicitly",
+                "Count matrix validated as non-negative integers; duplicate gene symbols and all-zero genes counted and dropped",
+                "PCA and library-size summaries produced, colored by condition and time, saved as artifacts"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Dataset: human cell-line bulk RNA-seq, salmon gene-level counts, 12,000 genes x 24 samples (counts.csv is 12,000 x 25 because the first column is the gene symbol). Metadata: condition x time (t0..t3) x 3 replicates. Goal of the overall analysis is genes with a treatment-specific time course (condition:time interaction).",
+              "depends_on": [],
+              "id": "T1S1",
+              "name": "Assemble DESeq2 dataset and QC",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap",
+                "data.table"
+              ],
+              "question": "Are the 24 salmon count columns and metadata rows consistent, and how do samples cluster by condition and time (t0..t3) in an unsupervised view before any differential testing?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis"
+            },
+            {
+              "acceptance_criteria": [
+                "DESeq2 fitted with ~ condition + time + condition:time; LRT result table produced for full vs reduced model",
+                "Per-timepoint interaction Wald contrast tables (treated-vs-control change at t1, t2, t3 relative to t0) produced with LFC, stat, p-value, BH padj",
+                "Counts of interaction-significant genes (padj < 0.05) reported for the LRT and each Wald contrast; results written as TSV"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same 24-sample human cell-line dataset; time (t0..t3) treated as a factor with t0 as reference, condition as the two-level treatment factor. Low-count genes filtered in T1S1.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "id": "T1S2",
+              "name": "Interaction model: LRT and per-timepoint Wald tests",
+              "packages": [
+                "DESeq2"
+              ],
+              "question": "Which genes show a treatment-specific change over the four time points (significant condition:time interaction by LRT, full ~ condition + time + condition:time vs reduced ~ condition + time), and at which time points (t1, t2, t3 relative to t0) does the treatment effect differ from control per Wald interaction contrasts?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis"
+            },
+            {
+              "acceptance_criteria": [
+                "VST matrix for interaction-significant genes with condition and time annotations, heatmap artifact",
+                "Genes partitioned into interaction-profile clusters with cluster sizes and centroid direction summaries (early vs late divergence)",
+                "Ranked table of top interaction genes with LRT padj and per-timepoint Wald LFCs joined"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Human cell-line time-course (t0..t3), 3 replicates per condition x time cell; interaction hits from T1S2 are expected to number tens to a few hundred given 24 samples and 12,000 genes.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "id": "T1S3",
+              "name": "Characterize interaction-gene response patterns",
+              "packages": [
+                "DESeq2",
+                "ComplexHeatmap",
+                "dplyr",
+                "ggplot2"
+              ],
+              "question": "Among genes with a significant condition:time interaction, what temporal response patterns exist (e.g., early vs late divergence, sustained vs transient), and which genes are the strongest hits in each pattern?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis"
+            },
+            {
+              "acceptance_criteria": [
+                "fgsea results over WikiPathways human pathways on the LRT-statistic ranking, with NES, padj, leading-edge genes",
+                "ORA results on the significant-interaction gene set with FDR-corrected pathway p-values",
+                "If the human GMT is absent from the reference store, the step reports that explicitly and returns only the ranked gene list instead of failing"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Gene identifiers in counts.csv are HGNC gene symbols, matching the WikiPathways human GMT member format directly (no ID mapping needed). Input is the LRT ranking of all tested genes plus the significant set from T1S2.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "id": "T2S1",
+              "name": "Pathway enrichment of treatment-specific temporal response",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Which biological pathways are enriched among genes whose time course differs between treatment and control (fgsea on the LRT/Wald statistic ranking, plus ORA on the padj < 0.05 interaction set), using WikiPathways human gene sets?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis"
+            }
+          ],
+          "title": "Treatment x time interaction DE in cell-line time course",
+          "analytical_narrative": "The data are salmon gene-level counts for 24 samples in a 2-condition x 4-time-point (t0..t3) cell-line time course with 3 replicates per condition-by-time cell (the counts matrix is 12,000 genes x 25 columns; the extra column is the gene-symbol index). The research question — which genes change over time differently under treatment beyond the shared time trend — is exactly the condition:time interaction in a factorial model. The plan therefore (1) assembles and sanity-checks the count matrix and metadata, (2) fits a DESeq2 model with design ~ condition + time + condition:time, testing the interaction by likelihood-ratio test against the reduced additive model and by per-timepoint Wald contrasts of the interaction coefficients, (3) characterizes the temporal shapes of the interaction hits (early vs late, transient vs sustained) on variance-stabilized values, and (4) tests the interaction gene set for pathway enrichment against WikiPathways human gene sets (HGNC symbols, matching the count matrix's gene-symbol identifiers). With 3 replicates per cell and 4 factor-level time, time is modeled as a factor, not a continuous covariate; the interaction LRT has 3 degrees of freedom. Power is modest at n=3 per cell, so results are reported with FDR control and effect sizes rather than p-values alone."
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The data are salmon gene-level counts for 24 samples in a 2-condition x 4-time-point (t0..t3) cell-line time course with 3 replicates per condition-by-time cell (the counts matrix is 12,000 genes x 25 columns; the extra column is the gene-symbol index). The research question — which genes change over time differently under treatment beyond the shared time trend — is exactly the condition:time interaction in a factorial model. The plan therefore (1) assembles and sanity-checks the count matrix and metadata, (2) fits a DESeq2 model with design ~ condition + time + condition:time, testing the interaction by likelihood-ratio test against the reduced additive model and by per-timepoint Wald contrasts of the interaction coefficients, (3) characterizes the temporal shapes of the interaction hits (early vs late, transient vs sustained) on variance-stabilized values, and (4) tests the interaction gene set for pathway enrichment against WikiPathways human gene sets (HGNC symbols, matching the count matrix's gene-symbol identifiers). With 3 replicates per cell and 4 factor-level time, time is modeled as a factor, not a continuous covariate; the interaction LRT has 3 degrees of freedom. Power is modest at n=3 per cell, so results are reported with FDR control and effect sizes rather than p-values alone.",
+          "created_at": "2026-07-22T12:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "All 24 samples in metadata.csv matched 1:1 to count columns; any mismatch reported and resolved explicitly",
+                "Count matrix validated as non-negative integers; duplicate gene symbols and all-zero genes counted and dropped",
+                "PCA and library-size summaries produced, colored by condition and time, saved as artifacts"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Dataset: human cell-line bulk RNA-seq, salmon gene-level counts, 12,000 genes x 24 samples (counts.csv is 12,000 x 25 because the first column is the gene symbol). Metadata: condition x time (t0..t3) x 3 replicates. Goal of the overall analysis is genes with a treatment-specific time course (condition:time interaction).",
+              "depends_on": [],
+              "id": "T1S1",
+              "name": "Assemble DESeq2 dataset and QC",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap",
+                "data.table"
+              ],
+              "question": "Are the 24 salmon count columns and metadata rows consistent, and how do samples cluster by condition and time (t0..t3) in an unsupervised view before any differential testing?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "interaction-de"
+            },
+            {
+              "acceptance_criteria": [
+                "DESeq2 fitted with ~ condition + time + condition:time; LRT result table produced for full vs reduced model",
+                "Per-timepoint interaction Wald contrast tables (treated-vs-control change at t1, t2, t3 relative to t0) produced with LFC, stat, p-value, BH padj",
+                "Counts of interaction-significant genes (padj < 0.05) reported for the LRT and each Wald contrast; results written as TSV"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same 24-sample human cell-line dataset; time (t0..t3) treated as a factor with t0 as reference, condition as the two-level treatment factor. Low-count genes filtered in T1S1.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "id": "T1S2",
+              "name": "Interaction model: LRT and per-timepoint Wald tests",
+              "packages": [
+                "DESeq2"
+              ],
+              "question": "Which genes show a treatment-specific change over the four time points (significant condition:time interaction by LRT, full ~ condition + time + condition:time vs reduced ~ condition + time), and at which time points (t1, t2, t3 relative to t0) does the treatment effect differ from control per Wald interaction contrasts?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "interaction-de"
+            },
+            {
+              "acceptance_criteria": [
+                "VST matrix for interaction-significant genes with condition and time annotations, heatmap artifact",
+                "Genes partitioned into interaction-profile clusters with cluster sizes and centroid direction summaries (early vs late divergence)",
+                "Ranked table of top interaction genes with LRT padj and per-timepoint Wald LFCs joined"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Human cell-line time-course (t0..t3), 3 replicates per condition x time cell; interaction hits from T1S2 are expected to number tens to a few hundred given 24 samples and 12,000 genes.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "id": "T1S3",
+              "name": "Characterize interaction-gene response patterns",
+              "packages": [
+                "DESeq2",
+                "ComplexHeatmap",
+                "dplyr",
+                "ggplot2"
+              ],
+              "question": "Among genes with a significant condition:time interaction, what temporal response patterns exist (e.g., early vs late divergence, sustained vs transient), and which genes are the strongest hits in each pattern?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "interaction-de"
+            },
+            {
+              "acceptance_criteria": [
+                "fgsea results over WikiPathways human pathways on the LRT-statistic ranking, with NES, padj, leading-edge genes",
+                "ORA results on the significant-interaction gene set with FDR-corrected pathway p-values",
+                "If the human GMT is absent from the reference store, the step reports that explicitly and returns only the ranked gene list instead of failing"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Gene identifiers in counts.csv are HGNC gene symbols, matching the WikiPathways human GMT member format directly (no ID mapping needed). Input is the LRT ranking of all tested genes plus the significant set from T1S2.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "id": "T2S1",
+              "name": "Pathway enrichment of treatment-specific temporal response",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Which biological pathways are enriched among genes whose time course differs between treatment and control (fgsea on the LRT/Wald statistic ranking, plus ORA on the padj < 0.05 interaction set), using WikiPathways human gene sets?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "pathway-enrichment"
+            }
+          ],
+          "title": "Treatment x time interaction DE in cell-line time course"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 1,
+    "normalization": 4,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan fits the design well: DESeq2 on raw counts with a two-group contrast, sample_03 characterized by library size, detection rate, PCA and distance heatmap, Cook's-distance diagnostics, and both fits reported with the overlap quantified, though no pre-fixed exclusion criterion is stated. It never mentions a low-count filter, never states size-factor normalization or the design formula and reference level, lists apeglm without saying shrinkage is applied to the reported effect, and applies the |log2FC|>1 threshold post hoc rather than in the test. Enrichment was not asked for and its specification is loose (ORA-or-GSEA undecided, no ranking metric, no collection version or size window), though the universe is given. The report lacks package versions."
+}

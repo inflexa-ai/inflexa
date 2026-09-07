@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 3,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly stays inside the QC question: raw library sizes and detected-gene counts, DESeq2 vst with blind=TRUE on raw counts, PCA on the top 500 variance genes colored by condition with sample_01 labeled, a full 12x12 Euclidean distance heatmap, and an explicit keep-unless-evidence policy for sample_01 grounded in PCA/distance/detected-gene position rather than depth alone. It omits the DE model, p-values, and enrichment, which the reference requires. Its main gap is that it explicitly declines any low-count gene filter before the transform, whereas the reference filters low-count genes before vst; it also never states that vst computes size factors, gives no design formula or explicit recommendation for the later test's design, omits a count-distribution view, and lists packages without versions."
+}

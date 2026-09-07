@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the core path: DESeq2 Wald on raw counts with median-of-ratios normalization, a justified 10-in-6 filter, explicit vehicle reference and named contrast, apeglm shrinkage with BH at 0.05, and decoupleR ulm on the full Wald statistic vector against signed CollecTRI regulons with a minimum size of five and BH across regulators. It omits the mlm cross-check and the per-sample activity matrix with limma that would show consistency across the six replicates, and it never states the CollecTRI version explicitly in the TF step. QC is complete with a report-don't-correct outlier policy; the added fgsea track is properly specified (Wald stat ranking, versioned collections, size window) though not required by the question. The report section covers methods, versions, counts, thresholds, and the inference-not-measurement caveat."
+}

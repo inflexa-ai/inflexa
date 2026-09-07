@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies a hidden non-confounded structure, forbids ComBat-adjusted counts entering the model, keeps normalization inside DESeq2/edgeR, uses svaseq with condition as the known factor and a data-driven n.sv, and reports BH at 0.05 with apeglm shrinkage on an explicit treated-vs-control contrast with control as reference. It loses points for never asking the analyst for the unrecorded variable, for not stating the sva null model or checking that no surrogate variable tracks condition, for capping n.sv at an arbitrary n/4, and for preferring a data-derived two-cluster fixed effect over the SVA design as primary, which partly circularizes the correction. QC is thorough but lacks an explicit outlier/shallow-sample policy; enrichment was not requested but is specified well (Wald-ranked full list, tested universe, 15-500 window, named collections) apart from an unpinned Reactome release; the report covers designs, versions, thresholds, overlaps and caveats but does not explicitly promise the count of genes tested."
+}

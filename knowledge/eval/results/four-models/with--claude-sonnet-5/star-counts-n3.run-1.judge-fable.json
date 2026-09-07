@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the STAR/featureCounts matrix as raw integer counts entering DESeq2 directly with no tximport or length offset, uses in-model median-of-ratios (and TMM for the edgeR cross-check), a minimal filter justified by the smallest group size, an explicit ~condition design with control as reference, apeglm shrinkage, BH at 0.05, and states the n=3 power limitation. QC is appropriate (blind VST PCA, distance heatmap, library sizes) but the outlier handling is only a flag rather than a stated policy for exclusion or downweighting. Enrichment was not asked for and the DESeq2/edgeR intersection is a somewhat ad hoc notion of 'high confidence', but the ORA itself is well specified (tested-gene universe, named collections with releases, 15-500 size window, per-collection BH). The report step covers method, versions, design, thresholds, tested/significant counts, and caveats."
+}

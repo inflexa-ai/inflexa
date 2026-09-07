@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference on the core issue: it demonstrates the rank deficiency of ~condition + batch, refuses ComBat/SVA/RUV, fits ~condition only with control as the explicit reference, labels every output as a combined condition+batch effect, and writes a design-remediation statement. Normalization stays inside DESeq2/edgeR, the low-count filter is minimal and reported, and enrichment uses the full Wald-ranked list with a tested-gene ORA background and a named MSigDB version. Weaknesses: the QC step has no stated policy for an outlier or shallow sample; the |LFC|>1 cut is applied post hoc rather than via lfcThreshold in the test; the fgsea size window is not stated; and package versions are not requested in the report."
+}

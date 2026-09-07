@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 5,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly reads the question as QC-only and stays there: library sizes with sample_01's ratio to median, vst/rlog or log-CPM transformation named before PCA and Euclidean/correlation distances, condition labeling, and an explicit verdict step that separates observation from interpretation from recommendation and states the 5v6 consequence of exclusion. No DE, p-values, or enrichment are invoked, which is the right omission here. The weak spot is the low-count filter, which is left as 'if any, e.g. removing all-zero genes' rather than a stated minimal filter before transformation, and software versions are not requested in the report."
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The primary model ~sex+age+condition with DESeq2 on raw counts, size-factor normalization, and a justified >=10-in-6-samples filter fits the unpaired two-group design with recorded covariates; the four-model sensitivity comparison is superfluous but pre-specifies Model D correctly. Weaknesses: age is not centered, the reference level is not stated, covariate balance is only noted as a caveat rather than tabulated up front, and there is no XIST/Y-linked sex check. Significance is counted with a post hoc |log2FC|>=1 cutoff alongside padj<0.05 rather than a threshold in the test, and the nominal p<0.05 enrichment fallback is weak. Enrichment names the collection and version and an explicit universe but no gene-set size window, and the report omits package versions."
+}

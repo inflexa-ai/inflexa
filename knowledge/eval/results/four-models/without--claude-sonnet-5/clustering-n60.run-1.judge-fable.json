@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference on the core method: VST after filtering, top variable genes, ConsensusClusterPlus with 80% sample and gene resampling over 1000 iterations, k=2..8, PAC and delta-area rather than silhouette alone, orthogonal Ward/PAM with ARI, and a chi-square/Fisher cross-tabulation against condition plus library size and a whole-blood composition proxy as confounders. It acknowledges that consensus clustering finds structure in noise but only gestures at a 'random/null baseline' without committing to a permuted or simulated matrix comparison, and the QC does not state coloring by condition or an explicit outlier/shallow-sample policy. The conditional enrichment step names MSigDB hallmark and GO-BP but gives no version, universe, ranking metric or size window, and the subgroup DESeq2 step lacks a stated BH alpha or fold-change shrinkage. Software versions are not required in the report."
+}

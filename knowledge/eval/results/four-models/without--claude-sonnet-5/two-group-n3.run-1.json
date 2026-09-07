@@ -1,0 +1,301 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-group-n3",
+  "run": 1,
+  "startedAt": "2026-09-06T21:01:11.789Z",
+  "elapsedMs": 44541,
+  "outcome": "plan_submitted",
+  "planId": "pln-1120b6a5",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering, and DESeq2 differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The data context lists counts.csv as 12000 x 7 but metadata.csv as 6 rows for a 3-vs-3 design — reconcile this discrepancy explicitly (extra column may be an ID column or an extra sample) rather than silently dropping a sample",
+          "With only 3 replicates per group, DESeq2's shrinkage-based dispersion estimation is essential; do not switch to a naive t-test on raw counts"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which genes are differentially expressed between the 3 treated and 3 control liver samples in counts.csv, using raw Salmon gene-level counts and metadata.csv condition labels?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Metadata.csv is used to define the treated vs control grouping and matched to counts.csv sample columns by name (report and resolve any mismatch between the 7 count columns and 6 metadata rows before proceeding)",
+          "Low-count genes are filtered (e.g. require count >=10 in at least 3 samples) prior to modeling, and the number of genes removed is reported",
+          "DESeq2 is run with an unpaired two-group design (condition: treated vs control), producing log2FoldChange, raw p-value, and BH-adjusted p-value per gene",
+          "A PCA or sample-distance plot is produced to check for outliers/batch structure among the 6-7 samples",
+          "Output table of all genes with DESeq2 statistics and a filtered significant gene list (padj < 0.05) is saved",
+          "Dispersion estimates and independent filtering diagnostics from DESeq2 are reported (dispersion plot, number of genes with independent filtering applied)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Power and reliability assessment for n=3 per group",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not report a false sense of precision — power estimates from n=3 are themselves approximate; state this as an approximation, not an exact figure",
+          "Check for at least one influential/outlier sample via Cook's distance (already computed by DESeq2) since a single aberrant replicate in a 3-sample group can dominate the result"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib"
+        ],
+        "question": "How much statistical confidence does the 3-vs-3 unpaired design support for the DE calls made in T1S1, and what fold-change/effect sizes are reliably detectable at this sample size?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistical_diagnostic",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Report the distribution of raw p-values (histogram) for the DESeq2 test to check calibration (uniform under null vs anti-conservative skew)",
+          "Report how many genes pass padj<0.05 vs padj<0.10, and how sensitive this count is to the independent-filtering threshold",
+          "Compute or cite a post-hoc power estimate (e.g. via simulation or an analytic NB power approximation) for detecting a 2-fold change at the observed mean dispersion with n=3 per group, stating the approximate power percentage",
+          "Explicitly state the practical detection floor: minimum fold-change reliably detectable at 80% power with n=3, given typical liver RNA-seq dispersion",
+          "State plainly, in the output text, that n=3 per group is the minimum replication DESeq2 accepts and that this limits power to detect small/moderate effect sizes and increases susceptibility to single-sample outlier influence"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways gene sets are HGNC symbols matching the counts.csv gene symbol column directly — verify identifier match before running enrichment",
+          "Small n=3 designs often yield short significant gene lists; enrichment power is itself limited and should be reported as exploratory, not confirmatory"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among the genes significantly differentially expressed between treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Uses the significant gene list (padj<0.05) from T1S1 as the query set and the full filtered gene universe as background",
+          "Uses the WikiPathways human gene sets (HGNC symbols) available in the reference store for enrichment testing (e.g. hypergeometric/Fisher or GSEA-preranked on the DESeq2 stat/log2FC ranking)",
+          "Reports enriched pathways with FDR-adjusted p-values, and states clearly if zero pathways survive multiple-testing correction given the likely small gene list from n=3",
+          "If the significant gene list from T1S1 is empty or very small (<5 genes), reports this explicitly and falls back to a preranked GSEA on the full ranked gene list rather than fabricating enrichment on an empty set"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "PPI network connectivity of DE genes as an orthogonal confidence check",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The STRING links file is space-delimited and ~83MB gzipped with edges duplicated per direction — load carefully and deduplicate before analysis, and do not attempt distance-based measures on the full unfiltered graph",
+          "STRING nodes are taxid-prefixed Ensembl protein IDs; the join through the protein.info file to gene symbols is mandatory before matching DE genes"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "networkx"
+        ],
+        "question": "Do the genes called differentially expressed between treated and control samples form a more interconnected module in the human STRING protein-protein interaction network than expected by chance, as an independent check on the credibility of the n=3 DE gene list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "network_analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Maps significant DE gene symbols to STRING protein IDs using the STRING human protein info file, reporting how many of the DE genes were mapped",
+          "Builds the subnetwork among mapped DE genes from the STRING human links file at the conventional high-confidence threshold (combined_score >= 700)",
+          "Computes observed number of edges among DE genes and compares to a null distribution from randomly sampled gene sets of the same size (permutation test), reporting an empirical p-value for network connectivity enrichment",
+          "States explicitly that this is a supporting/orthogonal signal on gene list plausibility, not a replacement for statistical significance from T1S1, and that with n=3 a small non-significant DE list may yield an inconclusive (underpowered) network test"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control DE with n=3 power caveat",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The input is a bulk RNA-seq gene-level count matrix (12000 genes x 7 samples per the file listing, though metadata lists 6 samples — 3 treated vs 3 control, unpaired, single batch) from Salmon quantification of human liver tissue under drug treatment. The core question has two parts: (1) which genes differ between treated and control, and (2) how much confidence the n=3-per-group design supports. Step 1 runs a standard DESeq2 negative-binomial model on raw counts (the appropriate model for Salmon-derived integer counts), with a QC/filtering step to remove low-count genes and check sample clustering before testing. Step 2 explicitly quantifies statistical power/reliability for n=3 per group — via BH-FDR calibration diagnostics (p-value histogram shape, dispersion fit quality, and a post-hoc power estimate) so the answer to 'how confident' is a stated number, not a hand-wave. Step 3 takes the significant DE gene list and runs pathway enrichment against WikiPathways human gene sets (available in the reference store) to give the DE hits biological context. Step 4 cross-checks the top hits against the STRING human PPI network to see whether DE genes form a connected functional module, which is an additional, orthogonal signal on the credibility of a small-n gene list (isolated singleton hits from n=3 are far less trustworthy than an interconnected module). No translational/safety steps are added since the research question is purely about DE gene identification and statistical confidence, not druggability or clinical outcome."
+  },
+  "usage": {
+    "inputTokens": 87159,
+    "outputTokens": 3305,
+    "cacheCreationInputTokens": 87135,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control DE with n=3 power caveat",
+          "analytical_narrative": "The input is a bulk RNA-seq gene-level count matrix (12000 genes x 7 samples per the file listing, though metadata lists 6 samples — 3 treated vs 3 control, unpaired, single batch) from Salmon quantification of human liver tissue under drug treatment. The core question has two parts: (1) which genes differ between treated and control, and (2) how much confidence the n=3-per-group design supports. Step 1 runs a standard DESeq2 negative-binomial model on raw counts (the appropriate model for Salmon-derived integer counts), with a QC/filtering step to remove low-count genes and check sample clustering before testing. Step 2 explicitly quantifies statistical power/reliability for n=3 per group — via BH-FDR calibration diagnostics (p-value histogram shape, dispersion fit quality, and a post-hoc power estimate) so the answer to 'how confident' is a stated number, not a hand-wave. Step 3 takes the significant DE gene list and runs pathway enrichment against WikiPathways human gene sets (available in the reference store) to give the DE hits biological context. Step 4 cross-checks the top hits against the STRING human PPI network to see whether DE genes form a connected functional module, which is an additional, orthogonal signal on the credibility of a small-n gene list (isolated singleton hits from n=3 are far less trustworthy than an interconnected module). No translational/safety steps are added since the research question is purely about DE gene identification and statistical confidence, not druggability or clinical outcome.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, filtering, and DESeq2 differential expression",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between the 3 treated and 3 control liver samples in counts.csv, using raw Salmon gene-level counts and metadata.csv condition labels?",
+              "acceptance_criteria": [
+                "Metadata.csv is used to define the treated vs control grouping and matched to counts.csv sample columns by name (report and resolve any mismatch between the 7 count columns and 6 metadata rows before proceeding)",
+                "Low-count genes are filtered (e.g. require count >=10 in at least 3 samples) prior to modeling, and the number of genes removed is reported",
+                "DESeq2 is run with an unpaired two-group design (condition: treated vs control), producing log2FoldChange, raw p-value, and BH-adjusted p-value per gene",
+                "A PCA or sample-distance plot is produced to check for outliers/batch structure among the 6-7 samples",
+                "Output table of all genes with DESeq2 statistics and a filtered significant gene list (padj < 0.05) is saved",
+                "Dispersion estimates and independent filtering diagnostics from DESeq2 are reported (dispersion plot, number of genes with independent filtering applied)"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "The data context lists counts.csv as 12000 x 7 but metadata.csv as 6 rows for a 3-vs-3 design — reconcile this discrepancy explicitly (extra column may be an ID column or an extra sample) rather than silently dropping a sample",
+                "With only 3 replicates per group, DESeq2's shrinkage-based dispersion estimation is essential; do not switch to a naive t-test on raw counts"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Power and reliability assessment for n=3 per group",
+              "track": "T1",
+              "step_type": "statistical_diagnostic",
+              "question": "How much statistical confidence does the 3-vs-3 unpaired design support for the DE calls made in T1S1, and what fold-change/effect sizes are reliably detectable at this sample size?",
+              "acceptance_criteria": [
+                "Report the distribution of raw p-values (histogram) for the DESeq2 test to check calibration (uniform under null vs anti-conservative skew)",
+                "Report how many genes pass padj<0.05 vs padj<0.10, and how sensitive this count is to the independent-filtering threshold",
+                "Compute or cite a post-hoc power estimate (e.g. via simulation or an analytic NB power approximation) for detecting a 2-fold change at the observed mean dispersion with n=3 per group, stating the approximate power percentage",
+                "Explicitly state the practical detection floor: minimum fold-change reliably detectable at 80% power with n=3, given typical liver RNA-seq dispersion",
+                "State plainly, in the output text, that n=3 per group is the minimum replication DESeq2 accepts and that this limits power to detect small/moderate effect sizes and increases susceptibility to single-sample outlier influence"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "caveats": [
+                "Do not report a false sense of precision — power estimates from n=3 are themselves approximate; state this as an approximation, not an exact figure",
+                "Check for at least one influential/outlier sample via Cook's distance (already computed by DESeq2) since a single aberrant replicate in a 3-sample group can dominate the result"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among the genes significantly differentially expressed between treated and control liver samples?",
+              "acceptance_criteria": [
+                "Uses the significant gene list (padj<0.05) from T1S1 as the query set and the full filtered gene universe as background",
+                "Uses the WikiPathways human gene sets (HGNC symbols) available in the reference store for enrichment testing (e.g. hypergeometric/Fisher or GSEA-preranked on the DESeq2 stat/log2FC ranking)",
+                "Reports enriched pathways with FDR-adjusted p-values, and states clearly if zero pathways survive multiple-testing correction given the likely small gene list from n=3",
+                "If the significant gene list from T1S1 is empty or very small (<5 genes), reports this explicitly and falls back to a preranked GSEA on the full ranked gene list rather than fabricating enrichment on an empty set"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "WikiPathways gene sets are HGNC symbols matching the counts.csv gene symbol column directly — verify identifier match before running enrichment",
+                "Small n=3 designs often yield short significant gene lists; enrichment power is itself limited and should be reported as exploratory, not confirmatory"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "PPI network connectivity of DE genes as an orthogonal confidence check",
+              "track": "T2",
+              "step_type": "network_analysis",
+              "question": "Do the genes called differentially expressed between treated and control samples form a more interconnected module in the human STRING protein-protein interaction network than expected by chance, as an independent check on the credibility of the n=3 DE gene list?",
+              "acceptance_criteria": [
+                "Maps significant DE gene symbols to STRING protein IDs using the STRING human protein info file, reporting how many of the DE genes were mapped",
+                "Builds the subnetwork among mapped DE genes from the STRING human links file at the conventional high-confidence threshold (combined_score >= 700)",
+                "Computes observed number of edges among DE genes and compares to a null distribution from randomly sampled gene sets of the same size (permutation test), reporting an empirical p-value for network connectivity enrichment",
+                "States explicitly that this is a supporting/orthogonal signal on gene list plausibility, not a replacement for statistical significance from T1S1, and that with n=3 a small non-significant DE list may yield an inconclusive (underpowered) network test"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "networkx"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "The STRING links file is space-delimited and ~83MB gzipped with edges duplicated per direction — load carefully and deduplicate before analysis, and do not attempt distance-based measures on the full unfiltered graph",
+                "STRING nodes are taxid-prefixed Ensembl protein IDs; the join through the protein.info file to gene symbols is mandatory before matching DE genes"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

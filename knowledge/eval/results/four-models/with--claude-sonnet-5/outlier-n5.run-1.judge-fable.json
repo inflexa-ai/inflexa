@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald with apeglm on an unpaired single-batch 5-vs-5 design, sample_03 characterized first (library size, detected genes, blind-VST PCA, distance heatmap) with an explicit no-silent-removal policy, then two fits (all samples as primary with Cook's handling, sample_03 excluded as a stated sensitivity run) with an explicit comparison of the significant sets. Filtering (>=10 counts in >=5 samples), in-model median-of-ratios normalization, BH at 0.05 with independent filtering, and reference level control with the named contrast are all stated; the design formula itself is only implied rather than written out, and the removal criterion for the sensitivity run is a group-size rule rather than a data-driven distance threshold. Enrichment is not requested but is fully specified (Wald-stat ranking, tested-gene universe, versioned collections, 15-500 size window). The report step covers versions, design, thresholds, counts for both fits, and caveats; a minor inconsistency (12,000 x 11 vs 12,000 x 10) in the narrative is a small blemish."
+}

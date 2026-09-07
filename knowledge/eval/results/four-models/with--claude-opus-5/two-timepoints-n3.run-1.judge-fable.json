@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the two-level time variable as a factor in a 2x2 factorial with ~ condition + time + condition:time, takes the interaction Wald test as primary, extracts both simple effects, and uses ashr (correctly noting apeglm cannot shrink the t1 combination); reference levels are set by explicit relevel with time = t0, though the condition reference is left to be 'stated in output' rather than fixed in the plan. QC is blind VST/PCA/distance/library size with a flag-only outlier policy, the filter is minimal and justified by the smallest cell size, and normalization stays inside both DESeq2 and edgeR. Enrichment was not asked for but is specified properly (full ranked list, Wald stat as metric with reason, named collections with releases, 15-500 window, seed), so it is not penalized. The report covers method, versions, design, thresholds, tested/significant counts, and the interaction power caveat prominently."
+}

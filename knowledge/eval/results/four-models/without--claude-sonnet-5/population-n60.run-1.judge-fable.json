@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 5,
+    "low_count_filter": 7,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "DESeq2 with ~condition and a case-vs-control Wald contrast fits an unpaired single-batch 60 vs 60 design, though the plan neither considers limma-voom at this scale nor sets the reference level explicitly. QC covers PCA and sample correlations but omits library sizes, a sex check, and any search for hidden structure or an outlier policy. The low-count filter is stated and tied to group size; normalization is implicit in DESeq2 rather than stated. Effect size is handled by post-hoc dual thresholding on shrunken LFC rather than a threshold in the test (lfcThreshold/TREAT) or a confidence interval, and enrichment leaves ORA vs fgsea undecided with no universe, version, or size window and ranks by LFC rather than a test statistic."
+}

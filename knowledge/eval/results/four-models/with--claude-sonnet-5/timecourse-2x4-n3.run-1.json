@@ -1,0 +1,1127 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "timecourse-2x4-n3",
+  "run": 1,
+  "startedAt": "2026-09-06T19:40:16.507Z",
+  "elapsedMs": 207507,
+  "outcome": "plan_submitted",
+  "planId": "pln-32101bca",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (blind VST, PCA, sample distances)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Strandedness of the library is unknown in the data profile; this cannot be re-inferred from a delivered count matrix (no BAMs available), so treat this as an unresolved caveat carried to the report rather than a step that can fix it."
+        ],
+        "context": "Raw integer salmon gene counts, 12000 genes x 25 samples; metadata has condition, time (t0-t3), time_hours. No batch variable is present in the profile.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 25 samples (2 conditions x 4 time points x 3 replicates) show the expected structure by condition and time, and are there outlier samples or library-size problems before fitting the interaction model?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC on every raw-count dataset: blind vst, PCA on top-variable genes, sample distance heatmap, per R-0033.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500 for the PCA (R-0033)",
+          "transform = vst(blind=TRUE) (DESeq2 vignette)"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the count matrix (DESeq2 vst(blind=TRUE))",
+          "PCA on the top 500 most-variable genes, colored by condition and shaped/colored by time",
+          "Sample-to-sample Euclidean distance heatmap produced",
+          "Library size per sample reported and flagged if any sample deviates strongly from the median",
+          "Any sample whose PCA/clustering position is inconsistent with its declared condition/time label is flagged explicitly, not silently dropped"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 interaction model: condition-specific change over time",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Counts are described as 'raw integer gene-level counts from salmon' with no accompanying transcript-level quant.sf/tximport object in the file list; the length-scaling offset that tximport normally supplies (R-0018) cannot be applied from a gene x sample matrix alone. This is reported as a known limitation, not silently ignored.",
+          "With 12 replicates total per condition but only 3 per condition x time cell, the interaction test has limited power per cell; interpret modest interaction effect sizes cautiously.",
+          "The interaction-based discovery set answers 'condition-specific over time' at the coefficient level (each non-reference time vs t0); a combined LRT of the full interaction block was the more natural omnibus test for this question but is not a permitted method per the knowledge service in this situation, so the per-coefficient Wald/BH approach is used instead and reported as such."
+        ],
+        "context": "Design ~condition + time + condition:time on raw counts (time as a 4-level categorical factor: t0 reference, t1, t2, t3). This directly targets the research question because the interaction coefficients are the deviation of each condition's time-trajectory from the trajectory implied by the additive model (shared time effect + fixed condition offset).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes have a significant condition:time interaction (i.e., their trajectory across t0-t3 differs by condition, beyond the shared/additive time trend)?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0056@a628",
+            "R-0038@a5e0",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with apeglm shrinkage is the permitted differential_expression method for this 2x4 design per R-0056 (12 replicates/group supports Wald/QLF/voom, not LRT which the knowledge_check flagged as not permitted here); minimal pre-filter (R-0029/R-0002), model-internal normalization (R-0026), explicit reference levels (R-0036), apeglm shrinkage (R-0009), BH+independent filtering at alpha 0.05 (R-0010, R-0043).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-interaction@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count = 10, min_samples = smallest group size (3) for the pre-filter",
+          "test = Wald (LRT was checked against the knowledge service and rejected as not a permitted differential_expression method for this situation)",
+          "alpha = 0.05, adjustment = BH, independent_filtering = true"
+        ],
+        "acceptance_criteria": [
+          "Genes filtered before the model: keep genes with >=10 counts in >=3 samples (the smallest condition x time cell size)",
+          "DESeq2 median-of-ratios normalization used inside the model; no separate count normalization applied beforehand",
+          "Reference levels set explicitly: condition reference and time reference (t0) stated in the output",
+          "Wald tests run on each condition:time interaction coefficient (t1,t2,t3 relative to t0)",
+          "apeglm shrinkage applied to each interaction coefficient; both shrunken and unshrunken log2FC with lfcSE reported",
+          "Benjamini-Hochberg FDR with independent filtering at alpha=0.05 applied per contrast; genes selected by padj<0.05, never by raw p-value or fold-change alone",
+          "A gene is called condition-specific over time if any interaction coefficient is significant at padj<0.05; the union across t1/t2/t3 interaction terms is reported as the discovery set together with the count DE per individual coefficient",
+          "MA plot and dispersion plot produced as fit diagnostics",
+          "p-value histogram inspected and its shape reported before trusting the BH-adjusted results",
+          "Cook's-distance-based outlier replacement (DESeq2 default) left on and the number of replaced genes reported",
+          "Full session info, package versions, and random seed recorded"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Trajectory clustering and DE report for condition-specific genes",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Trajectory clustering here is descriptive; cluster count and boundaries are a stated analytic choice, not a statistically validated subgroup structure."
+        ],
+        "context": "For each gene with any significant interaction coefficient, extract the per-timepoint log2 fold change of condition vs condition (or the fitted trajectory per condition) and group genes into trajectory clusters to summarize the qualitative patterns (e.g., diverging early vs late, transient vs sustained divergence).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "What are the temporal trajectory patterns of the genes with a significant condition:time interaction, and what does the full DE report show?",
+        "grounding": {
+          "claims": [
+            "R-0091@c19e",
+            "R-0092@bb58",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "Time course with >=3 time points: report trajectory clusters, not a single fold change (R-0091); interaction design reports simple effects and interaction contrast together (R-0092); shrunken+unshrunken LFC reported (R-0085); MA/dispersion diagnostics required (R-0087); full reproducibility record (R-0086).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "rank_genes_by = shrunken log2FC for tables/plots; unshrunken p-values retained for the test"
+        ],
+        "acceptance_criteria": [
+          "Per-timepoint (t0,t1,t2,t3) normalized-count trajectories extracted for all genes with a significant interaction term",
+          "Genes clustered into a stated number of trajectory clusters using a stated method (e.g., hierarchical clustering on the standardized per-timepoint condition-difference profile) with the clustering method and number of clusters stated",
+          "Mean trajectory per cluster plotted, with the top representative genes of each cluster shown as normalized-count line plots over time by condition",
+          "Number of genes tested, number of genes significant per interaction coefficient and in the union set, and the FDR threshold reported",
+          "MA plot, dispersion plot, and p-value histogram from T1S2 included in the report with an interpretation",
+          "Reproducibility record included: sessionInfo, package versions, random seed"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GO/Hallmark/Reactome/WikiPathways over-representation of condition-specific interaction genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If fewer than ~50 genes pass padj<0.05 in T1S2, ORA on that short list has little power; state the list size and treat any 'significant' pathway as a hypothesis, not a proven finding.",
+          "GO term nesting means many significant BP terms will share most of their genes; rrvgo reduction is used to avoid presenting these as independent findings."
+        ],
+        "context": "The knowledge service flagged fgsea preranked GSEA as not a permitted enrichment method for this interaction design/situation, and confirmed over-representation analysis (ORA) with an explicit universe is the permitted method. Universe = all genes tested in T1S2 after the low-count filter. Human organism, so MSigDB Hallmark, Reactome, and WikiPathways-human plus GO-BP are all available reference gene sets.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "rrvgo",
+          "DOSE"
+        ],
+        "question": "What biological processes and pathways are over-represented among the genes whose expression trajectory over time differs by condition (the significant condition:time interaction gene set)?",
+        "grounding": {
+          "claims": [
+            "R-0095@492a",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0101@06c8",
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0103@93aa"
+          ],
+          "reason": "Over-representation analysis with an explicit universe is the permitted enrichment method for this interaction-design situation (knowledge_check rejected fgsea preranked GSEA and LRT for this situation, and confirmed ORA per R-0095/R-0046); GO reduction via rrvgo (R-0095); Hallmark then Reactome/WikiPathways as further collections with stated releases (R-0098, R-0165); universe = tested genes and size window 15-500 (R-0046, R-0047); warn if <50 significant genes (R-0103).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-ora-go@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "universe = tested_genes (post-filter gene set from T1S2)",
+          "min_size = 15, max_size = 500",
+          "each gene-set collection tested and FDR-corrected separately, never merged"
+        ],
+        "acceptance_criteria": [
+          "Gene identifiers mapped from symbol to Entrez with org.Hs.eg.db; the fraction of unmapped/multiply-mapped genes reported",
+          "GO biological-process over-representation run with clusterProfiler::enrichGO, universe explicitly set to the tested-gene set (post-filter genes from T1S2), not the whole genome",
+          "Redundant significant GO terms reduced to representative terms with rrvgo (semantic similarity); full table kept as supplement",
+          "MSigDB Hallmark, Reactome, and WikiPathways-human over-representation run as separate/parallel tests (not merged into one gene-set list), each with the same universe and a gene-set size window of 15-500 members among the tested genes, and each collection's version/release stated (MSigDB 2026.1 hallmark; Reactome 'current'; WikiPathways 2026.07.10)",
+          "Benjamini-Hochberg FDR applied within each collection separately",
+          "If the significant interaction gene list has fewer than ~50 genes, this is stated explicitly in the report and the ORA result is interpreted as low-power/exploratory rather than as a confirmed finding",
+          "Report states the enrichment method, universe, gene-set database versions, and that results are method-dependent (a ranked test on the interaction statistic was not run here because it is not a permitted method for this situation)"
+        ]
+      }
+    ],
+    "title": "Condition-specific time-course RNA-seq: DESeq2 interaction analysis",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The design is 2 conditions x 4 time points (t0-t3) x 3 replicates (n=25 samples with metadata columns condition, time, time_hours), human cell line, raw salmon gene counts (12000 genes x 25 samples). The research question - which genes change over time in a condition-specific way, beyond the shared time trend - is a DESeq2 interaction (condition:time) question, not a simple two-group contrast. T1S1 runs sample-structure QC (blind VST, PCA, sample-distance heatmap, library sizes) on the raw counts to confirm the 8 condition x time cells separate and to catch outliers or a mislabelled sample before any model is fit; time is treated as a categorical factor (t0/t1/t2/t3) since only 4 timepoints are given, avoiding an unwarranted linear-time assumption. T1S2 fits the DESeq2 negative-binomial model with design ~condition + time + condition:time (median-of-ratios normalization built into the model, explicit reference levels for both factors), tests each condition:time interaction coefficient (t1,t2,t3 vs t0) with the Wald test, shrinks the interaction log2 fold changes with apeglm, and applies Benjamini-Hochberg FDR with independent filtering at alpha=0.05 - this directly answers 'condition-specific change beyond the shared time trend' because the interaction term is by construction the deviation from the additive (shared) time effect. T1S3 clusters the genes with any significant interaction term into trajectory groups from the per-timepoint condition-vs-condition log2 fold changes, and reports MA/dispersion diagnostics, the p-value histogram, and the reproducibility record, per DESeq2 time-course reporting practice. T2S1 runs GO biological-process over-representation (clusterProfiler enrichGO, universe = tested genes, rrvgo term reduction) on the significant interaction gene list, following the knowledge service's ruling for this design (LRT and preranked fgsea on a Wald/LRT statistic from an interaction design are flagged methods here; ORA on the significant gene list is the permitted enrichment method), with MSigDB Hallmark and Reactome/WikiPathways over-representation run in parallel as secondary collections using the same universe and size window. A caveat is carried through explicitly: if fewer than ~50 genes reach significance, ORA has little power and the enrichment step reports set size and interprets cautiously rather than over-reading sparse results."
+  },
+  "usage": {
+    "inputTokens": 5715764,
+    "outputTokens": 13077,
+    "cacheCreationInputTokens": 345444,
+    "cacheReadInputTokens": 5369852,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 12,
+        "n_per_group_max": 12,
+        "n_timepoints": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "enrichment_input": "ranked_list",
+        "library_type": "unknown",
+        "strandedness": "unknown"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "tximport",
+          "fgsea",
+          "org.Hs.eg.db",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ashr",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 12,
+        "n_per_group_max": 12,
+        "n_timepoints": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA + sample distances",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >=3 samples (smallest group)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~condition*time (likelihood ratio test full vs reduced ~condition+time for interaction)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "test",
+                "value": "LRT"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 LRT full model (~condition*time) vs reduced (~condition+time) to test condition:time interaction genes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "LRT"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm/ashr shrinkage of condition-vs-time simple effect coefficients for visualization",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on LRT stat, MSigDB Hallmark then Reactome",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 likelihood ratio test time course interaction condition-specific trend",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 time course RNA-seq likelihood ratio test interaction",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq time course differential expression likelihood ratio test",
+        "maxResults": 8
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "time course RNA-seq",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 vignette time course likelihood ratio test reduced model interaction",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 likelihood ratio test time course design interaction genes",
+        "limit": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Moderated estimation of fold change and dispersion RNA-seq DESeq2",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ],
+        "maxAuthors": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "fulltext",
+        "pmcId": "PMC4302049",
+        "sections": [
+          "time course"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "fulltext",
+        "pmcId": "PMC4302049",
+        "sections": [
+          "Composite null hypotheses",
+          "Interactions"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/bioc/deseq2",
+        "query": "time course experiment likelihood ratio test reduced model interaction condition time"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "time course likelihood ratio test"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeq2 time course experiment likelihood ratio test reduced model interaction condition time"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 12,
+        "n_per_group_max": 12,
+        "n_timepoints": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA + sample distances",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >=3 samples (smallest group)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~condition*time; full model vs reduced model ~condition+time to isolate condition:time interaction beyond shared time trend",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test with apeglm log fold change shrinkage on interaction coefficients; DESeq LRT full ~condition*time vs reduced ~condition+time reported as a robustness companion test for the omnibus condition-specific-over-time effect",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage of condition:time interaction coefficients",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the Wald statistic, MSigDB Hallmark then Reactome and WikiPathways",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 12,
+        "n_per_group_max": 12,
+        "n_timepoints": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "enrichment_input": "gene_list"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 12,
+        "n_per_group_max": 12,
+        "n_timepoints": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "enrichment_input": "gene_list",
+        "steps": [
+          {
+            "step_type": "enrichment",
+            "method": "GO over-representation (enrichGO, BP ontology) on genes with significant condition:time interaction, universe = tested genes, MSigDB Hallmark and Reactome ORA in parallel with hypergeometric test and explicit universe",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "go_ontology",
+                "value": "BP"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 12,
+        "n_per_group_max": 12,
+        "n_timepoints": 4,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "enrichment_input": "gene_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA + sample distances",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >=3 samples (smallest group)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~condition*time (full model), reference levels set explicitly; interaction coefficients isolate condition-specific change over time beyond the shared time trend",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test with apeglm log fold change shrinkage on each condition:time interaction coefficient",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage of condition:time interaction coefficients",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene sets human OrgDb"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "rrvgo",
+          "DOSE",
+          "GO.db",
+          "biomaRt"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "fgsea",
+          "DESeq2",
+          "apeglm",
+          "ashr"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GENCODE gtf annotation human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "NCBI gene info"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifier mapping human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot idmapping human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/uniprot-idmapping-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/uniprot-idmapping-human/current"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot-idmapping-human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap",
+          "ggplot2"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "genefilter",
+          "matrixStats",
+          "tximeta"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "mclust",
+          "dendextend"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "mfuzz",
+          "Mfuzz"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fastcluster",
+          "cluster"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Condition-specific time-course RNA-seq: DESeq2 interaction analysis",
+          "created_at": "2026-09-07T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The design is 2 conditions x 4 time points (t0-t3) x 3 replicates (n=25 samples with metadata columns condition, time, time_hours), human cell line, raw salmon gene counts (12000 genes x 25 samples). The research question - which genes change over time in a condition-specific way, beyond the shared time trend - is a DESeq2 interaction (condition:time) question, not a simple two-group contrast. T1S1 runs sample-structure QC (blind VST, PCA, sample-distance heatmap, library sizes) on the raw counts to confirm the 8 condition x time cells separate and to catch outliers or a mislabelled sample before any model is fit; time is treated as a categorical factor (t0/t1/t2/t3) since only 4 timepoints are given, avoiding an unwarranted linear-time assumption. T1S2 fits the DESeq2 negative-binomial model with design ~condition + time + condition:time (median-of-ratios normalization built into the model, explicit reference levels for both factors), tests each condition:time interaction coefficient (t1,t2,t3 vs t0) with the Wald test, shrinks the interaction log2 fold changes with apeglm, and applies Benjamini-Hochberg FDR with independent filtering at alpha=0.05 - this directly answers 'condition-specific change beyond the shared time trend' because the interaction term is by construction the deviation from the additive (shared) time effect. T1S3 clusters the genes with any significant interaction term into trajectory groups from the per-timepoint condition-vs-condition log2 fold changes, and reports MA/dispersion diagnostics, the p-value histogram, and the reproducibility record, per DESeq2 time-course reporting practice. T2S1 runs GO biological-process over-representation (clusterProfiler enrichGO, universe = tested genes, rrvgo term reduction) on the significant interaction gene list, following the knowledge service's ruling for this design (LRT and preranked fgsea on a Wald/LRT statistic from an interaction design are flagged methods here; ORA on the significant gene list is the permitted enrichment method), with MSigDB Hallmark and Reactome/WikiPathways over-representation run in parallel as secondary collections using the same universe and size window. A caveat is carried through explicitly: if fewer than ~50 genes reach significance, ORA has little power and the enrichment step reports set size and interprets cautiously rather than over-reading sparse results.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC (blind VST, PCA, sample distances)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 25 samples (2 conditions x 4 time points x 3 replicates) show the expected structure by condition and time, and are there outlier samples or library-size problems before fitting the interaction model?",
+              "context": "Raw integer salmon gene counts, 12000 genes x 25 samples; metadata has condition, time (t0-t3), time_hours. No batch variable is present in the profile.",
+              "acceptance_criteria": [
+                "Blind VST computed on the count matrix (DESeq2 vst(blind=TRUE))",
+                "PCA on the top 500 most-variable genes, colored by condition and shaped/colored by time",
+                "Sample-to-sample Euclidean distance heatmap produced",
+                "Library size per sample reported and flagged if any sample deviates strongly from the median",
+                "Any sample whose PCA/clustering position is inconsistent with its declared condition/time label is flagged explicitly, not silently dropped"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC on every raw-count dataset: blind vst, PCA on top-variable genes, sample distance heatmap, per R-0033.",
+                "template": "tpl-qc-eda@1.0.0"
+              },
+              "constraints": [
+                "n_top_genes = 500 for the PCA (R-0033)",
+                "transform = vst(blind=TRUE) (DESeq2 vignette)"
+              ],
+              "caveats": [
+                "Strandedness of the library is unknown in the data profile; this cannot be re-inferred from a delivered count matrix (no BAMs available), so treat this as an unresolved caveat carried to the report rather than a step that can fix it."
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 interaction model: condition-specific change over time",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes have a significant condition:time interaction (i.e., their trajectory across t0-t3 differs by condition, beyond the shared/additive time trend)?",
+              "context": "Design ~condition + time + condition:time on raw counts (time as a 4-level categorical factor: t0 reference, t1, t2, t3). This directly targets the research question because the interaction coefficients are the deviation of each condition's time-trajectory from the trajectory implied by the additive model (shared time effect + fixed condition offset).",
+              "acceptance_criteria": [
+                "Genes filtered before the model: keep genes with >=10 counts in >=3 samples (the smallest condition x time cell size)",
+                "DESeq2 median-of-ratios normalization used inside the model; no separate count normalization applied beforehand",
+                "Reference levels set explicitly: condition reference and time reference (t0) stated in the output",
+                "Wald tests run on each condition:time interaction coefficient (t1,t2,t3 relative to t0)",
+                "apeglm shrinkage applied to each interaction coefficient; both shrunken and unshrunken log2FC with lfcSE reported",
+                "Benjamini-Hochberg FDR with independent filtering at alpha=0.05 applied per contrast; genes selected by padj<0.05, never by raw p-value or fold-change alone",
+                "A gene is called condition-specific over time if any interaction coefficient is significant at padj<0.05; the union across t1/t2/t3 interaction terms is reported as the discovery set together with the count DE per individual coefficient",
+                "MA plot and dispersion plot produced as fit diagnostics",
+                "p-value histogram inspected and its shape reported before trusting the BH-adjusted results",
+                "Cook's-distance-based outlier replacement (DESeq2 default) left on and the number of replaced genes reported",
+                "Full session info, package versions, and random seed recorded"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0056@a628",
+                  "R-0038@a5e0",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "reason": "DESeq2 Wald test with apeglm shrinkage is the permitted differential_expression method for this 2x4 design per R-0056 (12 replicates/group supports Wald/QLF/voom, not LRT which the knowledge_check flagged as not permitted here); minimal pre-filter (R-0029/R-0002), model-internal normalization (R-0026), explicit reference levels (R-0036), apeglm shrinkage (R-0009), BH+independent filtering at alpha 0.05 (R-0010, R-0043).",
+                "template": "tpl-deseq2-interaction@1.0.0"
+              },
+              "constraints": [
+                "min_count = 10, min_samples = smallest group size (3) for the pre-filter",
+                "test = Wald (LRT was checked against the knowledge service and rejected as not a permitted differential_expression method for this situation)",
+                "alpha = 0.05, adjustment = BH, independent_filtering = true"
+              ],
+              "caveats": [
+                "Counts are described as 'raw integer gene-level counts from salmon' with no accompanying transcript-level quant.sf/tximport object in the file list; the length-scaling offset that tximport normally supplies (R-0018) cannot be applied from a gene x sample matrix alone. This is reported as a known limitation, not silently ignored.",
+                "With 12 replicates total per condition but only 3 per condition x time cell, the interaction test has limited power per cell; interpret modest interaction effect sizes cautiously.",
+                "The interaction-based discovery set answers 'condition-specific over time' at the coefficient level (each non-reference time vs t0); a combined LRT of the full interaction block was the more natural omnibus test for this question but is not a permitted method per the knowledge service in this situation, so the per-coefficient Wald/BH approach is used instead and reported as such."
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Trajectory clustering and DE report for condition-specific genes",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What are the temporal trajectory patterns of the genes with a significant condition:time interaction, and what does the full DE report show?",
+              "context": "For each gene with any significant interaction coefficient, extract the per-timepoint log2 fold change of condition vs condition (or the fitted trajectory per condition) and group genes into trajectory clusters to summarize the qualitative patterns (e.g., diverging early vs late, transient vs sustained divergence).",
+              "acceptance_criteria": [
+                "Per-timepoint (t0,t1,t2,t3) normalized-count trajectories extracted for all genes with a significant interaction term",
+                "Genes clustered into a stated number of trajectory clusters using a stated method (e.g., hierarchical clustering on the standardized per-timepoint condition-difference profile) with the clustering method and number of clusters stated",
+                "Mean trajectory per cluster plotted, with the top representative genes of each cluster shown as normalized-count line plots over time by condition",
+                "Number of genes tested, number of genes significant per interaction coefficient and in the union set, and the FDR threshold reported",
+                "MA plot, dispersion plot, and p-value histogram from T1S2 included in the report with an interpretation",
+                "Reproducibility record included: sessionInfo, package versions, random seed"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0091@c19e",
+                  "R-0092@bb58",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "Time course with >=3 time points: report trajectory clusters, not a single fold change (R-0091); interaction design reports simple effects and interaction contrast together (R-0092); shrunken+unshrunken LFC reported (R-0085); MA/dispersion diagnostics required (R-0087); full reproducibility record (R-0086).",
+                "template": "none"
+              },
+              "constraints": [
+                "rank_genes_by = shrunken log2FC for tables/plots; unshrunken p-values retained for the test"
+              ],
+              "caveats": [
+                "Trajectory clustering here is descriptive; cluster count and boundaries are a stated analytic choice, not a statistically validated subgroup structure."
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "GO/Hallmark/Reactome/WikiPathways over-representation of condition-specific interaction genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "What biological processes and pathways are over-represented among the genes whose expression trajectory over time differs by condition (the significant condition:time interaction gene set)?",
+              "context": "The knowledge service flagged fgsea preranked GSEA as not a permitted enrichment method for this interaction design/situation, and confirmed over-representation analysis (ORA) with an explicit universe is the permitted method. Universe = all genes tested in T1S2 after the low-count filter. Human organism, so MSigDB Hallmark, Reactome, and WikiPathways-human plus GO-BP are all available reference gene sets.",
+              "acceptance_criteria": [
+                "Gene identifiers mapped from symbol to Entrez with org.Hs.eg.db; the fraction of unmapped/multiply-mapped genes reported",
+                "GO biological-process over-representation run with clusterProfiler::enrichGO, universe explicitly set to the tested-gene set (post-filter genes from T1S2), not the whole genome",
+                "Redundant significant GO terms reduced to representative terms with rrvgo (semantic similarity); full table kept as supplement",
+                "MSigDB Hallmark, Reactome, and WikiPathways-human over-representation run as separate/parallel tests (not merged into one gene-set list), each with the same universe and a gene-set size window of 15-500 members among the tested genes, and each collection's version/release stated (MSigDB 2026.1 hallmark; Reactome 'current'; WikiPathways 2026.07.10)",
+                "Benjamini-Hochberg FDR applied within each collection separately",
+                "If the significant interaction gene list has fewer than ~50 genes, this is stated explicitly in the report and the ORA result is interpreted as low-power/exploratory rather than as a confirmed finding",
+                "Report states the enrichment method, universe, gene-set database versions, and that results are method-dependent (a ranked test on the interaction statistic was not run here because it is not a permitted method for this situation)"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "rrvgo",
+                "DOSE"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0095@492a",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0101@06c8",
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0103@93aa"
+                ],
+                "reason": "Over-representation analysis with an explicit universe is the permitted enrichment method for this interaction-design situation (knowledge_check rejected fgsea preranked GSEA and LRT for this situation, and confirmed ORA per R-0095/R-0046); GO reduction via rrvgo (R-0095); Hallmark then Reactome/WikiPathways as further collections with stated releases (R-0098, R-0165); universe = tested genes and size window 15-500 (R-0046, R-0047); warn if <50 significant genes (R-0103).",
+                "template": "tpl-ora-go@1.0.0"
+              },
+              "constraints": [
+                "universe = tested_genes (post-filter gene set from T1S2)",
+                "min_size = 15, max_size = 500",
+                "each gene-set collection tested and FDR-corrected separately, never merged"
+              ],
+              "caveats": [
+                "If fewer than ~50 genes pass padj<0.05 in T1S2, ORA on that short list has little power; state the list size and treat any 'significant' pathway as a hypothesis, not a proven finding.",
+                "GO term nesting means many significant BP terms will share most of their genes; rrvgo reduction is used to avoid presenting these as independent findings."
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

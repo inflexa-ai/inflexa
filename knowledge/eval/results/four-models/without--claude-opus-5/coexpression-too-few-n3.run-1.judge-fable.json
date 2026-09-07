@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly states that six samples cannot support a co-expression network (4 residual df, WGCNA's ~15-sample floor, minimum permutation p of 0.1) but then runs WGCNA anyway, reports module-trait correlations, and annotates the 'surviving' modules, rather than stopping the network step or substituting a prior network such as STRING as the reference requires; the stability gate and forbidden 'validated' verdict mitigate but do not fix this. The DESeq2 track is well specified: raw counts, ~condition with explicit treated-vs-control contrast, no batch term justified, BH at 0.05, apeglm shrinkage, a defensible filter of count>=10 in >=3 samples, and an honest statement of low power at 2 residual df, though the reference level is not set explicitly. QC includes PCA and outlier diagnostics with a retain-all policy but omits library sizes and sample distances. Enrichment names human hallmark/GO BP and uses the filtered universe for ORA, but no collection versions, no gene set size window, and the GSEA ranking metric is left ambiguous between shrunk LFC and Wald stat; software versions are not stated in the report."
+}

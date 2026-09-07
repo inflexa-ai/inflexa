@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses count models and applies limma-trend (eBayes trend=TRUE, robust=TRUE) directly to the log2(TPM+1) matrix with an explicit no-re-normalization constraint, a value-range sanity check, PCA/MDS and distance heatmap colored by condition, and a label-blind low-expression filter tied to the smallest group size. The design (~0 + condition with makeContrasts(treated - control), control as reference) and BH at 0.05 via topTable are explicit and correct for an unpaired single-batch 6v6. The outlier policy is only 'flag and name' rather than a stated keep/drop rule, and the filter floor is left unspecified. The GSEA step is well specified (full ranked list by moderated t, named collections with versions, 15-500 window, per-collection BH) but goes beyond the bounded question, so it is scored as competent scope creep rather than the reference's correct omission. The report step covers method, versions, design, contrast, thresholds, n tested/n DE, the named transform, and session info."
+}

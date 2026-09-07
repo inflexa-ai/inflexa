@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every point: the balanced batch enters as a fixed covariate in ~ batch + condition, counts are never adjusted before the test, and any ComBat-seq/removeBatchEffect output is confined to visualisation. QC precedes the test with blind-VST PCA on the top 500 genes, distance heatmap, and library sizes all coloured by condition and batch, with an explicit no-silent-drop policy. The filter (>=10 counts in >=6 samples) is minimal and tied to the smallest group; normalization is median-of-ratios inside DESeq2 and TMM inside edgeR; reference level, contrast as factor/numerator/denominator, BH at alpha 0.05 passed to results(), apeglm shrinkage, and refusal of post-hoc LFC filters are all stated. Enrichment is correctly omitted as unasked, and the report specifies versions, design, thresholds, tested and significant counts, and design caveats. The only minor omission is that the plan does not state that condition must be kept as a covariate if ComBat-seq is ever run for visualisation, but that does not affect the test."
+}

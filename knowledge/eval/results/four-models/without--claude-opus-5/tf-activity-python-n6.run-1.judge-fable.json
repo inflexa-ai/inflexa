@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the essentials: PyDESeq2 with ~condition, vehicle as reference, an explicit treated-minus-control sign, the full unshrunk Wald vector fed to decoupler ulm on the local signed CollecTRI CSV with a minimum of five measured targets, BH across regulators, a per-sample activity heatmap, and Python-only enforcement. QC includes PCA and a correlation heatmap but omits library sizes and a stated outlier policy; the low-count filter is sensible though its justification is only implicit. Normalization is left to PyDESeq2 without naming size factors, fold change shrinkage is never mentioned and the |log2FC|>1 cut is applied post hoc rather than in the test, and the per-sample activity comparison lacks a formal per-regulator test. The report specifies package versions, thresholds and honest caveats about activity inference, but does not name the CollecTRI version or the pathway collection and its version."
+}

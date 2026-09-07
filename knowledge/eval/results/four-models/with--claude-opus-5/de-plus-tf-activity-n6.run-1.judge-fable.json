@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the core contrast: blind-VST QC with PCA, distance heatmap and library sizes and a flag-only outlier policy; DESeq2 Wald on raw counts with median-of-ratios inside the model, a minimal filter justified by the smallest group size, explicit reference level and contrast triple, BH at 0.05 with apeglm shrinkage for the reported effect and no post-hoc fold-change filter. The TF step is correct in the way the reference demands: decoupleR ulm on the unshrunken Wald statistic of all tested genes against signed CollecTRI, mode of regulation kept, minimum regulon size 5, BH across regulators, with version recording and the inference-not-measurement caveat. It omits the per-sample activity matrix on VST values with limma on the scores that the reference uses to check regulator consistency across replicates, and it adds an optional promoter-motif ORA and an edgeR duplicate fit that are outside the asked scope, though neither violates the stated prohibitions. The report specification is thorough (versions, design, thresholds, n tested/DE, diagnostics, both fold-change columns, collection version, limitations)."
+}

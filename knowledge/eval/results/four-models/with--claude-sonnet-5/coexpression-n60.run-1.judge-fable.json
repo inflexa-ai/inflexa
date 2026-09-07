@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan builds a signed WGCNA on vst values with a stated soft-threshold fit target (0.8), TOM, dynamic tree cut with minModuleSize 30 and mergeCutHeight 0.25, eigengene-trait correlation with BH across modules, and kME hub genes, which matches the reference closely; it loses points for running the network on all ~12000 filtered genes rather than the top ~5000 variable genes, for using kME alone without gene significance for hubs, and for a contestable framing that NB models are inappropriate at n=60/group. QC is present (vst-blind PCA, distance heatmap, library sizes) but the outlier policy is only 'flagged with a stated criterion' with no stated handling. Filtering (filterByExpr, min 10 in 60 samples), TMM, reference level, and named contrast are explicit; BH at 0.05 is stated but the reported effect is unshrunken logFC with no shrinkage or treat threshold. Enrichment is well specified (camera on moderated t, tested-gene universe, Hallmark version, 15-500 size window) and the report step is thorough with sessionInfo, seeds, diagnostics, and caveats."
+}

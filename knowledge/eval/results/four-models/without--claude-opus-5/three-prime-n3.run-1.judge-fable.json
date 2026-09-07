@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies that 3' tag-seq counts carry no length dependence, fits DESeq2 Wald on raw counts with median-of-ratios size factors and ~condition, control as explicit reference, BH at 0.05 with apeglm shrinkage, an edgeR QL cross-check, and states the n=3 power limit; TPM/FPKM are explicitly excluded. QC is complete with PCA, correlation heatmap, library sizes and an outlier flagging rule, and the filter is independent and its retained-gene count is reported. The filter floor (filterByExpr default or CPM>1 in 3 samples) is not lowered for the sparser 3' counts as the reference suggests, despite the plan noting that sparsity. Enrichment was not asked but is well specified (signed statistic ranking, named collections, 10-500 size window, filtered-set ORA universe) though collection versions are not pinned, and the report does not explicitly commit to recording software versions."
+}

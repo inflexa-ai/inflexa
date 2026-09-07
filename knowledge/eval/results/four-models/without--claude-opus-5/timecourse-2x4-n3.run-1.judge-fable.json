@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the question as a condition-by-time interaction and specifies the DESeq2 LRT with the full and reduced models verbatim, time as a 4-level factor, the control reference level, BH at a stated alpha, per-timepoint interaction coefficients for direction, and a sensible sensitivity check; QC covers PCA, distances, library sizes and dispersion with the note that no sample is dropped silently, though there is no concrete shallow-sample or outlier policy. The instruction to treat time as an R ordered factor would yield polynomial contrasts rather than the t1/t2/t3-vs-t0 interaction coefficients the plan intends to extract, and no fold-change shrinkage is applied to the reported per-timepoint effects. Enrichment was not asked for; the version included has an explicit tested-gene universe and named collections but omits a set-size window and uses a signed LRT statistic as a ranking metric, which is a weak and unconventional choice. Reporting is otherwise thorough on design, thresholds, counts and caveats, but package versions are not explicitly required in the outputs."
+}

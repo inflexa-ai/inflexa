@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses to refit the DE model, ranks every tested gene by the Wald statistic with no padj cutoff, runs gseapy.prerank against a locally stored, version-named Hallmark GMT (2026.1) with a 15-500 size window and a fixed seed, and reports NES, BH q, direction, and leading-edge genes per set with a reproducibility record. QC is specific to the shallow sample_01 with a stated keep/inspect/report policy and blind VST PCA plus distance heatmap. Weaknesses: the tie rule is promised but never stated, handling of missing stat values is not addressed, and the permutation count is left as 'explicit' rather than fixed at 1000 or more; the Reactome/WikiPathways passes are extra scope that was not asked for. Low-count filtering and in-model normalization are not warranted here and the plan appropriately leaves them untouched without saying so."
+}

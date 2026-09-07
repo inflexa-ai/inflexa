@@ -1,0 +1,273 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "two-group-n6-enrich",
+  "run": 1,
+  "startedAt": "2026-09-07T05:21:48.397Z",
+  "elapsedMs": 293037,
+  "outcome": "plan_submitted",
+  "planId": "pln-0cb2bc88",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and sample_01 depth assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "matrixStats"
+        ],
+        "question": "Is sample_01's ~4x-below-median library size a pure scaling issue that normalization absorbs, or a quality problem that warrants exclusion from the treated-vs-control DE model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Read /eval-four-models-without-two-group-n6-enrich-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbols in column 1) and /eval-four-models-without-two-group-n6-enrich-1/data/inputs/metadata/metadata.csv (condition column, 6 treated vs 6 control). Compute per-sample library sizes and detected-gene counts; verify sample_01's depth against the median; build a DESeq2 object with design ~condition, apply variance-stabilizing transform, and plot PCA/MDS colored by condition to check whether sample_01 clusters with its group or is an outlier beyond depth. Quantify whether DESeq2 size factors differ by the expected ~4x for sample_01 and whether its gene-detection profile (fraction of counts in top-expressed genes) looks compositionally normal. Output a short QC report plus a written decision on how sample_01 is handled downstream. The primary model keeps all 12 samples; T1S3 tests the exclusion.",
+        "acceptance_criteria": [
+          "Per-sample table of library size (raw column sums), number of genes with count > 0 and > 10, and the sample_01/median ratio",
+          "PCA or MDS plot of variance-stabilized counts colored by condition, with sample_01 annotated; sample_01's position relative to its condition group is explicitly described",
+          "For sample_01: fraction of normalized expression in top-1000 genes (composition check) versus the other 11 samples, to distinguish shallow-but-normal from degraded",
+          "A documented handling decision: sample_01 stays in the primary model (with justification from the metrics) or is excluded, and what the sensitivity step T1S3 will test either way"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Primary DE: treated vs control, all 12 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "ggplot2"
+        ],
+        "question": "Which genes differ between AD lesional treated and control skin (6 vs 6, unpaired, single batch) when all 12 samples, including shallow sample_01, are modeled?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Build a DESeq2 dataset from the 12,000 x 12 raw count matrix with design ~condition (treated vs control). Pre-filter genes with negligible counts (e.g. count >= 10 in at least 6 samples) to reduce multiple-testing burden, using a filter independent of condition. Use DESeq2 median-of-ratios size factors, which absorb sample_01's depth difference without exclusion. Fit the Wald test, apply BH correction, and compute apeglm-shrunken log2FCs. Deliver the complete results table, the significant-gene count at padj < 0.05, a volcano plot, and the size-factor/dispersion diagnostics. Note in the report that with n=6 per group and no covariates, results are single-study inferences, not clinically validated markers.",
+        "acceptance_criteria": [
+          "Full DESeq2 results table (gene symbol, baseMean, log2FC, lfcSE, stat, p-value, padj) written as CSV",
+          "Counts of up- and down-regulated genes at padj < 0.05 (and optionally |log2FC| > 1) reported explicitly",
+          "Top 20 up and top 20 down genes by shrunken log2FC among significant genes listed",
+          "Diagnostic evidence that the fit is sane: dispersion plot and the size-factor vector including sample_01's value"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sensitivity DE excluding sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which of the treated-vs-control gene-level findings change when shallow sample_01 is dropped, i.e. which findings depend on the one sample flagged by QC?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Refit the identical DESeq2 pipeline on the 11 samples remaining after excluding sample_01, with the same pre-filter rule recomputed on the reduced matrix. Compare against T1S2's primary results: overlap of significant genes at padj < 0.05 in both directions (gained/lost calls), Spearman correlation of the ranked statistics over shared genes, and the shift in size factors. Produce a compact concordance report naming any top findings that appear only when sample_01 is present or only when it is absent. Both ranked lists are exported for the enrichment step.",
+        "acceptance_criteria": [
+          "Sensitivity results table (same columns as T1S2) for the 11-sample model",
+          "Overlap matrix of significant gene sets: all-12 vs 11-sample model, with Jaccard or overlap counts for up- and down-regulated sets",
+          "Rank agreement metric (Spearman correlation of padj-ranked or stat-ranked genes) between the two models",
+          "An explicit list of genes called significant in one model and not the other, and a one-paragraph verdict on whether the primary findings are robust to sample_01"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark GSEA and ORA on DE rankings",
+        "agent": "enrichment-agent",
+        "track": "pathway-enrichment",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which MSigDB Hallmark pathways are enriched among genes changing between AD lesional treated and control skin, and do those pathway calls survive removal of sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "description": "Run hallmark-level enrichment two ways on the differential-expression output. (1) GSEA: use fgsea with the MSigDB Hallmark human gene sets (50 sets, HGNC symbols GMT, MSigDB 2026.1, staged under /mnt/refs as msigdb-hallmark-human) on the stat-ranked gene list from T1S2, and repeat on the 11-sample ranked list from T1S3; report NES, padj, and leading-edge genes for both. (2) Over-representation: take the padj < 0.05 significant genes from each model and run a hypergeometric ORA against the same hallmark sets with the background restricted to genes that passed the DE pre-filter. Cross-check the two results and the two models: hallmark calls significant in all four combinations are the robust answer; calls appearing in only the primary or only the sensitivity model are flagged as sample_01-dependent. If the hallmark GMT is unexpectedly absent at run time, fall back to the staged WikiPathways human GMT and say so in the output rather than silently substituting.",
+        "acceptance_criteria": [
+          "fgsea results table per model (hallmark set, size, NES, p-value, padj) written as CSV for both the all-12-sample and 11-sample rankings",
+          "ORA results table per model (hallmark set, overlap, expected, odds ratio, BH-adjusted p-value)",
+          "Concordance summary: hallmark sets significant (padj < 0.05) in both rankings vs only one, flagged for sample_01 dependence",
+          "Leading-edge genes for the top 5 hallmarks by |NES| listed in the report"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark GSEA",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-24T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are 12,000 genes x 12 samples of raw Salmon gene-level counts from atopic-dermatitis skin (6 treated vs 6 control, unpaired, single batch), with one flagged sample (sample_01) at roughly 4x below median library size. The question — which genes and which hallmark pathways change — is a standard two-group count-modeling problem whose only real risk is the shallow sample. DESeq2's median-of-ratios size factors are specifically designed to absorb library-depth differences, so the plan runs the primary differential-expression model on all 12 samples, then repeats the model without sample_01 and formally compares the two result sets: if the shallow sample is merely deep-sequencing-shallow (scaling absorbs it, detection not depressed), concordance will be high; if its quality is poor, the comparison localizes which findings depend on it. The two ranked gene lists (primary and sensitivity) each feed a complementary enrichment analysis against the MSigDB Hallmark human gene sets — a ranked-list GSEA (fgsea) that uses all 12,000 genes, plus an over-representation test on the FDR-significant gene set as an independent parametric check — so the pathway answer carries the same sensitivity audit as the gene answer."
+  },
+  "usage": {
+    "inputTokens": 65168,
+    "outputTokens": 3607,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 1468
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "limit": 30
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark GSEA",
+          "analytical_narrative": "The data are 12,000 genes x 12 samples of raw Salmon gene-level counts from atopic-dermatitis skin (6 treated vs 6 control, unpaired, single batch), with one flagged sample (sample_01) at roughly 4x below median library size. The question — which genes and which hallmark pathways change — is a standard two-group count-modeling problem whose only real risk is the shallow sample. DESeq2's median-of-ratios size factors are specifically designed to absorb library-depth differences, so the plan runs the primary differential-expression model on all 12 samples, then repeats the model without sample_01 and formally compares the two result sets: if the shallow sample is merely deep-sequencing-shallow (scaling absorbs it, detection not depressed), concordance will be high; if its quality is poor, the comparison localizes which findings depend on it. The two ranked gene lists (primary and sensitivity) each feed a complementary enrichment analysis against the MSigDB Hallmark human gene sets — a ranked-list GSEA (fgsea) that uses all 12,000 genes, plus an over-representation test on the FDR-significant gene set as an independent parametric check — so the pathway answer carries the same sensitivity audit as the gene answer.",
+          "created_at": "2026-07-24T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and sample_01 depth assessment",
+              "track": "differential-expression",
+              "step_type": "analysis",
+              "question": "Is sample_01's ~4x-below-median library size a pure scaling issue that normalization absorbs, or a quality problem that warrants exclusion from the treated-vs-control DE model?",
+              "acceptance_criteria": [
+                "Per-sample table of library size (raw column sums), number of genes with count > 0 and > 10, and the sample_01/median ratio",
+                "PCA or MDS plot of variance-stabilized counts colored by condition, with sample_01 annotated; sample_01's position relative to its condition group is explicitly described",
+                "For sample_01: fraction of normalized expression in top-1000 genes (composition check) versus the other 11 samples, to distinguish shallow-but-normal from degraded",
+                "A documented handling decision: sample_01 stays in the primary model (with justification from the metrics) or is excluded, and what the sensitivity step T1S3 will test either way"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "description": "Read /eval-four-models-without-two-group-n6-enrich-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene symbols in column 1) and /eval-four-models-without-two-group-n6-enrich-1/data/inputs/metadata/metadata.csv (condition column, 6 treated vs 6 control). Compute per-sample library sizes and detected-gene counts; verify sample_01's depth against the median; build a DESeq2 object with design ~condition, apply variance-stabilizing transform, and plot PCA/MDS colored by condition to check whether sample_01 clusters with its group or is an outlier beyond depth. Quantify whether DESeq2 size factors differ by the expected ~4x for sample_01 and whether its gene-detection profile (fraction of counts in top-expressed genes) looks compositionally normal. Output a short QC report plus a written decision on how sample_01 is handled downstream. The primary model keeps all 12 samples; T1S3 tests the exclusion."
+            },
+            {
+              "id": "T1S2",
+              "name": "Primary DE: treated vs control, all 12 samples",
+              "track": "differential-expression",
+              "step_type": "analysis",
+              "question": "Which genes differ between AD lesional treated and control skin (6 vs 6, unpaired, single batch) when all 12 samples, including shallow sample_01, are modeled?",
+              "acceptance_criteria": [
+                "Full DESeq2 results table (gene symbol, baseMean, log2FC, lfcSE, stat, p-value, padj) written as CSV",
+                "Counts of up- and down-regulated genes at padj < 0.05 (and optionally |log2FC| > 1) reported explicitly",
+                "Top 20 up and top 20 down genes by shrunken log2FC among significant genes listed",
+                "Diagnostic evidence that the fit is sane: dispersion plot and the size-factor vector including sample_01's value"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "description": "Build a DESeq2 dataset from the 12,000 x 12 raw count matrix with design ~condition (treated vs control). Pre-filter genes with negligible counts (e.g. count >= 10 in at least 6 samples) to reduce multiple-testing burden, using a filter independent of condition. Use DESeq2 median-of-ratios size factors, which absorb sample_01's depth difference without exclusion. Fit the Wald test, apply BH correction, and compute apeglm-shrunken log2FCs. Deliver the complete results table, the significant-gene count at padj < 0.05, a volcano plot, and the size-factor/dispersion diagnostics. Note in the report that with n=6 per group and no covariates, results are single-study inferences, not clinically validated markers."
+            },
+            {
+              "id": "T1S3",
+              "name": "Sensitivity DE excluding sample_01",
+              "track": "differential-expression",
+              "step_type": "analysis",
+              "question": "Which of the treated-vs-control gene-level findings change when shallow sample_01 is dropped, i.e. which findings depend on the one sample flagged by QC?",
+              "acceptance_criteria": [
+                "Sensitivity results table (same columns as T1S2) for the 11-sample model",
+                "Overlap matrix of significant gene sets: all-12 vs 11-sample model, with Jaccard or overlap counts for up- and down-regulated sets",
+                "Rank agreement metric (Spearman correlation of padj-ranked or stat-ranked genes) between the two models",
+                "An explicit list of genes called significant in one model and not the other, and a one-paragraph verdict on whether the primary findings are robust to sample_01"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "description": "Refit the identical DESeq2 pipeline on the 11 samples remaining after excluding sample_01, with the same pre-filter rule recomputed on the reduced matrix. Compare against T1S2's primary results: overlap of significant genes at padj < 0.05 in both directions (gained/lost calls), Spearman correlation of the ranked statistics over shared genes, and the shift in size factors. Produce a compact concordance report naming any top findings that appear only when sample_01 is present or only when it is absent. Both ranked lists are exported for the enrichment step."
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark GSEA and ORA on DE rankings",
+              "track": "pathway-enrichment",
+              "step_type": "analysis",
+              "question": "Which MSigDB Hallmark pathways are enriched among genes changing between AD lesional treated and control skin, and do those pathway calls survive removal of sample_01?",
+              "acceptance_criteria": [
+                "fgsea results table per model (hallmark set, size, NES, p-value, padj) written as CSV for both the all-12-sample and 11-sample rankings",
+                "ORA results table per model (hallmark set, overlap, expected, odds ratio, BH-adjusted p-value)",
+                "Concordance summary: hallmark sets significant (padj < 0.05) in both rankings vs only one, flagged for sample_01 dependence",
+                "Leading-edge genes for the top 5 hallmarks by |NES| listed in the report"
+              ],
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "description": "Run hallmark-level enrichment two ways on the differential-expression output. (1) GSEA: use fgsea with the MSigDB Hallmark human gene sets (50 sets, HGNC symbols GMT, MSigDB 2026.1, staged under /mnt/refs as msigdb-hallmark-human) on the stat-ranked gene list from T1S2, and repeat on the 11-sample ranked list from T1S3; report NES, padj, and leading-edge genes for both. (2) Over-representation: take the padj < 0.05 significant genes from each model and run a hypergeometric ORA against the same hallmark sets with the background restricted to genes that passed the DE pre-filter. Cross-check the two results and the two models: hallmark calls significant in all four combinations are the robust answer; calls appearing in only the primary or only the sensitivity model are flagged as sample_01-dependent. If the hallmark GMT is unexpectedly absent at run time, fall back to the staged WikiPathways human GMT and say so in the output rather than silently substituting."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: it characterizes sample_03 with concrete per-sample metrics (library size, detection, RLE, correlations, PCA/distances) before deciding anything, keeps it in the primary DESeq2 Wald fit with Cook's handling, and runs a pre-specified 9-sample sensitivity fit, then reports both with a concordance table rather than a silent or unjustified removal. Design ~condition with control as verified reference, median-of-ratios inside the model, a minimal filter tied to the group size, BH at 0.05 with apeglm shrinkage are all explicit. Small deductions: the |LFC|>=1 cutoff is applied post hoc rather than as an lfcThreshold in the test, the plan does not fix a numeric removal criterion but relies on always running both fits, gene-set collection versions and software versions are not required in the report, and the DE-step filter is only implied by reference to step 1."
+}

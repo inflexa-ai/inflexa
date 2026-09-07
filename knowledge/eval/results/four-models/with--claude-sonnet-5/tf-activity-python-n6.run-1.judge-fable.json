@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the core path: PyDESeq2 Wald test on raw counts with median-of-ratios inside the model, a justified >=10-in->=6 filter, explicit ~condition design with vehicle as reference and a named contrast, BH at 0.05 with lfc_shrink for reported effects, and the full Wald statistic of all tested genes fed to decoupler ulm on the local CollecTRI network with signed edges and a five-target minimum. QC is design-specific (VST PCA, distance heatmap, library sizes by condition, explicit no-drop-without-reason policy). Gaps relative to the reference: no per-sample activity matrix (ulm on VST/log2 CPM with a t-test across replicates and a seaborn heatmap) to show replicate consistency, no explicit BH correction across regulators in the TF step, and the number of regulators tested is not named as a report field; the added GSEA is properly specified (full ranked stat, size window, collection versions) but not what was asked. The claim that VIPER/ARACNe is the 'tool of record' is unsupported, though it does not change the executed method."
+}

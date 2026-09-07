@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the critical points: it refuses to deduplicate no-UMI total RNA libraries and explains why, quantifies residual rRNA/MT fractions and complexity proxies as QC covariates, tests whether complexity is confounded with condition, adjudicates sample_01 on vst/correlation evidence rather than reflexively dropping it, and runs DESeq2 Wald with median-of-ratios, a justified count>=10-in-6 filter, BH at 0.05 and apeglm, with edgeR-QL as a cross-check. Design ~condition with control as reference and explicit contrast direction is correct for 6v6 unpaired single-batch. Minor gaps: it does not state a policy for removing rRNA/MT genes before normalization if their share is large and uneven, the |LFC|>1 cut is applied post hoc rather than via lfcThreshold, and the optional GSEA leaves the ranking metric ambiguous ('Wald or shrunken LFC') and omits collection versions. Package versions are not explicitly called for in the report."
+}

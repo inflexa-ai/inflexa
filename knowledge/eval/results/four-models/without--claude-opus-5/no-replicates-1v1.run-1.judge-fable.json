@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the n=1 design, produces TMM-normalized log2CPM and descriptive log2FC with an expression floor, and applies a justified single-sample-aware filter, all of which match the reference. However, it then runs edgeR exactTest with assumed BCVs to produce p-values, BH-FDR and counts of genes at FDR<0.05 plus a volcano plot, which is exactly the edgeR-with-p-values run the reference calls wrong; extensive caveating does not make an assumed-dispersion FDR valid. It never names the design that would support inference (>=2, preferably >=3 per group). Enrichment is technically well specified (filtered universe, log2FC ranking metric, human WikiPathways named, match rate reported) but lacks a version and size window and layers further inferential p-values onto an unreplicated ranking; package versions are absent from the report."
+}

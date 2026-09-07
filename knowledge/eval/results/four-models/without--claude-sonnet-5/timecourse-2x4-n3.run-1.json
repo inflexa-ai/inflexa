@@ -1,0 +1,412 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "timecourse-2x4-n3",
+  "run": 1,
+  "startedAt": "2026-09-06T21:08:28.200Z",
+  "elapsedMs": 92824,
+  "outcome": "plan_submitted",
+  "planId": "pln-54f5c88c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load counts/metadata, QC filter, build DESeqDataSet",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Data context reports counts.csv as 12000 x 25 (genes x samples) but metadata.csv as 24 x 4 (samples x fields) — a 25 vs 24 sample count mismatch must be explicitly checked and resolved (e.g. an extra gene-symbol or index column miscounted, or a genuinely unmatched sample) before any modeling; do not silently drop or duplicate a sample",
+          "Verify time_hours values map consistently to the four discrete time labels t0..t3 so time can be treated as a factor with 4 levels, not a continuous covariate, matching the stated 2x4 design"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the raw counts (12000 genes x 25 samples) and metadata (24 x 4: condition, time, time_hours) align correctly, and which genes pass a minimal expression filter for the condition x time design?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample identifiers in counts.csv columns match metadata.csv rows exactly (report any mismatch, e.g. the counts matrix reporting 25 samples vs metadata's 24 rows must be reconciled and explained before proceeding)",
+          "condition and time (t0..t3) columns are parsed as factors with t0 set as the reference level",
+          "Low-count genes (e.g. sum across samples below a stated threshold, or fewer than 3 samples with count >= 10) are filtered out and the number of genes retained is reported",
+          "A DESeqDataSet is constructed with design = ~condition + time + condition:time and saved for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 LRT: full (condition+time+condition:time) vs reduced (condition+time)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only n=3 replicates per condition:time cell, power for a multi-df interaction LRT is limited — report this explicitly rather than implying the padj threshold captures all true interaction genes",
+          "The condition:time interaction in DESeq2 with a 4-level time factor is a 3-df test (three interaction coefficients); do not reduce this to a single coefficient's Wald test, which would only capture one time-contrast rather than the overall interaction"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes show a significant condition:time interaction — i.e., a treatment-specific trajectory across t0..t3 beyond the trend shared by both conditions?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq() is run with test='LRT', full model ~condition + time + condition:time, reduced model ~condition + time",
+          "Output table has per-gene LRT p-value, BH-adjusted padj, and log fold-change columns for each condition:time interaction coefficient",
+          "Genes are ranked and thresholded at padj < 0.05 (report count of significant interaction genes; if zero, state that explicitly rather than lowering the threshold silently)",
+          "Full results table (all genes, not just significant ones) is saved for downstream pathway/network steps"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Characterize temporal shape of interaction genes per condition",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Use variance-stabilized or rlog-transformed values for visualization, not raw counts, to avoid mean-variance artifacts dominating the heatmap"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "For genes with a significant condition:time interaction, what does the per-condition trajectory across t0..t3 look like (magnitude, direction, and time point of divergence)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "For each significant interaction gene, per-condition mean (or model-fitted) normalized expression at t0, t1, t2, t3 is computed and reported",
+          "Genes are grouped/clustered by qualitative trajectory pattern (e.g. divergence appearing early vs late, one condition flat vs the other moving) using the fitted values, not raw counts",
+          "A heatmap or line-plot visualization of scaled trajectories for the top interaction genes (by padj) is produced",
+          "Report distinguishes genes with a clear early-divergence pattern from genes with only a late-timepoint difference, since both satisfy the LRT but have different biological implications"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of treatment-specific interaction genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "This step needs a curated pathway gene-set collection for human, resolved at run time against WikiPathways (human, 2026.07.10) and MSigDB Hallmark (human, 2026.1); if either is unavailable at run time, report which set was used and skip the other rather than failing silently",
+          "WikiPathways GMT lines are '%'-delimited descriptors — split on '%' to recover a readable pathway name before reporting results"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which biological pathways are over-represented among genes showing a treatment-specific (condition:time interaction) trajectory, using WikiPathways and Hallmark human gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Enrichment (e.g. fgsea or clusterProfiler ORA) is run on the significant interaction gene list from T1S2 against the human WikiPathways GMT and the MSigDB Hallmark human GMT",
+          "Gene symbols in the DESeq2 results are matched to the GMT identifier space (HGNC symbols) before testing; report the match rate",
+          "Enrichment results include adjusted p-values (BH) and are reported even if no term survives correction — do not omit a null result",
+          "If the interaction gene list from T1S2 is empty or very small (e.g. <10 genes), this step reports that enrichment is underpowered/not run rather than fabricating a ranked-list GSEA on non-significant genes"
+        ]
+      }
+    ],
+    "title": "DESeq2 LRT for treatment-specific time-course signal",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq counts (12000 genes x 25 samples, salmon-derived integer counts) with a 2-condition x 4-timepoint (t0..t3) design, 3 replicates per cell (metadata: condition, time, time_hours). The research question — which genes change over time in a treatment-specific way, beyond the shared time trend — is exactly the classic DESeq2 likelihood-ratio-test (LRT) time-course design: fit a full model with a condition:time interaction (~condition + time + condition:time) against a reduced model that drops the interaction term (~condition + time), so the LRT isolates genes whose temporal trajectory differs by condition, independent of genes that simply move with time in both arms. This requires (1) loading and QC-filtering the raw counts and aligning them to metadata, (2) running the DESeq2 full-vs-reduced LRT to get an interaction gene list with FDR control, (3) characterizing and visualizing the temporal shape of the significant interaction genes per condition (since the LRT p-value alone doesn't say which time point diverges or in which direction), and (4) functional interpretation of the interaction gene set via pathway enrichment against WikiPathways/Hallmark human gene sets and, if warranted, network context via STRING. All reference sets used are human, matching organism metadata. No PK, safety, immune, or drug-repurposing signal is implied by the research question, so no translational steps are added."
+  },
+  "usage": {
+    "inputTokens": 1085187,
+    "outputTokens": 4618,
+    "cacheCreationInputTokens": 119115,
+    "cacheReadInputTokens": 965856,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "pydeseq2",
+          "limma",
+          "splines",
+          "edgeR",
+          "fgsea",
+          "clusterProfiler",
+          "gseapy"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "splines2",
+          "mgcv",
+          "clusterProfiler.data",
+          "ComplexHeatmap",
+          "pheatmap"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/bioc/deseq2",
+        "query": "likelihood ratio test LRT reduced model interaction time course design formula"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "likelihood ratio test time course interaction design"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeq2 likelihood ratio test LRT reduced full design time course interaction condition:time"
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 likelihood ratio test time course RNA-seq interaction condition time design",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 time course RNA-seq analysis best practices likelihood ratio test",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq time course differential expression treatment interaction",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Love Huber Anders DESeq2 differential expression negative binomial",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 likelihood ratio test time course interaction design reduced model",
+        "limit": 5
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "string-ppi-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "AnnotationDbi"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "msigdbr",
+          "GO.db"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "counts.csv"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/eval-four-models-without-timecourse-2x4-n3-1/data/inputs"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "DESeq2 LRT for treatment-specific time-course signal",
+          "analytical_narrative": "The dataset is bulk RNA-seq counts (12000 genes x 25 samples, salmon-derived integer counts) with a 2-condition x 4-timepoint (t0..t3) design, 3 replicates per cell (metadata: condition, time, time_hours). The research question — which genes change over time in a treatment-specific way, beyond the shared time trend — is exactly the classic DESeq2 likelihood-ratio-test (LRT) time-course design: fit a full model with a condition:time interaction (~condition + time + condition:time) against a reduced model that drops the interaction term (~condition + time), so the LRT isolates genes whose temporal trajectory differs by condition, independent of genes that simply move with time in both arms. This requires (1) loading and QC-filtering the raw counts and aligning them to metadata, (2) running the DESeq2 full-vs-reduced LRT to get an interaction gene list with FDR control, (3) characterizing and visualizing the temporal shape of the significant interaction genes per condition (since the LRT p-value alone doesn't say which time point diverges or in which direction), and (4) functional interpretation of the interaction gene set via pathway enrichment against WikiPathways/Hallmark human gene sets and, if warranted, network context via STRING. All reference sets used are human, matching organism metadata. No PK, safety, immune, or drug-repurposing signal is implied by the research question, so no translational steps are added.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load counts/metadata, QC filter, build DESeqDataSet",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Do the raw counts (12000 genes x 25 samples) and metadata (24 x 4: condition, time, time_hours) align correctly, and which genes pass a minimal expression filter for the condition x time design?",
+              "acceptance_criteria": [
+                "Sample identifiers in counts.csv columns match metadata.csv rows exactly (report any mismatch, e.g. the counts matrix reporting 25 samples vs metadata's 24 rows must be reconciled and explained before proceeding)",
+                "condition and time (t0..t3) columns are parsed as factors with t0 set as the reference level",
+                "Low-count genes (e.g. sum across samples below a stated threshold, or fewer than 3 samples with count >= 10) are filtered out and the number of genes retained is reported",
+                "A DESeqDataSet is constructed with design = ~condition + time + condition:time and saved for downstream steps"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Data context reports counts.csv as 12000 x 25 (genes x samples) but metadata.csv as 24 x 4 (samples x fields) — a 25 vs 24 sample count mismatch must be explicitly checked and resolved (e.g. an extra gene-symbol or index column miscounted, or a genuinely unmatched sample) before any modeling; do not silently drop or duplicate a sample",
+                "Verify time_hours values map consistently to the four discrete time labels t0..t3 so time can be treated as a factor with 4 levels, not a continuous covariate, matching the stated 2x4 design"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 LRT: full (condition+time+condition:time) vs reduced (condition+time)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes show a significant condition:time interaction — i.e., a treatment-specific trajectory across t0..t3 beyond the trend shared by both conditions?",
+              "acceptance_criteria": [
+                "DESeq() is run with test='LRT', full model ~condition + time + condition:time, reduced model ~condition + time",
+                "Output table has per-gene LRT p-value, BH-adjusted padj, and log fold-change columns for each condition:time interaction coefficient",
+                "Genes are ranked and thresholded at padj < 0.05 (report count of significant interaction genes; if zero, state that explicitly rather than lowering the threshold silently)",
+                "Full results table (all genes, not just significant ones) is saved for downstream pathway/network steps"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With only n=3 replicates per condition:time cell, power for a multi-df interaction LRT is limited — report this explicitly rather than implying the padj threshold captures all true interaction genes",
+                "The condition:time interaction in DESeq2 with a 4-level time factor is a 3-df test (three interaction coefficients); do not reduce this to a single coefficient's Wald test, which would only capture one time-contrast rather than the overall interaction"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Characterize temporal shape of interaction genes per condition",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "For genes with a significant condition:time interaction, what does the per-condition trajectory across t0..t3 look like (magnitude, direction, and time point of divergence)?",
+              "acceptance_criteria": [
+                "For each significant interaction gene, per-condition mean (or model-fitted) normalized expression at t0, t1, t2, t3 is computed and reported",
+                "Genes are grouped/clustered by qualitative trajectory pattern (e.g. divergence appearing early vs late, one condition flat vs the other moving) using the fitted values, not raw counts",
+                "A heatmap or line-plot visualization of scaled trajectories for the top interaction genes (by padj) is produced",
+                "Report distinguishes genes with a clear early-divergence pattern from genes with only a late-timepoint difference, since both satisfy the LRT but have different biological implications"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Use variance-stabilized or rlog-transformed values for visualization, not raw counts, to avoid mean-variance artifacts dominating the heatmap"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of treatment-specific interaction genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are over-represented among genes showing a treatment-specific (condition:time interaction) trajectory, using WikiPathways and Hallmark human gene sets?",
+              "acceptance_criteria": [
+                "Enrichment (e.g. fgsea or clusterProfiler ORA) is run on the significant interaction gene list from T1S2 against the human WikiPathways GMT and the MSigDB Hallmark human GMT",
+                "Gene symbols in the DESeq2 results are matched to the GMT identifier space (HGNC symbols) before testing; report the match rate",
+                "Enrichment results include adjusted p-values (BH) and are reported even if no term survives correction — do not omit a null result",
+                "If the interaction gene list from T1S2 is empty or very small (e.g. <10 genes), this step reports that enrichment is underpowered/not run rather than fabricating a ranked-list GSEA on non-significant genes"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "This step needs a curated pathway gene-set collection for human, resolved at run time against WikiPathways (human, 2026.07.10) and MSigDB Hallmark (human, 2026.1); if either is unavailable at run time, report which set was used and skip the other rather than failing silently",
+                "WikiPathways GMT lines are '%'-delimited descriptors — split on '%' to recover a readable pathway name before reporting results"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

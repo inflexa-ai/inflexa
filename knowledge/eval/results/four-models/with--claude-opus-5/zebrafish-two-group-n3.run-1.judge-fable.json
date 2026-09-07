@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan fits the 3-vs-3 unpaired single-batch design with DESeq2 Wald plus an edgeR QL cross-check, states low power up front, and keeps normalization (median-of-ratios, TMM) inside the models with an explicit ~condition formula, relevel to control, and the (condition, treated, control) contrast. QC (blind VST, PCA, distance heatmap, library sizes by condition) precedes the test, the >=10 counts in >=3 samples filter is minimal and justified, and BH at alpha 0.05 with apeglm shrinkage and independent filtering is explicit. Enrichment correctly notes the absence of a zebrafish collection, builds a one-to-one ortholog bridge with mapped share and package version reported, runs fgsea on the full Wald-ranked list against named, versioned human collections with a 15-500 post-intersection window, and adds a native zebrafish GO branch with its thin coverage stated; the ortholog multiplicity rule is left to be 'stated' rather than fixed in the plan. The report covers versions, design, thresholds, tested/significant counts, and caveats, though the Ensembl release is deferred to the report rather than named in the plan, and the DESeq2/edgeR intersection as primary result is more conservative than the reference requires."
+}

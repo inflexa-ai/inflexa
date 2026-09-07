@@ -1,0 +1,686 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "two-group-n3",
+  "run": 1,
+  "startedAt": "2026-09-06T22:24:34.555Z",
+  "elapsedMs": 103068,
+  "outcome": "plan_submitted",
+  "planId": "pln-74b21b55",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 total, PCA percent-variance is unstable and a clean condition split on PC1 is not itself evidence of a strong treatment effect",
+          "The metadata carries only a condition column, so no technical covariate can be checked against the primary axis of variation"
+        ],
+        "context": "Human liver bulk RNA-seq, raw integer gene-level counts from Salmon, 3 drug-treated vs 3 control, unpaired, single batch. With only 3 replicates per group a single discordant sample can drive the whole downstream result, so sample structure is inspected before any test is fitted. No batch variable exists in the metadata, so batch cannot be plotted.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the 6 liver samples separate by condition (treated vs control), and does any of the 3 replicates per group behave as an outlier that would dominate a 3-vs-3 test?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Raw counts before a model: blind VST, PCA on the top 500 variable genes and a sample distance heatmap are the required sample-structure QC (R-0033).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the blind variance stabilizing transformation (vst, blind=TRUE) — the design must not inform the transform used for QC",
+          "PCA on the 500 most variable genes",
+          "Do not drop, impute, or correct any sample at this step; QC observes only",
+          "Do not pre-normalize or transform the raw counts for anything other than these QC plots"
+        ],
+        "description": "Load /eval-four-models-with-two-group-n3-1/data/inputs/counts/counts.csv (12000 genes x 6 samples, gene symbol in the first column) and /eval-four-models-with-two-group-n3-1/data/inputs/metadata/metadata.csv (6 rows, condition column). Verify sample names match between the two files and in the same order. Build a DESeqDataSet, apply the variance stabilizing transformation blind to the design, run PCA on the 500 most variable genes, draw a Euclidean sample-distance heatmap, and plot per-sample library sizes and detected-gene counts. Colour all plots by condition. Report the percent variance on PC1 and PC2 and whether the split by condition matches it.",
+        "acceptance_criteria": [
+          "Sample identity and order verified between counts.csv columns and metadata.csv rows; any mismatch reported, not silently reordered without a note",
+          "VST is computed with blind=TRUE and PCA uses the top 500 variable genes",
+          "PCA plot, sample-distance heatmap, and library-size barplot are written to file and coloured by condition",
+          "The report states PC1/PC2 percent variance and names any sample that sits away from its own group, without removing it"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test, treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Three replicates per group gives low power: DESeq2 recovers only a minority of truly differentially expressed genes, mostly those with large fold changes. A gene absent from the significant list is not shown to be unchanged.",
+          "Dispersion estimates from 3 replicates per group are themselves noisy, which propagates into every p-value",
+          "If the p-value histogram is not flat/right-skewed, the BH-adjusted values are not reliable and this must be said rather than worked around"
+        ],
+        "context": "Human liver, drug treatment vs control, 3 vs 3, unpaired, single batch, raw integer gene-level counts quantified with Salmon. The profile supplies a gene-level count matrix only — no transcript-level quant.sf files — so tximport gene-level summarization with average-transcript-length offsets cannot be applied here. That limitation must be stated in the output: without the length offset, a gene-level call driven by a shift in isoform usage cannot be separated from one driven by overall expression.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between the drug-treated and the control liver samples at BH-adjusted p < 0.05, with apeglm-shrunken effect sizes?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0017@8a47",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "Fixed-effects two-group design with 3 replicates per group on raw counts: DESeq2 Wald with apeglm shrinkage, minimal pre-filter, in-model median-of-ratios normalization, BH at alpha 0.05 with independent filtering (R-0001, R-0002, R-0009, R-0010, R-0026, R-0029). R-0018 (tximport length offsets) cannot be satisfied — only a gene-level matrix was provided — and the step states that.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design formula is ~condition; set the reference level with relevel(factor, ref=\"<control level name as it appears in metadata.csv>\")",
+          "Pre-filter min_count=10 in min_samples=3 (smallest group size) — do not filter more aggressively; independent filtering does the rest",
+          "Do not scale, log, TPM-convert, or otherwise transform the counts before DESeq2",
+          "Use lfcShrink with type=\"apeglm\" on the coefficient; keep the unshrunken estimate in the table beside it",
+          "Keep alpha at 0.05 and do NOT loosen the threshold to compensate for the small sample size",
+          "Rank and plot genes by the shrunken log2FoldChange, not the unshrunken one",
+          "Leave DESeq2 count-outlier handling at its default (flag and set p to NA at fewer than 7 replicates per cell)"
+        ],
+        "description": "Fit the primary differential expression model on the 12000 x 6 count matrix. Pre-filter minimally: keep genes with at least 10 counts in at least 3 samples (the smallest group size). Build the DESeqDataSet with design ~condition, setting the control level explicitly as the reference with relevel so a positive log2 fold change means higher in treated. Let DESeq2 estimate median-of-ratios size factors internally — do not pass pre-scaled or pre-normalized values. Run the Wald test, extract results with alpha=0.05, independent filtering on, BH adjustment. Apply apeglm shrinkage to the treated-vs-control coefficient and keep both the unshrunken and shrunken log2FoldChange with lfcSE in the output table. Plot the histogram of unadjusted p-values before trusting the adjusted values. Report the number of genes tested after filtering, the number with padj < 0.05, and separately the number of genes whose p-value is NA from the Cook's-distance count-outlier flag (DESeq2 flags rather than replaces at n=3 per cell) versus NA from independent filtering. Write the full results table with gene symbols.",
+        "acceptance_criteria": [
+          "Reference level of the condition factor is set explicitly to control and the contrast is named as (condition, treated, control) in the output",
+          "Pre-filter is exactly >=10 counts in >=3 samples; the number of genes retained out of 12000 is reported",
+          "Size factors are estimated inside DESeq2 by median-of-ratios; no externally normalized matrix enters the model",
+          "Results are extracted with alpha=0.05, independentFiltering=TRUE, pAdjustMethod=BH, and selection is on padj — never on raw p-value or fold change alone",
+          "Output table carries gene symbol, baseMean, unshrunken log2FoldChange, lfcSE, apeglm-shrunken log2FoldChange, stat (Wald), pvalue, padj",
+          "p-value histogram is produced and its shape described (flat/right-skewed vs irregular)",
+          "Counts of NA p-values from the Cook's outlier flag and from independent filtering are reported separately",
+          "The absence of transcript-level files and hence of tximport length offsets is stated explicitly"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR quasi-likelihood second method and overlap",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A large disagreement between the two methods is itself a finding about confidence at n=3, not a bug to be tuned away",
+          "Neither method's FDR control rescues the underlying low power; agreement does not prove a gene is truly changed"
+        ],
+        "context": "At three replicates per group the two count models control FDR but disagree on part of the gene list, and the disagreement grows at low counts and low replicate numbers. Running both is the standard robustness check for a design this small, and it directly informs the confidence half of the research question.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma"
+        ],
+        "question": "Does an independent count model (edgeR quasi-likelihood F-test) call the same genes differentially expressed between treated and control, and which genes form the high-confidence intersection?",
+        "grounding": {
+          "claims": [
+            "R-0001@9a17",
+            "R-0042@54e1",
+            "R-0026@9ab1"
+          ],
+          "reason": "edgeR quasi-likelihood is the named second method for a 2-11 replicate fixed-effects design (R-0001); the overlap of the two methods is the high-confidence set and the union is not reported (R-0042).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use glmQLFit/glmQLFTest (quasi-likelihood F-test), not the classic exact test or glmLRT",
+          "Keep FDR threshold at 0.05 to match T1S2; do not tune thresholds to increase overlap",
+          "Verify the contrast sign matches T1S2 before comparing gene lists",
+          "Report the intersection as high-confidence and the disjoint calls as secondary with the method named"
+        ],
+        "description": "Run edgeR on the same raw count matrix, the same pre-filter, and the same design as T1S2 as an independent robustness check. Compute TMM normalization factors, estimate dispersion with estimateDisp on the ~condition design, fit glmQLFit and test the treated-vs-control coefficient with glmQLFTest, adjusting with BH at FDR 0.05. Then compare against the DESeq2 result: report the count significant by DESeq2 alone, by edgeR alone, and by both; write the intersection as the high-confidence gene set and the method-specific calls as a clearly labelled secondary set. Also report the rank correlation of the two test statistics across all commonly tested genes.",
+        "acceptance_criteria": [
+          "edgeR uses the same pre-filtered gene set and the same ~condition design and contrast direction (treated vs control) as T1S2",
+          "TMM normalization factors are used; counts are not pre-scaled",
+          "A table reports n significant by DESeq2 only, edgeR only, and both, at FDR 0.05",
+          "The intersection is written out as the high-confidence set and labelled as such; the union is NOT presented as the result",
+          "Spearman correlation between the DESeq2 Wald statistic and the edgeR F statistic across common genes is reported"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Power assessment and final report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A power calculation from dispersions estimated on the same 6 samples is itself imprecise; present it as an order-of-magnitude guide, not a precise number",
+          "If the DE list is very short or empty, that is a legitimate outcome at this sample size and must be reported as such rather than salvaged by loosening thresholds"
+        ],
+        "context": "The research question explicitly asks how confident one can be with three replicates per group. Published benchmarks show that at n=3 both DESeq2 and edgeR recover only a minority of truly differentially expressed genes, concentrated among large fold changes, so the report must quantify this rather than gesture at it. The power tools of record (RNASeqPower, PROPER) are absent from this environment, so the calculation is done in closed form and labelled as such.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "knitr"
+        ],
+        "question": "With 3 treated and 3 control liver samples, what fold change is detectable at 80% power given the observed dispersion and library depths, and how should the differential expression result be interpreted in that light?",
+        "grounding": {
+          "claims": [
+            "R-0162@ed74",
+            "R-0094@6849",
+            "R-0017@8a47",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0086@becf",
+            "R-0042@54e1"
+          ],
+          "reason": "Flagged design (3 per group): R-0162 requires an expected-power statement computed in closed form because RNASeqPower and PROPER are absent, and R-0094/R-0017 require the power caution before the gene tables; R-0085/R-0087/R-0041/R-0086 set the required report contents.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Do not use RNASeqPower or PROPER — they are not installed; compute power in closed form from depth, BCV, fold change and alpha and show the working",
+          "Do not adjust the significance threshold on the basis of the power finding",
+          "Rank the gene tables by the shrunken log2 fold change",
+          "State the power limitation before the gene tables, not as a footnote after them",
+          "Report the identifier space as HGNC gene symbols from the first column of counts.csv, and note that symbols are release-dependent and were not remapped to a stable key"
+        ],
+        "description": "Answer the confidence half of the research question and assemble the report. Take the per-gene dispersion estimates from the fitted DESeq2 model, summarise the biological coefficient of variation (BCV = sqrt(dispersion)) at the median and across the expression range, and take the observed per-sample library depths. Compute, in closed form, the fold change detectable at 80% power at alpha 0.05 (and at the BH-adjusted effective significance level implied by the number of genes tested) for n=3 per group at a representative depth — state the formula and its assumptions rather than citing a package, since RNASeqPower and PROPER are not installed in this environment. Present a small table of detectable fold change across a range of BCV and mean-count values. Then assemble the final report: MA plot and dispersion plot from the DESeq2 fit, p-value histogram, the top genes ranked by shrunken log2 fold change with unshrunken LFC and lfcSE beside them, the DESeq2/edgeR overlap counts, the design formula and contrast, thresholds, number of genes tested after filtering, number of DE genes, gene identifier space (HGNC symbols as given in counts.csv), and a full reproducibility record with sessionInfo, package versions and any random seed.",
+        "acceptance_criteria": [
+          "The report states the observed median BCV, the observed library depths, and the fold change detectable at 80% power for n=3 per group, with the formula and assumptions written out",
+          "It is stated explicitly that RNASeqPower and PROPER are not available and the calculation is closed-form",
+          "It is stated that adding replicates raises power more than sequencing deeper",
+          "MA plot and dispersion plot are included before the gene tables, each with a one-line description of what it shows",
+          "Gene table carries unshrunken log2FoldChange, shrunken log2FoldChange, and lfcSE; ranking is by the shrunken value",
+          "The report names the method, package versions, design formula, contrast (condition: treated vs control), thresholds, n genes tested, and n DE genes",
+          "The report states plainly that absence from the significant list is not evidence a gene is unchanged",
+          "sessionInfo and any seed are stored with the results, not in a side note",
+          "No enrichment or pathway claim is made — it was not asked for and is out of scope here"
+        ]
+      }
+    ],
+    "title": "Liver drug-treated vs control DE with power assessment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single gene-level raw count matrix from Salmon (12,000 genes x 6 human liver samples, gene symbols in the first column) plus a 6-row metadata table carrying one condition column: 3 drug-treated vs 3 control, unpaired, single batch. The research question has two halves — which genes differ, and how much confidence three replicates per group support — so the plan answers both explicitly rather than producing a gene list alone.\n\nT1S1 establishes sample structure before any test: blind VST, PCA on the 500 most variable genes, a Euclidean sample-distance heatmap, and library sizes, coloured by condition. With n=3 per group a single aberrant sample can drive the entire result, so this step must be read before the model is trusted. T1S2 fits the primary model: minimal pre-filter (>=10 counts in >=3 samples, the smallest group size), median-of-ratios size factors estimated inside DESeq2 (counts are never pre-scaled), design ~condition with the control level set explicitly as the reference, Wald test, apeglm shrinkage of the reported log2 fold change, BH adjustment at alpha 0.05 with independent filtering on. Note the profile supplies a gene-level count matrix only — no Salmon quant.sf files — so tximport length offsets cannot be applied; the step must state that limitation, since without the length offset a fold change driven by isoform switching cannot be distinguished from one driven by gene-level expression.\n\nT1S3 runs edgeR quasi-likelihood on the same counts and design as an independent second method. At three replicates per group the two count models disagree on a non-trivial share of genes, so the intersection is reported as the high-confidence set and the method-specific calls as a secondary set; the union is not the result. T1S4 answers the confidence half of the question directly: expected power computed in closed form from the observed dispersion (BCV), the achieved library depths, and alpha, giving the fold change detectable at 80% power — RNASeqPower and PROPER are not installed, so this is a closed-form calculation, stated as such. It also assembles the final report with the MA and dispersion plots, the p-value histogram, shrunken and unshrunken LFC with lfcSE, the count-outlier NA genes separated from independent-filter NAs, and sessionInfo.\n\nNo enrichment step is planned: the research question asks for differentially expressed genes and confidence, not pathways, and with a likely short gene list at n=3 an enrichment would be unasked scope with weak footing. The dataset is 12,000 x 6 — a few MB — so every step is small in memory."
+  },
+  "usage": {
+    "inputTokens": 222554,
+    "outputTokens": 8479,
+    "cacheCreationInputTokens": 173590,
+    "cacheReadInputTokens": 48928,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA on top 500 variable genes, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with at least 10 counts in at least 3 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors (DESeq2 normalization)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~condition with explicit reference level control; contrast condition treated vs control; expected power stated from closed-form BCV calculation",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "power_plan",
+                "value": "expected_power_from_replicates_depth_and_dispersion"
+              },
+              {
+                "name": "import",
+                "value": "gene_level_count_matrix_no_tximport_files_available"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test with apeglm log fold change shrinkage",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              },
+              {
+                "name": "power_caution",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR with independent filtering, p-value histogram inspected",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "edgeR quasi-likelihood F-test as robustness second method, TMM normalization",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "quasi_likelihood_F"
+              },
+              {
+                "name": "normalization",
+                "value": "TMM"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Report with MA plot, dispersion plot, shrunken and unshrunken LFC with lfcSE, power statement, DESeq2/edgeR overlap, sessionInfo",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              },
+              {
+                "name": "robustness",
+                "value": "overlap_of_two_methods"
+              },
+              {
+                "name": "power_statement",
+                "value": "expected_power_at_replicate_number"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treated vs control DE with power assessment",
+          "analytical_narrative": "The input is a single gene-level raw count matrix from Salmon (12,000 genes x 6 human liver samples, gene symbols in the first column) plus a 6-row metadata table carrying one condition column: 3 drug-treated vs 3 control, unpaired, single batch. The research question has two halves — which genes differ, and how much confidence three replicates per group support — so the plan answers both explicitly rather than producing a gene list alone.\n\nT1S1 establishes sample structure before any test: blind VST, PCA on the 500 most variable genes, a Euclidean sample-distance heatmap, and library sizes, coloured by condition. With n=3 per group a single aberrant sample can drive the entire result, so this step must be read before the model is trusted. T1S2 fits the primary model: minimal pre-filter (>=10 counts in >=3 samples, the smallest group size), median-of-ratios size factors estimated inside DESeq2 (counts are never pre-scaled), design ~condition with the control level set explicitly as the reference, Wald test, apeglm shrinkage of the reported log2 fold change, BH adjustment at alpha 0.05 with independent filtering on. Note the profile supplies a gene-level count matrix only — no Salmon quant.sf files — so tximport length offsets cannot be applied; the step must state that limitation, since without the length offset a fold change driven by isoform switching cannot be distinguished from one driven by gene-level expression.\n\nT1S3 runs edgeR quasi-likelihood on the same counts and design as an independent second method. At three replicates per group the two count models disagree on a non-trivial share of genes, so the intersection is reported as the high-confidence set and the method-specific calls as a secondary set; the union is not the result. T1S4 answers the confidence half of the question directly: expected power computed in closed form from the observed dispersion (BCV), the achieved library depths, and alpha, giving the fold change detectable at 80% power — RNASeqPower and PROPER are not installed, so this is a closed-form calculation, stated as such. It also assembles the final report with the MA and dispersion plots, the p-value histogram, shrunken and unshrunken LFC with lfcSE, the count-outlier NA genes separated from independent-filter NAs, and sessionInfo.\n\nNo enrichment step is planned: the research question asks for differentially expressed genes and confidence, not pathways, and with a likely short gene list at n=3 an enrichment would be unasked scope with weak footing. The dataset is 12,000 x 6 — a few MB — so every step is small in memory.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 liver samples separate by condition (treated vs control), and does any of the 3 replicates per group behave as an outlier that would dominate a 3-vs-3 test?",
+              "description": "Load /eval-four-models-with-two-group-n3-1/data/inputs/counts/counts.csv (12000 genes x 6 samples, gene symbol in the first column) and /eval-four-models-with-two-group-n3-1/data/inputs/metadata/metadata.csv (6 rows, condition column). Verify sample names match between the two files and in the same order. Build a DESeqDataSet, apply the variance stabilizing transformation blind to the design, run PCA on the 500 most variable genes, draw a Euclidean sample-distance heatmap, and plot per-sample library sizes and detected-gene counts. Colour all plots by condition. Report the percent variance on PC1 and PC2 and whether the split by condition matches it.",
+              "context": "Human liver bulk RNA-seq, raw integer gene-level counts from Salmon, 3 drug-treated vs 3 control, unpaired, single batch. With only 3 replicates per group a single discordant sample can drive the whole downstream result, so sample structure is inspected before any test is fitted. No batch variable exists in the metadata, so batch cannot be plotted.",
+              "acceptance_criteria": [
+                "Sample identity and order verified between counts.csv columns and metadata.csv rows; any mismatch reported, not silently reordered without a note",
+                "VST is computed with blind=TRUE and PCA uses the top 500 variable genes",
+                "PCA plot, sample-distance heatmap, and library-size barplot are written to file and coloured by condition",
+                "The report states PC1/PC2 percent variance and names any sample that sits away from its own group, without removing it"
+              ],
+              "constraints": [
+                "Use the blind variance stabilizing transformation (vst, blind=TRUE) — the design must not inform the transform used for QC",
+                "PCA on the 500 most variable genes",
+                "Do not drop, impute, or correct any sample at this step; QC observes only",
+                "Do not pre-normalize or transform the raw counts for anything other than these QC plots"
+              ],
+              "caveats": [
+                "With n=6 total, PCA percent-variance is unstable and a clean condition split on PC1 is not itself evidence of a strong treatment effect",
+                "The metadata carries only a condition column, so no technical covariate can be checked against the primary axis of variation"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Raw counts before a model: blind VST, PCA on the top 500 variable genes and a sample distance heatmap are the required sample-structure QC (R-0033)."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test, treated vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between the drug-treated and the control liver samples at BH-adjusted p < 0.05, with apeglm-shrunken effect sizes?",
+              "description": "Fit the primary differential expression model on the 12000 x 6 count matrix. Pre-filter minimally: keep genes with at least 10 counts in at least 3 samples (the smallest group size). Build the DESeqDataSet with design ~condition, setting the control level explicitly as the reference with relevel so a positive log2 fold change means higher in treated. Let DESeq2 estimate median-of-ratios size factors internally — do not pass pre-scaled or pre-normalized values. Run the Wald test, extract results with alpha=0.05, independent filtering on, BH adjustment. Apply apeglm shrinkage to the treated-vs-control coefficient and keep both the unshrunken and shrunken log2FoldChange with lfcSE in the output table. Plot the histogram of unadjusted p-values before trusting the adjusted values. Report the number of genes tested after filtering, the number with padj < 0.05, and separately the number of genes whose p-value is NA from the Cook's-distance count-outlier flag (DESeq2 flags rather than replaces at n=3 per cell) versus NA from independent filtering. Write the full results table with gene symbols.",
+              "context": "Human liver, drug treatment vs control, 3 vs 3, unpaired, single batch, raw integer gene-level counts quantified with Salmon. The profile supplies a gene-level count matrix only — no transcript-level quant.sf files — so tximport gene-level summarization with average-transcript-length offsets cannot be applied here. That limitation must be stated in the output: without the length offset, a gene-level call driven by a shift in isoform usage cannot be separated from one driven by overall expression.",
+              "acceptance_criteria": [
+                "Reference level of the condition factor is set explicitly to control and the contrast is named as (condition, treated, control) in the output",
+                "Pre-filter is exactly >=10 counts in >=3 samples; the number of genes retained out of 12000 is reported",
+                "Size factors are estimated inside DESeq2 by median-of-ratios; no externally normalized matrix enters the model",
+                "Results are extracted with alpha=0.05, independentFiltering=TRUE, pAdjustMethod=BH, and selection is on padj — never on raw p-value or fold change alone",
+                "Output table carries gene symbol, baseMean, unshrunken log2FoldChange, lfcSE, apeglm-shrunken log2FoldChange, stat (Wald), pvalue, padj",
+                "p-value histogram is produced and its shape described (flat/right-skewed vs irregular)",
+                "Counts of NA p-values from the Cook's outlier flag and from independent filtering are reported separately",
+                "The absence of transcript-level files and hence of tximport length offsets is stated explicitly"
+              ],
+              "constraints": [
+                "Design formula is ~condition; set the reference level with relevel(factor, ref=\"<control level name as it appears in metadata.csv>\")",
+                "Pre-filter min_count=10 in min_samples=3 (smallest group size) — do not filter more aggressively; independent filtering does the rest",
+                "Do not scale, log, TPM-convert, or otherwise transform the counts before DESeq2",
+                "Use lfcShrink with type=\"apeglm\" on the coefficient; keep the unshrunken estimate in the table beside it",
+                "Keep alpha at 0.05 and do NOT loosen the threshold to compensate for the small sample size",
+                "Rank and plot genes by the shrunken log2FoldChange, not the unshrunken one",
+                "Leave DESeq2 count-outlier handling at its default (flag and set p to NA at fewer than 7 replicates per cell)"
+              ],
+              "caveats": [
+                "Three replicates per group gives low power: DESeq2 recovers only a minority of truly differentially expressed genes, mostly those with large fold changes. A gene absent from the significant list is not shown to be unchanged.",
+                "Dispersion estimates from 3 replicates per group are themselves noisy, which propagates into every p-value",
+                "If the p-value histogram is not flat/right-skewed, the BH-adjusted values are not reliable and this must be said rather than worked around"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0017@8a47",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Fixed-effects two-group design with 3 replicates per group on raw counts: DESeq2 Wald with apeglm shrinkage, minimal pre-filter, in-model median-of-ratios normalization, BH at alpha 0.05 with independent filtering (R-0001, R-0002, R-0009, R-0010, R-0026, R-0029). R-0018 (tximport length offsets) cannot be satisfied — only a gene-level matrix was provided — and the step states that."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "edgeR quasi-likelihood second method and overlap",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Does an independent count model (edgeR quasi-likelihood F-test) call the same genes differentially expressed between treated and control, and which genes form the high-confidence intersection?",
+              "description": "Run edgeR on the same raw count matrix, the same pre-filter, and the same design as T1S2 as an independent robustness check. Compute TMM normalization factors, estimate dispersion with estimateDisp on the ~condition design, fit glmQLFit and test the treated-vs-control coefficient with glmQLFTest, adjusting with BH at FDR 0.05. Then compare against the DESeq2 result: report the count significant by DESeq2 alone, by edgeR alone, and by both; write the intersection as the high-confidence gene set and the method-specific calls as a clearly labelled secondary set. Also report the rank correlation of the two test statistics across all commonly tested genes.",
+              "context": "At three replicates per group the two count models control FDR but disagree on part of the gene list, and the disagreement grows at low counts and low replicate numbers. Running both is the standard robustness check for a design this small, and it directly informs the confidence half of the research question.",
+              "acceptance_criteria": [
+                "edgeR uses the same pre-filtered gene set and the same ~condition design and contrast direction (treated vs control) as T1S2",
+                "TMM normalization factors are used; counts are not pre-scaled",
+                "A table reports n significant by DESeq2 only, edgeR only, and both, at FDR 0.05",
+                "The intersection is written out as the high-confidence set and labelled as such; the union is NOT presented as the result",
+                "Spearman correlation between the DESeq2 Wald statistic and the edgeR F statistic across common genes is reported"
+              ],
+              "constraints": [
+                "Use glmQLFit/glmQLFTest (quasi-likelihood F-test), not the classic exact test or glmLRT",
+                "Keep FDR threshold at 0.05 to match T1S2; do not tune thresholds to increase overlap",
+                "Verify the contrast sign matches T1S2 before comparing gene lists",
+                "Report the intersection as high-confidence and the disjoint calls as secondary with the method named"
+              ],
+              "caveats": [
+                "A large disagreement between the two methods is itself a finding about confidence at n=3, not a bug to be tuned away",
+                "Neither method's FDR control rescues the underlying low power; agreement does not prove a gene is truly changed"
+              ],
+              "packages": [
+                "edgeR",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0001@9a17",
+                  "R-0042@54e1",
+                  "R-0026@9ab1"
+                ],
+                "reason": "edgeR quasi-likelihood is the named second method for a 2-11 replicate fixed-effects design (R-0001); the overlap of the two methods is the high-confidence set and the union is not reported (R-0042)."
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Power assessment and final report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "With 3 treated and 3 control liver samples, what fold change is detectable at 80% power given the observed dispersion and library depths, and how should the differential expression result be interpreted in that light?",
+              "description": "Answer the confidence half of the research question and assemble the report. Take the per-gene dispersion estimates from the fitted DESeq2 model, summarise the biological coefficient of variation (BCV = sqrt(dispersion)) at the median and across the expression range, and take the observed per-sample library depths. Compute, in closed form, the fold change detectable at 80% power at alpha 0.05 (and at the BH-adjusted effective significance level implied by the number of genes tested) for n=3 per group at a representative depth — state the formula and its assumptions rather than citing a package, since RNASeqPower and PROPER are not installed in this environment. Present a small table of detectable fold change across a range of BCV and mean-count values. Then assemble the final report: MA plot and dispersion plot from the DESeq2 fit, p-value histogram, the top genes ranked by shrunken log2 fold change with unshrunken LFC and lfcSE beside them, the DESeq2/edgeR overlap counts, the design formula and contrast, thresholds, number of genes tested after filtering, number of DE genes, gene identifier space (HGNC symbols as given in counts.csv), and a full reproducibility record with sessionInfo, package versions and any random seed.",
+              "context": "The research question explicitly asks how confident one can be with three replicates per group. Published benchmarks show that at n=3 both DESeq2 and edgeR recover only a minority of truly differentially expressed genes, concentrated among large fold changes, so the report must quantify this rather than gesture at it. The power tools of record (RNASeqPower, PROPER) are absent from this environment, so the calculation is done in closed form and labelled as such.",
+              "acceptance_criteria": [
+                "The report states the observed median BCV, the observed library depths, and the fold change detectable at 80% power for n=3 per group, with the formula and assumptions written out",
+                "It is stated explicitly that RNASeqPower and PROPER are not available and the calculation is closed-form",
+                "It is stated that adding replicates raises power more than sequencing deeper",
+                "MA plot and dispersion plot are included before the gene tables, each with a one-line description of what it shows",
+                "Gene table carries unshrunken log2FoldChange, shrunken log2FoldChange, and lfcSE; ranking is by the shrunken value",
+                "The report names the method, package versions, design formula, contrast (condition: treated vs control), thresholds, n genes tested, and n DE genes",
+                "The report states plainly that absence from the significant list is not evidence a gene is unchanged",
+                "sessionInfo and any seed are stored with the results, not in a side note",
+                "No enrichment or pathway claim is made — it was not asked for and is out of scope here"
+              ],
+              "constraints": [
+                "Do not use RNASeqPower or PROPER — they are not installed; compute power in closed form from depth, BCV, fold change and alpha and show the working",
+                "Do not adjust the significance threshold on the basis of the power finding",
+                "Rank the gene tables by the shrunken log2 fold change",
+                "State the power limitation before the gene tables, not as a footnote after them",
+                "Report the identifier space as HGNC gene symbols from the first column of counts.csv, and note that symbols are release-dependent and were not remapped to a stable key"
+              ],
+              "caveats": [
+                "A power calculation from dispersions estimated on the same 6 samples is itself imprecise; present it as an order-of-magnitude guide, not a precise number",
+                "If the DE list is very short or empty, that is a legitimate outcome at this sample size and must be reported as such rather than salvaged by loosening thresholds"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "knitr"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0162@ed74",
+                  "R-0094@6849",
+                  "R-0017@8a47",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0086@becf",
+                  "R-0042@54e1"
+                ],
+                "reason": "Flagged design (3 per group): R-0162 requires an expected-power statement computed in closed form because RNASeqPower and PROPER are absent, and R-0094/R-0017 require the power caution before the gene tables; R-0085/R-0087/R-0041/R-0086 set the required report contents."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: it rejects count models with the correct reason, runs a value-range check before anything else, fits limma-trend (lmFit, contrast treated - control with control as explicit reference, eBayes trend=TRUE robust=TRUE) and takes BH at 0.05 through topTable, with an in-model treat() threshold rather than a post-hoc logFC cut. It applies no re-normalization and states the delivered scale and producer in the report. QC covers PCA/MDS on top 500 genes, distance heatmap, detected-gene counts, coloured by condition, with a flag-and-sensitivity outlier policy; the range check is slightly loose (upper bound ~20 rather than the 10-16 expected, no explicit test for a hidden second log). The filter is on mean log expression with a stated floor and smallest-group-size rule, though the wording mixes a per-gene mean with a per-sample count. Enrichment is correctly omitted and the report lists method, versions, design, thresholds, n tested, n DE, sessionInfo, and the power caveat."
+}

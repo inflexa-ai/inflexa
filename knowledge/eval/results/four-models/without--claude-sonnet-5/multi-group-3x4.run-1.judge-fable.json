@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan matches the reference: one DESeq2 model on all twelve samples with ~condition, an LRT against ~1 for the omnibus question, and two Wald contrasts against an explicitly releveled control with apeglm/ashr shrinkage, while correctly warning not to conflate LRT p-values with pairwise fold changes. QC (library sizes, VST PCA, correlation heatmap, outlier-reporting policy), a minimal row-sum<10 filter, and raw counts into DESeq2's own size factors are all stated. The |log2FC|>1 cutoff is applied post hoc rather than via lfcThreshold in the test, costing fdr_shrinkage points. Enrichment was not requested; the added step names the post-filter universe but gives no collection version, size window, or GSEA ranking metric and leaves ORA-vs-GSEA unresolved. Reporting omits package versions."
+}

@@ -1,0 +1,515 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "mouse-two-group-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T00:34:28.773Z",
+  "elapsedMs": 140242,
+  "outcome": "plan_submitted",
+  "planId": "pln-2d2e70fa",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Library-depth QC and sample_01 outlier adjudication",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Blind VST on 12 samples is fine, but with n=6 per group a single sample can dominate PC1 purely through depth — check whether sample_01's PCA position tracks its size factor before calling it an outlier.",
+          "Correlation on raw or CPM values is depth-sensitive; compute the correlation heatmap on VST values, not on raw counts.",
+          "Do not treat 'is an outlier on PCA' as sufficient by itself — a shallow sample can be an outlier for purely technical reasons and still carry usable signal after normalization."
+        ],
+        "context": "The data profile flags one caveat: sample_01 has a library size about 4x below the median. Depth differences are what size-factor normalization exists to absorb, so low depth by itself is not a reason to exclude a sample from a 6-vs-6 design where each sample is ~17% of the cohort. What matters is whether sample_01 is also an expression outlier — shifted on the VST PCA away from its own group, or with depressed correlation to same-condition samples. Low depth does inflate dispersion for low-count genes and can pull a PCA on its own, so the adjudication must distinguish a depth artefact from a biological or technical outlier.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "matrixStats",
+          "pheatmap",
+          "ggplot2",
+          "ggrepel",
+          "RColorBrewer"
+        ],
+        "question": "Is sample_01 — whose library size is ~4x below the median — merely shallow but consistent with its condition group, or a genuine expression outlier that should be excluded from the high-fat-diet vs chow contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Use the exact input paths given; do not assume any other file exists.",
+          "Compute size factors and VST with DESeq2 (varianceStabilizingTransformation or vst with blind=TRUE for QC).",
+          "Do NOT drop any sample in this step — this step only measures and recommends.",
+          "Report sample_01's library size and detected-gene count both in absolute terms and as a ratio to the cohort median, so the ~4x figure is confirmed or corrected against the actual data.",
+          "Colour/annotate every plot by the actual condition labels as they appear in metadata.csv; do not rename or recode them.",
+          "Write the per-sample QC table (sample, condition, library size, detected genes, size factor, median within-group correlation) as CSV."
+        ],
+        "description": "Load /eval-four-models-without-mouse-two-group-n6-1/data/inputs/counts/counts.csv (12,000 mouse gene symbols x 12 sample columns, raw integer Salmon counts, first column is the gene symbol) and /eval-four-models-without-mouse-two-group-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample id correspondence between the two files and align column order to metadata row order. Produce: per-sample total library size and number of detected genes (count > 0), DESeq2 median-of-ratios size factors, VST-transformed PCA (PC1/PC2, coloured by condition, samples labelled), a sample-sample Spearman and Pearson correlation heatmap with hierarchical clustering, and per-sample median pairwise correlation to all other samples plus to same-condition samples only. State explicitly which condition group sample_01 belongs to. Conclude with a written keep-or-drop recommendation for sample_01 that separates two distinct questions: (a) is its depth low — already known, quantify it exactly; (b) does it sit apart from its own condition group after variance-stabilizing transformation, beyond what depth alone explains. Write a tidy per-sample QC table to disk for downstream steps.",
+        "acceptance_criteria": [
+          "Per-sample library sizes, detected-gene counts and DESeq2 size factors are reported for all 12 samples.",
+          "sample_01's depth deficit is quantified against the cohort median and its condition group is stated.",
+          "A VST PCA and a sample-sample correlation heatmap are produced with samples labelled and coloured by condition.",
+          "An explicit keep-or-drop recommendation for sample_01 is stated, with the evidence separating low depth from expression outlierness.",
+          "A per-sample QC CSV is written to disk."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: high-fat diet vs chow, with sample_01 sensitivity",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group is adequate for strong, coordinated diet effects but underpowered for small ones — report the number of tested genes and avoid implying that an absent hit is an absent effect.",
+          "A shallow sample raises dispersion for low-expressed genes; if the two analyses disagree materially, the disagreement is the finding and must be reported, not resolved by picking the friendlier result.",
+          "Gene symbols as row identifiers can contain duplicates from the Salmon summarization — check for and resolve duplicate symbols (aggregate or keep the highest-expressed) before building the DESeqDataSet, and report how many were affected.",
+          "Do not interpret shrunken log2FC as a test statistic — significance comes from padj."
+        ],
+        "context": "Design is 6 treated vs 6 control mice, unpaired, single batch, no covariates recorded in metadata beyond condition — so ~condition is the correct and only supportable model. Counts are raw integer gene-level from Salmon with mouse gene symbols, which DESeq2 consumes directly. The shallow sample_01 is the one QC concern; running the contrast both ways and reporting concordance is what turns that concern into a measured statement rather than an assumption.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2",
+          "ggrepel",
+          "dplyr",
+          "readr"
+        ],
+        "question": "Which mouse liver genes are differentially expressed between high-fat diet and chow (6 vs 6, unpaired), and does any of that conclusion depend on including the shallow sample sample_01?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design formula is ~condition only — the metadata carries no batch or covariate column, so do not invent one.",
+          "Set the reference level explicitly to the control/chow group using the literal label in metadata.csv.",
+          "Run BOTH the all-12 analysis and the sample_01-excluded analysis, with identical filtering and shrinkage settings, and report both.",
+          "Use independent filtering as DESeq2 defaults provide; report how many genes were filtered and how many were tested.",
+          "Use BH FDR; report padj, never raw p-values, as the significance criterion.",
+          "Export the ranked list for GSEA using the UNSHRUNKEN Wald stat as the primary ranking metric, with shrunken log2FC as a secondary column.",
+          "If shrinkage with apeglm fails for the coefficient, fall back to ashr and say so.",
+          "Do not filter the results table down to significant genes only — the GSEA step needs the full ranking."
+        ],
+        "description": "Run DESeq2 on the raw counts with design ~condition, contrasting high-fat diet against chow with chow as the reference level (set the factor reference explicitly from the actual labels in metadata.csv; do not rely on alphabetical ordering). Pre-filter to genes with a minimum count in at least 6 samples (the smallest group size). Report the full results table with baseMean, log2FoldChange, lfcSE, stat, pvalue and BH-adjusted padj, plus LFC shrinkage (apeglm, or ashr if the coefficient name blocks apeglm) for ranking and plotting. Then run the IDENTICAL analysis a second time with sample_01 removed, as a pre-specified sensitivity analysis. Deliverables: (1) full DE table for the primary all-12-sample analysis, sorted by padj, written to CSV; (2) full DE table for the sample_01-excluded analysis, written to CSV; (3) counts of significant genes at padj<0.05 and at padj<0.05 with |log2FC|>1 for both analyses; (4) a concordance assessment between the two — overlap of the significant sets, and Spearman/Pearson correlation of the log2 fold changes across all tested genes; (5) MA plot, volcano plot and a heatmap of VST values for the top ~40 genes by padj (annotated by condition), for the primary analysis; (6) a ranked gene list (gene symbol + DESeq2 Wald stat, and separately + shrunken log2FC) written to CSV for the GSEA step. Designate the primary analysis explicitly, following T1S1's recommendation, and say plainly which one is primary and why.",
+        "acceptance_criteria": [
+          "Full DESeq2 results tables written for both the all-12 and the sample_01-excluded analyses, each with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj and a shrunken LFC column.",
+          "Significant gene counts reported at padj<0.05, and at padj<0.05 with |log2FC|>1, for both analyses.",
+          "Concordance between the two analyses is quantified: overlap of significant sets and correlation of log2FC across all tested genes.",
+          "MA plot, volcano plot and a top-gene VST heatmap produced for the primary analysis.",
+          "A ranked CSV (gene symbol, Wald stat, shrunken log2FC) is written for downstream GSEA.",
+          "The primary analysis is explicitly named, with the reason tied to T1S1's finding."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Hallmark GSEA on the ranked high-fat-diet vs chow signature",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If no hallmark set reaches padj<0.05, say so plainly and report the top sets by nominal p as exploratory — do not relax the threshold and present the result as significant.",
+          "Hallmark sets overlap in membership (metabolic sets in particular share genes), so several correlated significant sets are not several independent findings.",
+          "GSEA NES is sensitive to the ranking metric; a set significant on the Wald-stat ranking but not on the shrunken-LFC ranking is a weak call and should be labelled as such.",
+          "A high leading-edge overlap between an up set and a down set signals an unstable ranking rather than opposing biology."
+        ],
+        "context": "The research question asks specifically for hallmark pathways. Hallmark is 50 broad, coherent biological states — for a high-fat-diet liver comparison, the sets of a priori interest include fatty acid metabolism, bile acid metabolism, cholesterol homeostasis, adipogenesis, oxidative phosphorylation, xenobiotic metabolism, and the inflammatory/TNFA-signalling sets — but the analysis must be run untargeted and reported by statistics, not by which sets were expected. Pre-ranked GSEA over the full ranked list is preferred over over-representation on a thresholded DE list because with n=6 per group the coordinated shifts in metabolic sets are more detectable than individually significant genes, and thresholding discards that signal.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "data.table",
+          "ggplot2",
+          "dplyr",
+          "readr"
+        ],
+        "question": "Which MSigDB hallmark pathways are coordinately up- or down-regulated in high-fat-diet mouse liver relative to chow, on the DESeq2-ranked gene list?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the mouse hallmark collection with MGI symbols — resolve it from the reference store and verify the organism label is mouse. If only a human hallmark collection is available, do NOT run on it silently: report the mismatch and, if proceeding, map mouse symbols to human orthologs explicitly with a documented ortholog resource and report the mapping loss.",
+          "Rank on the DESeq2 Wald stat from T1S2's primary analysis; do not rank on p-value alone or on unshrunken log2FC alone.",
+          "Remove genes with NA statistics before ranking, and handle ties deterministically with a fixed random seed so the run is reproducible.",
+          "Use BH adjustment across hallmark sets and report padj alongside NES.",
+          "Report the symbol-overlap diagnostic (ranked symbols matched to the GMT, and hallmark genes absent from the matrix) before interpreting any enrichment.",
+          "Report leading-edge genes for every set called significant, not only for the narrative ones."
+        ],
+        "description": "Run pre-ranked gene set enrichment on the ranked gene list from T1S2 (gene symbol + DESeq2 Wald stat, primary analysis) against the mouse hallmark gene set collection. The step needs a hallmark gene set collection for Mus musculus with MGI gene symbols as members — resolve it from the environment's reference store rather than a hardcoded path, and confirm the organism matches before use; a mouse hallmark GMT (MSigDB 2026.1, ~50 ortholog-mapped sets keyed on MGI symbols) was present at plan time. Do NOT substitute a human collection: these are mouse symbols and cross-species symbol matching would silently drop or mismatch genes. Report, per hallmark set: normalized enrichment score, nominal p, BH-adjusted p, set size, and the leading-edge genes. Deliverables: a full hallmark results table sorted by adjusted p written to CSV; a bar or dot plot of significantly enriched sets (padj<0.05) coloured by NES direction; enrichment-score curves for the top 3 up and top 3 down sets; and a compact table of leading-edge genes for the top sets cross-referenced against their DESeq2 padj and log2FC from T1S2. Also report, as a robustness check, whether the top hallmark calls are reproduced when the ranking from the sample_01-excluded analysis is used instead — compare NES values across the two rankings. Before scoring, report how many of the ranked symbols matched at least one hallmark set, and how many hallmark genes were absent from the 12,000-gene matrix; a low match rate means the ranked list and the GMT are in different identifier spaces and must be reconciled before the result means anything.",
+        "acceptance_criteria": [
+          "Full hallmark GSEA table (set, size, NES, ES, pval, padj, leading-edge genes) written to CSV.",
+          "The gene-symbol overlap diagnostic between the ranked list and the hallmark collection is reported.",
+          "A plot of significant hallmark sets (padj<0.05) coloured by NES direction, plus enrichment curves for the top 3 up and top 3 down sets.",
+          "Leading-edge genes for top sets are cross-referenced to their T1S2 log2FC and padj.",
+          "NES concordance between the primary ranking and the sample_01-excluded ranking is reported.",
+          "The gene set collection actually used is named, with its organism, and confirmed to be mouse."
+        ]
+      }
+    ],
+    "title": "HFD vs chow mouse liver DE + hallmark GSEA",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch, unpaired 6-vs-6 bulk RNA-seq design in mouse liver: raw Salmon gene-level counts (12,000 mouse gene symbols x 12 samples) plus a 12-row metadata table carrying one condition column (high-fat diet vs chow). The research question has exactly two parts — which genes change, and which hallmark pathways change — plus an explicit flag that one sample (sample_01) looks shallow (library size ~4x below median).\n\nThe shallow sample is handled first and empirically rather than by assumption. Low depth alone is not grounds for exclusion: DESeq2's median-of-ratios normalization and the negative-binomial fit absorb a depth difference, and dropping a sample from a 6-vs-6 design costs real power. So T1S1 quantifies whether sample_01 is merely shallow or genuinely an outlier — library sizes, detected-gene counts, size factors, VST-based PCA and sample-sample correlation/clustering — and outputs an explicit, evidence-backed keep/drop recommendation. T1S2 then runs DESeq2 on the full 12 samples as the primary analysis, and re-runs the identical contrast with sample_01 removed as a pre-registered sensitivity analysis. Reporting both, and the concordance between them, is the honest way to answer 'one sample looks shallow' — it converts a QC worry into a measured statement about whether any conclusion depends on that sample.\n\nT1S3 runs hallmark GSEA on the DESeq2 statistic. The mouse hallmark collection (MSigDB 2026.1, MGI symbols) is staged locally, so the ranked symbols join it directly with no human-ortholog mapping step and no cross-species distortion. GSEA on the full ranked list, rather than over-representation on a thresholded DE list, is the right choice here because n=6 per group and because diet effects in liver are typically distributed across coordinated lipid/metabolic sets rather than concentrated in a few huge fold changes.\n\nThe design is unpaired with a single batch and no covariates in the metadata, so the model is ~condition with no additional terms. Feature space is small (12,000 x 12, a few MB), so resources are modest throughout."
+  },
+  "usage": {
+    "inputTokens": 148011,
+    "outputTokens": 12232,
+    "cacheCreationInputTokens": 86640,
+    "cacheReadInputTokens": 61335,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "fgsea",
+          "msigdbr",
+          "gseapy",
+          "decoupler",
+          "babelgene",
+          "clusterProfiler",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "pheatmap",
+          "org.Mm.eg.db"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "HFD vs chow mouse liver DE + hallmark GSEA",
+          "analytical_narrative": "The input is a single-batch, unpaired 6-vs-6 bulk RNA-seq design in mouse liver: raw Salmon gene-level counts (12,000 mouse gene symbols x 12 samples) plus a 12-row metadata table carrying one condition column (high-fat diet vs chow). The research question has exactly two parts — which genes change, and which hallmark pathways change — plus an explicit flag that one sample (sample_01) looks shallow (library size ~4x below median).\n\nThe shallow sample is handled first and empirically rather than by assumption. Low depth alone is not grounds for exclusion: DESeq2's median-of-ratios normalization and the negative-binomial fit absorb a depth difference, and dropping a sample from a 6-vs-6 design costs real power. So T1S1 quantifies whether sample_01 is merely shallow or genuinely an outlier — library sizes, detected-gene counts, size factors, VST-based PCA and sample-sample correlation/clustering — and outputs an explicit, evidence-backed keep/drop recommendation. T1S2 then runs DESeq2 on the full 12 samples as the primary analysis, and re-runs the identical contrast with sample_01 removed as a pre-registered sensitivity analysis. Reporting both, and the concordance between them, is the honest way to answer 'one sample looks shallow' — it converts a QC worry into a measured statement about whether any conclusion depends on that sample.\n\nT1S3 runs hallmark GSEA on the DESeq2 statistic. The mouse hallmark collection (MSigDB 2026.1, MGI symbols) is staged locally, so the ranked symbols join it directly with no human-ortholog mapping step and no cross-species distortion. GSEA on the full ranked list, rather than over-representation on a thresholded DE list, is the right choice here because n=6 per group and because diet effects in liver are typically distributed across coordinated lipid/metabolic sets rather than concentrated in a few huge fold changes.\n\nThe design is unpaired with a single batch and no covariates in the metadata, so the model is ~condition with no additional terms. Feature space is small (12,000 x 12, a few MB), so resources are modest throughout.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Library-depth QC and sample_01 outlier adjudication",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Is sample_01 — whose library size is ~4x below the median — merely shallow but consistent with its condition group, or a genuine expression outlier that should be excluded from the high-fat-diet vs chow contrast?",
+              "description": "Load /eval-four-models-without-mouse-two-group-n6-1/data/inputs/counts/counts.csv (12,000 mouse gene symbols x 12 sample columns, raw integer Salmon counts, first column is the gene symbol) and /eval-four-models-without-mouse-two-group-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample id correspondence between the two files and align column order to metadata row order. Produce: per-sample total library size and number of detected genes (count > 0), DESeq2 median-of-ratios size factors, VST-transformed PCA (PC1/PC2, coloured by condition, samples labelled), a sample-sample Spearman and Pearson correlation heatmap with hierarchical clustering, and per-sample median pairwise correlation to all other samples plus to same-condition samples only. State explicitly which condition group sample_01 belongs to. Conclude with a written keep-or-drop recommendation for sample_01 that separates two distinct questions: (a) is its depth low — already known, quantify it exactly; (b) does it sit apart from its own condition group after variance-stabilizing transformation, beyond what depth alone explains. Write a tidy per-sample QC table to disk for downstream steps.",
+              "context": "The data profile flags one caveat: sample_01 has a library size about 4x below the median. Depth differences are what size-factor normalization exists to absorb, so low depth by itself is not a reason to exclude a sample from a 6-vs-6 design where each sample is ~17% of the cohort. What matters is whether sample_01 is also an expression outlier — shifted on the VST PCA away from its own group, or with depressed correlation to same-condition samples. Low depth does inflate dispersion for low-count genes and can pull a PCA on its own, so the adjudication must distinguish a depth artefact from a biological or technical outlier.",
+              "constraints": [
+                "Use the exact input paths given; do not assume any other file exists.",
+                "Compute size factors and VST with DESeq2 (varianceStabilizingTransformation or vst with blind=TRUE for QC).",
+                "Do NOT drop any sample in this step — this step only measures and recommends.",
+                "Report sample_01's library size and detected-gene count both in absolute terms and as a ratio to the cohort median, so the ~4x figure is confirmed or corrected against the actual data.",
+                "Colour/annotate every plot by the actual condition labels as they appear in metadata.csv; do not rename or recode them.",
+                "Write the per-sample QC table (sample, condition, library size, detected genes, size factor, median within-group correlation) as CSV."
+              ],
+              "acceptance_criteria": [
+                "Per-sample library sizes, detected-gene counts and DESeq2 size factors are reported for all 12 samples.",
+                "sample_01's depth deficit is quantified against the cohort median and its condition group is stated.",
+                "A VST PCA and a sample-sample correlation heatmap are produced with samples labelled and coloured by condition.",
+                "A explicit keep-or-drop recommendation for sample_01 is stated, with the evidence separating low depth from expression outlierness.",
+                "A per-sample QC CSV is written to disk."
+              ],
+              "caveats": [
+                "Blind VST on 12 samples is fine, but with n=6 per group a single sample can dominate PC1 purely through depth — check whether sample_01's PCA position tracks its size factor before calling it an outlier.",
+                "Correlation on raw or CPM values is depth-sensitive; compute the correlation heatmap on VST values, not on raw counts.",
+                "Do not treat 'is an outlier on PCA' as sufficient by itself — a shallow sample can be an outlier for purely technical reasons and still carry usable signal after normalization."
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "matrixStats",
+                "pheatmap",
+                "ggplot2",
+                "ggrepel",
+                "RColorBrewer"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: high-fat diet vs chow, with sample_01 sensitivity",
+              "question": "Which mouse liver genes are differentially expressed between high-fat diet and chow (6 vs 6, unpaired), and does any of that conclusion depend on including the shallow sample sample_01?",
+              "description": "Run DESeq2 on the raw counts with design ~condition, contrasting high-fat diet against chow with chow as the reference level (set the factor reference explicitly from the actual labels in metadata.csv; do not rely on alphabetical ordering). Pre-filter to genes with a minimum count in at least 6 samples (the smallest group size). Report the full results table with baseMean, log2FoldChange, lfcSE, stat, pvalue and BH-adjusted padj, plus LFC shrinkage (apeglm, or ashr if the coefficient name blocks apeglm) for ranking and plotting. Then run the IDENTICAL analysis a second time with sample_01 removed, as a pre-specified sensitivity analysis. Deliverables: (1) full DE table for the primary all-12-sample analysis, sorted by padj, written to CSV; (2) full DE table for the sample_01-excluded analysis, written to CSV; (3) counts of significant genes at padj<0.05 and at padj<0.05 with |log2FC|>1 for both analyses; (4) a concordance assessment between the two — overlap of the significant sets, and Spearman/Pearson correlation of the log2 fold changes across all tested genes; (5) MA plot, volcano plot and a heatmap of VST values for the top ~40 genes by padj (annotated by condition), for the primary analysis; (6) a ranked gene list (gene symbol + DESeq2 Wald stat, and separately + shrunken log2FC) written to CSV for the GSEA step. Designate the primary analysis explicitly, following T1S1's recommendation, and say plainly which one is primary and why.",
+              "context": "Design is 6 treated vs 6 control mice, unpaired, single batch, no covariates recorded in metadata beyond condition — so ~condition is the correct and only supportable model. Counts are raw integer gene-level from Salmon with mouse gene symbols, which DESeq2 consumes directly. The shallow sample_01 is the one QC concern; running the contrast both ways and reporting concordance is what turns that concern into a measured statement rather than an assumption.",
+              "constraints": [
+                "Design formula is ~condition only — the metadata carries no batch or covariate column, so do not invent one.",
+                "Set the reference level explicitly to the control/chow group using the literal label in metadata.csv.",
+                "Run BOTH the all-12 analysis and the sample_01-excluded analysis, with identical filtering and shrinkage settings, and report both.",
+                "Use independent filtering as DESeq2 defaults provide; report how many genes were filtered and how many were tested.",
+                "Use BH FDR; report padj, never raw p-values, as the significance criterion.",
+                "Export the ranked list for GSEA using the UNSHRUNKEN Wald stat as the primary ranking metric, with shrunken log2FC as a secondary column.",
+                "If shrinkage with apeglm fails for the coefficient, fall back to ashr and say so.",
+                "Do not filter the results table down to significant genes only — the GSEA step needs the full ranking."
+              ],
+              "acceptance_criteria": [
+                "Full DESeq2 results tables written for both the all-12 and the sample_01-excluded analyses, each with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj and a shrunken LFC column.",
+                "Significant gene counts reported at padj<0.05, and at padj<0.05 with |log2FC|>1, for both analyses.",
+                "Concordance between the two analyses is quantified: overlap of significant sets and correlation of log2FC across all tested genes.",
+                "MA plot, volcano plot and a top-gene VST heatmap produced for the primary analysis.",
+                "A ranked CSV (gene symbol, Wald stat, shrunken log2FC) is written for downstream GSEA.",
+                "The primary analysis is explicitly named, with the reason tied to T1S1's finding."
+              ],
+              "caveats": [
+                "n=6 per group is adequate for strong, coordinated diet effects but underpowered for small ones — report the number of tested genes and avoid implying that an absent hit is an absent effect.",
+                "A shallow sample raises dispersion for low-expressed genes; if the two analyses disagree materially, the disagreement is the finding and must be reported, not resolved by picking the friendlier result.",
+                "Gene symbols as row identifiers can contain duplicates from the Salmon summarization — check for and resolve duplicate symbols (aggregate or keep the highest-expressed) before building the DESeqDataSet, and report how many were affected.",
+                "Do not interpret shrunken log2FC as a test statistic — significance comes from padj."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2",
+                "ggrepel",
+                "dplyr",
+                "readr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Hallmark GSEA on the ranked high-fat-diet vs chow signature",
+              "question": "Which MSigDB hallmark pathways are coordinately up- or down-regulated in high-fat-diet mouse liver relative to chow, on the DESeq2-ranked gene list?",
+              "description": "Run pre-ranked gene set enrichment on the ranked gene list from T1S2 (gene symbol + DESeq2 Wald stat, primary analysis) against the mouse hallmark gene set collection. The step needs a hallmark gene set collection for Mus musculus with MGI gene symbols as members — resolve it from the environment's reference store rather than a hardcoded path, and confirm the organism matches before use; a mouse hallmark GMT (MSigDB 2026.1, ~50 ortholog-mapped sets keyed on MGI symbols) was present at plan time. Do NOT substitute a human collection: these are mouse symbols and cross-species symbol matching would silently drop or mismatch genes. Report, per hallmark set: normalized enrichment score, nominal p, BH-adjusted p, set size, and the leading-edge genes. Deliverables: a full hallmark results table sorted by adjusted p written to CSV; a bar or dot plot of significantly enriched sets (padj<0.05) coloured by NES direction; enrichment-score curves for the top 3 up and top 3 down sets; and a compact table of leading-edge genes for the top sets cross-referenced against their DESeq2 padj and log2FC from T1S2. Also report, as a robustness check, whether the top hallmark calls are reproduced when the ranking from the sample_01-excluded analysis is used instead — compare NES values across the two rankings. Before scoring, report how many of the ranked symbols matched at least one hallmark set, and how many hallmark genes were absent from the 12,000-gene matrix; a low match rate means the ranked list and the GMT are in different identifier spaces and must be reconciled before the result means anything.",
+              "context": "The research question asks specifically for hallmark pathways. Hallmark is 50 broad, coherent biological states — for a high-fat-diet liver comparison, the sets of a priori interest include fatty acid metabolism, bile acid metabolism, cholesterol homeostasis, adipogenesis, oxidative phosphorylation, xenobiotic metabolism, and the inflammatory/TNFA-signalling sets — but the analysis must be run untargeted and reported by statistics, not by which sets were expected. Pre-ranked GSEA over the full ranked list is preferred over over-representation on a thresholded DE list because with n=6 per group the coordinated shifts in metabolic sets are more detectable than individually significant genes, and thresholding discards that signal.",
+              "constraints": [
+                "Use the mouse hallmark collection with MGI symbols — resolve it from the reference store and verify the organism label is mouse. If only a human hallmark collection is available, do NOT run on it silently: report the mismatch and, if proceeding, map mouse symbols to human orthologs explicitly with a documented ortholog resource and report the mapping loss.",
+                "Rank on the DESeq2 Wald stat from T1S2's primary analysis; do not rank on p-value alone or on unshrunken log2FC alone.",
+                "Remove genes with NA statistics before ranking, and handle ties deterministically with a fixed random seed so the run is reproducible.",
+                "Use BH adjustment across hallmark sets and report padj alongside NES.",
+                "Report the symbol-overlap diagnostic (ranked symbols matched to the GMT, and hallmark genes absent from the matrix) before interpreting any enrichment.",
+                "Report leading-edge genes for every set called significant, not only for the narrative ones."
+              ],
+              "acceptance_criteria": [
+                "Full hallmark GSEA table (set, size, NES, ES, pval, padj, leading-edge genes) written to CSV.",
+                "The gene-symbol overlap diagnostic between the ranked list and the hallmark collection is reported.",
+                "A plot of significant hallmark sets (padj<0.05) coloured by NES direction, plus enrichment curves for the top 3 up and top 3 down sets.",
+                "Leading-edge genes for top sets are cross-referenced to their T1S2 log2FC and padj.",
+                "NES concordance between the primary ranking and the sample_01-excluded ranking is reported.",
+                "The gene set collection actually used is named, with its organism, and confirmed to be mouse."
+              ],
+              "caveats": [
+                "If no hallmark set reaches padj<0.05, say so plainly and report the top sets by nominal p as exploratory — do not relax the threshold and present the result as significant.",
+                "Hallmark sets overlap in membership (metabolic sets in particular share genes), so several correlated significant sets are not several independent findings.",
+                "GSEA NES is sensitive to the ranking metric; a set significant on the Wald-stat ranking but not on the shrunken-LFC ranking is a weak call and should be labelled as such.",
+                "A high leading-edge overlap between an up set and a down set signals an unstable ranking rather than opposing biology."
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "data.table",
+                "ggplot2",
+                "dplyr",
+                "readr"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "HFD vs chow mouse liver DE + hallmark GSEA",
+          "analytical_narrative": "The input is a single-batch, unpaired 6-vs-6 bulk RNA-seq design in mouse liver: raw Salmon gene-level counts (12,000 mouse gene symbols x 12 samples) plus a 12-row metadata table carrying one condition column (high-fat diet vs chow). The research question has exactly two parts — which genes change, and which hallmark pathways change — plus an explicit flag that one sample (sample_01) looks shallow (library size ~4x below median).\n\nThe shallow sample is handled first and empirically rather than by assumption. Low depth alone is not grounds for exclusion: DESeq2's median-of-ratios normalization and the negative-binomial fit absorb a depth difference, and dropping a sample from a 6-vs-6 design costs real power. So T1S1 quantifies whether sample_01 is merely shallow or genuinely an outlier — library sizes, detected-gene counts, size factors, VST-based PCA and sample-sample correlation/clustering — and outputs an explicit, evidence-backed keep/drop recommendation. T1S2 then runs DESeq2 on the full 12 samples as the primary analysis, and re-runs the identical contrast with sample_01 removed as a pre-registered sensitivity analysis. Reporting both, and the concordance between them, is the honest way to answer 'one sample looks shallow' — it converts a QC worry into a measured statement about whether any conclusion depends on that sample.\n\nT1S3 runs hallmark GSEA on the DESeq2 statistic. The mouse hallmark collection (MSigDB 2026.1, MGI symbols) is staged locally, so the ranked symbols join it directly with no human-ortholog mapping step and no cross-species distortion. GSEA on the full ranked list, rather than over-representation on a thresholded DE list, is the right choice here because n=6 per group and because diet effects in liver are typically distributed across coordinated lipid/metabolic sets rather than concentrated in a few huge fold changes.\n\nThe design is unpaired with a single batch and no covariates in the metadata, so the model is ~condition with no additional terms. Feature space is small (12,000 x 12, a few MB), so resources are modest throughout.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Library-depth QC and sample_01 outlier adjudication",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Is sample_01 — whose library size is ~4x below the median — merely shallow but consistent with its condition group, or a genuine expression outlier that should be excluded from the high-fat-diet vs chow contrast?",
+              "description": "Load /eval-four-models-without-mouse-two-group-n6-1/data/inputs/counts/counts.csv (12,000 mouse gene symbols x 12 sample columns, raw integer Salmon counts, first column is the gene symbol) and /eval-four-models-without-mouse-two-group-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample id correspondence between the two files and align column order to metadata row order. Produce: per-sample total library size and number of detected genes (count > 0), DESeq2 median-of-ratios size factors, VST-transformed PCA (PC1/PC2, coloured by condition, samples labelled), a sample-sample Spearman and Pearson correlation heatmap with hierarchical clustering, and per-sample median pairwise correlation to all other samples plus to same-condition samples only. State explicitly which condition group sample_01 belongs to. Conclude with a written keep-or-drop recommendation for sample_01 that separates two distinct questions: (a) is its depth low — already known, quantify it exactly; (b) does it sit apart from its own condition group after variance-stabilizing transformation, beyond what depth alone explains. Write a tidy per-sample QC table to disk for downstream steps.",
+              "context": "The data profile flags one caveat: sample_01 has a library size about 4x below the median. Depth differences are what size-factor normalization exists to absorb, so low depth by itself is not a reason to exclude a sample from a 6-vs-6 design where each sample is ~17% of the cohort. What matters is whether sample_01 is also an expression outlier — shifted on the VST PCA away from its own group, or with depressed correlation to same-condition samples. Low depth does inflate dispersion for low-count genes and can pull a PCA on its own, so the adjudication must distinguish a depth artefact from a biological or technical outlier.",
+              "constraints": [
+                "Use the exact input paths given; do not assume any other file exists.",
+                "Compute size factors and VST with DESeq2 (varianceStabilizingTransformation or vst with blind=TRUE for QC).",
+                "Do NOT drop any sample in this step — this step only measures and recommends.",
+                "Report sample_01's library size and detected-gene count both in absolute terms and as a ratio to the cohort median, so the ~4x figure is confirmed or corrected against the actual data.",
+                "Colour/annotate every plot by the actual condition labels as they appear in metadata.csv; do not rename or recode them.",
+                "Write the per-sample QC table (sample, condition, library size, detected genes, size factor, median within-group correlation) as CSV."
+              ],
+              "acceptance_criteria": [
+                "Per-sample library sizes, detected-gene counts and DESeq2 size factors are reported for all 12 samples.",
+                "sample_01's depth deficit is quantified against the cohort median and its condition group is stated.",
+                "A VST PCA and a sample-sample correlation heatmap are produced with samples labelled and coloured by condition.",
+                "An explicit keep-or-drop recommendation for sample_01 is stated, with the evidence separating low depth from expression outlierness.",
+                "A per-sample QC CSV is written to disk."
+              ],
+              "caveats": [
+                "Blind VST on 12 samples is fine, but with n=6 per group a single sample can dominate PC1 purely through depth — check whether sample_01's PCA position tracks its size factor before calling it an outlier.",
+                "Correlation on raw or CPM values is depth-sensitive; compute the correlation heatmap on VST values, not on raw counts.",
+                "Do not treat 'is an outlier on PCA' as sufficient by itself — a shallow sample can be an outlier for purely technical reasons and still carry usable signal after normalization."
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "matrixStats",
+                "pheatmap",
+                "ggplot2",
+                "ggrepel",
+                "RColorBrewer"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: high-fat diet vs chow, with sample_01 sensitivity",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which mouse liver genes are differentially expressed between high-fat diet and chow (6 vs 6, unpaired), and does any of that conclusion depend on including the shallow sample sample_01?",
+              "description": "Run DESeq2 on the raw counts with design ~condition, contrasting high-fat diet against chow with chow as the reference level (set the factor reference explicitly from the actual labels in metadata.csv; do not rely on alphabetical ordering). Pre-filter to genes with a minimum count in at least 6 samples (the smallest group size). Report the full results table with baseMean, log2FoldChange, lfcSE, stat, pvalue and BH-adjusted padj, plus LFC shrinkage (apeglm, or ashr if the coefficient name blocks apeglm) for ranking and plotting. Then run the IDENTICAL analysis a second time with sample_01 removed, as a pre-specified sensitivity analysis. Deliverables: (1) full DE table for the primary all-12-sample analysis, sorted by padj, written to CSV; (2) full DE table for the sample_01-excluded analysis, written to CSV; (3) counts of significant genes at padj<0.05 and at padj<0.05 with |log2FC|>1 for both analyses; (4) a concordance assessment between the two — overlap of the significant sets, and Spearman/Pearson correlation of the log2 fold changes across all tested genes; (5) MA plot, volcano plot and a heatmap of VST values for the top ~40 genes by padj (annotated by condition), for the primary analysis; (6) a ranked gene list (gene symbol + DESeq2 Wald stat, and separately + shrunken log2FC) written to CSV for the GSEA step. Designate the primary analysis explicitly, following T1S1's recommendation, and say plainly which one is primary and why.",
+              "context": "Design is 6 treated vs 6 control mice, unpaired, single batch, no covariates recorded in metadata beyond condition — so ~condition is the correct and only supportable model. Counts are raw integer gene-level from Salmon with mouse gene symbols, which DESeq2 consumes directly. The shallow sample_01 is the one QC concern; running the contrast both ways and reporting concordance is what turns that concern into a measured statement rather than an assumption.",
+              "constraints": [
+                "Design formula is ~condition only — the metadata carries no batch or covariate column, so do not invent one.",
+                "Set the reference level explicitly to the control/chow group using the literal label in metadata.csv.",
+                "Run BOTH the all-12 analysis and the sample_01-excluded analysis, with identical filtering and shrinkage settings, and report both.",
+                "Use independent filtering as DESeq2 defaults provide; report how many genes were filtered and how many were tested.",
+                "Use BH FDR; report padj, never raw p-values, as the significance criterion.",
+                "Export the ranked list for GSEA using the UNSHRUNKEN Wald stat as the primary ranking metric, with shrunken log2FC as a secondary column.",
+                "If shrinkage with apeglm fails for the coefficient, fall back to ashr and say so.",
+                "Do not filter the results table down to significant genes only — the GSEA step needs the full ranking."
+              ],
+              "acceptance_criteria": [
+                "Full DESeq2 results tables written for both the all-12 and the sample_01-excluded analyses, each with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj and a shrunken LFC column.",
+                "Significant gene counts reported at padj<0.05, and at padj<0.05 with |log2FC|>1, for both analyses.",
+                "Concordance between the two analyses is quantified: overlap of significant sets and correlation of log2FC across all tested genes.",
+                "MA plot, volcano plot and a top-gene VST heatmap produced for the primary analysis.",
+                "A ranked CSV (gene symbol, Wald stat, shrunken log2FC) is written for downstream GSEA.",
+                "The primary analysis is explicitly named, with the reason tied to T1S1's finding."
+              ],
+              "caveats": [
+                "n=6 per group is adequate for strong, coordinated diet effects but underpowered for small ones — report the number of tested genes and avoid implying that an absent hit is an absent effect.",
+                "A shallow sample raises dispersion for low-expressed genes; if the two analyses disagree materially, the disagreement is the finding and must be reported, not resolved by picking the friendlier result.",
+                "Gene symbols as row identifiers can contain duplicates from the Salmon summarization — check for and resolve duplicate symbols (aggregate or keep the highest-expressed) before building the DESeqDataSet, and report how many were affected.",
+                "Do not interpret shrunken log2FC as a test statistic — significance comes from padj."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2",
+                "ggrepel",
+                "dplyr",
+                "readr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Hallmark GSEA on the ranked high-fat-diet vs chow signature",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which MSigDB hallmark pathways are coordinately up- or down-regulated in high-fat-diet mouse liver relative to chow, on the DESeq2-ranked gene list?",
+              "description": "Run pre-ranked gene set enrichment on the ranked gene list from T1S2 (gene symbol + DESeq2 Wald stat, primary analysis) against the mouse hallmark gene set collection. The step needs a hallmark gene set collection for Mus musculus with MGI gene symbols as members — resolve it from the environment's reference store rather than a hardcoded path, and confirm the organism matches before use; a mouse hallmark GMT (MSigDB 2026.1, ~50 ortholog-mapped sets keyed on MGI symbols) was present at plan time. Do NOT substitute a human collection: these are mouse symbols and cross-species symbol matching would silently drop or mismatch genes. Report, per hallmark set: normalized enrichment score, nominal p, BH-adjusted p, set size, and the leading-edge genes. Deliverables: a full hallmark results table sorted by adjusted p written to CSV; a bar or dot plot of significantly enriched sets (padj<0.05) coloured by NES direction; enrichment-score curves for the top 3 up and top 3 down sets; and a compact table of leading-edge genes for the top sets cross-referenced against their DESeq2 padj and log2FC from T1S2. Also report, as a robustness check, whether the top hallmark calls are reproduced when the ranking from the sample_01-excluded analysis is used instead — compare NES values across the two rankings. Before scoring, report how many of the ranked symbols matched at least one hallmark set, and how many hallmark genes were absent from the 12,000-gene matrix; a low match rate means the ranked list and the GMT are in different identifier spaces and must be reconciled before the result means anything.",
+              "context": "The research question asks specifically for hallmark pathways. Hallmark is 50 broad, coherent biological states — for a high-fat-diet liver comparison, the sets of a priori interest include fatty acid metabolism, bile acid metabolism, cholesterol homeostasis, adipogenesis, oxidative phosphorylation, xenobiotic metabolism, and the inflammatory/TNFA-signalling sets — but the analysis must be run untargeted and reported by statistics, not by which sets were expected. Pre-ranked GSEA over the full ranked list is preferred over over-representation on a thresholded DE list because with n=6 per group the coordinated shifts in metabolic sets are more detectable than individually significant genes, and thresholding discards that signal.",
+              "constraints": [
+                "Use the mouse hallmark collection with MGI symbols — resolve it from the reference store and verify the organism label is mouse. If only a human hallmark collection is available, do NOT run on it silently: report the mismatch and, if proceeding, map mouse symbols to human orthologs explicitly with a documented ortholog resource and report the mapping loss.",
+                "Rank on the DESeq2 Wald stat from T1S2's primary analysis; do not rank on p-value alone or on unshrunken log2FC alone.",
+                "Remove genes with NA statistics before ranking, and handle ties deterministically with a fixed random seed so the run is reproducible.",
+                "Use BH adjustment across hallmark sets and report padj alongside NES.",
+                "Report the symbol-overlap diagnostic (ranked symbols matched to the GMT, and hallmark genes absent from the matrix) before interpreting any enrichment.",
+                "Report leading-edge genes for every set called significant, not only for the narrative ones."
+              ],
+              "acceptance_criteria": [
+                "Full hallmark GSEA table (set, size, NES, ES, pval, padj, leading-edge genes) written to CSV.",
+                "The gene-symbol overlap diagnostic between the ranked list and the hallmark collection is reported.",
+                "A plot of significant hallmark sets (padj<0.05) coloured by NES direction, plus enrichment curves for the top 3 up and top 3 down sets.",
+                "Leading-edge genes for top sets are cross-referenced to their T1S2 log2FC and padj.",
+                "NES concordance between the primary ranking and the sample_01-excluded ranking is reported.",
+                "The gene set collection actually used is named, with its organism, and confirmed to be mouse."
+              ],
+              "caveats": [
+                "If no hallmark set reaches padj<0.05, say so plainly and report the top sets by nominal p as exploratory — do not relax the threshold and present the result as significant.",
+                "Hallmark sets overlap in membership (metabolic sets in particular share genes), so several correlated significant sets are not several independent findings.",
+                "GSEA NES is sensitive to the ranking metric; a set significant on the Wald-stat ranking but not on the shrunken-LFC ranking is a weak call and should be labelled as such.",
+                "A high leading-edge overlap between an up set and a down set signals an unstable ranking rather than opposing biology."
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "data.table",
+                "ggplot2",
+                "dplyr",
+                "readr"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

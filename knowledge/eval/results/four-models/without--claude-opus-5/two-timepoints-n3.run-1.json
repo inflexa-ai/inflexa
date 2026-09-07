@@ -1,0 +1,411 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "two-timepoints-n3",
+  "run": 1,
+  "startedAt": "2026-09-07T00:18:39.296Z",
+  "elapsedMs": 89785,
+  "outcome": "plan_submitted",
+  "planId": "pln-c401f2cc",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Build DESeq2 object and QC the 2x2 design",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon gene-level counts can be non-integer; DESeq2 requires integers, so round rather than truncate and report the change",
+          "With 12 samples PCA is descriptive only — do not interpret PC loadings as evidence of an interaction",
+          "time_hours may duplicate the information in time; use the categorical time factor for the model and note if time_hours contradicts it"
+        ],
+        "context": "Input is /eval-four-models-without-two-timepoints-n3-1/data/inputs/counts/counts.csv (12000 genes x 13 columns; first column is the gene symbol, remaining 12 are samples) and /eval-four-models-without-two-timepoints-n3-1/data/inputs/metadata/metadata.csv (12 rows x 4 columns: sample, condition, time, time_hours). Counts are raw gene-level estimates from Salmon. Design is 2 conditions x 2 time points (t0, t1) x 3 replicates, single batch. This step establishes the object every downstream step uses and catches label or outlier problems before an interaction model is fit on n=3 cells.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Do the 12 samples in counts.csv align to metadata.csv, is the condition x time design balanced at 3 replicates per cell, and does any sample fail QC before interaction testing?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the actual condition and time level names from metadata.csv throughout — never generic 'A'/'B' labels",
+          "Do not drop any sample; if a sample looks like an outlier, flag it in the QC report and let downstream steps decide, since n=3 per cell leaves no room for silent exclusion",
+          "Design must be ~ condition + time + condition:time, not two separate per-timepoint models",
+          "Do not apply batch correction — the design context states a single batch"
+        ],
+        "description": "Load counts.csv with the gene-symbol column as row names and metadata.csv as colData; assert that the sample identifiers match the count matrix column names exactly and reorder colData to the count column order rather than assuming it. Report the observed levels of condition and time verbatim (do not rename them) and the cross-tabulation of condition x time, confirming 3 replicates per cell. Set the reference level of condition to the untreated/control level and of time to t0, choosing by the actual level names present and stating the choice explicitly. Round Salmon-derived counts to integers if any non-integer values are present, reporting how many cells were affected. Filter to genes with at least 10 counts in at least 3 samples and report genes in/out. Build DESeqDataSet with design ~ condition + time + condition:time, estimate size factors, and report the size-factor range. Produce VST-transformed data and QC outputs: PCA coloured by condition and shaped by time, sample-to-sample distance heatmap, per-sample library sizes, and the dispersion-estimate plot. Save the DESeqDataSet/VST matrix and a QC summary for downstream steps.",
+        "acceptance_criteria": [
+          "Count matrix columns and metadata sample IDs are confirmed to match 1:1, with the reordering (or its absence) reported",
+          "condition x time cross-tabulation is reported and confirmed as 3/3/3/3",
+          "Reference levels for condition and time are stated explicitly using the actual level names found in metadata.csv",
+          "Number of genes retained after the >=10 counts in >=3 samples filter is reported out of 12000",
+          "PCA and sample-distance plots are saved, and any sample that separates from its design cell is named explicitly rather than passed over",
+          "Serialized DESeqDataSet (design ~ condition + time + condition:time) and VST matrix are written for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Interaction test: does the treatment effect differ between t0 and t1",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=3 per cell the interaction contrast has roughly half the effective power of a main effect; an empty interaction list is an honest result and must not be rescued by threshold relaxation presented as a finding",
+          "A gene significant at t1 and not at t0 is NOT evidence of a differing treatment effect — the difference between significant and non-significant is not itself significant. Only the interaction test supports that claim",
+          "Independent filtering can set padj to NA for low-count genes; report how many genes have NA padj rather than dropping them silently"
+        ],
+        "context": "This is the primary answer to the research question. In a 2x2 design the question 'does the treatment effect differ between the two time points' is exactly the condition:time interaction coefficient — not a comparison of two independently thresholded DE lists. All contrasts come from the single model fitted in T1S1 so they share dispersion estimates and one multiple-testing frame.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2",
+          "EnhancedVolcano",
+          "dplyr"
+        ],
+        "question": "For which genes does the condition effect differ significantly between t0 and t1 (condition:time interaction), and what is the treatment effect within each time point separately?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "The interaction Wald test (and the LRT) is the answer to the question — do NOT answer by intersecting or Venn-diagramming two separately thresholded per-timepoint DE lists, and say so in the report",
+          "All contrasts must be extracted from one fitted model so dispersions and the multiple-testing frame are shared",
+          "Use BH FDR; report both 0.05 and 0.1 thresholds rather than moving the threshold to find hits",
+          "Do not use shrunken LFCs for significance calls — shrinkage is for ranking and visualisation only",
+          "If apeglm cannot be applied to the interaction coefficient given the level coding, use ashr and state which was used"
+        ],
+        "description": "Fit the DESeq2 negative-binomial GLM on the T1S1 object with design ~ condition + time + condition:time (Wald test). Extract, as the PRIMARY result, the condition:time interaction coefficient: log2 fold change, standard error, Wald statistic, p-value, BH-adjusted p-value for every retained gene, with independent filtering on. Report the count of interaction-significant genes at FDR < 0.05 and at FDR < 0.1. Additionally run a likelihood-ratio test of the full model against the reduced additive model ~ condition + time, and report the number of LRT-significant genes at FDR < 0.05 — this is the model-level statement of whether an interaction term is warranted. From the same fitted model, extract the simple treatment effects by contrast: treated vs control at t0, and treated vs control at t1, each with LFC shrinkage (apeglm where the coefficient form allows it, otherwise ashr) for ranking and plotting. Also report the main effects (condition averaged over time, time averaged over condition) for context. Write one tidy results table per contrast (all genes, unfiltered by significance) plus a combined table keyed on gene symbol carrying the interaction statistic beside both per-timepoint LFCs. Produce MA and volcano plots for the interaction and for each simple effect, and a counts plot for the top interaction genes showing all four design cells. State the power limitation numerically in the report.",
+        "acceptance_criteria": [
+          "Interaction (condition:time) results table written for all retained genes with LFC, SE, stat, pvalue, padj — and this result is presented as the primary answer to the research question",
+          "Counts of interaction-significant genes reported at FDR < 0.05 and FDR < 0.1, with the explicit statement that zero or few is a legitimate outcome at n=3 per cell",
+          "LRT full-vs-additive result reported as a model-level check on whether the interaction term is warranted",
+          "Separate treated-vs-control contrast tables for t0 and t1 extracted from the SAME fitted model, with shrunken LFCs",
+          "Combined per-gene table joining interaction statistic to both per-timepoint LFCs is written",
+          "Top interaction genes visualised as normalized counts across all four condition x time cells",
+          "Report states the actual condition and time level names and the direction of every contrast (numerator vs denominator)"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Classify the shape of the time-dependent treatment response",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Classification of a gene with a wide LFC confidence interval is unstable; report the SE alongside the class rather than the class alone",
+          "Genes near the classification boundaries will move between classes under small threshold changes — say so rather than reporting counts as exact"
+        ],
+        "context": "An interaction p-value says the effect differs but not how. This step converts significant interaction genes into interpretable response classes using the two per-timepoint shrunken LFCs already computed in T1S2, so that the finding can be described mechanistically.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "ggplot2",
+          "ComplexHeatmap",
+          "circlize"
+        ],
+        "question": "Among genes with a condition:time interaction, is the treatment response amplified, dampened, reversed in sign, or present at only one of t0 and t1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Classification uses shrunken LFCs from T1S2, not raw ones, and the magnitude cutoff used for 'reversed' must be stated numerically",
+          "Class labels are descriptive only — do not present a class assignment as a statistical test result",
+          "Use the actual condition and time level names in all plot annotations"
+        ],
+        "description": "Take the combined table from T1S2. For genes with interaction padj < 0.1 (report the 0.05 subset separately), classify by the pair of shrunken treated-vs-control LFCs at t0 and t1: same sign with |LFC_t1| > |LFC_t0| = amplified over time; same sign with smaller magnitude at t1 = dampened; opposite signs with both magnitudes above a stated minimum = reversed; effect present at one time point and near zero at the other = time-specific. Report class counts and a scatter of LFC_t0 vs LFC_t1 with interaction-significant genes highlighted and the y=x diagonal drawn. Produce a heatmap of VST z-scores for the top interaction genes with samples ordered by condition then time so the four design cells are visually separable. If fewer than 10 genes pass interaction padj < 0.1, do not force the classification into a narrative: report the small count plainly, show the LFC_t0 vs LFC_t1 scatter for all genes as the descriptive summary, and state that no reliable response-class structure can be resolved at this sample size.",
+        "acceptance_criteria": [
+          "Response classes (amplified, dampened, reversed, time-specific) defined with explicit numeric rules and counts reported",
+          "LFC_t0 vs LFC_t1 scatter produced with interaction-significant genes highlighted and the identity line shown",
+          "Heatmap of VST z-scores for top interaction genes with samples grouped by condition and time",
+          "Explicit handling of the low-hit case: if fewer than 10 genes pass interaction padj < 0.1, this is stated plainly and no response-class narrative is constructed",
+          "A ranked gene table with class labels is written for downstream interpretation"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on the interaction ranking",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "An interaction ranking is noisier than a main-effect ranking at n=3 per cell — treat enriched sets as hypothesis-generating",
+          "GO BP sets are nested and share members, so significant hits arrive in correlated blocks; collapse before counting",
+          "The 12000-gene matrix is a subset of the transcriptome, so the GSEA universe is restricted — state this, since it affects which sets are testable"
+        ],
+        "context": "Operates on the ranked gene tables written by T1S2 — a generic gene-symbol keyed result, not a count object. The count matrix is indexed by gene symbol, and the reference store holds human HGNC-symbol gene sets (MSigDB hallmark, 50 sets; MSigDB GO Biological Process, ~7,500 sets) plus human WikiPathways, so the identifier spaces match directly with no ID conversion needed. Preranked GSEA is preferred over over-representation because the interaction gene list may be short or empty, and a preranked test still uses the full ranking.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Which biological processes and hallmark states show a treatment response that differs between t0 and t1, and how do the pathways enriched at t0 differ from those at t1?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use human gene sets — the data is Homo sapiens; do not fall back to the mouse or rat collections present in the store",
+          "Rank on the unshrunken Wald statistic, not on log2 fold change alone, so that both effect size and precision inform the ranking",
+          "Do not run over-representation analysis on a thresholded interaction list as the primary enrichment; preranked GSEA is primary, and ORA may appear only as a secondary check with its input list size stated",
+          "Report BH-adjusted p-values; do not report nominal p-values as significant hits"
+        ],
+        "description": "Resolve human hallmark and human GO Biological Process gene sets from the environment's reference data (HGNC gene symbols; human WikiPathways is an acceptable additional collection). Run preranked GSEA using the condition:time interaction Wald statistic as the ranking metric over all genes with a non-NA statistic, reporting normalized enrichment score, p-value and BH-adjusted p-value, and leading-edge genes per set. Separately, run preranked GSEA on the treated-vs-control Wald statistic at t0 and at t1, and produce a side-by-side table of NES per pathway across the two time points with the difference in NES — labelled explicitly as a descriptive comparison, NOT a statistical test of differential enrichment (the interaction GSEA is the test). Report the number of gene symbols in the matrix that matched the gene sets and the number that did not. Collapse redundant GO parent/child hits before reporting a set count. If no reference gene sets can be resolved at run time, report that the enrichment could not be performed and name what was needed — do not substitute a hard-coded gene list.",
+        "acceptance_criteria": [
+          "Preranked GSEA on the interaction statistic completed against human hallmark and human GO BP sets, with NES, padj and leading-edge genes reported",
+          "Gene-symbol match rate against the gene sets reported (matched vs unmatched out of the genes tested)",
+          "Side-by-side t0 vs t1 NES comparison table produced and explicitly labelled descriptive, not a test of differential enrichment",
+          "Redundant GO parent/child hits collapsed before any count of significant sets is reported",
+          "If the interaction ranking yields no significant sets, this is stated plainly alongside the per-timepoint results rather than replaced by them"
+        ]
+      }
+    ],
+    "title": "Treatment x time interaction DE in 2x2 bulk RNA-seq",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question — does the treatment effect differ between t0 and t1 — is a formal interaction question on a 2x2 factorial bulk RNA-seq design: 12 samples (12000 genes x 12 count columns in counts.csv, one gene-symbol column + 12 sample columns), 2 conditions x 2 time points (t0, t1), n=3 per cell, single batch, raw Salmon counts. The plan is deliberately short and centred on one statistical object: a DESeq2 negative-binomial GLM with design ~ condition + time + condition:time, where the interaction Wald test IS the answer. Everything else supports or interprets that test.\n\nT1S1 builds the DESeq2 object, verifies that metadata.csv sample IDs align to the count matrix columns exactly, confirms the design is balanced 3/3/3/3, filters low-count genes, and produces VST-based QC (PCA, sample distances, dispersion) so that any outlier or swapped label is caught before inference rather than after. It also reports the size-factor range, since Salmon-derived gene counts occasionally carry non-integer artefacts that must be rounded, not silently coerced.\n\nT1S2 is the primary inference: the interaction term, plus the simple treatment effects within each time point extracted by contrast from the same fitted model. This ordering matters — the honest answer to 'does the effect differ' is the interaction FDR, not a Venn diagram of two separate per-timepoint DE lists, which is the most common error in this design. The step is explicitly required to report the interaction result as the primary readout and to flag the power limitation: with n=3 per cell the interaction contrast has roughly half the effective power of a main effect, so few or zero interaction-significant genes is a plausible and reportable outcome, not a failed analysis. It also runs a likelihood-ratio test of the full model against the additive model ~ condition + time as a model-level check on whether an interaction is needed at all.\n\nT1S3 characterises the shape of any interaction: classifying genes into amplified, dampened, reversed (sign flip) and time-specific response patterns using the shrunken per-timepoint log2 fold changes, so that a significant interaction is described mechanistically rather than only counted.\n\nT2S1 runs enrichment on the interaction statistic. It is a separate track because it depends only on T1S2's ranked results and works on a generic ranked gene list; it uses the human hallmark and GO Biological Process gene sets confirmed present in the reference store (HGNC symbols, matching this matrix's gene-symbol index). Preranked GSEA on the interaction Wald statistic is preferred over over-representation of a thresholded list, precisely because the interaction list may be short. If the ranked interaction signal is empty or degenerate, the step should also rank on the per-timepoint contrasts and report the difference in enriched sets, stating clearly that this is a descriptive comparison and not a test of differential enrichment.\n\nLimits stated up front: 12 samples, one batch, one cell line, no biological replication beyond the three wells per cell — this design supports a within-experiment statistical claim about interaction, not a generalisable one."
+  },
+  "usage": {
+    "inputTokens": 92249,
+    "outputTokens": 6479,
+    "cacheCreationInputTokens": 74077,
+    "cacheReadInputTokens": 18148,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "pydeseq2",
+          "fgsea",
+          "clusterProfiler",
+          "apeglm",
+          "ashr",
+          "gseapy",
+          "decoupleR",
+          "ComplexHeatmap",
+          "EnhancedVolcano"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treatment x time interaction DE in 2x2 bulk RNA-seq",
+          "analytical_narrative": "The research question — does the treatment effect differ between t0 and t1 — is a formal interaction question on a 2x2 factorial bulk RNA-seq design: 12 samples (12000 genes x 12 count columns in counts.csv, one gene-symbol column + 12 sample columns), 2 conditions x 2 time points (t0, t1), n=3 per cell, single batch, raw Salmon counts. The plan is deliberately short and centred on one statistical object: a DESeq2 negative-binomial GLM with design ~ condition + time + condition:time, where the interaction Wald test IS the answer. Everything else supports or interprets that test.\n\nT1S1 builds the DESeq2 object, verifies that metadata.csv sample IDs align to the count matrix columns exactly, confirms the design is balanced 3/3/3/3, filters low-count genes, and produces VST-based QC (PCA, sample distances, dispersion) so that any outlier or swapped label is caught before inference rather than after. It also reports the size-factor range, since Salmon-derived gene counts occasionally carry non-integer artefacts that must be rounded, not silently coerced.\n\nT1S2 is the primary inference: the interaction term, plus the simple treatment effects within each time point extracted by contrast from the same fitted model. This ordering matters — the honest answer to 'does the effect differ' is the interaction FDR, not a Venn diagram of two separate per-timepoint DE lists, which is the most common error in this design. The step is explicitly required to report the interaction result as the primary readout and to flag the power limitation: with n=3 per cell the interaction contrast has roughly half the effective power of a main effect, so few or zero interaction-significant genes is a plausible and reportable outcome, not a failed analysis. It also runs a likelihood-ratio test of the full model against the additive model ~ condition + time as a model-level check on whether an interaction is needed at all.\n\nT1S3 characterises the shape of any interaction: classifying genes into amplified, dampened, reversed (sign flip) and time-specific response patterns using the shrunken per-timepoint log2 fold changes, so that a significant interaction is described mechanistically rather than only counted.\n\nT2S1 runs enrichment on the interaction statistic. It is a separate track because it depends only on T1S2's ranked results and works on a generic ranked gene list; it uses the human hallmark and GO Biological Process gene sets confirmed present in the reference store (HGNC symbols, matching this matrix's gene-symbol index). Preranked GSEA on the interaction Wald statistic is preferred over over-representation of a thresholded list, precisely because the interaction list may be short. If the ranked interaction signal is empty or degenerate, the step should also rank on the per-timepoint contrasts and report the difference in enriched sets, stating clearly that this is a descriptive comparison and not a test of differential enrichment.\n\nLimits stated up front: 12 samples, one batch, one cell line, no biological replication beyond the three wells per cell — this design supports a within-experiment statistical claim about interaction, not a generalisable one.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Build DESeq2 object and QC the 2x2 design",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 samples in counts.csv align to metadata.csv, is the condition x time design balanced at 3 replicates per cell, and does any sample fail QC before interaction testing?",
+              "context": "Input is /eval-four-models-without-two-timepoints-n3-1/data/inputs/counts/counts.csv (12000 genes x 13 columns; first column is the gene symbol, remaining 12 are samples) and /eval-four-models-without-two-timepoints-n3-1/data/inputs/metadata/metadata.csv (12 rows x 4 columns: sample, condition, time, time_hours). Counts are raw gene-level estimates from Salmon. Design is 2 conditions x 2 time points (t0, t1) x 3 replicates, single batch. This step establishes the object every downstream step uses and catches label or outlier problems before an interaction model is fit on n=3 cells.",
+              "description": "Load counts.csv with the gene-symbol column as row names and metadata.csv as colData; assert that the sample identifiers match the count matrix column names exactly and reorder colData to the count column order rather than assuming it. Report the observed levels of condition and time verbatim (do not rename them) and the cross-tabulation of condition x time, confirming 3 replicates per cell. Set the reference level of condition to the untreated/control level and of time to t0, choosing by the actual level names present and stating the choice explicitly. Round Salmon-derived counts to integers if any non-integer values are present, reporting how many cells were affected. Filter to genes with at least 10 counts in at least 3 samples and report genes in/out. Build DESeqDataSet with design ~ condition + time + condition:time, estimate size factors, and report the size-factor range. Produce VST-transformed data and QC outputs: PCA coloured by condition and shaped by time, sample-to-sample distance heatmap, per-sample library sizes, and the dispersion-estimate plot. Save the DESeqDataSet/VST matrix and a QC summary for downstream steps.",
+              "question_note": "",
+              "acceptance_criteria": [
+                "Count matrix columns and metadata sample IDs are confirmed to match 1:1, with the reordering (or its absence) reported",
+                "condition x time cross-tabulation is reported and confirmed as 3/3/3/3",
+                "Reference levels for condition and time are stated explicitly using the actual level names found in metadata.csv",
+                "Number of genes retained after the >=10 counts in >=3 samples filter is reported out of 12000",
+                "PCA and sample-distance plots are saved, and any sample that separates from its design cell is named explicitly rather than passed over",
+                "Serialized DESeqDataSet (design ~ condition + time + condition:time) and VST matrix are written for downstream steps"
+              ],
+              "constraints": [
+                "Use the actual condition and time level names from metadata.csv throughout — never generic 'A'/'B' labels",
+                "Do not drop any sample; if a sample looks like an outlier, flag it in the QC report and let downstream steps decide, since n=3 per cell leaves no room for silent exclusion",
+                "Design must be ~ condition + time + condition:time, not two separate per-timepoint models",
+                "Do not apply batch correction — the design context states a single batch"
+              ],
+              "caveats": [
+                "Salmon gene-level counts can be non-integer; DESeq2 requires integers, so round rather than truncate and report the change",
+                "With 12 samples PCA is descriptive only — do not interpret PC loadings as evidence of an interaction",
+                "time_hours may duplicate the information in time; use the categorical time factor for the model and note if time_hours contradicts it"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Interaction test: does the treatment effect differ between t0 and t1",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "For which genes does the condition effect differ significantly between t0 and t1 (condition:time interaction), and what is the treatment effect within each time point separately?",
+              "context": "This is the primary answer to the research question. In a 2x2 design the question 'does the treatment effect differ between the two time points' is exactly the condition:time interaction coefficient — not a comparison of two independently thresholded DE lists. All contrasts come from the single model fitted in T1S1 so they share dispersion estimates and one multiple-testing frame.",
+              "description": "Fit the DESeq2 negative-binomial GLM on the T1S1 object with design ~ condition + time + condition:time (Wald test). Extract, as the PRIMARY result, the condition:time interaction coefficient: log2 fold change, standard error, Wald statistic, p-value, BH-adjusted p-value for every retained gene, with independent filtering on. Report the count of interaction-significant genes at FDR < 0.05 and at FDR < 0.1. Additionally run a likelihood-ratio test of the full model against the reduced additive model ~ condition + time, and report the number of LRT-significant genes at FDR < 0.05 — this is the model-level statement of whether an interaction term is warranted. From the same fitted model, extract the simple treatment effects by contrast: treated vs control at t0, and treated vs control at t1, each with LFC shrinkage (apeglm where the coefficient form allows it, otherwise ashr) for ranking and plotting. Also report the main effects (condition averaged over time, time averaged over condition) for context. Write one tidy results table per contrast (all genes, unfiltered by significance) plus a combined table keyed on gene symbol carrying the interaction statistic beside both per-timepoint LFCs. Produce MA and volcano plots for the interaction and for each simple effect, and a counts plot for the top interaction genes showing all four design cells. State the power limitation numerically in the report.",
+              "acceptance_criteria": [
+                "Interaction (condition:time) results table written for all retained genes with LFC, SE, stat, pvalue, padj — and this result is presented as the primary answer to the research question",
+                "Counts of interaction-significant genes reported at FDR < 0.05 and FDR < 0.1, with the explicit statement that zero or few is a legitimate outcome at n=3 per cell",
+                "LRT full-vs-additive result reported as a model-level check on whether the interaction term is warranted",
+                "Separate treated-vs-control contrast tables for t0 and t1 extracted from the SAME fitted model, with shrunken LFCs",
+                "Combined per-gene table joining interaction statistic to both per-timepoint LFCs is written",
+                "Top interaction genes visualised as normalized counts across all four condition x time cells",
+                "Report states the actual condition and time level names and the direction of every contrast (numerator vs denominator)"
+              ],
+              "constraints": [
+                "The interaction Wald test (and the LRT) is the answer to the question — do NOT answer by intersecting or Venn-diagramming two separately thresholded per-timepoint DE lists, and say so in the report",
+                "All contrasts must be extracted from one fitted model so dispersions and the multiple-testing frame are shared",
+                "Use BH FDR; report both 0.05 and 0.1 thresholds rather than moving the threshold to find hits",
+                "Do not use shrunken LFCs for significance calls — shrinkage is for ranking and visualisation only",
+                "If apeglm cannot be applied to the interaction coefficient given the level coding, use ashr and state which was used"
+              ],
+              "caveats": [
+                "With n=3 per cell the interaction contrast has roughly half the effective power of a main effect; an empty interaction list is an honest result and must not be rescued by threshold relaxation presented as a finding",
+                "A gene significant at t1 and not at t0 is NOT evidence of a differing treatment effect — the difference between significant and non-significant is not itself significant. Only the interaction test supports that claim",
+                "Independent filtering can set padj to NA for low-count genes; report how many genes have NA padj rather than dropping them silently"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2",
+                "EnhancedVolcano",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Classify the shape of the time-dependent treatment response",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Among genes with a condition:time interaction, is the treatment response amplified, dampened, reversed in sign, or present at only one of t0 and t1?",
+              "context": "An interaction p-value says the effect differs but not how. This step converts significant interaction genes into interpretable response classes using the two per-timepoint shrunken LFCs already computed in T1S2, so that the finding can be described mechanistically.",
+              "description": "Take the combined table from T1S2. For genes with interaction padj < 0.1 (report the 0.05 subset separately), classify by the pair of shrunken treated-vs-control LFCs at t0 and t1: same sign with |LFC_t1| > |LFC_t0| = amplified over time; same sign with smaller magnitude at t1 = dampened; opposite signs with both magnitudes above a stated minimum = reversed; effect present at one time point and near zero at the other = time-specific. Report class counts and a scatter of LFC_t0 vs LFC_t1 with interaction-significant genes highlighted and the y=x diagonal drawn. Produce a heatmap of VST z-scores for the top interaction genes with samples ordered by condition then time so the four design cells are visually separable. If fewer than 10 genes pass interaction padj < 0.1, do not force the classification into a narrative: report the small count plainly, show the LFC_t0 vs LFC_t1 scatter for all genes as the descriptive summary, and state that no reliable response-class structure can be resolved at this sample size.",
+              "acceptance_criteria": [
+                "Response classes (amplified, dampened, reversed, time-specific) defined with explicit numeric rules and counts reported",
+                "LFC_t0 vs LFC_t1 scatter produced with interaction-significant genes highlighted and the identity line shown",
+                "Heatmap of VST z-scores for top interaction genes with samples grouped by condition and time",
+                "Explicit handling of the low-hit case: if fewer than 10 genes pass interaction padj < 0.1, this is stated plainly and no response-class narrative is constructed",
+                "A ranked gene table with class labels is written for downstream interpretation"
+              ],
+              "constraints": [
+                "Classification uses shrunken LFCs from T1S2, not raw ones, and the magnitude cutoff used for 'reversed' must be stated numerically",
+                "Class labels are descriptive only — do not present a class assignment as a statistical test result",
+                "Use the actual condition and time level names in all plot annotations"
+              ],
+              "caveats": [
+                "Classification of a gene with a wide LFC confidence interval is unstable; report the SE alongside the class rather than the class alone",
+                "Genes near the classification boundaries will move between classes under small threshold changes — say so rather than reporting counts as exact"
+              ],
+              "packages": [
+                "dplyr",
+                "ggplot2",
+                "ComplexHeatmap",
+                "circlize"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on the interaction ranking",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological processes and hallmark states show a treatment response that differs between t0 and t1, and how do the pathways enriched at t0 differ from those at t1?",
+              "context": "Operates on the ranked gene tables written by T1S2 — a generic gene-symbol keyed result, not a count object. The count matrix is indexed by gene symbol, and the reference store holds human HGNC-symbol gene sets (MSigDB hallmark, 50 sets; MSigDB GO Biological Process, ~7,500 sets) plus human WikiPathways, so the identifier spaces match directly with no ID conversion needed. Preranked GSEA is preferred over over-representation because the interaction gene list may be short or empty, and a preranked test still uses the full ranking.",
+              "description": "Resolve human hallmark and human GO Biological Process gene sets from the environment's reference data (HGNC gene symbols; human WikiPathways is an acceptable additional collection). Run preranked GSEA using the condition:time interaction Wald statistic as the ranking metric over all genes with a non-NA statistic, reporting normalized enrichment score, p-value and BH-adjusted p-value, and leading-edge genes per set. Separately, run preranked GSEA on the treated-vs-control Wald statistic at t0 and at t1, and produce a side-by-side table of NES per pathway across the two time points with the difference in NES — labelled explicitly as a descriptive comparison, NOT a statistical test of differential enrichment (the interaction GSEA is the test). Report the number of gene symbols in the matrix that matched the gene sets and the number that did not. Collapse redundant GO parent/child hits before reporting a set count. If no reference gene sets can be resolved at run time, report that the enrichment could not be performed and name what was needed — do not substitute a hard-coded gene list.",
+              "acceptance_criteria": [
+                "Preranked GSEA on the interaction statistic completed against human hallmark and human GO BP sets, with NES, padj and leading-edge genes reported",
+                "Gene-symbol match rate against the gene sets reported (matched vs unmatched out of the genes tested)",
+                "Side-by-side t0 vs t1 NES comparison table produced and explicitly labelled descriptive, not a test of differential enrichment",
+                "Redundant GO parent/child hits collapsed before any count of significant sets is reported",
+                "If the interaction ranking yields no significant sets, this is stated plainly alongside the per-timepoint results rather than replaced by them"
+              ],
+              "constraints": [
+                "Use human gene sets — the data is Homo sapiens; do not fall back to the mouse or rat collections present in the store",
+                "Rank on the unshrunken Wald statistic, not on log2 fold change alone, so that both effect size and precision inform the ranking",
+                "Do not run over-representation analysis on a thresholded interaction list as the primary enrichment; preranked GSEA is primary, and ORA may appear only as a secondary check with its input list size stated",
+                "Report BH-adjusted p-values; do not report nominal p-values as significant hits"
+              ],
+              "caveats": [
+                "An interaction ranking is noisier than a main-effect ranking at n=3 per cell — treat enriched sets as hypothesis-generating",
+                "GO BP sets are nested and share members, so significant hits arrive in correlated blocks; collapse before counting",
+                "The 12000-gene matrix is a subset of the transcriptome, so the GSEA universe is restricted — state this, since it affects which sets are testable"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "dplyr",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

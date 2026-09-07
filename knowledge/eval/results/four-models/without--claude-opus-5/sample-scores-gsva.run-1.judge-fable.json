@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly reads the question as per-sample scoring: VST (with log2-CPM as backup) feeds GSVA with the Gaussian kernel over the human Hallmark collection with min/max size window and coverage tabulation, and limma moderated t on the score matrix with BH at 0.05 identifies separating sets, matching the reference. QC covers library sizes, detected genes, PCA and sample correlations coloured by condition, with sample_01 explicitly retained and handled by a leave-one-out sensitivity run. The heatmap is row-scaled with condition and depth annotations, and caveats (relative scores, anti-conservative limma on GSVA, overlapping sets, n=6) are stated. Minor gaps: the reference level for the condition factor is not explicitly set, the Hallmark version is deferred to runtime rather than named, and package versions are not requested in the report."
+}

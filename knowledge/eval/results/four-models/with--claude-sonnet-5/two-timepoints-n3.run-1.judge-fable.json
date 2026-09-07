@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the two time points as a 2x2 factorial with time as a two-level factor (reference t0), fits ~condition + time + condition:time in DESeq2, tests the interaction coefficient by Wald as the primary answer, and reports simple effects at each time point via the main effect and main+interaction contrasts with ashr shrinkage, BH at 0.05 and an explicit power caution for n=3 per cell. Normalization is median-of-ratios inside the model, the filter (>=10 counts in >=3 samples, the smallest cell) is minimal and justified, and QC covers blind VST, PCA, distances and library sizes colored by both factors, though the outlier handling is 'flag' rather than a stated policy. Enrichment was not asked and the reference omits it; the plan adds a well-specified fgsea pass (Wald stat ranking, full list, named collections with versions, 15-500 window) but spreads it across three collections and an interaction ranking of doubtful interpretability, so it is competently specified but not warranted. The report step is complete with versions, seed, counts of tested/significant/NA genes and design caveats."
+}

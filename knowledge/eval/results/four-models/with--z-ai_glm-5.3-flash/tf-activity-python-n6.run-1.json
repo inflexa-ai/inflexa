@@ -1,0 +1,978 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "tf-activity-python-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T04:28:01.232Z",
+  "elapsedMs": 849183,
+  "outcome": "plan_submitted",
+  "planId": "pln-d72f928a",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "counts.csv has 13 columns for 12 samples: the first column holds gene symbols. Align count columns to metadata rows on sample ID explicitly and fail loudly on any mismatch.",
+          "Counts must be raw integers into pydeseq2; do not log-transform, scale, or pre-normalize before the model (R-0026@9ab1)."
+        ],
+        "context": "Data: /eval-four-models-with-tf-activity-python-n6-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns, first column gene symbol) and /eval-four-models-with-tf-activity-python-n6-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns, condition column with treated vs control). Human kidney, single batch, unpaired.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scikit-learn",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the 6 aldosterone-treated and 6 vehicle-control kidney samples form clean groups with no outlier sample, before any differential test?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-python@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)"
+        ],
+        "acceptance_criteria": [
+          "Blind vst applied on the raw counts (design ignored for the transform), PCA on the 500 highest-variance genes colored by condition",
+          "Euclidean sample-distance heatmap produced and saved",
+          "Library-size bar plot per sample produced",
+          "A written QC verdict states whether samples cluster by condition, whether any sample departs from its group, and whether that verdict blocks or allows the DE test",
+          "All figures and the verdict are written to the step's output directory"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "PyDESeq2 Wald test with log fold change shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The input is already a gene-level Salmon count matrix; no transcript-level quant.sf files are present, so the tximport length-offset import of R-0018@a472 cannot be applied. State this limitation in the report: a gene-level matrix cannot detect differential transcript usage, and isoform-length effects are uncorrected.",
+          "The user constraint is Python-only, so the R apeglm/edgeR implementations are unavailable. Use pydeseq2's lfc_shrink (its MAP/adaptive shrinkage implementation, the Python analogue of the apeglm path) and name the estimator actually used in the table header; keep the unshrunken log2FoldChange and lfcSE beside it (R-0009@f54e, R-0085@c24d).",
+          "PyDESeq2 does not ship DESeq2's independent filtering; implement it in the script (filter on the mean normalized count, choosing the threshold that maximizes discoveries at alpha 0.05, DESeq2-style) or state explicitly in the report that only BH without independent filtering was applied. Never select by unadjusted p-value (R-0043@4f55).",
+          "With 6 replicates per group, DESeq2/Cook's logic sets p-values to NA for flagged count outliers rather than replacing counts; report the count of such genes (R-0039@e17a).",
+          "Do not apply an effect-size threshold post hoc; if an LFC threshold is wanted it belongs inside the test (R-0037@e6d8). The research question does not state one, so the primary selection is padj < 0.05."
+        ],
+        "context": "Same 12-sample kidney dataset. PyDESeq2 (installed 0.5.4) is the Python implementation of the DESeq2 Wald path: DeseqDataSet(counts, metadata, design='~condition'), ds.deseq2(), DeseqStats with the treated-vs-control contrast, ds.vst not needed here (QC step holds it), lfc_shrink for the reported effect. Output table is the direct input to the TF activity step (T2S2), which consumes the stat column of all tested genes.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which genes are differentially expressed in aldosterone-treated kidney samples versus vehicle controls (condition: treated vs control, positive LFC = higher in treated), yielding the Wald statistic of every tested gene for the TF activity step?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with apeglm log fold change shrinkage per R-0029@fa6d; Python implementation via pydeseq2 per the user's language constraint and the tpl-pydeseq2-two-group@1.0.0 template",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-pydeseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)",
+          "filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)",
+          "filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)",
+          "normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)",
+          "model_design: import = tximport_lengthScaledTPM_or_offsets (doi:10.12688/f1000research.7563.2)",
+          "model_design: import_tool = tximport (vignette:tximport/2026-04-28#downstream-dge-in-bioconductor)",
+          "model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+          "model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)",
+          "differential_expression: count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)",
+          "differential_expression: test = Wald (doi:10.1186/s13059-014-0550-8)",
+          "shrink_lfc: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)",
+          "multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+          "multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)",
+          "multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)",
+          "multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+          "multiple_testing: independent_filtering = true (doi:10.1073/pnas.0914005107)",
+          "multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)"
+        ],
+        "acceptance_criteria": [
+          "Minimal pre-filter applied: gene kept if it has >= 10 counts in at least 6 samples (smallest group size); no stronger pre-filter",
+          "Median-of-ratios size factors computed inside the model; no counts scaled before the fit",
+          "Design ~condition with the reference level (control) set by an explicit call; contrast named as condition, numerator treated, denominator control",
+          "Wald test with Cook's outlier flagging and refit; the number of genes with NA p-values from outlier flagging is reported separately from filtered genes",
+          "p-value histogram of unadjusted p-values inspected and its shape reported before trusting adjusted p-values",
+          "BH adjustment at alpha 0.05 with independent filtering on the mean normalized count; genes selected by adjusted p-value only",
+          "Results table carries gene symbol, unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue, padj; ranking and plots use the shrunken value; the shrinkage estimator is named in the table header",
+          "MA plot and dispersion plot produced as fit diagnostics; n_tested and n_de reported"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Transcription factor activity with decoupleR ulm on the CollecTRI regulons",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Only 12 samples: no regulatory network may be inferred from this study's expression alone (R-0121@5f27); prior-knowledge regulons are the only sound source. State this in the step output.",
+          "The JASPAR/TFBSTools promoter-motif complement of R-0120@7639 requires an hg38 genome and JASPAR package not staged as loadable resources here; treat it as out of scope for this run and note its absence rather than faking a motif scan. The regulon inference answers the research question on its own.",
+          "A prior-network TF activity is the same for every tissue: a TF acting only in kidney may be missed and silent targets add noise (R-0114@9db7); say so when interpreting.",
+          "Do not call dc.get_collectri/dc.get_dorothea or any other function that downloads: the sandbox has no network. Read both regulon sets from the reference store files only.",
+          "A TF-activity p-value from ulm is a per-regulator model fit, not a gene-level test; adjust across regulators with BH and report it as such."
+        ],
+        "context": "Input is the T1S2 results table (stat column, all tested genes, positive stat = higher in treated). Reference data needed: a human TF-target regulon network — CollecTRI human 2.0 (managed CSV, source/target/weight, pass directly as decoupler's network argument) is the primary; DoRothEA human (rda with tf/confidence/target/mor columns, filter to confidence A-C, rename to source/target/weight) is the secondary robustness set; both are present in the reference store under regulatory-networks. decoupler 2.2.0 is installed; verify its Python entry point (run_ulm with source/target/weight and min_n=5) at run time — its get_collectri/get_dorothea helpers fetch over the network and MUST NOT be used.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "rpy2",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Which transcription factors are activated or inhibited in aldosterone-treated kidney samples versus vehicle controls, inferred from the treated-vs-control Wald statistic of every tested gene?",
+        "grounding": {
+          "claims": [
+            "R-0120@7639",
+            "R-0111@b668",
+            "R-0113@7a4d",
+            "R-0114@9db7",
+            "R-0121@5f27"
+          ],
+          "reason": "Transcription factor activity with decoupleR ulm on the CollecTRI regulons per R-0120@7639; Python decoupler 2.2.0 with the store's CollecTRI human 2.0 CSV per the user's language constraint and tpl-decoupler-py-tf-activity@1.0.0",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-decoupler-py-tf-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "activity",
+        "depends_on": [
+          "T1S2",
+          "T1S1"
+        ],
+        "constraints": [
+          "tf_activity: network_source = prior_knowledge_network_only (doi:10.1093/bioinformatics/btw216)",
+          "tf_activity: aracne_regulon_policy = viper_absent_prior_network_with_decoupler_instead (doi:10.1038/ng.3593)",
+          "tf_activity: alternative_regulon = dorothea_confidence_A_to_C (doi:10.1101/gr.240663.118)",
+          "tf_activity: regulon_preference = collectri_first (doi:10.1093/nar/gkad841)",
+          "tf_activity: activity_method = ulm (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: activity_input = contrast_statistic_all_tested_genes (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: regulon_collection = collectri_human (doi:10.1093/nar/gkad841)",
+          "tf_activity: min_regulon_size = 5 (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: edge_sign = keep_mode_of_regulation (doi:10.1093/nar/gkad841)",
+          "tf_activity: motif_complement = tfbstools_jaspar2020_hg38_promoters (doi:10.1093/bioinformatics/btw024)",
+          "tf_activity: motif_background = promoters_of_tested_genes (rule:R-0120)"
+        ],
+        "acceptance_criteria": [
+          "CollecTRI human regulons (version 2.0, the managed CSV with source/target/weight columns, +1 activating / -1 repressing) loaded from the reference store and passed as decoupler's network; edge signs kept",
+          "ulm run on the full Wald-statistic vector of ALL tested genes from T1S2 (not on significant genes only); the sign convention (positive = more active in treated) stated beside the result",
+          "Regulators with fewer than 5 targets among the tested genes dropped; the number of regulators entering the test reported",
+          "Ranked TF table produced: TF, activity score (ulm), p-value, adjusted p-value across TFs (BH), direction (activated/inhibited), n_targets",
+          "DoRothEA human A-C regulons run as a secondary estimate; the overlap of the top TFs between CollecTRI and DoRothEA A-C reported; if the DoRothEA rda cannot be loaded, report the CollecTRI result alone and say so",
+          "Per-sample activity matrix on the vst (or size-factor-normalized log) values produced for a visualization heatmap, clearly labeled as descriptive",
+          "A written interpretation names the leading activated and inhibited TFs and distinguishes statistically supported drivers from suggestive ones"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "R-0042@54e1's DESeq2-vs-edgeR-QL overlap cannot be executed in Python-only scripts; do not present a fake second method. Substitute the regulon-set overlap and say so.",
+          "The TF-activity result is an inference from a prior network, not a measured TF abundance; frame the leading TFs as hypotheses ranked by evidence, and flag any TF whose support comes from only one regulon set."
+        ],
+        "context": "Assembles outputs of T1S1 (QC figures/verdict), T1S2 (DE table, diagnostics, histogram) and T2S2 (TF activity tables) into the final report. This dataset's robustness section: the Python-only constraint rules out the R edgeR-QL second-method overlap of R-0042@54e1; report the CollecTRI vs DoRothEA A-C regulon overlap as the robustness evidence instead and name that substitution explicitly.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "What is the complete, reproducible answer to which transcription factors drive the aldosterone-treated versus vehicle response in these 12 kidney samples, with the DE evidence and fit diagnostics behind it?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "no rule covers this step",
+          "status": "ungrounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S2"
+        ],
+        "constraints": [
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+          "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+          "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+          "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)",
+          "report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)",
+          "report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)"
+        ],
+        "acceptance_criteria": [
+          "Report names the method (PyDESeq2 Wald, ulm/CollecTRI), all package versions, the design formula and the named contrast, the thresholds (min_count 10/6 samples, alpha 0.05), n_tested, n_de, and a session/version record",
+          "DE gene table carries unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue, padj; genes and plots ranked on the shrunken value; estimator named",
+          "MA plot, dispersion plot, and p-value histogram placed before the gene tables with one line each on what they show",
+          "Counts of NA p-values explained by cause (Cook's outlier vs filter)",
+          "TF activity ranking table (CollecTRI primary, DoRothEA A-C secondary with overlap) with direction and adjusted p-values",
+          "Reproducibility record: seed (none used unless permutations), package versions, CollecTRI 2.0 / DoRothEA collection versions",
+          "The report states the two limitations: gene-level counts without transcript-length offsets, and prior-network regulons being tissue-agnostic"
+        ]
+      }
+    ],
+    "title": "Aldosterone vs vehicle kidney: DE + TF activity",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is 12 human kidney bulk RNA-seq samples (6 aldosterone-treated vs 6 vehicle control) as raw gene-level Salmon counts (12,000 genes x 13 CSV columns, first column gene symbol) with a 12-row metadata table. The question — which transcription factors drive the treated-vs-control response — decomposes into (1) a sample-structure QC on a blind variance-stabilizing transform to verify grouping and outliers before any test, (2) a two-group differential expression fit (PyDESeq2 Wald, median-of-ratios size factors, explicit reference level, Cook's outlier flagging, BH at alpha 0.05 with an independent filter) that produces the Wald statistic of every tested gene, and (3) transcription-factor activity inference with decoupleR's univariate linear model on that full contrast statistic against the CollecTRI human regulons (DoRothEA A-C as a secondary regulon set for robustness). Small design (12 samples, single batch, no covariates) means regulons must come from prior knowledge only, not from network inference on the study itself. All scripts are Python (pydeseq2, decoupler); the language constraint rules out the R edgeR-QL second-method overlap, so robustness is carried by the CollecTRI vs DoRothEA regulon comparison instead. The report step assembles the DE table (unshrunken and shrunken LFC, SE), fit diagnostics, the p-value histogram, and the ranked TF table with a reproducibility record."
+  },
+  "usage": {
+    "inputTokens": 661088,
+    "outputTokens": 13133,
+    "cacheReadInputTokens": 290368,
+    "reasoningTokens": 5880
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "library_type": "unknown",
+        "extra_analyses": [
+          "tf_activity"
+        ],
+        "preferred_language": "python"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "pydeseq2",
+        "query": "two-group differential expression with Wald test, Cooks outlier refit, lfc shrinkage, variance stabilizing transform"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "decoupler",
+        "query": "transcription factor activity inference with ulm from a statistic vector using CollecTRI regulons"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/pydeseq2",
+        "query": "DeseqDataSet and DeseqStats API: design formula with reference level, Cooks outlier refit, lfc_shrink method apeglm, vst variance stabilizing transformation, results columns"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/saezlab/decoupler",
+        "query": "run_ulm Python usage: network dataframe with source target weight, stat input, min_regulon_size, returning TF activity estimates and p-values"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/saezlab/decoupler",
+        "query": "Python decoupler 2.x API: how to call run_ulm from Python on a pandas DataFrame network and a counts matrix or AnnData, min_n parameter, without downloading networks"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "library_type": "unknown",
+        "extra_analyses": [
+          "tf_activity"
+        ],
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "pydeseq2 vst (blind) + PCA top 500 variable genes + sample distance heatmap",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "minimal pre-filter >=10 counts in >= smallest group size (6) samples",
+            "package": "pandas",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors (pydeseq2 fit_size_factors)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "design ~condition, reference level control set explicitly, contrast condition treated vs control",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition_treated_vs_control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "pydeseq2 Wald test with Cooks outlier flagging and refit",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "pydeseq2 lfc_shrink MAP shrinkage (Python equivalent of apeglm path)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "map_shrink"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg at alpha 0.05 with independent filtering on mean normalized count",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "decoupler ulm on the Wald statistic of all tested genes with CollecTRI human regulons, min_n 5, DoRothEA A-C as secondary",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "network_source",
+                "value": "collectri_human_2.0"
+              },
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "activity_input",
+                "value": "contrast_statistic_all_tested_genes"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              },
+              {
+                "name": "edge_sign",
+                "value": "keep_mode_of_regulation"
+              },
+              {
+                "name": "alternative_regulon",
+                "value": "dorothea_confidence_A_to_C"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE table with unshrunken and shrunken LFC, MA plot, dispersion plot, p-value histogram, TF activity ranking, reproducibility record",
+            "package": "pandas",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method,versions,design,thresholds,n_tested,n_de,session_info"
+              },
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot,dispersion_plot"
+              },
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange,shrunken_log2FoldChange,lfcSE"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/pydeseq2",
+        "query": "lfc_shrink signature and method parameter: is apeglm shrinkage implemented, DeseqStats.lfc_shrink arguments coeff method"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "library_type": "unknown",
+        "extra_analyses": [
+          "tf_activity"
+        ],
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "pydeseq2 vst (blind) + PCA top 500 variable genes + sample distance heatmap",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "minimal pre-filter >=10 counts in >= smallest group size (6) samples",
+            "package": "pandas",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors (pydeseq2 fit_size_factors)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "design ~condition, reference level set with an explicit call, contrast named as factor/numerator/denominator",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition_numerator_treated_denominator_control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "pydeseq2 Wald test with Cooks outlier flagging and refit",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              },
+              {
+                "name": "note",
+                "value": "pydeseq2 lfc_shrink MAP implementation; estimator name reported in the table header"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg at alpha 0.05 with independent filtering on mean normalized count",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "decoupler ulm on the Wald statistic of all tested genes with CollecTRI human regulons, min_n 5, DoRothEA A-C as secondary",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "network_source",
+                "value": "collectri_human_2.0"
+              },
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "activity_input",
+                "value": "contrast_statistic_all_tested_genes"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              },
+              {
+                "name": "edge_sign",
+                "value": "keep_mode_of_regulation"
+              },
+              {
+                "name": "alternative_regulon",
+                "value": "dorothea_confidence_A_to_C"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE table with unshrunken and shrunken LFC, MA plot, dispersion plot, p-value histogram, TF activity ranking, reproducibility record",
+            "package": "pandas",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method,versions,design,thresholds,n_tested,n_de,session_info"
+              },
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot,dispersion_plot"
+              },
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange,shrunken_log2FoldChange,lfcSE"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Aldosterone vs vehicle kidney: DE + TF activity",
+          "analytical_narrative": "The dataset is 12 human kidney bulk RNA-seq samples (6 aldosterone-treated vs 6 vehicle control) as raw gene-level Salmon counts (12,000 genes x 13 CSV columns, first column gene symbol) with a 12-row metadata table. The question — which transcription factors drive the treated-vs-control response — decomposes into (1) a sample-structure QC on a blind variance-stabilizing transform to verify grouping and outliers before any test, (2) a two-group differential expression fit (PyDESeq2 Wald, median-of-ratios size factors, explicit reference level, Cook's outlier flagging, BH at alpha 0.05 with an independent filter) that produces the Wald statistic of every tested gene, and (3) transcription-factor activity inference with decoupleR's univariate linear model on that full contrast statistic against the CollecTRI human regulons (DoRothEA A-C as a secondary regulon set for robustness). Small design (12 samples, single batch, no covariates) means regulons must come from prior knowledge only, not from network inference on the study itself. All scripts are Python (pydeseq2, decoupler); the language constraint rules out the R edgeR-QL second-method overlap, so robustness is carried by the CollecTRI vs DoRothEA regulon comparison instead. The report step assembles the DE table (unshrunken and shrunken LFC, SE), fit diagnostics, the p-value histogram, and the ranked TF table with a reproducibility record.",
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "agent": "bulk-transcriptomics-agent",
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "question": "Do the 6 aldosterone-treated and 6 vehicle-control kidney samples form clean groups with no outlier sample, before any differential test?",
+              "acceptance_criteria": [
+                "Blind vst applied on the raw counts (design ignored for the transform), PCA on the 500 highest-variance genes colored by condition",
+                "Euclidean sample-distance heatmap produced and saved",
+                "Library-size bar plot per sample produced",
+                "A written QC verdict states whether samples cluster by condition, whether any sample departs from its group, and whether that verdict blocks or allows the DE test",
+                "All figures and the verdict are written to the step's output directory"
+              ],
+              "context": "Data: /eval-four-models-with-tf-activity-python-n6-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns, first column gene symbol) and /eval-four-models-with-tf-activity-python-n6-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns, condition column with treated vs control). Human kidney, single batch, unpaired.",
+              "constraints": [
+                "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+                "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)"
+              ],
+              "caveats": [
+                "counts.csv has 13 columns for 12 samples: the first column holds gene symbols. Align count columns to metadata rows on sample ID explicitly and fail loudly on any mismatch.",
+                "Counts must be raw integers into pydeseq2; do not log-transform, scale, or pre-normalize before the model (R-0026@9ab1)."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-python@1.0.0",
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "PyDESeq2 Wald test with log fold change shrinkage",
+              "track": "T1",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "question": "Which genes are differentially expressed in aldosterone-treated kidney samples versus vehicle controls (condition: treated vs control, positive LFC = higher in treated), yielding the Wald statistic of every tested gene for the TF activity step?",
+              "acceptance_criteria": [
+                "Minimal pre-filter applied: gene kept if it has >= 10 counts in at least 6 samples (smallest group size); no stronger pre-filter",
+                "Median-of-ratios size factors computed inside the model; no counts scaled before the fit",
+                "Design ~condition with the reference level (control) set by an explicit call; contrast named as condition, numerator treated, denominator control",
+                "Wald test with Cook's outlier flagging and refit; the number of genes with NA p-values from outlier flagging is reported separately from filtered genes",
+                "p-value histogram of unadjusted p-values inspected and its shape reported before trusting adjusted p-values",
+                "BH adjustment at alpha 0.05 with independent filtering on the mean normalized count; genes selected by adjusted p-value only",
+                "Results table carries gene symbol, unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue, padj; ranking and plots use the shrunken value; the shrinkage estimator is named in the table header",
+                "MA plot and dispersion plot produced as fit diagnostics; n_tested and n_de reported"
+              ],
+              "context": "Same 12-sample kidney dataset. PyDESeq2 (installed 0.5.4) is the Python implementation of the DESeq2 Wald path: DeseqDataSet(counts, metadata, design='~condition'), ds.deseq2(), DeseqStats with the treated-vs-control contrast, ds.vst not needed here (QC step holds it), lfc_shrink for the reported effect. Output table is the direct input to the TF activity step (T2S2), which consumes the stat column of all tested genes.",
+              "constraints": [
+                "filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)",
+                "filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)",
+                "filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)",
+                "normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)",
+                "model_design: import = tximport_lengthScaledTPM_or_offsets (doi:10.12688/f1000research.7563.2)",
+                "model_design: import_tool = tximport (vignette:tximport/2026-04-28#downstream-dge-in-bioconductor)",
+                "model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+                "model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)",
+                "differential_expression: count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)",
+                "differential_expression: test = Wald (doi:10.1186/s13059-014-0550-8)",
+                "shrink_lfc: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)",
+                "multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+                "multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)",
+                "multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)",
+                "multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+                "multiple_testing: independent_filtering = true (doi:10.1073/pnas.0914005107)",
+                "multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)"
+              ],
+              "caveats": [
+                "The input is already a gene-level Salmon count matrix; no transcript-level quant.sf files are present, so the tximport length-offset import of R-0018@a472 cannot be applied. State this limitation in the report: a gene-level matrix cannot detect differential transcript usage, and isoform-length effects are uncorrected.",
+                "The user constraint is Python-only, so the R apeglm/edgeR implementations are unavailable. Use pydeseq2's lfc_shrink (its MAP/adaptive shrinkage implementation, the Python analogue of the apeglm path) and name the estimator actually used in the table header; keep the unshrunken log2FoldChange and lfcSE beside it (R-0009@f54e, R-0085@c24d).",
+                "PyDESeq2 does not ship DESeq2's independent filtering; implement it in the script (filter on the mean normalized count, choosing the threshold that maximizes discoveries at alpha 0.05, DESeq2-style) or state explicitly in the report that only BH without independent filtering was applied. Never select by unadjusted p-value (R-0043@4f55).",
+                "With 6 replicates per group, DESeq2/Cook's logic sets p-values to NA for flagged count outliers rather than replacing counts; report the count of such genes (R-0039@e17a).",
+                "Do not apply an effect-size threshold post hoc; if an LFC threshold is wanted it belongs inside the test (R-0037@e6d8). The research question does not state one, so the primary selection is padj < 0.05."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-pydeseq2-two-group@1.0.0",
+                "reason": "DESeq2 Wald test with apeglm log fold change shrinkage per R-0029@fa6d; Python implementation via pydeseq2 per the user's language constraint and the tpl-pydeseq2-two-group@1.0.0 template"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Transcription factor activity with decoupleR ulm on the CollecTRI regulons",
+              "track": "T2",
+              "step_type": "activity",
+              "agent": "enrichment-agent",
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "rpy2",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "question": "Which transcription factors are activated or inhibited in aldosterone-treated kidney samples versus vehicle controls, inferred from the treated-vs-control Wald statistic of every tested gene?",
+              "acceptance_criteria": [
+                "CollecTRI human regulons (version 2.0, the managed CSV with source/target/weight columns, +1 activating / -1 repressing) loaded from the reference store and passed as decoupler's network; edge signs kept",
+                "ulm run on the full Wald-statistic vector of ALL tested genes from T1S2 (not on significant genes only); the sign convention (positive = more active in treated) stated beside the result",
+                "Regulators with fewer than 5 targets among the tested genes dropped; the number of regulators entering the test reported",
+                "Ranked TF table produced: TF, activity score (ulm), p-value, adjusted p-value across TFs (BH), direction (activated/inhibited), n_targets",
+                "DoRothEA human A-C regulons run as a secondary estimate; the overlap of the top TFs between CollecTRI and DoRothEA A-C reported; if the DoRothEA rda cannot be loaded, report the CollecTRI result alone and say so",
+                "Per-sample activity matrix on the vst (or size-factor-normalized log) values produced for a visualization heatmap, clearly labeled as descriptive",
+                "A written interpretation names the leading activated and inhibited TFs and distinguishes statistically supported drivers from suggestive ones"
+              ],
+              "context": "Input is the T1S2 results table (stat column, all tested genes, positive stat = higher in treated). Reference data needed: a human TF-target regulon network — CollecTRI human 2.0 (managed CSV, source/target/weight, pass directly as decoupler's network argument) is the primary; DoRothEA human (rda with tf/confidence/target/mor columns, filter to confidence A-C, rename to source/target/weight) is the secondary robustness set; both are present in the reference store under regulatory-networks. decoupler 2.2.0 is installed; verify its Python entry point (run_ulm with source/target/weight and min_n=5) at run time — its get_collectri/get_dorothea helpers fetch over the network and MUST NOT be used.",
+              "constraints": [
+                "tf_activity: network_source = prior_knowledge_network_only (doi:10.1093/bioinformatics/btw216)",
+                "tf_activity: aracne_regulon_policy = viper_absent_prior_network_with_decoupler_instead (doi:10.1038/ng.3593)",
+                "tf_activity: alternative_regulon = dorothea_confidence_A_to_C (doi:10.1101/gr.240663.118)",
+                "tf_activity: regulon_preference = collectri_first (doi:10.1093/nar/gkad841)",
+                "tf_activity: activity_method = ulm (doi:10.1093/bioadv/vbac016)",
+                "tf_activity: activity_input = contrast_statistic_all_tested_genes (doi:10.1093/bioadv/vbac016)",
+                "tf_activity: regulon_collection = collectri_human (doi:10.1093/nar/gkad841)",
+                "tf_activity: min_regulon_size = 5 (doi:10.1093/bioadv/vbac016)",
+                "tf_activity: edge_sign = keep_mode_of_regulation (doi:10.1093/nar/gkad841)",
+                "tf_activity: motif_complement = tfbstools_jaspar2020_hg38_promoters (doi:10.1093/bioinformatics/btw024)",
+                "tf_activity: motif_background = promoters_of_tested_genes (rule:R-0120)"
+              ],
+              "caveats": [
+                "Only 12 samples: no regulatory network may be inferred from this study's expression alone (R-0121@5f27); prior-knowledge regulons are the only sound source. State this in the step output.",
+                "The JASPAR/TFBSTools promoter-motif complement of R-0120@7639 requires an hg38 genome and JASPAR package not staged as loadable resources here; treat it as out of scope for this run and note its absence rather than faking a motif scan. The regulon inference answers the research question on its own.",
+                "A prior-network TF activity is the same for every tissue: a TF acting only in kidney may be missed and silent targets add noise (R-0114@9db7); say so when interpreting.",
+                "Do not call dc.get_collectri/dc.get_dorothea or any other function that downloads: the sandbox has no network. Read both regulon sets from the reference store files only.",
+                "A TF-activity p-value from ulm is a per-regulator model fit, not a gene-level test; adjust across regulators with BH and report it as such."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0120@7639",
+                  "R-0111@b668",
+                  "R-0113@7a4d",
+                  "R-0114@9db7",
+                  "R-0121@5f27"
+                ],
+                "template": "tpl-decoupler-py-tf-activity@1.0.0",
+                "reason": "Transcription factor activity with decoupleR ulm on the CollecTRI regulons per R-0120@7639; Python decoupler 2.2.0 with the store's CollecTRI human 2.0 CSV per the user's language constraint and tpl-decoupler-py-tf-activity@1.0.0"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Report",
+              "track": "T1",
+              "step_type": "report",
+              "agent": "bulk-transcriptomics-agent",
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "question": "What is the complete, reproducible answer to which transcription factors drive the aldosterone-treated versus vehicle response in these 12 kidney samples, with the DE evidence and fit diagnostics behind it?",
+              "acceptance_criteria": [
+                "Report names the method (PyDESeq2 Wald, ulm/CollecTRI), all package versions, the design formula and the named contrast, the thresholds (min_count 10/6 samples, alpha 0.05), n_tested, n_de, and a session/version record",
+                "DE gene table carries unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue, padj; genes and plots ranked on the shrunken value; estimator named",
+                "MA plot, dispersion plot, and p-value histogram placed before the gene tables with one line each on what they show",
+                "Counts of NA p-values explained by cause (Cook's outlier vs filter)",
+                "TF activity ranking table (CollecTRI primary, DoRothEA A-C secondary with overlap) with direction and adjusted p-values",
+                "Reproducibility record: seed (none used unless permutations), package versions, CollecTRI 2.0 / DoRothEA collection versions",
+                "The report states the two limitations: gene-level counts without transcript-length offsets, and prior-network regulons being tissue-agnostic"
+              ],
+              "context": "Assembles outputs of T1S1 (QC figures/verdict), T1S2 (DE table, diagnostics, histogram) and T2S2 (TF activity tables) into the final report. This dataset's robustness section: the Python-only constraint rules out the R edgeR-QL second-method overlap of R-0042@54e1; report the CollecTRI vs DoRothEA A-C regulon overlap as the robustness evidence instead and name that substitution explicitly.",
+              "constraints": [
+                "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+                "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+                "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+                "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)",
+                "report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)",
+                "report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)"
+              ],
+              "caveats": [
+                "R-0042@54e1's DESeq2-vs-edgeR-QL overlap cannot be executed in Python-only scripts; do not present a fake second method. Substitute the regulon-set overlap and say so.",
+                "The TF-activity result is an inference from a prior network, not a measured TF abundance; frame the leading TFs as hypotheses ranked by evidence, and flag any TF whose support comes from only one regulon set."
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "no rule covers this step"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

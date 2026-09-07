@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats the 2x2 design as a factorial rather than a time course, uses time as a two-level factor (explicitly not time_hours), specifies ~ condition + time + condition:time with stated reference levels, makes the interaction Wald test the primary answer, adds the LRT against the additive reduced model, and extracts both simple effects from the same fit with shrinkage reserved for ranking. QC is thorough with an explicit no-drop/flag outlier policy, normalization is size factors on raw rounded counts, and BH at 0.05 (with 0.1 reported alongside) is stated. Enrichment is not warranted by the question and the reference omits it; the plan includes it with a stated ranking metric and named collections but no collection version or set-size window, so it is only partly credited. The report requirements are strong on design, thresholds, counts and caveats but do not require software versions."
+}

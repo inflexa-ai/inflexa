@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 5,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly chooses a DESeq2 negative-binomial model on raw Salmon counts for a 3-vs-3 unpaired single-batch design, applies a minimal >=10-in-3-samples filter, uses BH at 0.05 without lowering alpha, and is unusually explicit about the n=3 power limitation and outlier influence via Cook's distance. However it never states the design formula, reference level, or contrast, never mentions size-factor normalization inside the model, and omits apeglm (or any) fold-change shrinkage for the reported effect. QC is limited to a PCA/distance plot without library-size checks or a stated policy for handling an outlier sample. Enrichment and STRING network steps were not asked for and are not warranted; the enrichment step does name a universe but gives no collection version, size window, or unambiguous ranking metric, and versions of software are not required in the report."
+}

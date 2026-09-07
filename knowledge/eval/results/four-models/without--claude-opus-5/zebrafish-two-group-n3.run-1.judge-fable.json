@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 6,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "DESeq2 Wald on ~condition with control as reference, a minimal count>=10-in-3 filter tied to group size, BH at 0.05 with apeglm shrinkage, and an honest n=3 power statement all match the reference. QC covers library size, VST PCA and distance heatmap and asks whether a pool is aberrant, but gives no policy for what to do with an outlier or shallow sample. The plan never states that normalization happens via DESeq2 size factors inside the model; it only implies it by feeding raw counts. Enrichment correctly recognises the lack of a zebrafish collection, uses native GO (with sparseness caveat) and species-filtered Reactome with tested-gene universe, shrunken-LFC ranking and a 10-500 size window, though it does not name the Reactome release, understates that zebrafish Reactome sets are themselves ortholog-inferred, and omits the Ensembl release."
+}

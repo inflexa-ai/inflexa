@@ -1,0 +1,682 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "tpm-input-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T04:09:49.869Z",
+  "elapsedMs": 154142,
+  "outcome": "plan_submitted",
+  "planId": "pln-7d811308",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on log TPM",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Inputs: /eval-four-models-with-tpm-input-n6-1/data/inputs/abundance/tpm.csv (12,000 gene-symbol rows x 13 cols, first col gene symbol) and /eval-four-models-with-tpm-input-n6-1/data/inputs/metadata/metadata.csv (12 rows x 2 cols: sample, condition). Unpaired 6v6, single batch, Homo sapiens skin. No raw counts exist; QC runs on log2(TPM+1), never a count-model VST.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats",
+          "ggplot2"
+        ],
+        "question": "Do the 6 lesional and 6 control skin samples form clean groups on log2(TPM+1), with no outliers or sample-identity problems, before testing psoriasis lesional vs control?",
+        "grounding": {
+          "claims": [
+            "R-0071@e4e2"
+          ],
+          "reason": "TPM-only input: QC on log2(TPM+1) with PCA/MDS, distances, detected genes per R-0071@e4e2",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "transform = log2_plus_1_unless_already_log: log2(TPM+1) before QC, since input is linear TPM",
+          "n_top_genes = 500 most variable genes for PCA/MDS",
+          "Do not apply a count-model variance-stabilizing transform (no raw counts exist)",
+          "Color the PCA/MDS and the detected-genes panel by condition and check for per-sample outliers"
+        ],
+        "acceptance_criteria": [
+          "PCA/MDS plot colored by condition showing the 6v6 grouping",
+          "Sample-distance heatmap over the 12 samples",
+          "Detected-genes (TPM >= 1) count per sample reported",
+          "A stated verdict on outliers and whether the condition structure is visible before modeling"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma DE on log TPM (lesional vs control)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Same TPM table and metadata as T1S1. 12,000 genes; expect a large fraction to fall below the 1-TPM floor. Reference level set explicitly to control so positive log2FC means higher in lesional. limma is the only valid model class here: DESeq2/edgeR/voom are forbidden on TPM input (R-0004@a06d).",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats"
+        ],
+        "question": "Which genes differ between psoriasis lesional skin (6 samples) and control skin (6 samples), by limma on log2(TPM+1) with BH-adjusted p < 0.05?",
+        "grounding": {
+          "claims": [
+            "R-0072@881a",
+            "R-0073@8b36",
+            "R-0036@9786",
+            "R-0004@a06d",
+            "R-0093@4fa4",
+            "R-0037@e6d8",
+            "R-0043@4f55",
+            "R-0044@1777"
+          ],
+          "reason": "TPM input forbids count models (R-0004@a06d): limma on log2 TPM with trend+robust per the sourced procedure",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-limma-trend-logvalues@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: keep genes with TPM >= 1 in at least 6 samples (smallest group size); report the number kept",
+          "normalize = log2_plus_1_only: no TMM/size-factor normalization on TPM",
+          "reference_level = explicit: set condition factor reference to control before fitting",
+          "contrast_form = factor_numerator_denominator: named contrast lesional-vs-control",
+          "differential_expression: eBayes(trend = TRUE, robust = TRUE) on log2(TPM+1)",
+          "multiple_testing = BH via topTable(adjust.method='BH'); select by adjusted p-value (alpha 0.05), not raw p or fold change alone",
+          "lfc_threshold_policy = test_against_threshold: additionally report treat() results against |log2FC| >= 1 as the effect-size-controlled list",
+          "Report n_tested after the filter beside n_significant",
+          "tpm.csv and metadata.csv row order must be joined on sample names, not assumed aligned"
+        ],
+        "acceptance_criteria": [
+          "Full results table (gene symbol, log2FC, t, P.Value, adj.P.Val) written as CSV",
+          "Counts of genes kept by the TPM filter, genes tested, and genes with BH adj.P.Val < 0.05 (and passing |log2FC| >= 1 under treat)",
+          "Top up- and down-regulated genes in lesional skin reported",
+          "Session info captured for the report step"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Reproducibility report of DE findings",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Depends on T1S2 results. The report must make explicit that only a TPM table was delivered: fold changes are abundance ratios from salmon TPM, no raw counts or quantification directories exist, results cannot be re-derived with count models, and recovering the raw counts or transcript quantifications would allow a more powerful reanalysis. TPM from different library protocols would not be comparable across samples, though this cohort is a single batch.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the final answer to 'which genes differ between lesional and control samples', with full method, threshold, and provenance detail?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "Reporting per R-0041@059a and R-0086@becf: method, versions, design, thresholds, counts, session record",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "report_fields = method, package versions, design formula, contrast, thresholds (alpha, LFC), n_tested, n_DE, session_info",
+          "reproducibility_record = sessionInfo and package versions stored with the results",
+          "State the TPM-only caveat and the recommendation to request raw counts or quantification directories",
+          "List the top differentially expressed genes with direction and effect size"
+        ],
+        "acceptance_criteria": [
+          "A written report naming method, versions, design, contrast, thresholds, n_tested, n_DE, and the session info",
+          "Explicit TPM-only data caveat and reanalysis recommendation",
+          "Final ranked DE gene list attached to the report"
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control DE from TPM",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The analysis receives only a gene-level TPM table (12,000 genes x 12 samples, salmon-derived, no raw counts or quantification dirs) plus a 12x2 metadata table describing 6 psoriasis lesional vs 6 control unpaired skin samples in a single batch. With TPM input and no counts, count-based models (DESeq2/edgeR/voom) are invalid; the grounded procedure is limma on log2(TPM+1) with trend=TRUE and robust empirical Bayes. Flow: (1) sample-structure QC on log values — PCA/MDS, sample distances, detected genes per sample — to confirm the 6v6 structure separates by condition and flag outliers; (2) single analysis step applying the 1-TPM floor (>= 6 samples, the smallest group size), log2(+1) transform, explicit control reference level, named contrast lesional-vs-control, limma eBayes(trend=TRUE, robust=TRUE), and BH adjustment with results selected by adjusted p-value, with an optional treat-style test against |log2FC| >= 1; (3) a reproducibility report stating method, versions, design, thresholds, n_tested, n_DE genes, and the TPM-only caveat that fold changes are abundance ratios, not counts-based effects, and recommending recovery of raw counts or quantification directories for a definitive analysis."
+  },
+  "usage": {
+    "inputTokens": 253774,
+    "outputTokens": 3954,
+    "cacheReadInputTokens": 142912,
+    "reasoningTokens": 149
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "PCA/MDS on log2(TPM+1), sample distance heatmap, detected genes",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "TPM abundance floor",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "log2(TPM+1) transform only",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "design matrix ~condition, explicit reference level, named contrast",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma eBayes with trend=TRUE robust=TRUE on log2 TPM",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH via topTable, treat-style threshold testing optional",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record and DE summary table",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info"
+              },
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "limma linear model on log-scale expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "limma linear model on log-scale expression values",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "limma linear model on log-scale expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "limma linear model on log-scale expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma linear model on log-scale expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "limma linear model on log-scale expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "limma linear model on log-scale expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info"
+              },
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC on log abundance values: MDS or PCA, sample distances, detected genes",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low abundance filter on TPM, FPKM, or log expression values",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": 1
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "log2(TPM+1) transform only",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "design matrix ~condition with explicit reference level and named contrast",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma linear model on log-scale expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg via topTable",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record and DE summary",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info"
+              },
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control DE from TPM",
+          "analytical_narrative": "The analysis receives only a gene-level TPM table (12,000 genes x 12 samples, salmon-derived, no raw counts or quantification dirs) plus a 12x2 metadata table describing 6 psoriasis lesional vs 6 control unpaired skin samples in a single batch. With TPM input and no counts, count-based models (DESeq2/edgeR/voom) are invalid; the grounded procedure is limma on log2(TPM+1) with trend=TRUE and robust empirical Bayes. Flow: (1) sample-structure QC on log values — PCA/MDS, sample distances, detected genes per sample — to confirm the 6v6 structure separates by condition and flag outliers; (2) single analysis step applying the 1-TPM floor (>= 6 samples, the smallest group size), log2(+1) transform, explicit control reference level, named contrast lesional-vs-control, limma eBayes(trend=TRUE, robust=TRUE), and BH adjustment with results selected by adjusted p-value, with an optional treat-style test against |log2FC| >= 1; (3) a reproducibility report stating method, versions, design, thresholds, n_tested, n_DE genes, and the TPM-only caveat that fold changes are abundance ratios, not counts-based effects, and recommending recovery of raw counts or quantification directories for a definitive analysis.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on log TPM",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 lesional and 6 control skin samples form clean groups on log2(TPM+1), with no outliers or sample-identity problems, before testing psoriasis lesional vs control?",
+              "context": "Inputs: /eval-four-models-with-tpm-input-n6-1/data/inputs/abundance/tpm.csv (12,000 gene-symbol rows x 13 cols, first col gene symbol) and /eval-four-models-with-tpm-input-n6-1/data/inputs/metadata/metadata.csv (12 rows x 2 cols: sample, condition). Unpaired 6v6, single batch, Homo sapiens skin. No raw counts exist; QC runs on log2(TPM+1), never a count-model VST.",
+              "constraints": [
+                "transform = log2_plus_1_unless_already_log: log2(TPM+1) before QC, since input is linear TPM",
+                "n_top_genes = 500 most variable genes for PCA/MDS",
+                "Do not apply a count-model variance-stabilizing transform (no raw counts exist)",
+                "Color the PCA/MDS and the detected-genes panel by condition and check for per-sample outliers"
+              ],
+              "acceptance_criteria": [
+                "PCA/MDS plot colored by condition showing the 6v6 grouping",
+                "Sample-distance heatmap over the 12 samples",
+                "Detected-genes (TPM >= 1) count per sample reported",
+                "A stated verdict on outliers and whether the condition structure is visible before modeling"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0071@e4e2"
+                ],
+                "template": "tpl-qc-log-abundance@1.0.0",
+                "reason": "TPM-only input: QC on log2(TPM+1) with PCA/MDS, distances, detected genes per R-0071@e4e2"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "limma DE on log TPM (lesional vs control)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes differ between psoriasis lesional skin (6 samples) and control skin (6 samples), by limma on log2(TPM+1) with BH-adjusted p < 0.05?",
+              "context": "Same TPM table and metadata as T1S1. 12,000 genes; expect a large fraction to fall below the 1-TPM floor. Reference level set explicitly to control so positive log2FC means higher in lesional. limma is the only valid model class here: DESeq2/edgeR/voom are forbidden on TPM input (R-0004@a06d).",
+              "constraints": [
+                "filter_low_counts: keep genes with TPM >= 1 in at least 6 samples (smallest group size); report the number kept",
+                "normalize = log2_plus_1_only: no TMM/size-factor normalization on TPM",
+                "reference_level = explicit: set condition factor reference to control before fitting",
+                "contrast_form = factor_numerator_denominator: named contrast lesional-vs-control",
+                "differential_expression: eBayes(trend = TRUE, robust = TRUE) on log2(TPM+1)",
+                "multiple_testing = BH via topTable(adjust.method='BH'); select by adjusted p-value (alpha 0.05), not raw p or fold change alone",
+                "lfc_threshold_policy = test_against_threshold: additionally report treat() results against |log2FC| >= 1 as the effect-size-controlled list",
+                "Report n_tested after the filter beside n_significant",
+                "tpm.csv and metadata.csv row order must be joined on sample names, not assumed aligned"
+              ],
+              "acceptance_criteria": [
+                "Full results table (gene symbol, log2FC, t, P.Value, adj.P.Val) written as CSV",
+                "Counts of genes kept by the TPM filter, genes tested, and genes with BH adj.P.Val < 0.05 (and passing |log2FC| >= 1 under treat)",
+                "Top up- and down-regulated genes in lesional skin reported",
+                "Session info captured for the report step"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0072@881a",
+                  "R-0073@8b36",
+                  "R-0036@9786",
+                  "R-0004@a06d",
+                  "R-0093@4fa4",
+                  "R-0037@e6d8",
+                  "R-0043@4f55",
+                  "R-0044@1777"
+                ],
+                "template": "tpl-limma-trend-logvalues@1.0.0",
+                "reason": "TPM input forbids count models (R-0004@a06d): limma on log2 TPM with trend+robust per the sourced procedure"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Reproducibility report of DE findings",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the final answer to 'which genes differ between lesional and control samples', with full method, threshold, and provenance detail?",
+              "context": "Depends on T1S2 results. The report must make explicit that only a TPM table was delivered: fold changes are abundance ratios from salmon TPM, no raw counts or quantification directories exist, results cannot be re-derived with count models, and recovering the raw counts or transcript quantifications would allow a more powerful reanalysis. TPM from different library protocols would not be comparable across samples, though this cohort is a single batch.",
+              "constraints": [
+                "report_fields = method, package versions, design formula, contrast, thresholds (alpha, LFC), n_tested, n_DE, session_info",
+                "reproducibility_record = sessionInfo and package versions stored with the results",
+                "State the TPM-only caveat and the recommendation to request raw counts or quantification directories",
+                "List the top differentially expressed genes with direction and effect size"
+              ],
+              "acceptance_criteria": [
+                "A written report naming method, versions, design, contrast, thresholds, n_tested, n_DE, and the session info",
+                "Explicit TPM-only data caveat and reanalysis recommendation",
+                "Final ranked DE gene list attached to the report"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "Reporting per R-0041@059a and R-0086@becf: method, versions, design, thresholds, counts, session record"
+              }
+            }
+          ],
+          "created_at": "2026-09-06T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The core construction matches the reference: DESeq2 Wald on raw counts with ~condition and vehicle as reference, the full unshrunken Wald vector fed to decoupler ULM on signed CollecTRI with a five-target floor and BH across TFs, plus a per-sample VST activity matrix for replicate consistency and a heatmap. Deviations are the use of Welch/Mann-Whitney rather than limma on per-sample scores, a vague 'or' between two filter rules, and the addition of unsigned GTRD TF-target GSEA and a possible ORA fallback on TF-target sets, which the reference explicitly flags as the wrong construction even if labelled weak corroboration. Enrichment states the ranking metric and the tested-gene universe but names no collection versions (CollecTRI, WikiPathways) and no size window for pathway sets, and the padj 0.05-or-0.1 ORA switch is post hoc. Reporting is otherwise thorough on design, thresholds, target counts, and the inference-not-measurement caveat."
+}

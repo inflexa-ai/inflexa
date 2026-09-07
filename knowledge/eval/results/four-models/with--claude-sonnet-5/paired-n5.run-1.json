@@ -1,0 +1,882 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "paired-n5",
+  "run": 1,
+  "startedAt": "2026-09-06T19:32:46.127Z",
+  "elapsedMs": 104197,
+  "outcome": "plan_submitted",
+  "planId": "pln-37cf368c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (blind VST, PCA, sample distances)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A subject whose control and treated samples do not pair (e.g. cluster with the wrong condition or with a different subject) must be flagged before the paired model is fit, since the design ~subject+condition assumes correct pairing."
+        ],
+        "context": "Data: /eval-four-models-with-paired-n5-1/data/inputs/counts/counts.csv (12000 genes x 10 samples, raw STAR/featureCounts integer counts) and metadata.csv (10 samples x subject, condition). Design: 5 subjects, each contributing one control and one treated sample.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 5 control and 5 treated blood samples pair correctly by subject, and does any sample depart from its expected group before fitting the paired model?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "R-0033: sample structure QC (blind vst, PCA on top-variable genes, sample distance heatmap) precedes any count model.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500 for the PCA (doi:10.12688/f1000research.7035.1)",
+          "transform = vst(blind=TRUE) (DESeq2 vignette, blind dispersion estimation)"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the raw counts.csv (12000 genes x 10 samples)",
+          "PCA plotted on the top 500 most variable genes, colored by condition and labeled by subject",
+          "Sample-to-sample Euclidean distance heatmap produced",
+          "Library size per sample reported and any low-depth or outlier sample flagged"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 paired Wald test with apeglm shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 5 replicates per condition cell (below 7), DESeq2 flags count outliers by Cook's distance and sets their p-value/padj to NA rather than replacing the count — report these genes separately from the independent-filtering NAs.",
+          "No GC-content/gene-length bias correction tool (cqn/EDASeq) is available in this environment; run the log-ratio-vs-GC-content diagnostic and state whether a trend exists rather than silently skipping the check."
+        ],
+        "context": "Paired design, 5 subjects x 2 conditions (control, treated), no batch. Blocking factor is subject. Raw integer counts from STAR/featureCounts, gene-level, no length correction, no tximport.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Within each of the 5 subjects, which genes are differentially expressed between the treated and control blood sample, controlling for between-subject variation?",
+        "grounding": {
+          "claims": [
+            "R-0011@233b",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0064@92ec",
+            "R-0009@f54e",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "R-0011: paired design blocked on subject with DESeq2 Wald + apeglm; validated by execute_knowledge_check with ok:true.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-blocked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count=10, min_samples=5 (smallest group size) for the pre-filter",
+          "design_terms = subject, condition; reference_level set explicitly, not left to alphabetical default",
+          "test = Wald; count_outlier_policy = flag_and_report_na",
+          "lfc_shrink = apeglm on the condition coefficient",
+          "multiple_testing: BH adjustment, alpha=0.05, independent_filtering=true, results() alpha matched to reporting cutoff"
+        ],
+        "acceptance_criteria": [
+          "Genes pre-filtered to >=10 counts in >=5 samples (the smaller group size), pre-filter kept minimal",
+          "DESeq2 design = ~subject + condition, condition releveled with an explicit reference level (control)",
+          "Median-of-ratios size factors computed internally by DESeq(); no separate normalization applied to the input counts",
+          "Wald test run on the condition coefficient; apeglm shrinkage applied to log2FoldChange",
+          "Results table reports both unshrunken log2FoldChange (with lfcSE) and apeglm-shrunken log2FoldChange, raw p-value, and BH-adjusted p-value (padj), with independent filtering left on",
+          "MA plot and dispersion plot produced as fit diagnostics",
+          "p-value histogram inspected and its shape reported before trusting padj",
+          "Genes with NA padj from Cook's-distance outlier flagging (small per-cell replicate count) reported separately from those removed by independent filtering",
+          "DE gene count reported at padj < 0.05"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway over-representation analysis on significant DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "An ORA on a short significant-gene list (<~50 genes) has low power and is sensitive to the significance threshold; state the size of the significant list plainly in the report.",
+          "No local KEGG collection is available; KEGG is out of scope for this enrichment unless a licensed local copy is provided separately."
+        ],
+        "context": "Input is the DESeq2 results table from T1S2 (gene symbols, log2FoldChange, padj) for the paired control-vs-treated contrast. Reference gene sets available in the environment: MSigDB Hallmark human (h.all.v2026.1.Hs.symbols.gmt), Reactome pathways (ReactomePathways.gmt, filtered to Homo sapiens via ReactomePathways.txt), and WikiPathways human (wikipathways_Homo_sapiens.gmt).",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which pathways (Hallmark, Reactome, WikiPathways human) are over-represented among the genes significantly changed by treatment within subjects?",
+        "grounding": {
+          "claims": [
+            "R-0048@500d",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0165@e456"
+          ],
+          "reason": "execute_knowledge_check rejected fgsea preranked for this situation and returned Over-representation analysis with an explicit universe as the only permitted method; plan revised accordingly and re-validated (ok:true).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "enrichment method fixed to over-representation analysis with an explicit universe (per knowledge-service policy check for this paired n=5 gene-list situation; preranked fgsea GSEA was checked and flagged as not permitted for this situation)",
+          "universe = tested_genes; min_size=15; max_size=500; id_mapping via org.Hs.eg.db with unmapped share reported",
+          "collections reported with release stated per collection, not merged"
+        ],
+        "acceptance_criteria": [
+          "Gene symbols mapped to Entrez IDs via org.Hs.eg.db, with the unmapped share reported",
+          "ORA (clusterProfiler enricher) run separately against MSigDB Hallmark human (50 sets), Reactome human pathways, and WikiPathways human pathways, each with its release/version stated and not merged into one set list",
+          "Universe set explicitly to the full set of genes that passed the pre-filter and were tested in T1S2, not the whole genome",
+          "Gene set size window of 15-500 members (after intersecting with the tested-gene universe) applied to each collection",
+          "BH adjustment applied within each collection's ORA result",
+          "Redundant/overlapping significant sets collapsed to representative sets, full table kept as supplement",
+          "If fewer than ~50 genes pass padj<0.05 in T1S2, this is stated explicitly as a power caveat for the ORA result"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Compile DE + per-subject concordance + enrichment report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not overstate ORA results as mechanistic conclusions; state explicitly that enrichment results depend on the chosen method and threshold."
+        ],
+        "context": "Final synthesis step combining the DESeq2 paired DE results (T1S2) and the ORA enrichment results (T2S1) for the 5-subject paired control-vs-treated blood dataset.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Summarize which genes respond to treatment within subjects, how consistent that response is across the 5 subjects, and which pathways it maps to.",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "Report step type has no single dedicated rule but aggregates the reporting rules already fired for the DE and enrichment steps.",
+          "status": "ungrounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "report_fields: method, versions, design, thresholds, n_tested, n_de, session_info",
+          "reproducibility_record: session_info, seed, package_versions, collection_version, annotation_release"
+        ],
+        "acceptance_criteria": [
+          "Report states design formula (~subject+condition), reference level, contrast direction, package versions (DESeq2, apeglm, clusterProfiler, org.Hs.eg.db), and gene-set collection releases",
+          "Report gives number of genes tested after filtering, number of DE genes at padj<0.05, and the fold-change threshold policy if any was applied",
+          "MA plot and dispersion plot included as fit diagnostics; p-value histogram included",
+          "For each DE gene, both shrunken and unshrunken log2FoldChange with lfcSE are reported; ranking/plots use the shrunken value",
+          "Per-subject concordance: for the top DE genes, report the raw per-subject treated-vs-control log2 difference (from the VST or normalized counts) to show whether the effect is consistent across all 5 subjects or driven by a subset",
+          "Enrichment section states database, version, universe, size window, and multiple-testing method for each of the three collections, with leading genes listed per significant set",
+          "Full session info, random seeds, and reproducibility record included"
+        ]
+      }
+    ],
+    "title": "Paired within-subject DE: control vs treated (n=5)",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "Five subjects each contribute a control and a treated blood sample (paired design, no batch). The research question — which genes respond to treatment within each subject — is answered by DESeq2 with a design of ~subject + condition, which removes between-subject variation and tests the within-subject condition effect via the Wald test on the condition coefficient, with apeglm shrinkage of the reported log2 fold change. QC (blind VST, PCA, sample-distance heatmap) precedes the model to confirm subjects pair correctly and no sample is an outlier. A minimal pre-filter (>=10 counts in >=5 samples, the smaller group size) keeps DESeq2's independent filtering as the primary filter. BH-adjusted p-values at alpha=0.05 select DE genes. Because the DESeq2 Wald statistic is signed and monotone in one coefficient, an unambiguous ranked list exists, but knowledge-service policy for this exact situation (paired n=5, gene-level enrichment) restricts the enrichment method to over-representation analysis (ORA) with an explicit universe of tested genes rather than preranked GSEA — this was verified against the knowledge service (fgsea preranked was flagged as not permitted here) and the plan follows ORA against MSigDB Hallmark, Reactome, and WikiPathways human collections, each with its release stated, and with the required caveat that ORA needs at least ~50 significant genes to have power. A final report step compiles the DE results, fit diagnostics, per-subject concordance of the DE genes, and the enrichment result with full reproducibility metadata (session info, package versions, collection releases)."
+  },
+  "usage": {
+    "inputTokens": 869463,
+    "outputTokens": 8915,
+    "cacheCreationInputTokens": 185490,
+    "cacheReadInputTokens": 683865,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 5,
+        "n_per_group_max": 5,
+        "paired": true,
+        "batch": "none",
+        "blocking_factor": "subject",
+        "enrichment_input": "ranked_list"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "msigdb-hallmark-human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "DESeq2",
+          "apeglm",
+          "fgsea",
+          "clusterProfiler",
+          "ashr"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 5,
+        "n_per_group_max": 5,
+        "paired": true,
+        "batch": "none",
+        "blocking_factor": "subject",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind), PCA, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >=5 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 5
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors (internal to DESeq())",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "design = ~ subject + condition, explicit reference level, paired per-subject blocking",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "reference_level",
+                "value": "control"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test, condition coefficient, within-subject paired contrast",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage on the condition coefficient",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg on Wald p-values with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked on Wald statistic, MSigDB Hallmark human then Reactome then WikiPathways human",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE + per-subject paired concordance + enrichment report with reproducibility record"
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 5,
+        "n_per_group_max": 5,
+        "paired": true,
+        "batch": "none",
+        "blocking_factor": "subject",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind), PCA, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >=5 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 5
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors (internal to DESeq())",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "design = ~ subject + condition, explicit reference level, paired per-subject blocking",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test, condition coefficient, within-subject paired contrast",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage on the condition coefficient",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg on Wald p-values with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the Wald statistic, full ranked gene list, MSigDB Hallmark human then Reactome then WikiPathways human",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "gsea_input",
+                "value": "full_ranked_list"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE + per-subject paired concordance + enrichment report with reproducibility record"
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 5,
+        "n_per_group_max": 5,
+        "paired": true,
+        "batch": "none",
+        "blocking_factor": "subject",
+        "enrichment_input": "gene_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind), PCA, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >=5 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 5
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors (internal to DESeq())",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "model_design",
+            "method": "design = ~ subject + condition, explicit reference level, paired per-subject blocking",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test, condition coefficient, within-subject paired contrast",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage on the condition coefficient",
+            "package": "apeglm"
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg on Wald p-values with independent filtering, alpha=0.05",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "Over-representation analysis (clusterProfiler enricher) with explicit universe of tested genes, on significant DE genes, MSigDB Hallmark human then Reactome then WikiPathways human",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE + per-subject paired concordance + enrichment report with reproducibility record"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Paired within-subject DE: control vs treated (n=5)",
+          "analytical_narrative": "Five subjects each contribute a control and a treated blood sample (paired design, no batch). The research question — which genes respond to treatment within each subject — is answered by DESeq2 with a design of ~subject + condition, which removes between-subject variation and tests the within-subject condition effect via the Wald test on the condition coefficient, with apeglm shrinkage of the reported log2 fold change. QC (blind VST, PCA, sample-distance heatmap) precedes the model to confirm subjects pair correctly and no sample is an outlier. A minimal pre-filter (>=10 counts in >=5 samples, the smaller group size) keeps DESeq2's independent filtering as the primary filter. BH-adjusted p-values at alpha=0.05 select DE genes. Because the DESeq2 Wald statistic is signed and monotone in one coefficient, an unambiguous ranked list exists, but knowledge-service policy for this exact situation (paired n=5, gene-level enrichment) restricts the enrichment method to over-representation analysis (ORA) with an explicit universe of tested genes rather than preranked GSEA — this was verified against the knowledge service (fgsea preranked was flagged as not permitted here) and the plan follows ORA against MSigDB Hallmark, Reactome, and WikiPathways human collections, each with its release stated, and with the required caveat that ORA needs at least ~50 significant genes to have power. A final report step compiles the DE results, fit diagnostics, per-subject concordance of the DE genes, and the enrichment result with full reproducibility metadata (session info, package versions, collection releases).",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC (blind VST, PCA, sample distances)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 5 control and 5 treated blood samples pair correctly by subject, and does any sample depart from its expected group before fitting the paired model?",
+              "acceptance_criteria": [
+                "Blind VST computed on the raw counts.csv (12000 genes x 10 samples)",
+                "PCA plotted on the top 500 most variable genes, colored by condition and labeled by subject",
+                "Sample-to-sample Euclidean distance heatmap produced",
+                "Library size per sample reported and any low-depth or outlier sample flagged"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data: /eval-four-models-with-paired-n5-1/data/inputs/counts/counts.csv (12000 genes x 10 samples, raw STAR/featureCounts integer counts) and metadata.csv (10 samples x subject, condition). Design: 5 subjects, each contributing one control and one treated sample.",
+              "constraints": [
+                "n_top_genes = 500 for the PCA (doi:10.12688/f1000research.7035.1)",
+                "transform = vst(blind=TRUE) (DESeq2 vignette, blind dispersion estimation)"
+              ],
+              "caveats": [
+                "A subject whose control and treated samples do not pair (e.g. cluster with the wrong condition or with a different subject) must be flagged before the paired model is fit, since the design ~subject+condition assumes correct pairing."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "R-0033: sample structure QC (blind vst, PCA on top-variable genes, sample distance heatmap) precedes any count model."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 paired Wald test with apeglm shrinkage",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Within each of the 5 subjects, which genes are differentially expressed between the treated and control blood sample, controlling for between-subject variation?",
+              "acceptance_criteria": [
+                "Genes pre-filtered to >=10 counts in >=5 samples (the smaller group size), pre-filter kept minimal",
+                "DESeq2 design = ~subject + condition, condition releveled with an explicit reference level (control)",
+                "Median-of-ratios size factors computed internally by DESeq(); no separate normalization applied to the input counts",
+                "Wald test run on the condition coefficient; apeglm shrinkage applied to log2FoldChange",
+                "Results table reports both unshrunken log2FoldChange (with lfcSE) and apeglm-shrunken log2FoldChange, raw p-value, and BH-adjusted p-value (padj), with independent filtering left on",
+                "MA plot and dispersion plot produced as fit diagnostics",
+                "p-value histogram inspected and its shape reported before trusting padj",
+                "Genes with NA padj from Cook's-distance outlier flagging (small per-cell replicate count) reported separately from those removed by independent filtering",
+                "DE gene count reported at padj < 0.05"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Paired design, 5 subjects x 2 conditions (control, treated), no batch. Blocking factor is subject. Raw integer counts from STAR/featureCounts, gene-level, no length correction, no tximport.",
+              "constraints": [
+                "min_count=10, min_samples=5 (smallest group size) for the pre-filter",
+                "design_terms = subject, condition; reference_level set explicitly, not left to alphabetical default",
+                "test = Wald; count_outlier_policy = flag_and_report_na",
+                "lfc_shrink = apeglm on the condition coefficient",
+                "multiple_testing: BH adjustment, alpha=0.05, independent_filtering=true, results() alpha matched to reporting cutoff"
+              ],
+              "caveats": [
+                "With 5 replicates per condition cell (below 7), DESeq2 flags count outliers by Cook's distance and sets their p-value/padj to NA rather than replacing the count — report these genes separately from the independent-filtering NAs.",
+                "No GC-content/gene-length bias correction tool (cqn/EDASeq) is available in this environment; run the log-ratio-vs-GC-content diagnostic and state whether a trend exists rather than silently skipping the check."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0011@233b",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0064@92ec",
+                  "R-0009@f54e",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-blocked@1.0.0",
+                "reason": "R-0011: paired design blocked on subject with DESeq2 Wald + apeglm; validated by execute_knowledge_check with ok:true."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway over-representation analysis on significant DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which pathways (Hallmark, Reactome, WikiPathways human) are over-represented among the genes significantly changed by treatment within subjects?",
+              "acceptance_criteria": [
+                "Gene symbols mapped to Entrez IDs via org.Hs.eg.db, with the unmapped share reported",
+                "ORA (clusterProfiler enricher) run separately against MSigDB Hallmark human (50 sets), Reactome human pathways, and WikiPathways human pathways, each with its release/version stated and not merged into one set list",
+                "Universe set explicitly to the full set of genes that passed the pre-filter and were tested in T1S2, not the whole genome",
+                "Gene set size window of 15-500 members (after intersecting with the tested-gene universe) applied to each collection",
+                "BH adjustment applied within each collection's ORA result",
+                "Redundant/overlapping significant sets collapsed to representative sets, full table kept as supplement",
+                "If fewer than ~50 genes pass padj<0.05 in T1S2, this is stated explicitly as a power caveat for the ORA result"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Input is the DESeq2 results table from T1S2 (gene symbols, log2FoldChange, padj) for the paired control-vs-treated contrast. Reference gene sets available in the environment: MSigDB Hallmark human (h.all.v2026.1.Hs.symbols.gmt), Reactome pathways (ReactomePathways.gmt, filtered to Homo sapiens via ReactomePathways.txt), and WikiPathways human (wikipathways_Homo_sapiens.gmt).",
+              "constraints": [
+                "enrichment method fixed to over-representation analysis with an explicit universe (per knowledge-service policy check for this paired n=5 gene-list situation; preranked fgsea GSEA was checked and flagged as not permitted for this situation)",
+                "universe = tested_genes; min_size=15; max_size=500; id_mapping via org.Hs.eg.db with unmapped share reported",
+                "collections reported with release stated per collection, not merged"
+              ],
+              "caveats": [
+                "An ORA on a short significant-gene list (<~50 genes) has low power and is sensitive to the significance threshold; state the size of the significant list plainly in the report.",
+                "No local KEGG collection is available; KEGG is out of scope for this enrichment unless a licensed local copy is provided separately."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0048@500d",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0165@e456"
+                ],
+                "reason": "execute_knowledge_check rejected fgsea preranked for this situation and returned Over-representation analysis with an explicit universe as the only permitted method; plan revised accordingly and re-validated (ok:true)."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Compile DE + per-subject concordance + enrichment report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "Summarize which genes respond to treatment within subjects, how consistent that response is across the 5 subjects, and which pathways it maps to.",
+              "acceptance_criteria": [
+                "Report states design formula (~subject+condition), reference level, contrast direction, package versions (DESeq2, apeglm, clusterProfiler, org.Hs.eg.db), and gene-set collection releases",
+                "Report gives number of genes tested after filtering, number of DE genes at padj<0.05, and the fold-change threshold policy if any was applied",
+                "MA plot and dispersion plot included as fit diagnostics; p-value histogram included",
+                "For each DE gene, both shrunken and unshrunken log2FoldChange with lfcSE are reported; ranking/plots use the shrunken value",
+                "Per-subject concordance: for the top DE genes, report the raw per-subject treated-vs-control log2 difference (from the VST or normalized counts) to show whether the effect is consistent across all 5 subjects or driven by a subset",
+                "Enrichment section states database, version, universe, size window, and multiple-testing method for each of the three collections, with leading genes listed per significant set",
+                "Full session info, random seeds, and reproducibility record included"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Final synthesis step combining the DESeq2 paired DE results (T1S2) and the ORA enrichment results (T2S1) for the 5-subject paired control-vs-treated blood dataset.",
+              "constraints": [
+                "report_fields: method, versions, design, thresholds, n_tested, n_de, session_info",
+                "reproducibility_record: session_info, seed, package_versions, collection_version, annotation_release"
+              ],
+              "caveats": [
+                "Do not overstate ORA results as mechanistic conclusions; state explicitly that enrichment results depend on the chosen method and threshold."
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "Report step type has no single dedicated rule but aggregates the reporting rules already fired for the DE and enrichment steps."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

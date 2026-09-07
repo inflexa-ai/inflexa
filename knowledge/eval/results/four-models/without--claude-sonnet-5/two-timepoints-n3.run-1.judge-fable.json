@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly frames the two-time-point data as a 2x2 factorial with time as a factor, fits ~ time + condition + time:condition, tests the interaction by Wald (cross-checked by LRT against the reduced model), and reports the simple effects of treatment at t0 and t1 with shrinkage and BH at 0.05, while flagging the n=3 power limit and the need to document reference levels. QC is concrete (library size, vst PCA colored by condition and shaped by time, distance heatmap) but lacks a stated policy for handling an outlier or shallow sample, and normalization inside DESeq2 is implied rather than stated. The low-count filter (rowSums >= 10) is minimal but only loosely justified. Enrichment and STRING network steps were not asked for; they are included anyway with a stated ORA universe but no collection version, no set-size window, and an ambiguous 'ORA or GSEA-style' choice, which is incorrect for a padj-filtered list. Report elements are mostly named but software versions are not."
+}

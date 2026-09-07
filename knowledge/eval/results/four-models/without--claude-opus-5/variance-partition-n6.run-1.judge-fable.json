@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference structure: filterByExpr, TMM and voom weights before a variancePartition fit that is explicitly descriptive, then DESeq2 with ~ sex + age + condition, control as reference, BH at 0.05 and apeglm; the covariates are fixed in the DE design and the unadjusted model is comparison-only. Deviations: condition and sex are entered as fixed rather than random effects in the partition (with a questionable justification), age is centered only conditionally, the sex/age-by-group balance table is only conditional, and the |LFC|>1 cut is applied post hoc rather than via lfcThreshold. QC lacks library sizes and an outlier/shallow-sample policy, and two different low-count filters are used across steps. Enrichment was neither asked nor warranted at n=12; it is included with a stated universe and ranking metric but no collection version or set-size window, and package versions are not requested in the report."
+}

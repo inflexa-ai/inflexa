@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses the count-model route for TPM input and fits limma on log2(TPM+1) with eBayes(trend=TRUE, robust=TRUE), a two-group design with control set explicitly as reference, BH at 0.05 via topTable, and a fold-change threshold tested inside the model with treat(). QC is on log values (PCA/MDS on top-500 variable genes, correlation heatmap, detected genes, column sums) with a flag-and-sensitivity policy for outliers, and the filter (TPM >= 1 in at least 6 samples, the smallest group size) is minimal and justified; no TMM, size factors, or voom are applied, and enrichment is correctly omitted as unasked. The only gaps are that the plan notes the preferred tximport/lengthScaledTPM route is impossible but never explicitly asks the core to deliver the raw counts or quantification directories, and the report caveat calls a 6 vs 6 design 'unreplicated', which is imprecise."
+}

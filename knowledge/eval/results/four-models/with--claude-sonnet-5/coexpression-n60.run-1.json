@@ -1,0 +1,980 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "coexpression-n60",
+  "run": 1,
+  "startedAt": "2026-09-06T20:36:28.903Z",
+  "elapsedMs": 187516,
+  "outcome": "plan_submitted",
+  "planId": "pln-791f74f5",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (vst-blind, PCA, distances)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 120 whole-blood samples (60 case, 60 control) show any batch-like or outlier structure in a blind variance-stabilized PCA/sample-distance analysis before module detection or DE testing proceeds?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf; template tpl-qc-eda@1.0.0",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "vst(blind=TRUE) computed on the filtered count matrix",
+          "PCA plot on top 500 variable genes colored by case/control status produced",
+          "Sample-to-sample Euclidean distance heatmap produced",
+          "Library size per sample reported and any outlier sample flagged with a stated criterion"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count filter, TMM normalization, and limma-voom differential expression (case vs control)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "In a population cohort the sample-to-sample variation does not obey the negative binomial model; DESeq2 and edgeR can report many false positives even on permuted labels at n>=50/group. limma-voom keeps FDR closer to nominal but not universally — report a Wilcoxon or permutation check as a control."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "statmod"
+        ],
+        "question": "With filterByExpr low-count filtering and TMM normalization on the 12000 x 120 gene-level Salmon counts, which genes are differentially expressed between case (n=60) and control (n=60) whole-blood samples under a limma-voom fixed-effects model, given that at 60 samples/group the negative-binomial count models (DESeq2/edgeR) are known to exaggerate false positives?",
+        "grounding": {
+          "claims": [
+            "R-0015@65aa",
+            "R-0058@99e1",
+            "R-0057@31cc",
+            "R-0002@087b",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0043@4f55"
+          ],
+          "reason": "Population-scale cohort (60/60): rule R-0015 flags count-model false-positive inflation and mandates limma-voom with a stated Wilcoxon/permutation control; template tpl-limma-voom-fixed@1.0.0",
+          "status": "flagged",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Genes filtered with filterByExpr (edgeR), minimum 10 counts in at least 60 samples (smallest group size)",
+          "TMM normalization factors computed with edgeR calcNormFactors before voom",
+          "voom precision weights computed and limma linear model fit with condition as an explicit factor, reference level (control) stated",
+          "Named contrast case-vs-control reported; moderated t-statistics and BH-adjusted p-values (alpha=0.05) reported for every tested gene",
+          "p-value histogram inspected and reported before trusting adjusted p-values",
+          "Caveat stated: population-scale cohort inflates false positives in count-based models; limma-voom chosen per the recommendation, and a Wilcoxon rank-sum test run as a control/sensitivity check on the same contrast",
+          "Number of genes tested and number of significant genes (padj<0.05) reported with effect sizes (logFC) alongside p-values"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "WGCNA signed co-expression network, module detection, and module-trait correlation",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A single-batch, unpaired 60 vs 60 design supports this network construction, but module-trait correlation is descriptive/exploratory — it is not a hypothesis test with the same guarantees as the differential expression model, and modules should be cross-checked against the limma-voom DE gene list for convergent evidence."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA"
+        ],
+        "question": "Across all 120 whole-blood samples, what co-expression modules do the ~12000 genes (after low-count filtering) form under a signed WGCNA network, and which of these modules' eigengenes correlate significantly with case-vs-control status?",
+        "grounding": {
+          "claims": [
+            "R-0139@0008"
+          ],
+          "reason": "Co-expression modules: signed WGCNA network on the variance-stabilized matrix, soft threshold by scale-free fit, eigengenes against traits, hubs by module membership, per R-0139@0008; template tpl-wgcna-modules@1.0.0",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 12
+        },
+        "step_type": "coexpression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Input is the vst-blind variance-stabilized expression matrix (from T1S1) restricted to the same low-count-filtered gene set used in T1S2",
+          "Soft-threshold power selected as the lowest power reaching scale-free topology fit index >= 0.8 (pickSoftThreshold), power and fit reported",
+          "Signed network built (blockwiseModules or equivalent step-wise TOM + hierarchical clustering) with minModuleSize=30 and mergeCutHeight=0.25 explicitly stated",
+          "Module eigengenes computed for every module (including grey/unassigned reported separately)",
+          "Each module eigengene correlated with case/control status (point-biserial/Pearson correlation with a p-value), multiple-testing correction across modules applied (BH)",
+          "Top hub genes per significant module ranked by module membership (kME, correlation of gene with its module eigengene) reported",
+          "Module count, module sizes, and sample size (n=120) stated beside every module correlation, with an explicit caution that correlations are estimated from 120 samples and can be unstable for small modules"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Pathway enrichment of case-associated modules and the DE gene ranking",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "fgsea"
+        ],
+        "question": "Which MSigDB Hallmark (and, as a follow-up, Reactome) gene sets are enriched among the genes of the WGCNA modules found to be significantly correlated with case/control status, and among the full ranked list of tested genes from the limma-voom contrast?",
+        "grounding": {
+          "claims": [
+            "R-0088@8b80",
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0a77"
+          ],
+          "reason": "Population-scale cohort enrichment: camera on the limma-voom fit as first pass, Hallmark then Reactome as collections, tested-gene universe, ORA gated at >=50 significant genes per R-0103; template tpl-camera-hallmark@1.0.0",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "camera (limma) run on the full ranked gene list from T1S2 (ranked by moderated t-statistic) against MSigDB Hallmark (2026.1, human, 50 sets) with inter-gene correlation estimated from the data; universe = tested genes only",
+          "For each module significantly correlated with status in T2S1, an over-representation test (with the tested-gene universe) is run only if the module holds >=50 genes; otherwise state the module size and skip ORA per the small-list rule",
+          "Gene set size window applied: keep sets with 15-500 members among tested genes",
+          "Second pass against Reactome pathways (current release) reported for the same ranked list, with each collection's release stated and never merged into one set list",
+          "Gene identifiers mapped from symbol to Entrez via org.Hs.eg.db (version stated) before the ORA test; unmapped share reported",
+          "Redundant significant gene sets collapsed to one representative with members retained in a supplementary table",
+          "Report states that enrichment results are method-dependent (camera vs ORA can disagree) and gives both where applicable"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Integrated report: modules, module-trait correlation, DE genes, and enrichment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the reproducible, decision-ready summary of the co-expression modules, their case/control associations, the complementary differential expression result, and the pathway interpretation for this 120-sample whole-blood cohort?",
+        "grounding": {
+          "claims": [
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0089@69f0",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "No single rule covers the composite report step; individual reporting rules (effect-size-with-pvalue, reproducibility record, enrichment reporting fields) are folded in as constraints on prior steps and restated here",
+          "status": "ungrounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1",
+          "T2S2"
+        ],
+        "acceptance_criteria": [
+          "Reports the design (60 case vs 60 control, single batch, unpaired), the reference level, and the named contrast",
+          "Lists module count, module sizes, module-trait correlation table (r, p, BH-adjusted p) for every module, and hub genes for each module significantly associated with status",
+          "Lists DE gene table with unshrunken logFC, moderated t, and BH-adjusted p-value, sorted by effect size within the significant set, plus the population-cohort caveat and the Wilcoxon/permutation control result",
+          "Lists enriched Hallmark and Reactome gene sets with database version, ranking metric, universe, and size window stated, plus leading-edge genes for ranked results",
+          "Includes MA-style diagnostic plot (or limma mean-difference plot) and the WGCNA soft-threshold scale-free-fit diagnostic plot",
+          "Full reproducibility record: sessionInfo, random seeds used (WGCNA network construction, any permutation test), package versions, and the version/date of every reference gene-set collection used"
+        ]
+      }
+    ],
+    "title": "Whole-blood co-expression modules vs case/control status",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "This 60 vs 60 human whole-blood cohort (raw Salmon gene-level counts, 12000 genes x 120 samples, single batch, unpaired) asks which co-expression modules the genes form and which track case vs control. The core analysis is a WGCNA signed co-expression network built from the variance-stabilized, blind-transformed expression matrix: pick a soft-threshold power by the scale-free topology fit (~0.8), cluster genes into modules by topological overlap with dynamic tree cutting, compute module eigengenes, and correlate each eigengene with case/control status (module-trait correlation) plus report hub genes by module membership (kME). QC sample structure (PCA/heatmap on vst-blind values) runs first to confirm no batch/outlier structure would confound module detection or the trait correlation. Because each group has 60 samples (population-scale cohort), the knowledge base flags that DESeq2/edgeR's negative-binomial assumption is exaggerated at this size and recommends limma-voom with TMM normalization for a complementary differential-expression view of individual genes, feeding a camera/fgsea gene-set enrichment against MSigDB Hallmark (then Reactome) to interpret which pathways the case-associated modules and individual DE genes represent. A final report step ties module-trait results, hub genes, DE genes, and enrichment together with full reproducibility records (session info, seed, package/collection versions) and states the population-cohort caveat explicitly."
+  },
+  "usage": {
+    "inputTokens": 4480391,
+    "outputTokens": 10067,
+    "cacheCreationInputTokens": 235774,
+    "cacheReadInputTokens": 4244137,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db annotation"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "WGCNA",
+          "limma",
+          "edgeR",
+          "DESeq2",
+          "apeglm",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "/eval-four-models-with-coexpression-n60-1/data/inputs/metadata"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene length transcript length human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GENCODE gtf human"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human genome annotation gtf"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "genome-annotation"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "EnsDb.Hsapiens"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human chrom sizes"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "path": "genome-annotation"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnsDb.Hsapiens.v86",
+          "biomaRt",
+          "tximport"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "tximport"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "tximeta"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "GenomicFeatures"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "ensembldb"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "org.Hs.eg.db"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "variancePartition"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "statmod"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/cran/WGCNA",
+        "query": "signed network module eigengenes trait correlation"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "WGCNA",
+        "query": "signed network soft threshold module eigengene trait correlation"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/smorabit/hdwgcna",
+        "query": "pickSoftThreshold blockwiseModules signed network module eigengene trait correlation classic WGCNA"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "WGCNA",
+        "query": "pickSoftThreshold blockwiseModules bulk RNA-seq classic package function"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "bwnet",
+        "query": "blockwiseModules R package WGCNA classic"
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "WGCNA blockwiseModules pickSoftThreshold classic weighted gene co-expression network analysis R package",
+        "limit": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "WGCNA weighted gene co-expression network analysis Langfelder Horvath",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "19712483"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "whole blood transcriptomics case control cohort"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "whole blood RNA-seq case control 60 60 WGCNA co-expression modules",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "whole blood transcriptome case control cohort WGCNA",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      }
+    },
+    {
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "whole blood transcriptome case control",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "immunedeconv"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "MCPcounter"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "GSVA"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "query": "dynamicTreeCut"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr low count filter",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM normalization",
+            "package": "edgeR"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom fixed-effects linear model",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "moderated_t"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "WGCNA signed network, blockwiseModules, module eigengenes, module-trait correlation with case/control status, module membership hub genes",
+            "package": "WGCNA",
+            "parameters": [
+              {
+                "name": "network_type",
+                "value": "signed"
+              },
+              {
+                "name": "min_module_size",
+                "value": 30
+              },
+              {
+                "name": "merge_cut_height",
+                "value": 0.25
+              },
+              {
+                "name": "soft_threshold_criterion",
+                "value": "scale_free_fit_index_0.8"
+              },
+              {
+                "name": "input",
+                "value": "vst_blind_expression"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "camera competitive gene set test on WGCNA module gene sets and on limma fit, Hallmark then Reactome",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record with session info, module-trait correlation table, hub genes, DE results"
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind) PCA, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr low count filter",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM normalization",
+            "package": "edgeR"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom fixed-effects linear model",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "moderated_t"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg false discovery rate with independent filtering",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "WGCNA signed network, blockwiseModules, module eigengenes, module-trait correlation with case/control status, module membership hub genes",
+            "package": "WGCNA",
+            "parameters": [
+              {
+                "name": "network_type",
+                "value": "signed"
+              },
+              {
+                "name": "min_module_size",
+                "value": 30
+              },
+              {
+                "name": "merge_cut_height",
+                "value": 0.25
+              },
+              {
+                "name": "soft_threshold_criterion",
+                "value": "scale_free_fit_index_0.8"
+              },
+              {
+                "name": "input",
+                "value": "vst_blind_expression"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "camera competitive gene set test on limma fit, Hallmark then Reactome",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record with session info, module-trait correlation table, hub genes, DE results"
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood co-expression modules vs case/control status",
+          "analytical_narrative": "This 60 vs 60 human whole-blood cohort (raw Salmon gene-level counts, 12000 genes x 120 samples, single batch, unpaired) asks which co-expression modules the genes form and which track case vs control. The core analysis is a WGCNA signed co-expression network built from the variance-stabilized, blind-transformed expression matrix: pick a soft-threshold power by the scale-free topology fit (~0.8), cluster genes into modules by topological overlap with dynamic tree cutting, compute module eigengenes, and correlate each eigengene with case/control status (module-trait correlation) plus report hub genes by module membership (kME). QC sample structure (PCA/heatmap on vst-blind values) runs first to confirm no batch/outlier structure would confound module detection or the trait correlation. Because each group has 60 samples (population-scale cohort), the knowledge base flags that DESeq2/edgeR's negative-binomial assumption is exaggerated at this size and recommends limma-voom with TMM normalization for a complementary differential-expression view of individual genes, feeding a camera/fgsea gene-set enrichment against MSigDB Hallmark (then Reactome) to interpret which pathways the case-associated modules and individual DE genes represent. A final report step ties module-trait results, hub genes, DE genes, and enrichment together with full reproducibility records (session info, seed, package/collection versions) and states the population-cohort caveat explicitly.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC (vst-blind, PCA, distances)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 120 whole-blood samples (60 case, 60 control) show any batch-like or outlier structure in a blind variance-stabilized PCA/sample-distance analysis before module detection or DE testing proceeds?",
+              "acceptance_criteria": [
+                "vst(blind=TRUE) computed on the filtered count matrix",
+                "PCA plot on top 500 variable genes colored by case/control status produced",
+                "Sample-to-sample Euclidean distance heatmap produced",
+                "Library size per sample reported and any outlier sample flagged with a stated criterion"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf; template tpl-qc-eda@1.0.0"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count filter, TMM normalization, and limma-voom differential expression (case vs control)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "With filterByExpr low-count filtering and TMM normalization on the 12000 x 120 gene-level Salmon counts, which genes are differentially expressed between case (n=60) and control (n=60) whole-blood samples under a limma-voom fixed-effects model, given that at 60 samples/group the negative-binomial count models (DESeq2/edgeR) are known to exaggerate false positives?",
+              "acceptance_criteria": [
+                "Genes filtered with filterByExpr (edgeR), minimum 10 counts in at least 60 samples (smallest group size)",
+                "TMM normalization factors computed with edgeR calcNormFactors before voom",
+                "voom precision weights computed and limma linear model fit with condition as an explicit factor, reference level (control) stated",
+                "Named contrast case-vs-control reported; moderated t-statistics and BH-adjusted p-values (alpha=0.05) reported for every tested gene",
+                "p-value histogram inspected and reported before trusting adjusted p-values",
+                "Caveat stated: population-scale cohort inflates false positives in count-based models; limma-voom chosen per the recommendation, and a Wilcoxon rank-sum test run as a control/sensitivity check on the same contrast",
+                "Number of genes tested and number of significant genes (padj<0.05) reported with effect sizes (logFC) alongside p-values"
+              ],
+              "packages": [
+                "edgeR",
+                "limma",
+                "statmod"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "In a population cohort the sample-to-sample variation does not obey the negative binomial model; DESeq2 and edgeR can report many false positives even on permuted labels at n>=50/group. limma-voom keeps FDR closer to nominal but not universally — report a Wilcoxon or permutation check as a control."
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0015@65aa",
+                  "R-0058@99e1",
+                  "R-0057@31cc",
+                  "R-0002@087b",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0043@4f55"
+                ],
+                "reason": "Population-scale cohort (60/60): rule R-0015 flags count-model false-positive inflation and mandates limma-voom with a stated Wilcoxon/permutation control; template tpl-limma-voom-fixed@1.0.0"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "WGCNA signed co-expression network, module detection, and module-trait correlation",
+              "track": "T2",
+              "step_type": "coexpression",
+              "question": "Across all 120 whole-blood samples, what co-expression modules do the ~12000 genes (after low-count filtering) form under a signed WGCNA network, and which of these modules' eigengenes correlate significantly with case-vs-control status?",
+              "acceptance_criteria": [
+                "Input is the vst-blind variance-stabilized expression matrix (from T1S1) restricted to the same low-count-filtered gene set used in T1S2",
+                "Soft-threshold power selected as the lowest power reaching scale-free topology fit index >= 0.8 (pickSoftThreshold), power and fit reported",
+                "Signed network built (blockwiseModules or equivalent step-wise TOM + hierarchical clustering) with minModuleSize=30 and mergeCutHeight=0.25 explicitly stated",
+                "Module eigengenes computed for every module (including grey/unassigned reported separately)",
+                "Each module eigengene correlated with case/control status (point-biserial/Pearson correlation with a p-value), multiple-testing correction across modules applied (BH)",
+                "Top hub genes per significant module ranked by module membership (kME, correlation of gene with its module eigengene) reported",
+                "Module count, module sizes, and sample size (n=120) stated beside every module correlation, with an explicit caution that correlations are estimated from 120 samples and can be unstable for small modules"
+              ],
+              "packages": [
+                "WGCNA"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 12
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "A single-batch, unpaired 60 vs 60 design supports this network construction, but module-trait correlation is descriptive/exploratory — it is not a hypothesis test with the same guarantees as the differential expression model, and modules should be cross-checked against the limma-voom DE gene list for convergent evidence."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0139@0008"
+                ],
+                "reason": "Co-expression modules: signed WGCNA network on the variance-stabilized matrix, soft threshold by scale-free fit, eigengenes against traits, hubs by module membership, per R-0139@0008; template tpl-wgcna-modules@1.0.0"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Pathway enrichment of case-associated modules and the DE gene ranking",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which MSigDB Hallmark (and, as a follow-up, Reactome) gene sets are enriched among the genes of the WGCNA modules found to be significantly correlated with case/control status, and among the full ranked list of tested genes from the limma-voom contrast?",
+              "acceptance_criteria": [
+                "camera (limma) run on the full ranked gene list from T1S2 (ranked by moderated t-statistic) against MSigDB Hallmark (2026.1, human, 50 sets) with inter-gene correlation estimated from the data; universe = tested genes only",
+                "For each module significantly correlated with status in T2S1, an over-representation test (with the tested-gene universe) is run only if the module holds >=50 genes; otherwise state the module size and skip ORA per the small-list rule",
+                "Gene set size window applied: keep sets with 15-500 members among tested genes",
+                "Second pass against Reactome pathways (current release) reported for the same ranked list, with each collection's release stated and never merged into one set list",
+                "Gene identifiers mapped from symbol to Entrez via org.Hs.eg.db (version stated) before the ORA test; unmapped share reported",
+                "Redundant significant gene sets collapsed to one representative with members retained in a supplementary table",
+                "Report states that enrichment results are method-dependent (camera vs ORA can disagree) and gives both where applicable"
+              ],
+              "packages": [
+                "limma",
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0088@8b80",
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0a77"
+                ],
+                "reason": "Population-scale cohort enrichment: camera on the limma-voom fit as first pass, Hallmark then Reactome as collections, tested-gene universe, ORA gated at >=50 significant genes per R-0103; template tpl-camera-hallmark@1.0.0"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Integrated report: modules, module-trait correlation, DE genes, and enrichment",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the reproducible, decision-ready summary of the co-expression modules, their case/control associations, the complementary differential expression result, and the pathway interpretation for this 120-sample whole-blood cohort?",
+              "acceptance_criteria": [
+                "Reports the design (60 case vs 60 control, single batch, unpaired), the reference level, and the named contrast",
+                "Lists module count, module sizes, module-trait correlation table (r, p, BH-adjusted p) for every module, and hub genes for each module significantly associated with status",
+                "Lists DE gene table with unshrunken logFC, moderated t, and BH-adjusted p-value, sorted by effect size within the significant set, plus the population-cohort caveat and the Wilcoxon/permutation control result",
+                "Lists enriched Hallmark and Reactome gene sets with database version, ranking metric, universe, and size window stated, plus leading-edge genes for ranked results",
+                "Includes MA-style diagnostic plot (or limma mean-difference plot) and the WGCNA soft-threshold scale-free-fit diagnostic plot",
+                "Full reproducibility record: sessionInfo, random seeds used (WGCNA network construction, any permutation test), package versions, and the version/date of every reference gene-set collection used"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0089@69f0",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "No single rule covers the composite report step; individual reporting rules (effect-size-with-pvalue, reproducibility record, enrichment reporting fields) are folded in as constraints on prior steps and restated here"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

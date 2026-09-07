@@ -1,0 +1,272 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "coexpression-too-few-n3",
+  "run": 1,
+  "startedAt": "2026-09-07T04:16:06.421Z",
+  "elapsedMs": 134401,
+  "outcome": "error",
+  "error": "Plan generation failed: Provider call failed for analysis:eval-four-models-with-coexpression-too-few-n3-1: Upstream error from NextBit: upstream model did not return a valid tool call for the requested tool_choice",
+  "usage": {
+    "inputTokens": 150179,
+    "outputTokens": 1907,
+    "cacheReadInputTokens": 107264,
+    "reasoningTokens": 657
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst blind PCA + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "min 10 counts in smallest group size samples; median-of-ratios size factors",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test, design ~ condition, explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "contrast",
+                "value": "condition, treated, control"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage on condition coefficient",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "type",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "STRING high-confidence (score>=700) prior network modules over detected genes; per-module sample score; t-test vs condition; BH across modules",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "combined_score",
+                "value": 700
+              },
+              {
+                "name": "outcome",
+                "value": "too_few_samples_prior_network_or_stop"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "coexpression + DE report with reproducibility record",
+            "parameters": [
+              {
+                "name": "coexpression_report",
+                "value": "n_samples, n_genes, network_source, module_sizes, module_trait_tests, adjusted_p_values"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "method": "DESeq2 vst blind PCA + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ],
+            "step_type": "qc_sample_structure"
+          },
+          {
+            "method": "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ],
+            "step_type": "filter_low_counts"
+          },
+          {
+            "method": "Median-of-ratios size factors (DESeq2 normalization)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              }
+            ],
+            "step_type": "normalize"
+          },
+          {
+            "method": "DESeq2 Wald test, design ~ condition, explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "contrast",
+                "value": "condition, treated, control"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ],
+            "step_type": "differential_expression"
+          },
+          {
+            "method": "apeglm shrinkage on condition coefficient",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "type",
+                "value": "apeglm"
+              }
+            ],
+            "step_type": "shrink_lfc"
+          },
+          {
+            "method": "WGCNA signed co-expression network with module eigengenes and module membership — outcome too_few_samples_prior_network_or_stop: build modules on the STRING high-confidence prior network over the filtered genes instead of from expression correlations",
+            "package": "WGCNA",
+            "parameters": [
+              {
+                "name": "network_type",
+                "value": "signed"
+              },
+              {
+                "name": "min_module_size",
+                "value": 30
+              },
+              {
+                "name": "merge_cut_height",
+                "value": 0.25
+              },
+              {
+                "name": "combined_score_cutoff",
+                "value": 700
+              },
+              {
+                "name": "outcome",
+                "value": "too_few_samples_prior_network_or_stop"
+              }
+            ],
+            "step_type": "coexpression"
+          },
+          {
+            "method": "coexpression + DE report with reproducibility record",
+            "parameters": [
+              {
+                "name": "coexpression_report",
+                "value": "n_samples, n_genes, network_source, module_sizes, module_trait_tests, adjusted_p_values"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version"
+              }
+            ],
+            "step_type": "report"
+          }
+        ]
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

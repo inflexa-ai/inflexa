@@ -1,0 +1,359 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "tf-activity-python-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T01:06:13.894Z",
+  "elapsedMs": 86917,
+  "outcome": "plan_submitted",
+  "planId": "pln-1528460b",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 differential expression: aldosterone vs vehicle",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 vs n=6 is modest power; report effect sizes and adjusted p-values, and do not describe borderline hits as established.",
+          "The counts matrix is gene-symbol indexed; check for and resolve duplicate symbols (sum or drop, but say which) before building the DESeq2 object.",
+          "Salmon counts may be non-integer after tximport rounding — verify integrality and round if needed, reporting that this was done."
+        ],
+        "context": "This is the DE backbone the TF inference consumes. The critical output for step T1S2 is the COMPLETE signed Wald statistic vector across all tested genes — footprint-based TF activity must see the whole ranked signal, not a thresholded DE list. Do not drop the stat column and do not filter the table before saving it.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn",
+          "scipy"
+        ],
+        "question": "Which genes change expression in the 6 aldosterone-treated kidney samples relative to the 6 vehicle controls, and what is the signed Wald statistic for every tested gene?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Python only — use pydeseq2, pandas, numpy, matplotlib/seaborn. Do not call R or rpy2 anywhere.",
+          "Treat the design as unpaired with a single batch, exactly as the data profile states; do not invent a pairing or batch covariate.",
+          "Preserve the sign convention treated-minus-control and state it explicitly in the output files."
+        ],
+        "description": "Load /eval-four-models-without-tf-activity-python-n6-1/data/inputs/counts/counts.csv (12,000 gene symbols x 12 sample columns, raw integer Salmon counts, gene symbol in the first column) and /eval-four-models-without-tf-activity-python-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Align sample columns to metadata rows by name and fail loudly on any mismatch. Filter low-count genes (keep genes with at least 10 counts summed across samples, and expressed in at least 3 samples), then run PyDESeq2 with design ~condition, contrast aldosterone-treated vs vehicle control using the exact condition labels found in metadata.csv, with vehicle/control as the reference level. Emit: (a) a full results table for every tested gene with baseMean, log2FoldChange, lfcSE, stat (Wald), pvalue, padj, indexed by gene symbol; (b) the same table sorted by padj; (c) VST- or log-CPM-normalized expression matrix for downstream use; (d) a sample-level PCA and a sample-sample correlation heatmap to check that the two groups separate and that no sample is an outlier; (e) a volcano plot. Report how many genes pass padj<0.05 and |log2FC|>1, and state plainly if the number is small — with n=6 per group that is a real possibility and must not be papered over.",
+        "acceptance_criteria": [
+          "Sample columns of counts.csv are matched 1:1 to the 12 rows of metadata.csv; a mismatch aborts the step rather than being silently reconciled",
+          "Design and contrast use the literal condition labels present in metadata.csv, with the vehicle/control level as the DESeq2 reference, and the applied contrast direction is printed",
+          "Full results table written for every tested gene, retaining gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj — unfiltered and unsorted copy preserved",
+          "Number of genes retained after low-count filtering, and counts of genes at padj<0.05 and at padj<0.05 with |log2FC|>1, are reported",
+          "PCA, sample correlation heatmap and volcano plot are produced and the degree of group separation is described in words",
+          "Normalized (VST or log-CPM) expression matrix saved for reuse"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "TF activity inference from the DE statistic",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Only 12,000 gene symbols are present, so regulon coverage will be partial; a TF with few measured targets can produce an extreme, unstable score — flag low-coverage TFs rather than ranking them alongside well-covered ones.",
+          "A TF's inferred activity change need not be accompanied by a change in its own mRNA; conversely a DE TF gene is not evidence of activity. Keep the two claims separate.",
+          "Complex entries in curated regulons (e.g. NFKB, AP-1 as composite sources) are not single gene symbols — report them as complexes, do not silently treat them as genes."
+        ],
+        "context": "This is the step that answers the research question. Verify with the API of the installed decoupler (2.2.0) before writing — the Python package's function layout differs across major versions (e.g. a methods namespace such as dc.mt.ulm versus older dc.run_ulm); check what is importable rather than assuming. The reference store currently holds a signed human TF-target regulon as a plain CSV with source/target/weight columns that pandas can read and hand straight to decoupler as its network argument; DoRothEA copies present are R .rda and are NOT usable under the Python-only constraint without an R bridge, and the MSigDB C3 GTRD target sets are unsigned binding sets that cannot give direction — use them only as an unsigned sensitivity check, never as the primary network. If no signed human regulon can be resolved at run time, stop and report that rather than substituting a non-human or unsigned resource.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn",
+          "scipy",
+          "statsmodels"
+        ],
+        "question": "Which transcription factors show significantly altered inferred activity in aldosterone-treated kidney versus vehicle control, and in which direction?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Python only — decoupler, pandas, numpy, matplotlib/seaborn. No R, no rpy2.",
+          "Do not fetch any network over the network; resolve the regulon from provisioned reference data only.",
+          "Do not hardcode a reference path from memory — resolve it, verify the organism and the signed-weight column, and abort with a clear message if absent."
+        ],
+        "description": "Take the complete signed Wald statistic vector from T1S1 (one value per tested gene, gene symbols) and run footprint-based TF activity inference with decoupler against a curated, signed human TF-target regulon resolved from the environment's reference data — a network with source (TF symbol), target (gene symbol) and a signed weight/mode-of-regulation column. Confirm the resource is Homo sapiens before use; the data are human kidney. Run the univariate linear model (ULM) as the primary estimator on the statistic vector, and additionally run a second decoupler estimator (e.g. MLM or a weighted-mean/consensus) so that concordance between estimators can be reported. Require a minimum regulon size (n>=5 targets measured in the filtered expression matrix) and record, per TF, the regulon size, the number of its targets actually present in the data, the activity score, the raw p-value, and a BH-adjusted p-value across TFs. Output: a full ranked TF activity table; a barplot of the top ~25 TFs by |score| with direction; and, for the top TFs, a target-level plot showing each regulon's member genes positioned by their log2FC and Wald statistic so the reader can see whether the call rests on many coherent targets or a few extreme ones. Also run the same inference on the per-sample normalized expression matrix to obtain per-sample TF activity scores, and show a heatmap of the top TFs across the 12 samples to confirm the group-level call is not driven by one or two samples.",
+        "acceptance_criteria": [
+          "The regulon used is signed, human, and resolved from the environment at run time; its identity, edge count, TF count, and organism are printed",
+          "Inference consumes the full gene-level Wald statistic vector from T1S1, not a thresholded DE gene list",
+          "Ranked TF activity table includes per TF: score, raw p-value, BH-adjusted p-value, regulon size, and number of regulon targets present in the data",
+          "At least two decoupler estimators are run and their agreement on the top TFs is reported quantitatively (e.g. rank correlation and overlap of top 25)",
+          "Per-sample TF activity heatmap over the 12 samples is produced and inspected for single-sample drivers",
+          "Target-level diagnostic plots for the top TFs show the distribution of member-gene statistics",
+          "Step reports explicitly that TF activity scores are non-independent (shared targets) and that the ranking is a hypothesis ordering"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "TF cross-check and pathway context",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Enrichment gene sets and the TF regulon overlap in content, so pathway agreement is corroboration of coherence, not independent validation — say this in the output.",
+          "With 12,000 measured symbols the enrichment background is truncated relative to the full transcriptome; use the tested-gene universe as background and state it."
+        ],
+        "context": "This step exists to keep the TF answer honest. It converts a ranked score list into a claim with stated evidence and stated weakness. If a human pathway gene set collection cannot be resolved at run time, skip the enrichment component, say so, and still deliver the TF-vs-own-DE and regulon-coherence cross-check — the research question survives the loss of the pathway annotation.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "gseapy",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn",
+          "statsmodels"
+        ],
+        "question": "Do the top aldosterone-responsive TFs hold up against their own mRNA differential expression, their regulon coverage, and the pathways enriched in the treated-vs-control signature?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "interpretation",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Python only — pandas, numpy, decoupler and/or gseapy/blitzgsea for enrichment, matplotlib/seaborn. No R, no rpy2.",
+          "Resolve pathway gene sets from provisioned reference data and confirm they are human before use.",
+          "Report negative and null results as findings; do not drop TFs that failed the cross-check from the table."
+        ],
+        "description": "Join the ranked TF activity table from T1S2 to the gene-level DE table from T1S1 on the TF's own gene symbol, producing an annotated table with, per top TF: activity score and adjusted p-value, its own log2FC/padj (or an explicit 'TF gene not measured'), regulon size, measured-target count, and the fraction of its measured targets moving in the direction consistent with the inferred activity. Separately, run gene set enrichment on the full ranked Wald statistic from T1S1 against human pathway gene sets resolved from the environment's reference data, and report the leading pathways with FDR. Then check whether the leading-edge genes of the top pathways overlap the regulons of the top TFs, and quantify that overlap. Produce a concise final table of the TFs the evidence actually supports, each row carrying its supporting and non-supporting evidence, and a short written statement of which calls are well-supported, which are single-line-of-evidence, and which are underpowered. Do not construct a mechanistic aldosterone/mineralocorticoid narrative beyond what the numbers show; if the canonical mineralocorticoid-receptor axis is or is not visible in the results, say so plainly either way.",
+        "acceptance_criteria": [
+          "Annotated TF table joins activity scores to the TF's own DE result, with 'not measured' stated explicitly where the TF gene is absent from the 12,000-symbol matrix",
+          "Per-TF regulon coherence is quantified (fraction of measured targets moving consistently with the inferred direction)",
+          "Pathway enrichment on the full ranked Wald statistic reports FDR-adjusted results, or the step states clearly that no suitable human gene set collection was resolvable",
+          "Overlap between top-pathway leading-edge genes and top-TF regulons is quantified",
+          "Final summary separates well-supported TF calls from single-evidence and underpowered ones, in explicit language"
+        ]
+      }
+    ],
+    "title": "Aldosterone vs vehicle kidney TF activity (Python)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment in human kidney: raw Salmon gene-level counts for 12,000 gene symbols across 12 samples (counts.csv, gene symbol in the first column, one column per sample), with metadata.csv giving one condition label per sample — 6 aldosterone-treated vs 6 vehicle controls, unpaired. The question is which transcription factors drive the treated-vs-control response, so the analytical backbone is: (1) filter and normalize the counts and run a single unpaired two-group differential expression contrast (aldosterone vs vehicle) with PyDESeq2, producing a gene-level Wald statistic per gene; (2) feed the full signed gene-level statistic vector — not a truncated DE gene list — into footprint-based TF activity inference against a curated signed human TF-target regulon, which is the method that answers 'which TFs drive the response' rather than 'which TF genes changed expression'; (3) cross-check the inferred TFs against their own mRNA-level differential expression and against the direction/coverage of their regulons, and place the top TFs in pathway context. Step 2 is the answer step; steps 1 and 3 supply and audit it.\n\nMethod choices are constrained by what is present. decoupler 2.2.0 and pydeseq2 0.5.4 are installed (Python only, per the user constraint — no R, no rpy2 bridge to the DoRothEA .rda files). The reference store holds a curated, signed human TF-target regulon as a plain CSV (CollecTRI, source/target/weight columns) which a Python CSV reader can consume directly and pass to decoupler as its network; the DoRothEA copies are R .rda and the MSigDB C3 GTRD sets are unsigned ChIP-binding sets, so both are secondary. The step must resolve the regulon from the environment rather than assume a path, and must confirm it is human — the data are Homo sapiens.\n\nThe main statistical caveat, stated up front: n=6 per group with a single batch is adequate for a clean treatment effect but modest. TF activity scores from footprint methods are not independent tests — regulons share targets heavily — so the ranking is a hypothesis ordering, and per-TF p-values must be FDR-adjusted and reported alongside regulon size and the fraction of the regulon actually measured among the 12,000 genes. A TF whose call rests on a handful of targets should be labelled as such and not promoted."
+  },
+  "usage": {
+    "inputTokens": 331300,
+    "outputTokens": 5684,
+    "cacheCreationInputTokens": 112999,
+    "cacheReadInputTokens": 218229,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "decoupler",
+        "query": "TF activity inference from DESeq2 t-statistics using ULM and CollecTRI"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/saezlab/decoupler",
+        "query": "Python decoupler 2.x API run ulm mlm consensus method names decoupler.mt.ulm"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "pydeseq2",
+          "gseapy",
+          "blitzgsea",
+          "statsmodels",
+          "adjusttext",
+          "matplotlib",
+          "seaborn",
+          "rnanorm"
+        ]
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/saezlab/decoupler",
+        "query": "python decoupler 2.x mt.ulm function signature dc.mt.ulm(data, net) input dataframe of t-statistics"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Aldosterone vs vehicle kidney TF activity (Python)",
+          "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment in human kidney: raw Salmon gene-level counts for 12,000 gene symbols across 12 samples (counts.csv, gene symbol in the first column, one column per sample), with metadata.csv giving one condition label per sample — 6 aldosterone-treated vs 6 vehicle controls, unpaired. The question is which transcription factors drive the treated-vs-control response, so the analytical backbone is: (1) filter and normalize the counts and run a single unpaired two-group differential expression contrast (aldosterone vs vehicle) with PyDESeq2, producing a gene-level Wald statistic per gene; (2) feed the full signed gene-level statistic vector — not a truncated DE gene list — into footprint-based TF activity inference against a curated signed human TF-target regulon, which is the method that answers 'which TFs drive the response' rather than 'which TF genes changed expression'; (3) cross-check the inferred TFs against their own mRNA-level differential expression and against the direction/coverage of their regulons, and place the top TFs in pathway context. Step 2 is the answer step; steps 1 and 3 supply and audit it.\n\nMethod choices are constrained by what is present. decoupler 2.2.0 and pydeseq2 0.5.4 are installed (Python only, per the user constraint — no R, no rpy2 bridge to the DoRothEA .rda files). The reference store holds a curated, signed human TF-target regulon as a plain CSV (CollecTRI, source/target/weight columns) which a Python CSV reader can consume directly and pass to decoupler as its network; the DoRothEA copies are R .rda and the MSigDB C3 GTRD sets are unsigned ChIP-binding sets, so both are secondary. The step must resolve the regulon from the environment rather than assume a path, and must confirm it is human — the data are Homo sapiens.\n\nThe main statistical caveat, stated up front: n=6 per group with a single batch is adequate for a clean treatment effect but modest. TF activity scores from footprint methods are not independent tests — regulons share targets heavily — so the ranking is a hypothesis ordering, and per-TF p-values must be FDR-adjusted and reported alongside regulon size and the fraction of the regulon actually measured among the 12,000 genes. A TF whose call rests on a handful of targets should be labelled as such and not promoted.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DESeq2 differential expression: aldosterone vs vehicle",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes change expression in the 6 aldosterone-treated kidney samples relative to the 6 vehicle controls, and what is the signed Wald statistic for every tested gene?",
+              "description": "Load /eval-four-models-without-tf-activity-python-n6-1/data/inputs/counts/counts.csv (12,000 gene symbols x 12 sample columns, raw integer Salmon counts, gene symbol in the first column) and /eval-four-models-without-tf-activity-python-n6-1/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Align sample columns to metadata rows by name and fail loudly on any mismatch. Filter low-count genes (keep genes with at least 10 counts summed across samples, and expressed in at least 3 samples), then run PyDESeq2 with design ~condition, contrast aldosterone-treated vs vehicle control using the exact condition labels found in metadata.csv, with vehicle/control as the reference level. Emit: (a) a full results table for every tested gene with baseMean, log2FoldChange, lfcSE, stat (Wald), pvalue, padj, indexed by gene symbol; (b) the same table sorted by padj; (c) VST- or log-CPM-normalized expression matrix for downstream use; (d) a sample-level PCA and a sample-sample correlation heatmap to check that the two groups separate and that no sample is an outlier; (e) a volcano plot. Report how many genes pass padj<0.05 and |log2FC|>1, and state plainly if the number is small — with n=6 per group that is a real possibility and must not be papered over.",
+              "question_context": "",
+              "context": "This is the DE backbone the TF inference consumes. The critical output for step T1S2 is the COMPLETE signed Wald statistic vector across all tested genes — footprint-based TF activity must see the whole ranked signal, not a thresholded DE list. Do not drop the stat column and do not filter the table before saving it.",
+              "acceptance_criteria": [
+                "Sample columns of counts.csv are matched 1:1 to the 12 rows of metadata.csv; a mismatch aborts the step rather than being silently reconciled",
+                "Design and contrast use the literal condition labels present in metadata.csv, with the vehicle/control level as the DESeq2 reference, and the applied contrast direction is printed",
+                "Full results table written for every tested gene, retaining gene symbol, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj — unfiltered and unsorted copy preserved",
+                "Number of genes retained after low-count filtering, and counts of genes at padj<0.05 and at padj<0.05 with |log2FC|>1, are reported",
+                "PCA, sample correlation heatmap and volcano plot are produced and the degree of group separation is described in words",
+                "Normalized (VST or log-CPM) expression matrix saved for reuse"
+              ],
+              "constraints": [
+                "Python only — use pydeseq2, pandas, numpy, matplotlib/seaborn. Do not call R or rpy2 anywhere.",
+                "Treat the design as unpaired with a single batch, exactly as the data profile states; do not invent a pairing or batch covariate.",
+                "Preserve the sign convention treated-minus-control and state it explicitly in the output files."
+              ],
+              "caveats": [
+                "n=6 vs n=6 is modest power; report effect sizes and adjusted p-values, and do not describe borderline hits as established.",
+                "The counts matrix is gene-symbol indexed; check for and resolve duplicate symbols (sum or drop, but say which) before building the DESeq2 object.",
+                "Salmon counts may be non-integer after tximport rounding — verify integrality and round if needed, reporting that this was done."
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn",
+                "scipy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "TF activity inference from the DE statistic",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which transcription factors show significantly altered inferred activity in aldosterone-treated kidney versus vehicle control, and in which direction?",
+              "description": "Take the complete signed Wald statistic vector from T1S1 (one value per tested gene, gene symbols) and run footprint-based TF activity inference with decoupler against a curated, signed human TF-target regulon resolved from the environment's reference data — a network with source (TF symbol), target (gene symbol) and a signed weight/mode-of-regulation column. Confirm the resource is Homo sapiens before use; the data are human kidney. Run the univariate linear model (ULM) as the primary estimator on the statistic vector, and additionally run a second decoupler estimator (e.g. MLM or a weighted-mean/consensus) so that concordance between estimators can be reported. Require a minimum regulon size (n>=5 targets measured in the filtered expression matrix) and record, per TF, the regulon size, the number of its targets actually present in the data, the activity score, the raw p-value, and a BH-adjusted p-value across TFs. Output: a full ranked TF activity table; a barplot of the top ~25 TFs by |score| with direction; and, for the top TFs, a target-level plot showing each regulon's member genes positioned by their log2FC and Wald statistic so the reader can see whether the call rests on many coherent targets or a few extreme ones. Also run the same inference on the per-sample normalized expression matrix to obtain per-sample TF activity scores, and show a heatmap of the top TFs across the 12 samples to confirm the group-level call is not driven by one or two samples.",
+              "question_context": "",
+              "context": "This is the step that answers the research question. Verify with the API of the installed decoupler (2.2.0) before writing — the Python package's function layout differs across major versions (e.g. a methods namespace such as dc.mt.ulm versus older dc.run_ulm); check what is importable rather than assuming. The reference store currently holds a signed human TF-target regulon as a plain CSV with source/target/weight columns that pandas can read and hand straight to decoupler as its network argument; DoRothEA copies present are R .rda and are NOT usable under the Python-only constraint without an R bridge, and the MSigDB C3 GTRD target sets are unsigned binding sets that cannot give direction — use them only as an unsigned sensitivity check, never as the primary network. If no signed human regulon can be resolved at run time, stop and report that rather than substituting a non-human or unsigned resource.",
+              "acceptance_criteria": [
+                "The regulon used is signed, human, and resolved from the environment at run time; its identity, edge count, TF count, and organism are printed",
+                "Inference consumes the full gene-level Wald statistic vector from T1S1, not a thresholded DE gene list",
+                "Ranked TF activity table includes per TF: score, raw p-value, BH-adjusted p-value, regulon size, and number of regulon targets present in the data",
+                "At least two decoupler estimators are run and their agreement on the top TFs is reported quantitatively (e.g. rank correlation and overlap of top 25)",
+                "Per-sample TF activity heatmap over the 12 samples is produced and inspected for single-sample drivers",
+                "Target-level diagnostic plots for the top TFs show the distribution of member-gene statistics",
+                "Step reports explicitly that TF activity scores are non-independent (shared targets) and that the ranking is a hypothesis ordering"
+              ],
+              "constraints": [
+                "Python only — decoupler, pandas, numpy, matplotlib/seaborn. No R, no rpy2.",
+                "Do not fetch any network over the network; resolve the regulon from provisioned reference data only.",
+                "Do not hardcode a reference path from memory — resolve it, verify the organism and the signed-weight column, and abort with a clear message if absent."
+              ],
+              "caveats": [
+                "Only 12,000 gene symbols are present, so regulon coverage will be partial; a TF with few measured targets can produce an extreme, unstable score — flag low-coverage TFs rather than ranking them alongside well-covered ones.",
+                "A TF's inferred activity change need not be accompanied by a change in its own mRNA; conversely a DE TF gene is not evidence of activity. Keep the two claims separate.",
+                "Complex entries in curated regulons (e.g. NFKB, AP-1 as composite sources) are not single gene symbols — report them as complexes, do not silently treat them as genes."
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn",
+                "scipy",
+                "statsmodels"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "TF cross-check and pathway context",
+              "track": "T1",
+              "step_type": "interpretation",
+              "question": "Do the top aldosterone-responsive TFs hold up against their own mRNA differential expression, their regulon coverage, and the pathways enriched in the treated-vs-control signature?",
+              "description": "Join the ranked TF activity table from T1S2 to the gene-level DE table from T1S1 on the TF's own gene symbol, producing an annotated table with, per top TF: activity score and adjusted p-value, its own log2FC/padj (or an explicit 'TF gene not measured'), regulon size, measured-target count, and the fraction of its measured targets moving in the direction consistent with the inferred activity. Separately, run gene set enrichment on the full ranked Wald statistic from T1S1 against human pathway gene sets resolved from the environment's reference data, and report the leading pathways with FDR. Then check whether the leading-edge genes of the top pathways overlap the regulons of the top TFs, and quantify that overlap. Produce a concise final table of the TFs the evidence actually supports, each row carrying its supporting and non-supporting evidence, and a short written statement of which calls are well-supported, which are single-line-of-evidence, and which are underpowered. Do not construct a mechanistic aldosterone/mineralocorticoid narrative beyond what the numbers show; if the canonical mineralocorticoid-receptor axis is or is not visible in the results, say so plainly either way.",
+              "question_context": "",
+              "context": "This step exists to keep the TF answer honest. It converts a ranked score list into a claim with stated evidence and stated weakness. If a human pathway gene set collection cannot be resolved at run time, skip the enrichment component, say so, and still deliver the TF-vs-own-DE and regulon-coherence cross-check — the research question survives the loss of the pathway annotation.",
+              "acceptance_criteria": [
+                "Annotated TF table joins activity scores to the TF's own DE result, with 'not measured' stated explicitly where the TF gene is absent from the 12,000-symbol matrix",
+                "Per-TF regulon coherence is quantified (fraction of measured targets moving consistently with the inferred direction)",
+                "Pathway enrichment on the full ranked Wald statistic reports FDR-adjusted results, or the step states clearly that no suitable human gene set collection was resolvable",
+                "Overlap between top-pathway leading-edge genes and top-TF regulons is quantified",
+                "Final summary separates well-supported TF calls from single-evidence and underpowered ones, in explicit language"
+              ],
+              "constraints": [
+                "Python only — pandas, numpy, decoupler and/or gseapy/blitzgsea for enrichment, matplotlib/seaborn. No R, no rpy2.",
+                "Resolve pathway gene sets from provisioned reference data and confirm they are human before use.",
+                "Report negative and null results as findings; do not drop TFs that failed the cross-check from the table."
+              ],
+              "caveats": [
+                "Enrichment gene sets and the TF regulon overlap in content, so pathway agreement is corroboration of coherence, not independent validation — say this in the output.",
+                "With 12,000 measured symbols the enrichment background is truncated relative to the full transcriptome; use the tested-gene universe as background and state it."
+              ],
+              "packages": [
+                "decoupler",
+                "gseapy",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn",
+                "statsmodels"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

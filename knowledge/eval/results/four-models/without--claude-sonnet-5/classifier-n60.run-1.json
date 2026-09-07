@@ -1,0 +1,309 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "classifier-n60",
+  "run": 1,
+  "startedAt": "2026-09-06T21:46:56.703Z",
+  "elapsedMs": 34826,
+  "outcome": "plan_submitted",
+  "planId": "pln-bade341d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, sample-metadata reconciliation, and normalization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "counts.csv has 121 columns but metadata.csv has 120 rows — resolve this mismatch explicitly before any downstream step, do not silently drop or assume order-matching",
+          "Single batch is stated, so no batch correction is expected, but still check PCA for unexpected substructure"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "pandas"
+        ],
+        "question": "Do the 121 count-matrix columns and 120 metadata rows align to a clean 60 case vs 60 control set, and what does a normalized (e.g., variance-stabilized/log-CPM) whole-blood count matrix look like after removing low-count genes and any unmatched or duplicate sample?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Do not perform any case/control differential filtering of genes at this stage — only low-expression filtering"
+        ],
+        "acceptance_criteria": [
+          "Reports how many of the 121 count columns match the 120 metadata rows by sample ID, and explicitly states what happens to any unmatched sample(s)",
+          "Confirms final case/control counts (expected 60/60) after reconciliation",
+          "Filters genes with near-zero counts across samples using a stated, reproducible threshold",
+          "Produces a normalized expression matrix (VST or log-CPM) plus library-size/QC metrics (total counts, detected genes) per sample",
+          "Flags any outlier samples by PCA or library size but does not remove them without justification"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Case vs control differential expression (descriptive)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "12000 x 120 is a small-n/wide-p regime for DE — interpret nominal significance cautiously",
+          "This gene list must not leak into the classifier's feature selection to avoid optimistic bias"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes are differentially expressed between the 60 cases and 60 controls in whole blood, using DESeq2 on raw counts with condition as the sole factor (single batch, unpaired design)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Reports full DE table (log2FC, p-value, BH-adjusted p-value) for all tested genes",
+          "Uses raw integer counts (not the normalized matrix) as DESeq2 input, per DESeq2 requirements",
+          "States the number of genes significant at FDR<0.05 and effect-size distribution",
+          "Explicitly labeled as descriptive/hypothesis-generating — NOT used to pre-select features for the classifier in T2S1"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Cross-validated classifier: case vs control, multiple model comparison",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Do not reuse the T1S2 DE gene list to pre-filter features for this model — that constitutes leakage since DE was computed on the same full labeled cohort; feature selection (univariate filter, elastic-net penalty, or embedded importance) must occur strictly inside each CV training fold",
+          "n=120 is modest for a 12000-feature classifier; expect wide confidence intervals and report them rather than a single point accuracy",
+          "Unpaired single-batch design means CV accuracy could be inflated by any latent technical covariate correlated with case/control status — check whether top selected features overlap suspiciously with library-size or housekeeping-gene patterns from T1S1 QC"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "scikit-learn",
+          "xgboost",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Using the full normalized whole-blood gene expression matrix (12000 genes x 120 labeled samples), can a classifier distinguish the 60 cases from the 60 controls, and what is the expected accuracy on a new, unseen sample?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "machine_learning",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Must implement nested (not flat) cross-validation for any step involving feature/hyperparameter selection",
+          "Must report performance as a range/CI, not a single number, and must state the external-validation caveat verbatim in the output summary"
+        ],
+        "acceptance_criteria": [
+          "Uses nested cross-validation (e.g., outer 5- or 10-fold repeated, inner fold for hyperparameter and feature-count selection) so that all feature selection happens inside the training fold only, never on the full dataset before splitting",
+          "Compares at least two model families appropriate for n=120, p=12000 (e.g., elastic-net logistic regression, random forest or gradient-boosted trees, and optionally an SVM) — explicitly does NOT use a hard-coded pre-fixed classifier without comparison",
+          "Reports cross-validated ROC-AUC, PR-AUC, sensitivity/specificity at a chosen operating point, and confidence intervals (e.g., via bootstrap or fold variance)",
+          "Reports a calibration assessment (e.g., calibration curve or Brier score) so probability outputs are interpretable, not just discrimination",
+          "States explicitly that no independent external validation cohort exists in this dataset, so the CV estimate is the best available proxy for accuracy on a new sample but does not guarantee generalization across site/batch/platform",
+          "Lists the top features selected across CV folds for each model, with frequency of selection, as a transparency check (not as a second DE analysis)"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Pathway enrichment of DE and classifier-selected genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Reference data needed: a human pathway gene set collection (e.g., WikiPathways human GMT, available at /mnt/refs/managed/wikipathways-human) — if absent at run time, report enrichment as skipped and say so rather than substituting an unrelated organism's gene sets",
+          "Whole blood signatures are frequently dominated by cell-composition shifts (e.g., neutrophil/lymphocyte ratio) rather than disease-specific pathways — call this out explicitly if seen"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Are the genes differentially expressed between cases and controls (from T1S2) and/or the genes most frequently selected by the cross-validated classifier (from T2S1) enriched for specific biological pathways, using human pathway gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Use only the human WikiPathways GMT confirmed present in refs; do not substitute mouse or rat gene sets for a human dataset"
+        ],
+        "acceptance_criteria": [
+          "Runs over-representation or GSEA-style enrichment separately for the DE gene list and the classifier's frequently-selected feature list against a human pathway gene set collection",
+          "Reports enriched pathways with FDR-corrected significance",
+          "Explicitly notes if enrichment is weak/absent given the small significant-gene counts expected from a modest-n whole-blood comparison, rather than overstating biological interpretation",
+          "Flags if enrichment reveals inflammation/technical or purely blood-cell-composition-associated pathways rather than disease-specific programs, given blood is a mixed-cell tissue"
+        ]
+      }
+    ],
+    "title": "Blood RNA-seq case vs control classifier (n=120)",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "Input is 121-sample raw Salmon gene-level counts (12000 genes x 121 samples; metadata gives 120 labeled samples, 60 cases/60 controls, whole blood, single batch, unpaired). The plan: (1) QC/normalize counts and confirm sample-metadata alignment, dropping any unmatched sample; (2) run a supervised differential expression contrast (case vs control) with DESeq2 to characterize the transcriptomic signal and produce an effect-size-ranked gene list, purely descriptive, not used to pre-select classifier features; (3) build and evaluate a classifier using nested cross-validation on the full normalized feature matrix, with feature selection performed inside each CV fold (not from the standalone DE step), comparing at least two model families (e.g., regularized logistic regression / elastic net and a tree ensemble) so the report has a fair basis for picking one; (4) report cross-validated ROC-AUC, PR-AUC, calibration, and confidence intervals as the honest estimate of accuracy on a new sample, explicitly flagging that this is an unpaired single-batch cohort with no independent external validation set, so the CV estimate is the best available accuracy proxy but may not generalize to a different batch/site; (5) run pathway enrichment on the DE gene list against human pathway gene sets to give biological context for any signal the classifier is picking up, and flag if the top classifier features are dominated by technical/batch-associated genes rather than biologically plausible ones."
+  },
+  "usage": {
+    "inputTokens": 43227,
+    "outputTokens": 3179,
+    "cacheCreationInputTokens": 34073,
+    "cacheReadInputTokens": 9142,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Blood RNA-seq case vs control classifier (n=120)",
+          "analytical_narrative": "Input is 121-sample raw Salmon gene-level counts (12000 genes x 121 samples; metadata gives 120 labeled samples, 60 cases/60 controls, whole blood, single batch, unpaired). The plan: (1) QC/normalize counts and confirm sample-metadata alignment, dropping any unmatched sample; (2) run a supervised differential expression contrast (case vs control) with DESeq2 to characterize the transcriptomic signal and produce an effect-size-ranked gene list, purely descriptive, not used to pre-select classifier features; (3) build and evaluate a classifier using nested cross-validation on the full normalized feature matrix, with feature selection performed inside each CV fold (not from the standalone DE step), comparing at least two model families (e.g., regularized logistic regression / elastic net and a tree ensemble) so the report has a fair basis for picking one; (4) report cross-validated ROC-AUC, PR-AUC, calibration, and confidence intervals as the honest estimate of accuracy on a new sample, explicitly flagging that this is an unpaired single-batch cohort with no independent external validation set, so the CV estimate is the best available accuracy proxy but may not generalize to a different batch/site; (5) run pathway enrichment on the DE gene list against human pathway gene sets to give biological context for any signal the classifier is picking up, and flag if the top classifier features are dominated by technical/batch-associated genes rather than biologically plausible ones.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, sample-metadata reconciliation, and normalization",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Do the 121 count-matrix columns and 120 metadata rows align to a clean 60 case vs 60 control set, and what does a normalized (e.g., variance-stabilized/log-CPM) whole-blood count matrix look like after removing low-count genes and any unmatched or duplicate sample?",
+              "acceptance_criteria": [
+                "Reports how many of the 121 count columns match the 120 metadata rows by sample ID, and explicitly states what happens to any unmatched sample(s)",
+                "Confirms final case/control counts (expected 60/60) after reconciliation",
+                "Filters genes with near-zero counts across samples using a stated, reproducible threshold",
+                "Produces a normalized expression matrix (VST or log-CPM) plus library-size/QC metrics (total counts, detected genes) per sample",
+                "Flags any outlier samples by PCA or library size but does not remove them without justification"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "pandas"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "counts.csv has 121 columns but metadata.csv has 120 rows — resolve this mismatch explicitly before any downstream step, do not silently drop or assume order-matching",
+                "Single batch is stated, so no batch correction is expected, but still check PCA for unexpected substructure"
+              ],
+              "constraints": [
+                "Do not perform any case/control differential filtering of genes at this stage — only low-expression filtering"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Case vs control differential expression (descriptive)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between the 60 cases and 60 controls in whole blood, using DESeq2 on raw counts with condition as the sole factor (single batch, unpaired design)?",
+              "acceptance_criteria": [
+                "Reports full DE table (log2FC, p-value, BH-adjusted p-value) for all tested genes",
+                "Uses raw integer counts (not the normalized matrix) as DESeq2 input, per DESeq2 requirements",
+                "States the number of genes significant at FDR<0.05 and effect-size distribution",
+                "Explicitly labeled as descriptive/hypothesis-generating — NOT used to pre-select features for the classifier in T2S1"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "12000 x 120 is a small-n/wide-p regime for DE — interpret nominal significance cautiously",
+                "This gene list must not leak into the classifier's feature selection to avoid optimistic bias"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Cross-validated classifier: case vs control, multiple model comparison",
+              "track": "T2",
+              "step_type": "machine_learning",
+              "question": "Using the full normalized whole-blood gene expression matrix (12000 genes x 120 labeled samples), can a classifier distinguish the 60 cases from the 60 controls, and what is the expected accuracy on a new, unseen sample?",
+              "acceptance_criteria": [
+                "Uses nested cross-validation (e.g., outer 5- or 10-fold repeated, inner fold for hyperparameter and feature-count selection) so that all feature selection happens inside the training fold only, never on the full dataset before splitting",
+                "Compares at least two model families appropriate for n=120, p=12000 (e.g., elastic-net logistic regression, random forest or gradient-boosted trees, and optionally an SVM) — explicitly does NOT use a hard-coded pre-fixed classifier without comparison",
+                "Reports cross-validated ROC-AUC, PR-AUC, sensitivity/specificity at a chosen operating point, and confidence intervals (e.g., via bootstrap or fold variance)",
+                "Reports a calibration assessment (e.g., calibration curve or Brier score) so probability outputs are interpretable, not just discrimination",
+                "States explicitly that no independent external validation cohort exists in this dataset, so the CV estimate is the best available proxy for accuracy on a new sample but does not guarantee generalization across site/batch/platform",
+                "Lists the top features selected across CV folds for each model, with frequency of selection, as a transparency check (not as a second DE analysis)"
+              ],
+              "packages": [
+                "scikit-learn",
+                "xgboost",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "statistical-modeling-agent",
+              "caveats": [
+                "Do not reuse the T1S2 DE gene list to pre-filter features for this model — that constitutes leakage since DE was computed on the same full labeled cohort; feature selection (univariate filter, elastic-net penalty, or embedded importance) must occur strictly inside each CV training fold",
+                "n=120 is modest for a 12000-feature classifier; expect wide confidence intervals and report them rather than a single point accuracy",
+                "Unpaired single-batch design means CV accuracy could be inflated by any latent technical covariate correlated with case/control status — check whether top selected features overlap suspiciously with library-size or housekeeping-gene patterns from T1S1 QC"
+              ],
+              "constraints": [
+                "Must implement nested (not flat) cross-validation for any step involving feature/hyperparameter selection",
+                "Must report performance as a range/CI, not a single number, and must state the external-validation caveat verbatim in the output summary"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "Pathway enrichment of DE and classifier-selected genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Are the genes differentially expressed between cases and controls (from T1S2) and/or the genes most frequently selected by the cross-validated classifier (from T2S1) enriched for specific biological pathways, using human pathway gene sets?",
+              "acceptance_criteria": [
+                "Runs over-representation or GSEA-style enrichment separately for the DE gene list and the classifier's frequently-selected feature list against a human pathway gene set collection",
+                "Reports enriched pathways with FDR-corrected significance",
+                "Explicitly notes if enrichment is weak/absent given the small significant-gene counts expected from a modest-n whole-blood comparison, rather than overstating biological interpretation",
+                "Flags if enrichment reveals inflammation/technical or purely blood-cell-composition-associated pathways rather than disease-specific programs, given blood is a mixed-cell tissue"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Reference data needed: a human pathway gene set collection (e.g., WikiPathways human GMT, available at /mnt/refs/managed/wikipathways-human) — if absent at run time, report enrichment as skipped and say so rather than substituting an unrelated organism's gene sets",
+                "Whole blood signatures are frequently dominated by cell-composition shifts (e.g., neutrophil/lymphocyte ratio) rather than disease-specific pathways — call this out explicitly if seen"
+              ],
+              "constraints": [
+                "Use only the human WikiPathways GMT confirmed present in refs; do not substitute mouse or rat gene sets for a human dataset"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,676 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-python-n4",
+  "run": 1,
+  "startedAt": "2026-09-06T21:37:47.192Z",
+  "elapsedMs": 137948,
+  "outcome": "plan_submitted",
+  "planId": "pln-2d634014",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, and exploratory structure",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "12000 genes x 16 samples is small; do not over-allocate memory/CPU",
+          "Report group separation honestly — with n=4/cell a modest PCA overlap is not disqualifying by itself, but should be stated"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn",
+          "scikit-learn"
+        ],
+        "question": "Do the 16 heart samples (4 genotype x treatment groups, WT-vehicle, WT-drug, KO-vehicle, KO-drug; 4 replicates each) show the expected 2x2 group structure after normalization, and are there outlier samples or genes that should be filtered before model fitting on the 12000-gene raw Salmon count matrix?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts and metadata are loaded and joined on sample ID; genotype, treatment, and condition columns are confirmed against the 16x4 metadata table",
+          "Low-count genes (e.g. rows with near-zero counts across all 16 samples) are flagged/filtered with the filter threshold and resulting gene count reported",
+          "DESeq2-style median-of-ratios size factors are computed and reported per sample",
+          "PCA or hierarchical clustering on variance-stabilized/log-normalized counts is produced and colored by genotype and treatment, with an explicit statement of whether the 4 groups separate or overlap",
+          "Any sample flagged as an outlier (e.g., by PCA distance or library size) is reported explicitly, not silently dropped"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Fit full factorial GLM with genotype:treatment interaction",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=4/cell (16 samples total, 4 groups), power to detect interaction effects is limited — state this explicitly when interpreting the number of significant interaction genes; a small/zero count of interaction hits is a legitimate negative finding, not a failure",
+          "Do not substitute four separate pairwise DE tests (WT drug-vs-veh, KO drug-vs-veh, etc.) for the interaction coefficient as the primary answer — those only support interpretation of genes the interaction test already flagged",
+          "Verify PyDESeq2's coefficient/contrast naming for the interaction term against the installed version before extracting results (its API differs from R DESeq2's resultsNames)"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Using PyDESeq2 with design ~ genotype + treatment + genotype:treatment on the filtered count matrix from T1S1, what is the genotype:treatment interaction coefficient per gene — i.e., for which genes does the drug-vehicle effect differ significantly between WT and KO — alongside the genotype main effect (in vehicle) and the treatment main effect (in WT)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DeseqDataSet is built with design_factors reflecting genotype and treatment and an explicit interaction term (genotype:treatment) is included in the design matrix/formula, not modeled as four independent pairwise contrasts",
+          "Wald test results (log2FoldChange, lfcSE, stat, pvalue, padj) are reported for: the genotype:treatment interaction coefficient, the treatment effect within WT, and the genotype effect within vehicle",
+          "The number of genes with a significant interaction term (padj < 0.05, explicit threshold stated) is reported as the direct, quantitative answer to whether the drug acts differently in KO vs WT",
+          "lfc_shrink (apeglm-style shrinkage in PyDESeq2) is applied to the interaction coefficient before ranking genes by effect size",
+          "Full per-gene results table (gene symbol, all three coefficients, p/padj) is written out as a CSV artifact"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Simple-effect contrasts within each genotype stratum for interpretation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Stratified simple-effect estimates from a small n=4/group design will have wide confidence intervals — report lfcSE alongside point estimates",
+          "This step is interpretive, not a second independent significance test layered without correction on top of T1S2"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "For the genes flagged with a significant genotype:treatment interaction in T1S2, what is the direction and magnitude of the drug-vs-vehicle effect separately in WT and in KO — does the drug have an effect only in one genotype, opposite-direction effects, or a difference in magnitude but same direction?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Drug-vs-vehicle log2FoldChange and padj are reported separately within the WT stratum and within the KO stratum (either via a releveled/stratified PyDESeq2 fit or by combining interaction-model coefficients correctly, e.g. genotype main effect + interaction for the KO-stratum drug effect)",
+          "For each interaction-significant gene, a categorical annotation is added: drug effect present in WT only, KO only, both same direction, or opposite direction",
+          "A summary table/count of genes in each category is reported",
+          "Results are restricted to the interaction-flagged gene set from T1S2, not run as an independent uncorrected screen"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on interaction-significant genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Reference gene sets use HGNC gene symbols — confirm the counts.csv gene identifier column is also HGNC symbols (per data profile) before joining",
+          "Small input gene lists (a realistic outcome from T1S2) yield low-power, noisy enrichment — state this rather than overselling any hit"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Are the genes with a significant genotype:treatment interaction (from T1S2) enriched for specific biological pathways, using human WikiPathways, Reactome, and MSigDB canonical pathway gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Over-representation analysis (e.g., hypergeometric/Fisher test via gseapy) is run on the interaction-significant gene list against WikiPathways human, Reactome, and MSigDB C2:CP (KEGG MEDICUS/BioCarta/PID) gene sets, all confirmed present in the reference store for Homo sapiens",
+          "Background gene universe is set to all genes tested (post-filtering, from T1S1/T1S2), not the whole genome",
+          "Enrichment results reported with pathway name, gene overlap, p-value, and FDR-adjusted q-value per gene set collection",
+          "If the interaction-significant gene list from T1S2 is empty or very small (a real possibility given n=4/group), this step explicitly reports that enrichment is underpowered/not run rather than fabricating a result on an arbitrary relaxed gene list"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Interactome connectivity of interaction-significant genes",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The STRING links file is space-delimited despite .txt naming and gzipped, and every edge appears twice (once per direction) — collapse via an undirected graph constructor and do not double-count edges",
+          "STRING node IDs are taxid-prefixed Ensembl protein IDs, not gene symbols — the info file join is mandatory before any gene-list lookup"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "networkx",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the genes with a significant genotype:treatment interaction form a more connected subnetwork in the STRING human protein-protein interaction network than expected by chance, supporting a coherent genotype-dependent drug-response mechanism rather than a scattered/noisy signal?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "STRING human network (protein.links + protein.info, v12.0) is loaded, IDs mapped from STRING protein IDs to gene symbols via the info file, and filtered to combined_score >= 700 high-confidence edges",
+          "The induced subnetwork on the interaction-significant gene set (from T1S2) is extracted and its edge density/largest-connected-component size reported",
+          "A permutation-based null (random gene sets of the same size drawn from the tested gene universe) is used to test whether the observed connectivity exceeds chance, with an empirical p-value reported",
+          "If the interaction gene list is too small (e.g., <5 genes) for a meaningful network test, this is stated explicitly rather than forcing a network statistic on a near-empty set"
+        ]
+      }
+    ],
+    "title": "Heart RNA-seq: genotype x drug interaction analysis",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The research question — does the drug act differently in KO vs WT — is formally a genotype x treatment interaction question in a 2x2 factorial bulk RNA-seq design (WT/KO x vehicle/drug, n=4/cell, 16 samples, 12000 genes, raw Salmon counts, heart, Homo sapiens). Testing this correctly requires a single DESeq2-style negative-binomial GLM fit with a full factorial design (~genotype + treatment + genotype:treatment) rather than four separate pairwise contrasts, because only the interaction (genotype:treatment) coefficient directly tests whether the treatment effect differs by genotype; running simple contrasts risks the classic error of concluding 'different' from one being significant and the other not without ever testing the difference-of-differences. Per the user's explicit constraint, PyDESeq2 (Python, present in the sandbox, published and validated against DESeq2) is used instead of R's DESeq2. The plan proceeds: (1) QC/normalization and exploratory structure (PCA/library size) on the 12000x16 count matrix to confirm the four experimental groups separate and to catch outlier samples before model fitting; (2) fit the full interaction model and extract three coefficients — the main effect of genotype in vehicle, the main effect of drug in WT, and the interaction term itself, which is the direct answer to the research question; (3) for genes with a significant interaction, also report the drug-vs-vehicle simple effect within each genotype stratum (WT-only and KO-only contrasts, obtained either via re-leveling or via the interaction model directly) so the direction and magnitude of genotype-dependent drug response is interpretable, not just its existence; (4) pathway enrichment on the interaction-significant gene set using WikiPathways/Reactome/MSigDB human gene sets (all present in the reference store) to give the interaction result biological interpretation; (5) an interaction-gene PPI submodule analysis using the STRING human network to check whether interaction genes cluster on the interactome (supports a coherent genotype-dependent mechanism versus a scattered/noisy signal). No translational/PK/safety steps are added because the research question is a pure genotype x treatment mechanistic question with no compound identity, dose-response, clinical outcome, or safety data given — adding those would be speculative."
+  },
+  "usage": {
+    "inputTokens": 2723807,
+    "outputTokens": 7741,
+    "cacheCreationInputTokens": 194973,
+    "cacheReadInputTokens": 2528378,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways mouse"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "human hallmark msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "gseapy",
+          "statsmodels",
+          "pandas",
+          "numpy"
+        ]
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 interaction term genotype treatment design",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq 2x2 factorial design interaction genotype drug treatment DESeq2",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "factorial design RNA-seq interaction term",
+        "maxResults": 5
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 differential expression analysis Love Huber Anders",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 3
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "heart cardiac tissue"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING human protein"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "drug target repurposing"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathway-activity"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO_Biological_Process human enrichr"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "decoupleR",
+          "gseapy",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "adjustText",
+          "matplotlib-venn",
+          "upsetplot",
+          "seaborn"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gseapy",
+          "networkx"
+        ]
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "interaction effect differential expression genotype treatment RNA-seq",
+        "limit": 3
+      }
+    },
+    {
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "pydeseq2",
+        "query": "interaction term design formula multi-factor 2x2"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/pydeseq2",
+        "query": "design formula with interaction term genotype:treatment, contrast, multi-factor design, LRT reduced model"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/pydeseq2",
+        "query": "DeseqDataSet design_factors continuous_factors design formula categorical interaction contrast"
+      }
+    },
+    {
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/pydeseq2",
+        "query": "example usage design_factors ~ condition group tutorial code snippet"
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "pydeseq2 interaction term design factorial",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_github_repos",
+      "input": {
+        "query": "pydeseq2 tutorial multi-factor",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "PyDESeq2 python differential expression bulk RNA-seq",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "PyDESeq2 python differential expression bulk RNA-seq",
+        "limit": 5
+      }
+    },
+    {
+      "name": "search_arxiv",
+      "input": {
+        "query": "PyDESeq2 python bulk RNA-seq differential expression",
+        "limit": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "PyDESeq2 Muzellec Bioinformatics 2023",
+        "maxResults": 3
+      }
+    },
+    {
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "37669147"
+        ],
+        "maxAuthors": 4,
+        "maxMeshTerms": 3
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "scikit-posthocs",
+          "statsmodels",
+          "scipy"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "cheminformatics",
+          "rdkit"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "scanpy",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "gseapy",
+          "networkx",
+          "python-igraph"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph"
+        ]
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "openpyxl"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Heart RNA-seq: genotype x drug interaction analysis",
+          "analytical_narrative": "The research question — does the drug act differently in KO vs WT — is formally a genotype x treatment interaction question in a 2x2 factorial bulk RNA-seq design (WT/KO x vehicle/drug, n=4/cell, 16 samples, 12000 genes, raw Salmon counts, heart, Homo sapiens). Testing this correctly requires a single DESeq2-style negative-binomial GLM fit with a full factorial design (~genotype + treatment + genotype:treatment) rather than four separate pairwise contrasts, because only the interaction (genotype:treatment) coefficient directly tests whether the treatment effect differs by genotype; running simple contrasts risks the classic error of concluding 'different' from one being significant and the other not without ever testing the difference-of-differences. Per the user's explicit constraint, PyDESeq2 (Python, present in the sandbox, published and validated against DESeq2) is used instead of R's DESeq2. The plan proceeds: (1) QC/normalization and exploratory structure (PCA/library size) on the 12000x16 count matrix to confirm the four experimental groups separate and to catch outlier samples before model fitting; (2) fit the full interaction model and extract three coefficients — the main effect of genotype in vehicle, the main effect of drug in WT, and the interaction term itself, which is the direct answer to the research question; (3) for genes with a significant interaction, also report the drug-vs-vehicle simple effect within each genotype stratum (WT-only and KO-only contrasts, obtained either via re-leveling or via the interaction model directly) so the direction and magnitude of genotype-dependent drug response is interpretable, not just its existence; (4) pathway enrichment on the interaction-significant gene set using WikiPathways/Reactome/MSigDB human gene sets (all present in the reference store) to give the interaction result biological interpretation; (5) an interaction-gene PPI submodule analysis using the STRING human network to check whether interaction genes cluster on the interactome (supports a coherent genotype-dependent mechanism versus a scattered/noisy signal). No translational/PK/safety steps are added because the research question is a pure genotype x treatment mechanistic question with no compound identity, dose-response, clinical outcome, or safety data given — adding those would be speculative.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization, and exploratory structure",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the 16 heart samples (4 genotype x treatment groups, WT-vehicle, WT-drug, KO-vehicle, KO-drug; 4 replicates each) show the expected 2x2 group structure after normalization, and are there outlier samples or genes that should be filtered before model fitting on the 12000-gene raw Salmon count matrix?",
+              "acceptance_criteria": [
+                "Counts and metadata are loaded and joined on sample ID; genotype, treatment, and condition columns are confirmed against the 16x4 metadata table",
+                "Low-count genes (e.g. rows with near-zero counts across all 16 samples) are flagged/filtered with the filter threshold and resulting gene count reported",
+                "DESeq2-style median-of-ratios size factors are computed and reported per sample",
+                "PCA or hierarchical clustering on variance-stabilized/log-normalized counts is produced and colored by genotype and treatment, with an explicit statement of whether the 4 groups separate or overlap",
+                "Any sample flagged as an outlier (e.g., by PCA distance or library size) is reported explicitly, not silently dropped"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn",
+                "scikit-learn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "12000 genes x 16 samples is small; do not over-allocate memory/CPU",
+                "Report group separation honestly — with n=4/cell a modest PCA overlap is not disqualifying by itself, but should be stated"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Fit full factorial GLM with genotype:treatment interaction",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Using PyDESeq2 with design ~ genotype + treatment + genotype:treatment on the filtered count matrix from T1S1, what is the genotype:treatment interaction coefficient per gene — i.e., for which genes does the drug-vehicle effect differ significantly between WT and KO — alongside the genotype main effect (in vehicle) and the treatment main effect (in WT)?",
+              "acceptance_criteria": [
+                "DeseqDataSet is built with design_factors reflecting genotype and treatment and an explicit interaction term (genotype:treatment) is included in the design matrix/formula, not modeled as four independent pairwise contrasts",
+                "Wald test results (log2FoldChange, lfcSE, stat, pvalue, padj) are reported for: the genotype:treatment interaction coefficient, the treatment effect within WT, and the genotype effect within vehicle",
+                "The number of genes with a significant interaction term (padj < 0.05, explicit threshold stated) is reported as the direct, quantitative answer to whether the drug acts differently in KO vs WT",
+                "lfc_shrink (apeglm-style shrinkage in PyDESeq2) is applied to the interaction coefficient before ranking genes by effect size",
+                "Full per-gene results table (gene symbol, all three coefficients, p/padj) is written out as a CSV artifact"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=4/cell (16 samples total, 4 groups), power to detect interaction effects is limited — state this explicitly when interpreting the number of significant interaction genes; a small/zero count of interaction hits is a legitimate negative finding, not a failure",
+                "Do not substitute four separate pairwise DE tests (WT drug-vs-veh, KO drug-vs-veh, etc.) for the interaction coefficient as the primary answer — those only support interpretation of genes the interaction test already flagged",
+                "Verify PyDESeq2's coefficient/contrast naming for the interaction term against the installed version before extracting results (its API differs from R DESeq2's resultsNames)"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Simple-effect contrasts within each genotype stratum for interpretation",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "For the genes flagged with a significant genotype:treatment interaction in T1S2, what is the direction and magnitude of the drug-vs-vehicle effect separately in WT and in KO — does the drug have an effect only in one genotype, opposite-direction effects, or a difference in magnitude but same direction?",
+              "acceptance_criteria": [
+                "Drug-vs-vehicle log2FoldChange and padj are reported separately within the WT stratum and within the KO stratum (either via a releveled/stratified PyDESeq2 fit or by combining interaction-model coefficients correctly, e.g. genotype main effect + interaction for the KO-stratum drug effect)",
+                "For each interaction-significant gene, a categorical annotation is added: drug effect present in WT only, KO only, both same direction, or opposite direction",
+                "A summary table/count of genes in each category is reported",
+                "Results are restricted to the interaction-flagged gene set from T1S2, not run as an independent uncorrected screen"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Stratified simple-effect estimates from a small n=4/group design will have wide confidence intervals — report lfcSE alongside point estimates",
+                "This step is interpretive, not a second independent significance test layered without correction on top of T1S2"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment on interaction-significant genes",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Are the genes with a significant genotype:treatment interaction (from T1S2) enriched for specific biological pathways, using human WikiPathways, Reactome, and MSigDB canonical pathway gene sets?",
+              "acceptance_criteria": [
+                "Over-representation analysis (e.g., hypergeometric/Fisher test via gseapy) is run on the interaction-significant gene list against WikiPathways human, Reactome, and MSigDB C2:CP (KEGG MEDICUS/BioCarta/PID) gene sets, all confirmed present in the reference store for Homo sapiens",
+                "Background gene universe is set to all genes tested (post-filtering, from T1S1/T1S2), not the whole genome",
+                "Enrichment results reported with pathway name, gene overlap, p-value, and FDR-adjusted q-value per gene set collection",
+                "If the interaction-significant gene list from T1S2 is empty or very small (a real possibility given n=4/group), this step explicitly reports that enrichment is underpowered/not run rather than fabricating a result on an arbitrary relaxed gene list"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Reference gene sets use HGNC gene symbols — confirm the counts.csv gene identifier column is also HGNC symbols (per data profile) before joining",
+                "Small input gene lists (a realistic outcome from T1S2) yield low-power, noisy enrichment — state this rather than overselling any hit"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "Interactome connectivity of interaction-significant genes",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do the genes with a significant genotype:treatment interaction form a more connected subnetwork in the STRING human protein-protein interaction network than expected by chance, supporting a coherent genotype-dependent drug-response mechanism rather than a scattered/noisy signal?",
+              "acceptance_criteria": [
+                "STRING human network (protein.links + protein.info, v12.0) is loaded, IDs mapped from STRING protein IDs to gene symbols via the info file, and filtered to combined_score >= 700 high-confidence edges",
+                "The induced subnetwork on the interaction-significant gene set (from T1S2) is extracted and its edge density/largest-connected-component size reported",
+                "A permutation-based null (random gene sets of the same size drawn from the tested gene universe) is used to test whether the observed connectivity exceeds chance, with an empirical p-value reported",
+                "If the interaction gene list is too small (e.g., <5 genes) for a meaningful network test, this is stated explicitly rather than forcing a network statistic on a near-empty set"
+              ],
+              "packages": [
+                "networkx",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "The STRING links file is space-delimited despite .txt naming and gzipped, and every edge appears twice (once per direction) — collapse via an undirected graph constructor and do not double-count edges",
+                "STRING node IDs are taxid-prefixed Ensembl protein IDs, not gene symbols — the info file join is mandatory before any gene-list lookup"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

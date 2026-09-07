@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly frames the question as a genotype-by-treatment interaction, fits ~genotype + treatment + genotype:treatment in PyDESeq2 with explicit WT/vehicle reference levels, tests the interaction Wald coefficient, and reports both within-genotype simple effects with a stated power caveat for n=4/cell. QC (blind VST, PCA on top 500 genes, distance heatmap, library sizes, flag-not-exclude policy), the minimal justified filter (>=10 in >=4 samples), in-model size factors, per-contrast BH at 0.05, and the enrichment specification (Wald-stat ranking, tested-gene universe, versioned Hallmark/Reactome/WikiPathways, 15-500 window, no pooling) are all explicit and design-specific. The main flaw is the shrinkage step: it invokes ashr from R via rpy2, breaching the Python-only constraint without stopping to ask whether R is permitted, and its justification is partly wrong (the interaction term and the WT simple effect are single coefficients, so apeglm was available for them). The plan also asserts PyDESeq2 supports the interaction formula and a numeric contrast vector without stating a fallback if the installed version cannot."
+}

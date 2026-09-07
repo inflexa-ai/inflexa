@@ -1,0 +1,331 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "multi-group-3x4",
+  "run": 1,
+  "startedAt": "2026-09-06T21:21:31.212Z",
+  "elapsedMs": 49798,
+  "outcome": "plan_submitted",
+  "planId": "pln-0e21d9e3",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and exploratory analysis of raw counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=4 per group is small — a single outlier sample can dominate PCA and dispersion estimates; report leverage explicitly rather than silently dropping samples"
+        ],
+        "context": "Input: counts.csv (12000 genes x 12 samples, raw integer Salmon gene-level counts) and metadata.csv (12 samples x condition: control/treated_a/treated_b, 4 reps each, unpaired, single batch).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Are the 12 liver samples (4 control, 4 treated_a, 4 treated_b) free of outliers, batch artifacts, or low-quality libraries that would confound the differential expression model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use raw counts as given; do not renormalize before DESeq2's own size-factor estimation",
+          "Filter genes with very low counts (e.g., row sum < 10 across all 12 samples) and report how many genes were removed"
+        ],
+        "acceptance_criteria": [
+          "Library size / total counts reported per sample",
+          "PCA or MDS plot of variance-stabilized counts colored by condition (control/treated_a/treated_b) produced",
+          "Sample-sample correlation or hierarchical clustering heatmap produced",
+          "Any outlier or mismatched sample flagged with justification, or explicit statement that none was found",
+          "Gene filtering criterion (e.g., minimum count threshold across samples) stated and applied before downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 omnibus LRT across all three groups",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "LRT p-values test whether condition explains variance jointly across 3 groups; they do not indicate which specific group(s) differ — that is answered separately in T2S1",
+          "With 4 reps/group, power for the LRT is limited; state this when reporting hit counts"
+        ],
+        "context": "Same counts.csv / metadata.csv as T1S1, post-filtering. Design: condition (control, treated_a, treated_b), 4 reps/group, unpaired, single batch — no covariates to adjust for.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes' expression differs across control, treated_a, and treated_b at all, when tested jointly with a likelihood-ratio test (full model ~condition vs reduced model ~1)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use DESeq(dds, test='LRT', reduced=~1) on the same filtered count matrix and size factors used for the pairwise contrasts in T2S1, so the omnibus and pairwise results are drawn from one consistent fit",
+          "Set condition reference level explicitly to 'control'"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 object built from raw counts and condition factor (levels: control, treated_a, treated_b; control set as reference)",
+          "LRT comparing full ~condition against reduced ~1 model performed",
+          "Full results table with gene symbol, LRT p-value, and BH-adjusted p-value (padj) exported",
+          "Number of genes significant at padj < 0.05 reported",
+          "Filtering criterion from T1S1 applied identically here"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pairwise Wald contrasts: each treatment vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Two separate two-group contrasts do not have joint FDR control across all 3 groups the way the LRT does — report both the omnibus LRT hit list and the pairwise hit lists as answering distinct questions, not as redundant checks",
+          "n=4/group limits detection of subtle (<1.5-fold) effects"
+        ],
+        "context": "Same filtered counts/metadata as T1S1/T1S2. This step performs the pairwise arm of the same overall DE analysis; it should reuse the fitted DESeq2 object (Wald test, condition as factor, control as reference) rather than re-fitting independently, so dispersion estimates are shared with the omnibus LRT in T1S2.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes are significantly up- or down-regulated in treated_a vs control, and separately in treated_b vs control?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Fit with DESeq(dds) default Wald test on the same dds object (condition releveled to control) used conceptually in T1S2, so both arms share size factors and dispersions",
+          "Apply log2FC shrinkage (apeglm or ashr) before ranking/reporting fold changes",
+          "State the padj and |log2FC| thresholds used explicitly in the output"
+        ],
+        "acceptance_criteria": [
+          "Wald test contrasts extracted from the same fitted DESeq2 model: condition treated_a vs control, and condition treated_b vs control",
+          "Results tables (gene symbol, log2FoldChange, shrunken LFC via apeglm/ashr, p-value, padj) exported per contrast",
+          "Significant gene counts (padj < 0.05, |log2FC| > 1 as a stated default) reported for each contrast separately",
+          "Overlap between the treated_a-vs-control and treated_b-vs-control significant gene sets reported (shared vs treatment-specific responders)",
+          "MA plots or volcano plots produced per contrast"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment on omnibus and pairwise gene sets",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "12000-gene background (post-filtering) should be used as the enrichment universe, not the whole genome, to avoid inflated significance",
+          "Small gene lists from n=4/group contrasts may yield few or no significant pathways after multiple-testing correction; report this plainly if it occurs"
+        ],
+        "context": "Gene lists come from the omnibus LRT (T1S2) and the two pairwise contrasts (T2S1), all human liver Salmon-derived gene symbols. Reference: a WikiPathways human pathway gene set collection (HGNC gene symbols) is present in this environment's reference store and should be used for enrichment; confirm its presence before running rather than assuming a path.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea"
+        ],
+        "question": "What biological pathways are enriched among the genes that differ across all three groups (omnibus LRT hits), and separately among genes changed by treated_a vs control and treated_b vs control?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Use human WikiPathways gene sets only — do not use rat or mouse pathway files present elsewhere in the reference store",
+          "Parse the GMT '%'-delimited descriptor field to recover a readable pathway name for reporting"
+        ],
+        "acceptance_criteria": [
+          "Over-representation or GSEA-style enrichment run separately for: (a) omnibus LRT significant genes, (b) treated_a-vs-control significant genes, (c) treated_b-vs-control significant genes",
+          "Enrichment results table (pathway name, gene set size, overlap, p-value, adjusted p-value) exported per gene list",
+          "If the WikiPathways human gene set reference is unavailable at run time, this is reported explicitly and the step stops rather than substituting an unrelated organism's gene sets"
+        ]
+      }
+    ],
+    "title": "Liver 3-group DE: LRT + pairwise vs control",
+    "created_at": "2026-09-07T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (Salmon-derived raw gene-level counts, 12000 genes x 12 samples) from human liver with three unpaired groups of four replicates each (control, treated_a, treated_b), single batch. The question has two parts: (1) which genes differ across all three groups (an omnibus test), and (2) which genes each treatment changes relative to control (pairwise contrasts). This maps directly onto a single DESeq2 model with condition as the only factor: a likelihood-ratio test (full ~condition vs reduced ~1) answers the omnibus 'differs across any group' question, and two Wald contrasts (treated_a vs control, treated_b vs control) from the same fitted model answer the pairwise question, avoiding two separately-fit models and keeping dispersion estimates consistent. QC (library size, PCA, sample clustering) precedes modeling since n=4/group is small and any outlier or mislabeled sample would compromise both tests. Enrichment on the pairwise gene lists uses WikiPathways human gene sets, confirmed present in the reference store. No translational/clinical data are present, so no PK/PD, safety, or biomarker steps are warranted."
+  },
+  "usage": {
+    "inputTokens": 87199,
+    "outputTokens": 3449,
+    "cacheCreationInputTokens": 68891,
+    "cacheReadInputTokens": 18284,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver 3-group DE: LRT + pairwise vs control",
+          "analytical_narrative": "The dataset is bulk RNA-seq (Salmon-derived raw gene-level counts, 12000 genes x 12 samples) from human liver with three unpaired groups of four replicates each (control, treated_a, treated_b), single batch. The question has two parts: (1) which genes differ across all three groups (an omnibus test), and (2) which genes each treatment changes relative to control (pairwise contrasts). This maps directly onto a single DESeq2 model with condition as the only factor: a likelihood-ratio test (full ~condition vs reduced ~1) answers the omnibus 'differs across any group' question, and two Wald contrasts (treated_a vs control, treated_b vs control) from the same fitted model answer the pairwise question, avoiding two separately-fit models and keeping dispersion estimates consistent. QC (library size, PCA, sample clustering) precedes modeling since n=4/group is small and any outlier or mislabeled sample would compromise both tests. Enrichment on the pairwise gene lists uses WikiPathways human gene sets, confirmed present in the reference store. No translational/clinical data are present, so no PK/PD, safety, or biomarker steps are warranted.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and exploratory analysis of raw counts",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Are the 12 liver samples (4 control, 4 treated_a, 4 treated_b) free of outliers, batch artifacts, or low-quality libraries that would confound the differential expression model?",
+              "acceptance_criteria": [
+                "Library size / total counts reported per sample",
+                "PCA or MDS plot of variance-stabilized counts colored by condition (control/treated_a/treated_b) produced",
+                "Sample-sample correlation or hierarchical clustering heatmap produced",
+                "Any outlier or mismatched sample flagged with justification, or explicit statement that none was found",
+                "Gene filtering criterion (e.g., minimum count threshold across samples) stated and applied before downstream steps"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: counts.csv (12000 genes x 12 samples, raw integer Salmon gene-level counts) and metadata.csv (12 samples x condition: control/treated_a/treated_b, 4 reps each, unpaired, single batch).",
+              "constraints": [
+                "Use raw counts as given; do not renormalize before DESeq2's own size-factor estimation",
+                "Filter genes with very low counts (e.g., row sum < 10 across all 12 samples) and report how many genes were removed"
+              ],
+              "caveats": [
+                "n=4 per group is small — a single outlier sample can dominate PCA and dispersion estimates; report leverage explicitly rather than silently dropping samples"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 omnibus LRT across all three groups",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes' expression differs across control, treated_a, and treated_b at all, when tested jointly with a likelihood-ratio test (full model ~condition vs reduced model ~1)?",
+              "acceptance_criteria": [
+                "DESeq2 object built from raw counts and condition factor (levels: control, treated_a, treated_b; control set as reference)",
+                "LRT comparing full ~condition against reduced ~1 model performed",
+                "Full results table with gene symbol, LRT p-value, and BH-adjusted p-value (padj) exported",
+                "Number of genes significant at padj < 0.05 reported",
+                "Filtering criterion from T1S1 applied identically here"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same counts.csv / metadata.csv as T1S1, post-filtering. Design: condition (control, treated_a, treated_b), 4 reps/group, unpaired, single batch — no covariates to adjust for.",
+              "constraints": [
+                "Use DESeq(dds, test='LRT', reduced=~1) on the same filtered count matrix and size factors used for the pairwise contrasts in T2S1, so the omnibus and pairwise results are drawn from one consistent fit",
+                "Set condition reference level explicitly to 'control'"
+              ],
+              "caveats": [
+                "LRT p-values test whether condition explains variance jointly across 3 groups; they do not indicate which specific group(s) differ — that is answered separately in T2S1",
+                "With 4 reps/group, power for the LRT is limited; state this when reporting hit counts"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pairwise Wald contrasts: each treatment vs control",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Which genes are significantly up- or down-regulated in treated_a vs control, and separately in treated_b vs control?",
+              "acceptance_criteria": [
+                "Wald test contrasts extracted from the same fitted DESeq2 model: condition treated_a vs control, and condition treated_b vs control",
+                "Results tables (gene symbol, log2FoldChange, shrunken LFC via apeglm/ashr, p-value, padj) exported per contrast",
+                "Significant gene counts (padj < 0.05, |log2FC| > 1 as a stated default) reported for each contrast separately",
+                "Overlap between the treated_a-vs-control and treated_b-vs-control significant gene sets reported (shared vs treatment-specific responders)",
+                "MA plots or volcano plots produced per contrast"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same filtered counts/metadata as T1S1/T1S2. This step performs the pairwise arm of the same overall DE analysis; it should reuse the fitted DESeq2 object (Wald test, condition as factor, control as reference) rather than re-fitting independently, so dispersion estimates are shared with the omnibus LRT in T1S2.",
+              "constraints": [
+                "Fit with DESeq(dds) default Wald test on the same dds object (condition releveled to control) used conceptually in T1S2, so both arms share size factors and dispersions",
+                "Apply log2FC shrinkage (apeglm or ashr) before ranking/reporting fold changes",
+                "State the padj and |log2FC| thresholds used explicitly in the output"
+              ],
+              "caveats": [
+                "Two separate two-group contrasts do not have joint FDR control across all 3 groups the way the LRT does — report both the omnibus LRT hit list and the pairwise hit lists as answering distinct questions, not as redundant checks",
+                "n=4/group limits detection of subtle (<1.5-fold) effects"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment on omnibus and pairwise gene sets",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "What biological pathways are enriched among the genes that differ across all three groups (omnibus LRT hits), and separately among genes changed by treated_a vs control and treated_b vs control?",
+              "acceptance_criteria": [
+                "Over-representation or GSEA-style enrichment run separately for: (a) omnibus LRT significant genes, (b) treated_a-vs-control significant genes, (c) treated_b-vs-control significant genes",
+                "Enrichment results table (pathway name, gene set size, overlap, p-value, adjusted p-value) exported per gene list",
+                "If the WikiPathways human gene set reference is unavailable at run time, this is reported explicitly and the step stops rather than substituting an unrelated organism's gene sets"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Gene lists come from the omnibus LRT (T1S2) and the two pairwise contrasts (T2S1), all human liver Salmon-derived gene symbols. Reference: a WikiPathways human pathway gene set collection (HGNC gene symbols) is present in this environment's reference store and should be used for enrichment; confirm its presence before running rather than assuming a path.",
+              "constraints": [
+                "Use human WikiPathways gene sets only — do not use rat or mouse pathway files present elsewhere in the reference store",
+                "Parse the GMT '%'-delimited descriptor field to recover a readable pathway name for reporting"
+              ],
+              "caveats": [
+                "12000-gene background (post-filtering) should be used as the enrichment universe, not the whole genome, to avoid inflated significance",
+                "Small gene lists from n=4/group contrasts may yield few or no significant pathways after multiple-testing correction; report this plainly if it occurs"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

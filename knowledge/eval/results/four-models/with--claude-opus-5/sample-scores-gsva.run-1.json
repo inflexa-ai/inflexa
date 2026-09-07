@@ -1,0 +1,815 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "sample-scores-gsva",
+  "run": 1,
+  "startedAt": "2026-09-06T22:41:12.220Z",
+  "elapsedMs": 115311,
+  "outcome": "plan_submitted",
+  "planId": "pln-a547a5b7",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A sample with a library size several times below the median must not be deleted silently: DESeq2 size factors down-weight depth, so removal is a judgment call that must be stated, not a default",
+          "With n=6 per group a single sample sitting apart on the PCA materially changes downstream scores — report it, do not hide it"
+        ],
+        "context": "Human colon bulk RNA-seq, ulcerative colitis inflamed vs control, 6 vs 6, unpaired, single batch, gene-level counts quantified with Salmon. Data profile flags one caveat: sample_01 has a library size about 4x below the median.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the 12 colon samples group by condition (UC inflamed vs control) on a blind vst PCA, and does sample_01, whose library size is about 4x below the median, behave as an outlier or merely as a low-depth sample?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d",
+            "R-0036@9786"
+          ],
+          "reason": "Blind vst + PCA on top 500 genes + sample distance heatmap is the sample-structure QC of R-0033@40bf; the low-depth sample_01 is kept and reported per R-0008@440d.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "transform = vst_blind (blind to the design)",
+          "n_top_genes = 500 for the PCA",
+          "low_depth_policy = keep_inspect_report — sample_01 is not dropped in this step",
+          "Set the reference level of the condition factor explicitly; do not rely on alphabetical ordering"
+        ],
+        "description": "Load /eval-four-models-with-sample-scores-gsva-1/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, first column = gene symbol) and /eval-four-models-with-sample-scores-gsva-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify the sample ids in the metadata match the count columns exactly and in order. Build a DESeqDataSet with design ~condition, set the reference level of condition explicitly to the control level as named in metadata.csv. Apply the blind variance-stabilizing transform, compute PCA on the 500 most variable genes, a Euclidean sample-distance heatmap, and a per-sample table of library size and number of detected genes. Colour every plot by condition and mark sample_01. Keep sample_01 in the dataset; report its library size and detected-gene count beside the others and state explicitly whether it separates from its group on the PCA and the distance heatmap. Do not remove any sample in this step.",
+        "acceptance_criteria": [
+          "Metadata sample ids confirmed to match the 12 count-matrix columns; any mismatch reported rather than silently reordered",
+          "PCA on the top 500 variable genes and a sample-distance heatmap produced, both coloured by condition with sample_01 labelled",
+          "A per-sample table of library size and detected genes is written, with sample_01's values stated relative to the cohort median",
+          "All 12 samples retained into T1S2; any exclusion proposal is stated with an explicit reason and left as a recommendation, not applied"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count filter and vst expression matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Over-filtering removes small coordinated changes that are exactly what a set-level score aggregates",
+          "Depth differences are handled by the size factors; do not additionally correct sample_01 by hand"
+        ],
+        "context": "Downstream steps need one consistent depth-normalized log-scale matrix. GSVA, UCell and decoupleR all take log-scale expression; giving each step a different transform would make their results incomparable.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which of the 12,000 genes carry enough signal to score hallmark sets, and what is the depth-normalized log-scale expression matrix that every scoring step will use?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248"
+          ],
+          "reason": "Minimal pre-filter at 10 counts in the smallest group size per R-0002@087b/R-0029@fa6d; normalization stays inside the model as median-of-ratios size factors per R-0026@9ab1, and depth alone is not grounds to drop sample_01 per R-0030@2248.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count = 10, min_samples = 6 (smallest group size)",
+          "filter_policy = minimal_then_independent — do not raise the threshold to prune the matrix further",
+          "size_factors = median-of-ratios; no pre-normalization of counts before the model"
+        ],
+        "description": "On the DESeqDataSet from T1S1, keep genes with at least 10 counts in at least 6 samples (the smallest group size). Estimate median-of-ratios size factors on the filtered matrix. Emit (a) the filtered raw count matrix, (b) the size factors, and (c) a variance-stabilized log-scale expression matrix with gene symbols as row names, as the single shared input for T2S1, T2S2 and T3S1. Report how many genes passed the filter out of 12,000. Do not scale, quantile-normalize or otherwise transform the counts before the size-factor estimation.",
+        "acceptance_criteria": [
+          "Gene filter applied as >=10 counts in >=6 samples, with the retained gene count reported against the 12,000 input genes",
+          "Median-of-ratios size factors computed and reported per sample, including sample_01",
+          "A vst log-scale matrix (genes x 12 samples, gene symbols as row names) is written and is the only expression matrix downstream steps consume"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GSVA hallmark scores, limma test, and the heatmap",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A GSVA score of one sample depends on the other samples in the matrix; sample_01's low depth can therefore shift every sample's score, which is why T2S2 repeats the scoring with a sample-independent method",
+          "With 6 per group the limma test on scores has 10 residual degrees of freedom — sufficient to rank hallmarks, not to establish a single borderline hallmark",
+          "Row-scaling the heatmap makes every hallmark look equally variable; report the unscaled score range alongside",
+          "A hallmark set whose member genes are largely absent from the 12,000-gene matrix gives an unreliable score — flag any set with a low present-gene count"
+        ],
+        "context": "Human colon, UC inflamed (n=6) vs control (n=6). The research question explicitly asks for a per-sample pathway score and a hallmark heatmap showing which pathways separate the groups. Hallmark is the right first collection for a human dataset. The reference store holds the human hallmark GMT (50 sets, HGNC symbols) and a separate mouse hallmark GMT — using the mouse file on these human symbols would silently produce near-empty sets.",
+        "maxSteps": 200,
+        "packages": [
+          "GSVA",
+          "limma",
+          "ComplexHeatmap",
+          "circlize"
+        ],
+        "question": "What is each of the 50 MSigDB hallmark sets' activity score in each of the 12 colon samples, and which hallmarks differ significantly between UC inflamed and control?",
+        "grounding": {
+          "claims": [
+            "R-0133@ce76",
+            "R-0134@0f16",
+            "R-0048@801e",
+            "R-0047@fd9d"
+          ],
+          "reason": "GSVA is the named alternative in R-0133@ce76 for many gene sets scored as one matrix across a fixed sample set and tested with limma; the score test and BH adjustment across signatures follow R-0134@0f16; hallmark first for a human dataset per R-0048@801e.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-signature-scoring@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Input scale = log-scale normalized expression (the T1S2 vst matrix); do not feed raw counts to GSVA",
+          "score_test = limma on the score matrix under the same ~condition design as the gene-level model",
+          "score_adjustment = Benjamini-Hochberg across the 50 hallmark sets",
+          "preprocessing_scope = the gene filter and any scaling are applied once to the whole matrix before scoring; no per-fold scheme applies here because this step fits no classifier — state this in the output",
+          "signature_provenance = report the collection name, version, and the number of member genes present per set",
+          "Use the human hallmark collection matched to the Homo sapiens dataset; if only a non-human hallmark collection is resolvable, stop and report rather than substituting"
+        ],
+        "description": "This step produces the requested deliverable. Load the human hallmark gene set collection (the 50 HALLMARK_* sets, HGNC symbols, from the reference store — the human file, not the mouse one; state the collection version in the output). Intersect each set with the genes retained in T1S2 and report, per set, how many of its genes are present. Run GSVA on the T1S2 vst matrix with the Gaussian kernel appropriate to continuous log-scale data, producing a 50 x 12 sample-score matrix. Test the score matrix with limma under design ~condition (contrast: inflamed minus control, reference level as set in T1S1) and adjust p-values with Benjamini-Hochberg across the 50 hallmarks. Render the deliverable heatmap: hallmark sets in rows, the 12 samples in columns, scores row-scaled, a condition annotation bar, hierarchical clustering of both dimensions, and an adjacent annotation of the limma t-statistic and BH-adjusted p-value per hallmark. Also write the full 50 x 12 score table and the limma results table as CSVs. State in the output that a GSVA score is relative to this sample set and would change if samples were added or removed, and that the heatmap's sample clustering is descriptive — the separation claim rests on the limma test.",
+        "acceptance_criteria": [
+          "A 50 x 12 hallmark score matrix written as CSV, with per-set counts of member genes present in the filtered matrix",
+          "limma results for all 50 hallmarks with t-statistic, raw p and BH-adjusted p for inflamed vs control, written as CSV",
+          "A clustered hallmark-by-sample heatmap with a condition annotation bar, saved as a figure file",
+          "The hallmark collection source and version are stated in the output, and the human (not mouse) collection is confirmed by checking symbol overlap with the count matrix",
+          "The output states that GSVA scores are sample-set-relative and that separation is claimed from the limma test, not from the clustering"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "UCell rank-based hallmark scores as a robustness check",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Agreement between two scoring methods on the same gene sets is a stability check, not independent biological evidence — both read the same 50 sets from the same 12 samples",
+          "UCell scores are bounded and compressed relative to GSVA; compare ranks and directions, not raw score magnitudes"
+        ],
+        "context": "GSVA scores are relative to the sample set, so with 12 samples and one at ~4x below median depth a GSVA-only result is fragile. UCell is rank-based within a sample and depth-insensitive, making it the appropriate independent check on the same collection.",
+        "maxSteps": 200,
+        "packages": [
+          "UCell",
+          "limma"
+        ],
+        "question": "Do the hallmarks that separate UC inflamed from control under GSVA also separate them under a scoring method whose per-sample score does not depend on the other samples?",
+        "grounding": {
+          "claims": [
+            "R-0133@ce76",
+            "R-0134@0f16"
+          ],
+          "reason": "UCell is the default rank-based per-sample scorer of R-0133@ce76 and its sample-independence addresses the GSVA caveat in the same rule; the limma-on-scores test with BH across signatures follows R-0134@0f16.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-signature-scoring@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Input scale = log-scale normalized expression (the same T1S2 vst matrix used in T2S1) — the two methods must see identical input",
+          "Same ~condition design and same BH adjustment across the 50 hallmarks as T2S1",
+          "score_method = rank-based per sample",
+          "preprocessing_scope = filtering and scaling applied once to the full matrix before scoring; no classifier is fitted, so no fold-wise preprocessing applies — state this"
+        ],
+        "description": "Score the same 50 human hallmark sets on the same T1S2 vst matrix with UCell, whose Mann-Whitney rank statistic gives each sample a score independent of the other samples. Test the resulting 50 x 12 score matrix with limma under the same ~condition design and adjust with BH across the 50 sets. Compare against T2S1: report the rank correlation between the GSVA and UCell t-statistics across the 50 hallmarks, and a concordance table of which hallmarks are BH-significant under one, the other, or both. Highlight any hallmark whose direction disagrees between the two methods, and check whether sample_01 is an influential point by reporting its per-hallmark score percentile under each method.",
+        "acceptance_criteria": [
+          "A 50 x 12 UCell hallmark score matrix and its limma/BH results table written as CSVs",
+          "Rank correlation between GSVA and UCell hallmark t-statistics reported, plus a concordance table of BH-significant hallmarks under each method",
+          "Any hallmark with opposite direction between the two methods is named explicitly",
+          "sample_01's per-hallmark score percentile reported under both methods"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "PROGENy signalling pathway activity per sample",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "A PROGENy pathway can change activity with no change in its member genes' expression, and the reverse — do not reconcile it with the hallmark result by assuming they measure the same thing",
+          "With 12 samples the per-sample activity estimates are noisy; read the between-group contrast, not individual sample values"
+        ],
+        "context": "Hallmark scores are membership-based aggregates; PROGENy footprints answer a different question (is the pathway signalling engaged) and are the appropriate second per-sample pathway readout for UC colon, where TNFa/NFkB and JAK-STAT signalling are the expected axes. SPIA, the topology-aware tool of record, is not available in this environment.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupleR",
+          "limma",
+          "ComplexHeatmap"
+        ],
+        "question": "Which signalling pathways (TNFa/NFkB, JAK-STAT, TGFb and the rest of the PROGENy set) show a changed transcriptional footprint per sample in UC inflamed colon versus control, as an orthogonal readout to the hallmark scores?",
+        "grounding": {
+          "claims": [
+            "R-0115@1504",
+            "R-0122@08af"
+          ],
+          "reason": "decoupleR mlm on the PROGENy footprint model with the top 500 responsive genes is the pathway-activity procedure of R-0115@1504; R-0122@08af requires stating that SPIA topology analysis is absent and the footprint substitutes for it.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-progeny-pathway-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "activity",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "activity_method = mlm (decoupleR multivariate linear model)",
+          "footprint_model = human PROGENy",
+          "top_responsive_genes = 500",
+          "interpretation = footprint, not membership",
+          "No topology-based impact analysis is claimed — SPIA is absent from this environment"
+        ],
+        "description": "Compute per-sample signalling pathway activity on the T1S2 vst matrix with the decoupleR multivariate linear model (mlm) against the human PROGENy footprint model, using the top 500 responsive genes per pathway. This yields one activity value per pathway per sample. Test the activity matrix with limma under the same ~condition design and adjust with BH across the pathways. Plot the pathway-by-sample activity heatmap with the condition annotation bar, matching the layout of the T2S1 hallmark heatmap so the two can be read side by side. State explicitly that a PROGENy score is a transcriptional footprint of pathway activity, not the expression of the pathway's member genes, and that no topology-aware impact analysis is performed. The PROGENy model must be human. If no human footprint model is resolvable in this environment, report that clearly and do not substitute a non-human model or a membership-based enrichment presented as an activity.",
+        "acceptance_criteria": [
+          "A pathway-by-sample PROGENy activity matrix written as CSV, with the number of model genes present in the filtered matrix per pathway",
+          "limma results with BH-adjusted p per pathway for inflamed vs control",
+          "A pathway activity heatmap annotated by condition, laid out to match the hallmark heatmap",
+          "The output states that the score is a footprint, not member-gene expression, and that no pathway topology is used",
+          "Human PROGENy model confirmed; absence reported rather than substituted"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Consolidated report and reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Two scoring methods over the same 50 sets are a stability check, not replication in an independent cohort",
+          "With 50 hallmarks and 12 samples, a BH-adjusted p just under 0.05 is a lead, not an established finding"
+        ],
+        "context": "The user asked a scoping question — which pathways separate treated from control — and a small cohort answers it as a ranking with uncertainty, not as a validated pathway list.",
+        "maxSteps": 200,
+        "packages": [
+          "rmarkdown",
+          "knitr",
+          "ggplot2"
+        ],
+        "question": "Which pathways separate UC inflamed from control colon across the hallmark and PROGENy per-sample scores, and how confident can a 6-vs-6 cohort with one low-depth sample make us?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf"
+          ],
+          "reason": "The reproducibility record (sessionInfo, seed, package versions, pinned collection version) in every report is required by R-0086@becf.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S1",
+          "T2S1",
+          "T2S2",
+          "T3S1"
+        ],
+        "constraints": [
+          "reproducibility_record = sessionInfo, seed, package versions, gene set collection version, footprint model version — stored with the results, not in a separate note",
+          "Every reported separation claim traces to a BH-adjusted score-level test, naming which method produced it"
+        ],
+        "description": "Assemble one report from T1S1, T2S1, T2S2 and T3S1: the QC summary including sample_01's library size and its position on the PCA; the hallmark activity heatmap as the headline figure; the ranked table of hallmarks by limma t-statistic with BH-adjusted p, annotated with whether GSVA and UCell agree; the PROGENy pathway activity heatmap and table; and a short statement of which pathways separate the groups and which are ambiguous. State the limits plainly: n=6 per group, 10 residual degrees of freedom on every score-level test, one sample at ~4x below median depth, set-level scores derived from a 12,000-gene matrix so hallmarks with few present member genes are unreliable, and heatmap clustering that is descriptive rather than inferential. Do not report a hallmark as separating the groups on clustering alone. Include a reproducibility record: sessionInfo, package versions, any random seed used, and the version of the hallmark collection and the PROGENy model.",
+        "acceptance_criteria": [
+          "Report contains the hallmark heatmap, the ranked hallmark table with BH-adjusted p and GSVA/UCell concordance, and the PROGENy heatmap and table",
+          "Explicit limitations section covering n=6 per group, sample_01's depth, and the descriptive nature of the clustering",
+          "Reproducibility record with sessionInfo, package versions, seed, hallmark collection version and PROGENy model version stored with the results",
+          "No pathway is described as separating the groups on the basis of the heatmap clustering alone"
+        ]
+      }
+    ],
+    "title": "UC inflamed vs control hallmark activity per sample",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks for a per-sample pathway activity score and a hallmark activity heatmap that shows which pathways separate the ulcerative-colitis inflamed samples from the controls. The input is a single gene-symbol count matrix from Salmon (12,000 genes x 12 samples, counts.csv) plus a 12 x 2 sample table (metadata.csv) with one condition column, 6 inflamed vs 6 control, unpaired, one batch. This is a sample-scoring question, not a gene-level DE question, so the plan goes: (T1S1) sample structure QC on blind vst — PCA on the top 500 variable genes, sample-distance heatmap, library sizes and detected genes per sample, with sample_01 (library size ~4x below the median) kept and explicitly inspected rather than silently dropped, because DESeq2 size factors already down-weight depth; (T1S2) minimal low-count filter (>=10 counts in >=6 samples, the smallest group size) and median-of-ratios size factors, producing the vst matrix that every scoring step consumes — no pre-scaled counts; (T2S1) the core deliverable, GSVA hallmark scores per sample on the 50 MSigDB human hallmark sets, tested with limma under ~condition and BH-adjusted across the 50 sets, rendered as the requested clustered heatmap of hallmark activity across the 12 samples annotated by condition; (T2S2) UCell rank-based scores on the same hallmark sets as an independent, sample-set-independent check, because a GSVA score of one sample shifts when the sample set changes and a 12-sample cohort with one low-depth sample is exactly where that matters; (T3S1) PROGENy footprint pathway activity with decoupleR mlm as an orthogonal, mechanism-oriented per-sample readout that is a footprint rather than a membership score; (T1S3) the consolidated report. With n=6 per group the score-level tests have 10 residual degrees of freedom — enough to rank hallmarks, not enough to treat a single borderline BH-adjusted hallmark as established, and the report must say so. Heatmap ordering is descriptive: samples clustered on the score matrix will tend to split by condition by construction, so separation claims rest on the limma test on the scores, not on the picture."
+  },
+  "usage": {
+    "inputTokens": 225405,
+    "outputTokens": 9725,
+    "cacheCreationInputTokens": 146660,
+    "cacheReadInputTokens": 78709,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "sample_scores",
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "preferred_language": "R"
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "enrichment_input": "sample_scores",
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA on top 500 variable genes, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep a gene with at least 10 counts in at least 6 samples (smallest group size)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              },
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors, vst for downstream scoring",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "GSVA per-sample hallmark scores plus UCell rank-based scores, limma on the score matrix",
+            "package": "GSVA",
+            "parameters": [
+              {
+                "name": "score_method",
+                "value": "rank_based_per_sample"
+              },
+              {
+                "name": "input_scale",
+                "value": "log_normalized_expression"
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_the_design"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH_across_signatures"
+              },
+              {
+                "name": "signature_provenance",
+                "value": "source_version_and_genes_present"
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "Pathway activity with decoupleR mlm on the PROGENy footprint model",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "footprint_model",
+                "value": "progeny_human"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "interpretation",
+                "value": "footprint_not_membership"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Hallmark activity heatmap across the 12 samples with reproducibility record",
+            "package": "ComplexHeatmap",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "UC inflamed vs control hallmark activity per sample",
+          "analytical_narrative": "The question asks for a per-sample pathway activity score and a hallmark activity heatmap that shows which pathways separate the ulcerative-colitis inflamed samples from the controls. The input is a single gene-symbol count matrix from Salmon (12,000 genes x 12 samples, counts.csv) plus a 12 x 2 sample table (metadata.csv) with one condition column, 6 inflamed vs 6 control, unpaired, one batch. This is a sample-scoring question, not a gene-level DE question, so the plan goes: (T1S1) sample structure QC on blind vst — PCA on the top 500 variable genes, sample-distance heatmap, library sizes and detected genes per sample, with sample_01 (library size ~4x below the median) kept and explicitly inspected rather than silently dropped, because DESeq2 size factors already down-weight depth; (T1S2) minimal low-count filter (>=10 counts in >=6 samples, the smallest group size) and median-of-ratios size factors, producing the vst matrix that every scoring step consumes — no pre-scaled counts; (T2S1) the core deliverable, GSVA hallmark scores per sample on the 50 MSigDB human hallmark sets, tested with limma under ~condition and BH-adjusted across the 50 sets, rendered as the requested clustered heatmap of hallmark activity across the 12 samples annotated by condition; (T2S2) UCell rank-based scores on the same hallmark sets as an independent, sample-set-independent check, because a GSVA score of one sample shifts when the sample set changes and a 12-sample cohort with one low-depth sample is exactly where that matters; (T3S1) PROGENy footprint pathway activity with decoupleR mlm as an orthogonal, mechanism-oriented per-sample readout that is a footprint rather than a membership score; (T1S3) the consolidated report. With n=6 per group the score-level tests have 10 residual degrees of freedom — enough to rank hallmarks, not enough to treat a single borderline BH-adjusted hallmark as established, and the report must say so. Heatmap ordering is descriptive: samples clustered on the score matrix will tend to split by condition by construction, so separation claims rest on the limma test on the scores, not on the picture.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 colon samples group by condition (UC inflamed vs control) on a blind vst PCA, and does sample_01, whose library size is about 4x below the median, behave as an outlier or merely as a low-depth sample?",
+              "description": "Load /eval-four-models-with-sample-scores-gsva-1/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, first column = gene symbol) and /eval-four-models-with-sample-scores-gsva-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify the sample ids in the metadata match the count columns exactly and in order. Build a DESeqDataSet with design ~condition, set the reference level of condition explicitly to the control level as named in metadata.csv. Apply the blind variance-stabilizing transform, compute PCA on the 500 most variable genes, a Euclidean sample-distance heatmap, and a per-sample table of library size and number of detected genes. Colour every plot by condition and mark sample_01. Keep sample_01 in the dataset; report its library size and detected-gene count beside the others and state explicitly whether it separates from its group on the PCA and the distance heatmap. Do not remove any sample in this step.",
+              "context": "Human colon bulk RNA-seq, ulcerative colitis inflamed vs control, 6 vs 6, unpaired, single batch, gene-level counts quantified with Salmon. Data profile flags one caveat: sample_01 has a library size about 4x below the median.",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "acceptance_criteria": [
+                "Metadata sample ids confirmed to match the 12 count-matrix columns; any mismatch reported rather than silently reordered",
+                "PCA on the top 500 variable genes and a sample-distance heatmap produced, both coloured by condition with sample_01 labelled",
+                "A per-sample table of library size and detected genes is written, with sample_01's values stated relative to the cohort median",
+                "All 12 samples retained into T1S2; any exclusion proposal is stated with an explicit reason and left as a recommendation, not applied"
+              ],
+              "constraints": [
+                "transform = vst_blind (blind to the design)",
+                "n_top_genes = 500 for the PCA",
+                "low_depth_policy = keep_inspect_report — sample_01 is not dropped in this step",
+                "Set the reference level of the condition factor explicitly; do not rely on alphabetical ordering"
+              ],
+              "caveats": [
+                "A sample with a library size several times below the median must not be deleted silently: DESeq2 size factors down-weight depth, so removal is a judgment call that must be stated, not a default",
+                "With n=6 per group a single sample sitting apart on the PCA materially changes downstream scores — report it, do not hide it"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d",
+                  "R-0036@9786"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Blind vst + PCA on top 500 genes + sample distance heatmap is the sample-structure QC of R-0033@40bf; the low-depth sample_01 is kept and reported per R-0008@440d."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count filter and vst expression matrix",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12,000 genes carry enough signal to score hallmark sets, and what is the depth-normalized log-scale expression matrix that every scoring step will use?",
+              "description": "On the DESeqDataSet from T1S1, keep genes with at least 10 counts in at least 6 samples (the smallest group size). Estimate median-of-ratios size factors on the filtered matrix. Emit (a) the filtered raw count matrix, (b) the size factors, and (c) a variance-stabilized log-scale expression matrix with gene symbols as row names, as the single shared input for T2S1, T2S2 and T3S1. Report how many genes passed the filter out of 12,000. Do not scale, quantile-normalize or otherwise transform the counts before the size-factor estimation.",
+              "context": "Downstream steps need one consistent depth-normalized log-scale matrix. GSVA, UCell and decoupleR all take log-scale expression; giving each step a different transform would make their results incomparable.",
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "acceptance_criteria": [
+                "Gene filter applied as >=10 counts in >=6 samples, with the retained gene count reported against the 12,000 input genes",
+                "Median-of-ratios size factors computed and reported per sample, including sample_01",
+                "A vst log-scale matrix (genes x 12 samples, gene symbols as row names) is written and is the only expression matrix downstream steps consume"
+              ],
+              "constraints": [
+                "min_count = 10, min_samples = 6 (smallest group size)",
+                "filter_policy = minimal_then_independent — do not raise the threshold to prune the matrix further",
+                "size_factors = median-of-ratios; no pre-normalization of counts before the model"
+              ],
+              "caveats": [
+                "Over-filtering removes small coordinated changes that are exactly what a set-level score aggregates",
+                "Depth differences are handled by the size factors; do not additionally correct sample_01 by hand"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0030@2248"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Minimal pre-filter at 10 counts in the smallest group size per R-0002@087b/R-0029@fa6d; normalization stays inside the model as median-of-ratios size factors per R-0026@9ab1, and depth alone is not grounds to drop sample_01 per R-0030@2248."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "GSVA hallmark scores, limma test, and the heatmap",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "What is each of the 50 MSigDB hallmark sets' activity score in each of the 12 colon samples, and which hallmarks differ significantly between UC inflamed and control?",
+              "description": "This step produces the requested deliverable. Load the human hallmark gene set collection (the 50 HALLMARK_* sets, HGNC symbols, from the reference store — the human file, not the mouse one; state the collection version in the output). Intersect each set with the genes retained in T1S2 and report, per set, how many of its genes are present. Run GSVA on the T1S2 vst matrix with the Gaussian kernel appropriate to continuous log-scale data, producing a 50 x 12 sample-score matrix. Test the score matrix with limma under design ~condition (contrast: inflamed minus control, reference level as set in T1S1) and adjust p-values with Benjamini-Hochberg across the 50 hallmarks. Render the deliverable heatmap: hallmark sets in rows, the 12 samples in columns, scores row-scaled, a condition annotation bar, hierarchical clustering of both dimensions, and an adjacent annotation of the limma t-statistic and BH-adjusted p-value per hallmark. Also write the full 50 x 12 score table and the limma results table as CSVs. State in the output that a GSVA score is relative to this sample set and would change if samples were added or removed, and that the heatmap's sample clustering is descriptive — the separation claim rests on the limma test.",
+              "context": "Human colon, UC inflamed (n=6) vs control (n=6). The research question explicitly asks for a per-sample pathway score and a hallmark heatmap showing which pathways separate the groups. Hallmark is the right first collection for a human dataset. The reference store holds the human hallmark GMT (50 sets, HGNC symbols) and a separate mouse hallmark GMT — using the mouse file on these human symbols would silently produce near-empty sets.",
+              "packages": [
+                "GSVA",
+                "limma",
+                "ComplexHeatmap",
+                "circlize"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "acceptance_criteria": [
+                "A 50 x 12 hallmark score matrix written as CSV, with per-set counts of member genes present in the filtered matrix",
+                "limma results for all 50 hallmarks with t-statistic, raw p and BH-adjusted p for inflamed vs control, written as CSV",
+                "A clustered hallmark-by-sample heatmap with a condition annotation bar, saved as a figure file",
+                "The hallmark collection source and version are stated in the output, and the human (not mouse) collection is confirmed by checking symbol overlap with the count matrix",
+                "The output states that GSVA scores are sample-set-relative and that separation is claimed from the limma test, not from the clustering"
+              ],
+              "constraints": [
+                "Input scale = log-scale normalized expression (the T1S2 vst matrix); do not feed raw counts to GSVA",
+                "score_test = limma on the score matrix under the same ~condition design as the gene-level model",
+                "score_adjustment = Benjamini-Hochberg across the 50 hallmark sets",
+                "preprocessing_scope = the gene filter and any scaling are applied once to the whole matrix before scoring; no per-fold scheme applies here because this step fits no classifier — state this in the output",
+                "signature_provenance = report the collection name, version, and the number of member genes present per set",
+                "Use the human hallmark collection matched to the Homo sapiens dataset; if only a non-human hallmark collection is resolvable, stop and report rather than substituting"
+              ],
+              "caveats": [
+                "A GSVA score of one sample depends on the other samples in the matrix; sample_01's low depth can therefore shift every sample's score, which is why T2S2 repeats the scoring with a sample-independent method",
+                "With 6 per group the limma test on scores has 10 residual degrees of freedom — sufficient to rank hallmarks, not to establish a single borderline hallmark",
+                "Row-scaling the heatmap makes every hallmark look equally variable; report the unscaled score range alongside",
+                "A hallmark set whose member genes are largely absent from the 12,000-gene matrix gives an unreliable score — flag any set with a low present-gene count"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0133@ce76",
+                  "R-0134@0f16",
+                  "R-0048@801e",
+                  "R-0047@fd9d"
+                ],
+                "template": "tpl-signature-scoring@1.0.0",
+                "reason": "GSVA is the named alternative in R-0133@ce76 for many gene sets scored as one matrix across a fixed sample set and tested with limma; the score test and BH adjustment across signatures follow R-0134@0f16; hallmark first for a human dataset per R-0048@801e."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "UCell rank-based hallmark scores as a robustness check",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do the hallmarks that separate UC inflamed from control under GSVA also separate them under a scoring method whose per-sample score does not depend on the other samples?",
+              "description": "Score the same 50 human hallmark sets on the same T1S2 vst matrix with UCell, whose Mann-Whitney rank statistic gives each sample a score independent of the other samples. Test the resulting 50 x 12 score matrix with limma under the same ~condition design and adjust with BH across the 50 sets. Compare against T2S1: report the rank correlation between the GSVA and UCell t-statistics across the 50 hallmarks, and a concordance table of which hallmarks are BH-significant under one, the other, or both. Highlight any hallmark whose direction disagrees between the two methods, and check whether sample_01 is an influential point by reporting its per-hallmark score percentile under each method.",
+              "context": "GSVA scores are relative to the sample set, so with 12 samples and one at ~4x below median depth a GSVA-only result is fragile. UCell is rank-based within a sample and depth-insensitive, making it the appropriate independent check on the same collection.",
+              "packages": [
+                "UCell",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "acceptance_criteria": [
+                "A 50 x 12 UCell hallmark score matrix and its limma/BH results table written as CSVs",
+                "Rank correlation between GSVA and UCell hallmark t-statistics reported, plus a concordance table of BH-significant hallmarks under each method",
+                "Any hallmark with opposite direction between the two methods is named explicitly",
+                "sample_01's per-hallmark score percentile reported under both methods"
+              ],
+              "constraints": [
+                "Input scale = log-scale normalized expression (the same T1S2 vst matrix used in T2S1) — the two methods must see identical input",
+                "Same ~condition design and same BH adjustment across the 50 hallmarks as T2S1",
+                "score_method = rank-based per sample",
+                "preprocessing_scope = filtering and scaling applied once to the full matrix before scoring; no classifier is fitted, so no fold-wise preprocessing applies — state this"
+              ],
+              "caveats": [
+                "Agreement between two scoring methods on the same gene sets is a stability check, not independent biological evidence — both read the same 50 sets from the same 12 samples",
+                "UCell scores are bounded and compressed relative to GSVA; compare ranks and directions, not raw score magnitudes"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0133@ce76",
+                  "R-0134@0f16"
+                ],
+                "template": "tpl-signature-scoring@1.0.0",
+                "reason": "UCell is the default rank-based per-sample scorer of R-0133@ce76 and its sample-independence addresses the GSVA caveat in the same rule; the limma-on-scores test with BH across signatures follows R-0134@0f16."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "PROGENy signalling pathway activity per sample",
+              "track": "T3",
+              "step_type": "activity",
+              "question": "Which signalling pathways (TNFa/NFkB, JAK-STAT, TGFb and the rest of the PROGENy set) show a changed transcriptional footprint per sample in UC inflamed colon versus control, as an orthogonal readout to the hallmark scores?",
+              "description": "Compute per-sample signalling pathway activity on the T1S2 vst matrix with the decoupleR multivariate linear model (mlm) against the human PROGENy footprint model, using the top 500 responsive genes per pathway. This yields one activity value per pathway per sample. Test the activity matrix with limma under the same ~condition design and adjust with BH across the pathways. Plot the pathway-by-sample activity heatmap with the condition annotation bar, matching the layout of the T2S1 hallmark heatmap so the two can be read side by side. State explicitly that a PROGENy score is a transcriptional footprint of pathway activity, not the expression of the pathway's member genes, and that no topology-aware impact analysis is performed. The PROGENy model must be human. If no human footprint model is resolvable in this environment, report that clearly and do not substitute a non-human model or a membership-based enrichment presented as an activity.",
+              "context": "Hallmark scores are membership-based aggregates; PROGENy footprints answer a different question (is the pathway signalling engaged) and are the appropriate second per-sample pathway readout for UC colon, where TNFa/NFkB and JAK-STAT signalling are the expected axes. SPIA, the topology-aware tool of record, is not available in this environment.",
+              "packages": [
+                "decoupleR",
+                "limma",
+                "ComplexHeatmap"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "acceptance_criteria": [
+                "A pathway-by-sample PROGENy activity matrix written as CSV, with the number of model genes present in the filtered matrix per pathway",
+                "limma results with BH-adjusted p per pathway for inflamed vs control",
+                "A pathway activity heatmap annotated by condition, laid out to match the hallmark heatmap",
+                "The output states that the score is a footprint, not member-gene expression, and that no pathway topology is used",
+                "Human PROGENy model confirmed; absence reported rather than substituted"
+              ],
+              "constraints": [
+                "activity_method = mlm (decoupleR multivariate linear model)",
+                "footprint_model = human PROGENy",
+                "top_responsive_genes = 500",
+                "interpretation = footprint, not membership",
+                "No topology-based impact analysis is claimed — SPIA is absent from this environment"
+              ],
+              "caveats": [
+                "A PROGENy pathway can change activity with no change in its member genes' expression, and the reverse — do not reconcile it with the hallmark result by assuming they measure the same thing",
+                "With 12 samples the per-sample activity estimates are noisy; read the between-group contrast, not individual sample values"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0115@1504",
+                  "R-0122@08af"
+                ],
+                "template": "tpl-progeny-pathway-activity@1.0.0",
+                "reason": "decoupleR mlm on the PROGENy footprint model with the top 500 responsive genes is the pathway-activity procedure of R-0115@1504; R-0122@08af requires stating that SPIA topology analysis is absent and the footprint substitutes for it."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Consolidated report and reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "question": "Which pathways separate UC inflamed from control colon across the hallmark and PROGENy per-sample scores, and how confident can a 6-vs-6 cohort with one low-depth sample make us?",
+              "description": "Assemble one report from T1S1, T2S1, T2S2 and T3S1: the QC summary including sample_01's library size and its position on the PCA; the hallmark activity heatmap as the headline figure; the ranked table of hallmarks by limma t-statistic with BH-adjusted p, annotated with whether GSVA and UCell agree; the PROGENy pathway activity heatmap and table; and a short statement of which pathways separate the groups and which are ambiguous. State the limits plainly: n=6 per group, 10 residual degrees of freedom on every score-level test, one sample at ~4x below median depth, set-level scores derived from a 12,000-gene matrix so hallmarks with few present member genes are unreliable, and heatmap clustering that is descriptive rather than inferential. Do not report a hallmark as separating the groups on clustering alone. Include a reproducibility record: sessionInfo, package versions, any random seed used, and the version of the hallmark collection and the PROGENy model.",
+              "context": "The user asked a scoping question — which pathways separate treated from control — and a small cohort answers it as a ranking with uncertainty, not as a validated pathway list.",
+              "packages": [
+                "rmarkdown",
+                "knitr",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1",
+                "T2S2",
+                "T3S1"
+              ],
+              "acceptance_criteria": [
+                "Report contains the hallmark heatmap, the ranked hallmark table with BH-adjusted p and GSVA/UCell concordance, and the PROGENy heatmap and table",
+                "Explicit limitations section covering n=6 per group, sample_01's depth, and the descriptive nature of the clustering",
+                "Reproducibility record with sessionInfo, package versions, seed, hallmark collection version and PROGENy model version stored with the results",
+                "No pathway is described as separating the groups on the basis of the heatmap clustering alone"
+              ],
+              "constraints": [
+                "reproducibility_record = sessionInfo, seed, package versions, gene set collection version, footprint model version — stored with the results, not in a separate note",
+                "Every reported separation claim traces to a BH-adjusted score-level test, naming which method produced it"
+              ],
+              "caveats": [
+                "Two scoring methods over the same 50 sets are a stability check, not replication in an independent cohort",
+                "With 50 hallmarks and 12 samples, a BH-adjusted p just under 0.05 is a lead, not an established finding"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0086@becf"
+                ],
+                "reason": "The reproducibility record (sessionInfo, seed, package versions, pinned collection version) in every report is required by R-0086@becf."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

@@ -1,0 +1,434 @@
+{
+  "campaign": "four-models",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "total-rna-highdup-n6",
+  "run": 1,
+  "startedAt": "2026-09-07T00:36:49.032Z",
+  "elapsedMs": 173104,
+  "outcome": "plan_submitted",
+  "planId": "pln-e35535f6",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC: duplication consequence, complexity, sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A very shallow library inflates its own dispersion; low complexity in sample_01 may be a depth artefact — distinguish by outlier status in correlation space after vst, not by library size alone",
+          "If residual rRNA or MT- fraction differs strongly between arms, fold changes of low-expressed genes are sensitive to it; report the magnitude",
+          "Gini and top-N fractions are depth-sensitive; compute on raw counts and note that sample_01's values are not directly comparable to deeper libraries"
+        ],
+        "context": "Human (taxon 9606) heart tissue, bulk RNA-seq, raw integer gene-level Salmon counts, 12,000 genes x 12 samples, 6 treated vs 6 control, unpaired, single batch. Two documented caveats drive this step: duplication >60% in most libraries, and sample_01 ~4x below median depth. No UMIs, so read-level deduplication is unavailable and would be actively harmful. Heart total-RNA libraries are intrinsically low-complexity, which is a sufficient benign explanation for high duplication; the analysis-relevant question is only whether that complexity varies with the condition label.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats",
+          "data.table"
+        ],
+        "question": "In the 12,000 x 12 heart count matrix, does the flagged >60% duplication rate reflect low library complexity that is confounded with treated vs control, and is sample_01 (library size ~4x below median) merely shallow or compositionally aberrant?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Do NOT deduplicate counts or apply any duplicate-removal correction — the libraries have no UMIs",
+          "Do NOT drop any sample in this step; only recommend, with evidence",
+          "Use DESeq2 median-of-ratios size factors for depth adjustment, not TPM/CPM-only scaling",
+          "Low-count prefilter: keep genes with count >= 10 in at least 6 samples (the smaller group size)",
+          "Treat gene identifiers as HGNC symbols; report any duplicated symbols and resolve by summing"
+        ],
+        "description": "Load /eval-four-models-without-total-rna-highdup-n6-1/data/inputs/counts/counts.csv (gene symbols in column 1, 12 sample columns) and /eval-four-models-without-total-rna-highdup-n6-1/data/inputs/metadata/metadata.csv (12 rows, condition column). Verify sample IDs match across the two files and record the exact condition level names verbatim. Report per-sample library size, detected genes (count>0), and complexity proxies: fraction of total counts in the top 10, top 50 and top 500 genes, plus the Gini coefficient of the count distribution. Because these are rRNA-depleted total RNA libraries WITHOUT UMIs, do NOT deduplicate and do NOT estimate a PCR-duplicate fraction from counts; instead characterise what high duplication implies here by quantifying counts in residual ribosomal genes (RNA5S*, RNA18S*, RNA28S*, RNA45S*, RPPH1, RMRP), mitochondrial genes (MT- prefix) and mitochondrial ribosomal genes (MRPL*/MRPS*) as a fraction of each library, and list the top 20 genes per sample. Test each complexity proxy between treated and control with a Wilcoxon rank-sum test: a difference means duplication/complexity is confounded with the contrast and downstream fold changes carry a compositional component. Then compute DESeq2 median-of-ratios size factors and a variance-stabilising transformation (vst, blind=TRUE) and produce a labelled PCA (PC1-PC2 coloured by condition), a sample-sample Spearman correlation heatmap, and per-sample median correlation to the other samples. Explicitly adjudicate sample_01 — size factor, detected genes, PCA position, median inter-sample correlation relative to the other 11 — and give a clear retain-or-exclude recommendation with the numbers behind it. Write out the filtered count matrix (count >= 10 in at least 6 samples), size factors, vst matrix and a per-sample QC table.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv and metadata.csv confirmed to match; exact condition level names reported verbatim",
+          "Per-sample table reports library size, detected genes, top-10/top-50/top-500 count fractions, Gini coefficient, residual rRNA fraction and MT- fraction",
+          "Wilcoxon test of each complexity proxy between treated and control reported with p-value and direction, with the confounding implication stated explicitly",
+          "No deduplication performed; output states why deduplication is inappropriate for no-UMI total RNA libraries",
+          "PCA on vst values and sample-sample correlation heatmap produced with samples labelled",
+          "sample_01 explicitly adjudicated with a retain/exclude recommendation supported by size factor, detected genes, PCA position and median inter-sample correlation",
+          "Filtered count matrix, size factors, vst matrix and QC table written to disk"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 treated vs control with sample_01 sensitivity",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per arm is modest: well powered only for large consistent effects, and a short or empty padj<0.05 list is a real possible outcome to report as such rather than rescue by relaxing thresholds without labelling them exploratory",
+          "If T1S1 found complexity confounded with condition, part of any global LFC shift is compositional; state this alongside the hit list",
+          "apeglm shrinkage materially reduces LFCs for low-count genes — do not report shrunken and unshrunken values interchangeably"
+        ],
+        "context": "Primary analysis for the research question. 6 treated vs 6 control, unpaired, single batch — no covariates beyond condition. DESeq2's negative-binomial model with median-of-ratios size factors suits raw Salmon gene-level counts and is robust to the compositional skew of rRNA-depleted heart total-RNA libraries. The high duplication rate is not corrected here (no UMIs, see T1S1); its consequence is interpretive and carried through from T1S1's confounding test.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2",
+          "EnhancedVolcano",
+          "pheatmap",
+          "data.table"
+        ],
+        "question": "Which genes are differentially expressed between treated and control human heart samples, and does the answer change when the low-depth sample_01 is excluded?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design must be ~ condition with control as reference; state the level names taken from T1S1",
+          "Use the T1S1 filtered matrix and let DESeq2 apply its own independent filtering on top",
+          "Do NOT apply batch correction or surrogate-variable adjustment — single batch, no covariates; report any latent structure seen in T1S1's PCA rather than silently removing it",
+          "Shrunken LFCs are for effect-size reporting only; state which statistic is used for downstream ranking and use it consistently",
+          "The leave-one-out fit is a sensitivity analysis, not a replacement — do not present it as the headline unless T1S1 recommended exclusion, and say so if it does"
+        ],
+        "description": "Run the primary differential expression with DESeq2 on the T1S1 filtered matrix, design ~ condition, contrast treated vs control using the exact level names from T1S1 with control as reference. Wald test, default independent filtering, Benjamini-Hochberg FDR. Report the dispersion-fit plot and note whether any gene's dispersion is driven by a single sample. Produce shrunken log2 fold changes with apeglm (fall back to ashr if the coefficient form prevents apeglm) for effect-size reporting, keeping unshrunken values and Wald statistics for ranking. Define the primary hit list as padj<0.05 and additionally report counts at padj<0.10 and at padj<0.05 with |shrunken LFC|>1 so threshold dependence is visible. Then run the pre-specified sensitivity analysis: refit the identical model on the 11 samples excluding sample_01 and quantify concordance — overlap of the two padj<0.05 lists, Spearman correlation of shrunken LFCs across all tested genes, and any gene significant in one fit with opposite-sign LFC in the other. If T1S1 recommended excluding sample_01, still report both fits and state which is primary. Write the full results table for both fits (gene symbol, baseMean, LFC, shrunken LFC, lfcSE, stat, pvalue, padj), a volcano plot of the primary fit with top genes labelled, and a heatmap of vst values for the top 40 genes by padj annotated by condition.",
+        "acceptance_criteria": [
+          "Full DESeq2 results table for treated vs control written with gene symbol, baseMean, unshrunken and shrunken LFC, lfcSE, Wald stat, pvalue, padj",
+          "Contrast direction stated explicitly (positive LFC = higher in treated) with control as reference level",
+          "Hit counts reported at padj<0.05, padj<0.10, and padj<0.05 with |shrunken LFC|>1",
+          "Leave-sample_01-out refit run, with concordance reported as list overlap, Spearman correlation of shrunken LFCs, and any sign flips among significant genes",
+          "Volcano plot and top-40 vst heatmap produced for the primary fit",
+          "Dispersion plot produced and any gene whose significance rests on a single sample flagged"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR quasi-likelihood cross-check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Perfect agreement is not expected and modest marginal disagreement is normal; only large divergence indicates a real problem, most likely with normalisation under compositional skew",
+          "TMM assumes most genes are not differentially expressed — if T1S1 showed a few genes dominating the libraries, TMM factors may be unstable and this should be reported"
+        ],
+        "context": "At n=6 per arm on a 12,000-gene matrix from low-complexity total-RNA heart libraries, one method's hit list is not robust enough to report unqualified. edgeR-QL uses a different dispersion estimator and normalisation (TMM vs median-of-ratios), so agreement is meaningful evidence and disagreement localises the fragile genes. Both packages confirmed installed.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "DESeq2",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Does an independent count-model implementation (edgeR quasi-likelihood F-test) recover the same treated-vs-control genes as DESeq2, or is the hit list method-dependent?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Use glmQLFit/glmQLFTest, not the classic exact test or glmLRT",
+          "Use the same filtered matrix and the same sample set as T1S2's primary fit so the comparison is like-for-like",
+          "Do not present the edgeR list as a replacement for the DESeq2 primary result; it is a robustness check",
+          "If T1S2's primary fit excluded sample_01, mirror that exclusion here"
+        ],
+        "description": "Re-test the same treated vs control contrast on the T1S1 filtered matrix with edgeR: TMM normalisation, estimateDisp with ~condition, glmQLFit and glmQLFTest. Report hit counts at FDR<0.05 and FDR<0.10 and compare directly against T1S2's DESeq2 primary result — list sizes, intersection, method-unique genes, Spearman correlation of fold changes across commonly tested genes, and any discordant sign. Produce a scatter of DESeq2 shrunken LFC against edgeR logFC and a two-set overlap diagram of the FDR<0.05 lists. Write out a consensus list (FDR<0.05 in both with concordant sign) and state plainly that genes outside the consensus are method-sensitive and weaker evidence. Also report whether TMM normalisation factors agree with DESeq2 size factors per sample, since divergence would indicate the compositional skew flagged in T1S1 is strong enough to affect normalisation choice.",
+        "acceptance_criteria": [
+          "edgeR quasi-likelihood results table written with logFC, logCPM, F, PValue, FDR",
+          "Hit counts at FDR<0.05 and FDR<0.10 reported and compared to the DESeq2 counts from T1S2",
+          "Overlap of the two FDR<0.05 lists, method-unique genes and Spearman correlation of fold changes reported",
+          "Consensus list (significant in both, concordant sign) written to disk",
+          "Per-sample agreement between TMM factors and DESeq2 size factors reported",
+          "LFC scatter plot and list-overlap diagram produced"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Ranked GSEA on the treated vs control signature",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Only genes surviving the T1S1 filter enter the ranking, so gene-set coverage is reduced relative to a full transcriptome; state the universe used",
+          "A strong NES is a coordinated shift, not evidence of mechanism; the 6v6 unpaired single-batch design supports association only",
+          "GO:BP FDR across ~7,500 nested sets is severe and produces correlated blocks; a raw count of significant sets overstates the finding"
+        ],
+        "context": "Interpretation layer for the primary contrast. Reference collections confirmed present for human with HGNC symbols: MSigDB hallmark (50 sets), MSigDB GO biological process (~7,538 sets) and human WikiPathways. GO:BP is a nested hierarchy, so parent and child sets overlap heavily and hits arrive in correlated blocks that must be collapsed before any count is reported. Input identifiers are gene symbols, so no ID mapping is needed beyond case/synonym reconciliation; report the fraction of ranked genes failing to match any set.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "data.table",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Which biological processes and pathways are coordinately shifted between treated and control human heart samples according to the full ranked treated-vs-control gene list?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "pathway_enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the pre-ranked GSEA approach on all tested genes — do NOT use over-representation analysis on a thresholded list as the primary readout",
+          "Use human gene set collections only; do not substitute mouse or rat collections",
+          "Rank by a single stated statistic applied consistently; do not silently re-rank between collections",
+          "Report the number and fraction of ranked genes matching at least one set in each collection"
+        ],
+        "description": "Run pre-ranked gene set enrichment on the complete DESeq2 result from T1S2 rather than a thresholded list, because at n=6 per arm the per-gene FDR list may be short and a ranked test uses the whole signal. Rank all tested genes by the statistic T1S2 declared (Wald statistic or shrunken LFC), break ties deterministically, and run fgsea with minSize 15, maxSize 500 and an adequate eps setting. Test against human gene set collections resolved from the environment's reference store, matched to Homo sapiens and HGNC symbols to match the counts.csv identifier space: the hallmark collection, the GO biological process collection, and the human WikiPathways collection (whose GMT encodes its set name in a '%'-delimited first field that must be split to recover a readable name). Report NES, FDR and leading-edge genes for every set at padj<0.05, with an enrichment barplot per collection and enrichment curves for the top 5 up and top 5 down sets. Because heart total-RNA libraries are dominated by mitochondrial, sarcomeric and structural transcripts, explicitly report whether significant sets are driven by leading-edge genes overlapping the high-abundance or rRNA/MT gene groups quantified in T1S1 — a mitochondrial or ribosomal set topping the list in libraries with condition-associated complexity differences is a normalisation artefact until shown otherwise and must be labelled as such. If a collection is absent from the reference store at run time, name it and continue with those present, basing conclusions only on collections actually loaded. Also run the same fgsea on the edgeR-ranked list from T1S3 and report whether the top pathways are stable across rankings.",
+        "acceptance_criteria": [
+          "fgsea run on the full ranked gene list from T1S2 against each human collection that resolves in the reference store",
+          "Species and identifier space of every collection used confirmed as human/HGNC and stated in the output",
+          "Per-collection results table written with pathway, NES, pvalue, padj, size and leading-edge genes",
+          "Redundant GO:BP hits collapsed by leading-edge overlap or ancestry before any hit count is reported",
+          "Significant sets whose leading edge is dominated by mitochondrial, ribosomal or very-high-abundance genes flagged in T1S1 explicitly labelled as possible composition/normalisation artefacts",
+          "Stability of top pathways between the DESeq2-ranked and edgeR-ranked inputs reported",
+          "Any absent expected collection named, with the step proceeding on the rest"
+        ]
+      }
+    ],
+    "title": "Heart treated vs control bulk RNA-seq DE",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is a two-group differential expression on a small bulk RNA-seq matrix: 12,000 genes x 12 human heart samples (counts.csv, gene symbols in column 1) with metadata.csv giving 6 treated vs 6 control, unpaired, single batch. Two data facts drive the plan's shape. First, the flagged >60% duplication rate: these are rRNA-depleted total RNA libraries WITHOUT UMIs, so duplication cannot be resolved read-by-read, and deduplicating a no-UMI library is the wrong move because it discards true reads from the most highly expressed genes. High duplication in a heart total-RNA library is the expected consequence of low complexity plus a skewed transcript distribution (sarcomeric and mitochondrial transcripts dominate; rRNA depletion leaves residual structural RNA). T1S1 therefore does not dedupe; it quantifies the consequence — counts concentration, residual rRNA/MT fraction — and tests whether complexity is confounded with condition, because if it is, fold changes carry a compositional component that must be reported. Second, sample_01 is ~4x below median depth. With n=6 per arm, dropping a sample costs real power, so T1S1 adjudicates it on evidence (shallow-but-concordant vs compositional outlier in vst/correlation space) and T1S2 runs the leave-it-out refit as a pre-specified sensitivity analysis rather than a reflex exclusion. DESeq2 with median-of-ratios normalisation and apeglm shrinkage is the primary test; edgeR quasi-likelihood in T1S3 is an independent cross-check because a single method's hit list at n=6 should not be reported unqualified. T2S1 takes the full ranked list into fgsea against the staged human MSigDB hallmark, GO:BP and human WikiPathways collections (all confirmed present, HGNC symbols matching the counts.csv identifier space) — a ranked test rather than over-representation, since the per-gene FDR list may be short. The design (6v6, unpaired, single batch, no dose or time axis) supports association between the condition label and expression, and the reporting must say so."
+  },
+  "usage": {
+    "inputTokens": 165444,
+    "outputTokens": 14873,
+    "cacheCreationInputTokens": 104027,
+    "cacheReadInputTokens": 61381,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      }
+    },
+    {
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "msigdbr",
+          "babelgene",
+          "EnhancedVolcano",
+          "sva",
+          "RUVSeq",
+          "pydeseq2",
+          "decoupleR"
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Heart treated vs control bulk RNA-seq DE",
+          "analytical_narrative": "The question is a two-group differential expression on a small bulk RNA-seq matrix: 12,000 genes x 12 human heart samples (counts.csv, gene symbols in column 1) with metadata.csv giving 6 treated vs 6 control, unpaired, single batch. Two data facts drive the plan's shape. First, the flagged >60% duplication rate: these are rRNA-depleted total RNA libraries WITHOUT UMIs, so duplication cannot be resolved read-by-read, and deduplicating a no-UMI library is the wrong move because it discards true reads from the most highly expressed genes. High duplication in a heart total-RNA library is the expected consequence of low complexity plus a skewed transcript distribution (sarcomeric and mitochondrial transcripts dominate; rRNA depletion leaves residual structural RNA). T1S1 therefore does not dedupe; it quantifies the consequence — counts concentration, residual rRNA/MT fraction — and tests whether complexity is confounded with condition, because if it is, fold changes carry a compositional component that must be reported. Second, sample_01 is ~4x below median depth. With n=6 per arm, dropping a sample costs real power, so T1S1 adjudicates it on evidence (shallow-but-concordant vs compositional outlier in vst/correlation space) and T1S2 runs the leave-it-out refit as a pre-specified sensitivity analysis rather than a reflex exclusion. DESeq2 with median-of-ratios normalisation and apeglm shrinkage is the primary test; edgeR quasi-likelihood in T1S3 is an independent cross-check because a single method's hit list at n=6 should not be reported unqualified. T2S1 takes the full ranked list into fgsea against the staged human MSigDB hallmark, GO:BP and human WikiPathways collections (all confirmed present, HGNC symbols matching the counts.csv identifier space) — a ranked test rather than over-representation, since the per-gene FDR list may be short. The design (6v6, unpaired, single batch, no dose or time axis) supports association between the condition label and expression, and the reporting must say so.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC: duplication consequence, complexity, sample_01",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "In the 12,000 x 12 heart count matrix, does the flagged >60% duplication rate reflect low library complexity that is confounded with treated vs control, and is sample_01 (library size ~4x below median) merely shallow or compositionally aberrant?",
+              "description": "Load /eval-four-models-without-total-rna-highdup-n6-1/data/inputs/counts/counts.csv (gene symbols in column 1, 12 sample columns) and /eval-four-models-without-total-rna-highdup-n6-1/data/inputs/metadata/metadata.csv (12 rows, condition column). Verify sample IDs match across the two files and record the exact condition level names verbatim. Report per-sample library size, detected genes (count>0), and complexity proxies: fraction of total counts in the top 10, top 50 and top 500 genes, plus the Gini coefficient of the count distribution. Because these are rRNA-depleted total RNA libraries WITHOUT UMIs, do NOT deduplicate and do NOT estimate a PCR-duplicate fraction from counts; instead characterise what high duplication implies here by quantifying counts in residual ribosomal genes (RNA5S*, RNA18S*, RNA28S*, RNA45S*, RPPH1, RMRP), mitochondrial genes (MT- prefix) and mitochondrial ribosomal genes (MRPL*/MRPS*) as a fraction of each library, and list the top 20 genes per sample. Test each complexity proxy between treated and control with a Wilcoxon rank-sum test: a difference means duplication/complexity is confounded with the contrast and downstream fold changes carry a compositional component. Then compute DESeq2 median-of-ratios size factors and a variance-stabilising transformation (vst, blind=TRUE) and produce a labelled PCA (PC1-PC2 coloured by condition), a sample-sample Spearman correlation heatmap, and per-sample median correlation to the other samples. Explicitly adjudicate sample_01 — size factor, detected genes, PCA position, median inter-sample correlation relative to the other 11 — and give a clear retain-or-exclude recommendation with the numbers behind it. Write out the filtered count matrix (count >= 10 in at least 6 samples), size factors, vst matrix and a per-sample QC table.",
+              "context": "Human (taxon 9606) heart tissue, bulk RNA-seq, raw integer gene-level Salmon counts, 12,000 genes x 12 samples, 6 treated vs 6 control, unpaired, single batch. Two documented caveats drive this step: duplication >60% in most libraries, and sample_01 ~4x below median depth. No UMIs, so read-level deduplication is unavailable and would be actively harmful. Heart total-RNA libraries are intrinsically low-complexity, which is a sufficient benign explanation for high duplication; the analysis-relevant question is only whether that complexity varies with the condition label.",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv and metadata.csv confirmed to match; exact condition level names reported verbatim",
+                "Per-sample table reports library size, detected genes, top-10/top-50/top-500 count fractions, Gini coefficient, residual rRNA fraction and MT- fraction",
+                "Wilcoxon test of each complexity proxy between treated and control reported with p-value and direction, with the confounding implication stated explicitly",
+                "No deduplication performed; output states why deduplication is inappropriate for no-UMI total RNA libraries",
+                "PCA on vst values and sample-sample correlation heatmap produced with samples labelled",
+                "sample_01 explicitly adjudicated with a retain/exclude recommendation supported by size factor, detected genes, PCA position and median inter-sample correlation",
+                "Filtered count matrix, size factors, vst matrix and QC table written to disk"
+              ],
+              "constraints": [
+                "Do NOT deduplicate counts or apply any duplicate-removal correction — the libraries have no UMIs",
+                "Do NOT drop any sample in this step; only recommend, with evidence",
+                "Use DESeq2 median-of-ratios size factors for depth adjustment, not TPM/CPM-only scaling",
+                "Low-count prefilter: keep genes with count >= 10 in at least 6 samples (the smaller group size)",
+                "Treat gene identifiers as HGNC symbols; report any duplicated symbols and resolve by summing"
+              ],
+              "caveats": [
+                "A very shallow library inflates its own dispersion; low complexity in sample_01 may be a depth artefact — distinguish by outlier status in correlation space after vst, not by library size alone",
+                "If residual rRNA or MT- fraction differs strongly between arms, fold changes of low-expressed genes are sensitive to it; report the magnitude",
+                "Gini and top-N fractions are depth-sensitive; compute on raw counts and note that sample_01's values are not directly comparable to deeper libraries"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 treated vs control with sample_01 sensitivity",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between treated and control human heart samples, and does the answer change when the low-depth sample_01 is excluded?",
+              "description": "Run the primary differential expression with DESeq2 on the T1S1 filtered matrix, design ~ condition, contrast treated vs control using the exact level names from T1S1 with control as reference. Wald test, default independent filtering, Benjamini-Hochberg FDR. Report the dispersion-fit plot and note whether any gene's dispersion is driven by a single sample. Produce shrunken log2 fold changes with apeglm (fall back to ashr if the coefficient form prevents apeglm) for effect-size reporting, keeping unshrunken values and Wald statistics for ranking. Define the primary hit list as padj<0.05 and additionally report counts at padj<0.10 and at padj<0.05 with |shrunken LFC|>1 so threshold dependence is visible. Then run the pre-specified sensitivity analysis: refit the identical model on the 11 samples excluding sample_01 and quantify concordance — overlap of the two padj<0.05 lists, Spearman correlation of shrunken LFCs across all tested genes, and any gene significant in one fit with opposite-sign LFC in the other. If T1S1 recommended excluding sample_01, still report both fits and state which is primary. Write the full results table for both fits (gene symbol, baseMean, LFC, shrunken LFC, lfcSE, stat, pvalue, padj), a volcano plot of the primary fit with top genes labelled, and a heatmap of vst values for the top 40 genes by padj annotated by condition.",
+              "context": "Primary analysis for the research question. 6 treated vs 6 control, unpaired, single batch — no covariates beyond condition. DESeq2's negative-binomial model with median-of-ratios size factors suits raw Salmon gene-level counts and is robust to the compositional skew of rRNA-depleted heart total-RNA libraries. The high duplication rate is not corrected here (no UMIs, see T1S1); its consequence is interpretive and carried through from T1S1's confounding test.",
+              "acceptance_criteria": [
+                "Full DESeq2 results table for treated vs control written with gene symbol, baseMean, unshrunken and shrunken LFC, lfcSE, Wald stat, pvalue, padj",
+                "Contrast direction stated explicitly (positive LFC = higher in treated) with control as reference level",
+                "Hit counts reported at padj<0.05, padj<0.10, and padj<0.05 with |shrunken LFC|>1",
+                "Leave-sample_01-out refit run, with concordance reported as list overlap, Spearman correlation of shrunken LFCs, and any sign flips among significant genes",
+                "Volcano plot and top-40 vst heatmap produced for the primary fit",
+                "Dispersion plot produced and any gene whose significance rests on a single sample flagged"
+              ],
+              "constraints": [
+                "Design must be ~ condition with control as reference; state the level names taken from T1S1",
+                "Use the T1S1 filtered matrix and let DESeq2 apply its own independent filtering on top",
+                "Do NOT apply batch correction or surrogate-variable adjustment — single batch, no covariates; report any latent structure seen in T1S1's PCA rather than silently removing it",
+                "Shrunken LFCs are for effect-size reporting only; state which statistic is used for downstream ranking and use it consistently",
+                "The leave-one-out fit is a sensitivity analysis, not a replacement — do not present it as the headline unless T1S1 recommended exclusion, and say so if it does"
+              ],
+              "caveats": [
+                "n=6 per arm is modest: well powered only for large consistent effects, and a short or empty padj<0.05 list is a real possible outcome to report as such rather than rescue by relaxing thresholds without labelling them exploratory",
+                "If T1S1 found complexity confounded with condition, part of any global LFC shift is compositional; state this alongside the hit list",
+                "apeglm shrinkage materially reduces LFCs for low-count genes — do not report shrunken and unshrunken values interchangeably"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "edgeR quasi-likelihood cross-check",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Does an independent count-model implementation (edgeR quasi-likelihood F-test) recover the same treated-vs-control genes as DESeq2, or is the hit list method-dependent?",
+              "description": "Re-test the same treated vs control contrast on the T1S1 filtered matrix with edgeR: TMM normalisation, estimateDisp with ~condition, glmQLFit and glmQLFTest. Report hit counts at FDR<0.05 and FDR<0.10 and compare directly against T1S2's DESeq2 primary result — list sizes, intersection, method-unique genes, Spearman correlation of fold changes across commonly tested genes, and any discordant sign. Produce a scatter of DESeq2 shrunken LFC against edgeR logFC and a two-set overlap diagram of the FDR<0.05 lists. Write out a consensus list (FDR<0.05 in both with concordant sign) and state plainly that genes outside the consensus are method-sensitive and weaker evidence. Also report whether TMM normalisation factors agree with DESeq2 size factors per sample, since divergence would indicate the compositional skew flagged in T1S1 is strong enough to affect normalisation choice.",
+              "context": "At n=6 per arm on a 12,000-gene matrix from low-complexity total-RNA heart libraries, one method's hit list is not robust enough to report unqualified. edgeR-QL uses a different dispersion estimator and normalisation (TMM vs median-of-ratios), so agreement is meaningful evidence and disagreement localises the fragile genes. Both packages confirmed installed.",
+              "acceptance_criteria": [
+                "edgeR quasi-likelihood results table written with logFC, logCPM, F, PValue, FDR",
+                "Hit counts at FDR<0.05 and FDR<0.10 reported and compared to the DESeq2 counts from T1S2",
+                "Overlap of the two FDR<0.05 lists, method-unique genes and Spearman correlation of fold changes reported",
+                "Consensus list (significant in both, concordant sign) written to disk",
+                "Per-sample agreement between TMM factors and DESeq2 size factors reported",
+                "LFC scatter plot and list-overlap diagram produced"
+              ],
+              "constraints": [
+                "Use glmQLFit/glmQLFTest, not the classic exact test or glmLRT",
+                "Use the same filtered matrix and the same sample set as T1S2's primary fit so the comparison is like-for-like",
+                "Do not present the edgeR list as a replacement for the DESeq2 primary result; it is a robustness check",
+                "If T1S2's primary fit excluded sample_01, mirror that exclusion here"
+              ],
+              "caveats": [
+                "Perfect agreement is not expected and modest marginal disagreement is normal; only large divergence indicates a real problem, most likely with normalisation under compositional skew",
+                "TMM assumes most genes are not differentially expressed — if T1S1 showed a few genes dominating the libraries, TMM factors may be unstable and this should be reported"
+              ],
+              "packages": [
+                "edgeR",
+                "limma",
+                "DESeq2",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Ranked GSEA on the treated vs control signature",
+              "track": "T2",
+              "step_type": "pathway_enrichment",
+              "question": "Which biological processes and pathways are coordinately shifted between treated and control human heart samples according to the full ranked treated-vs-control gene list?",
+              "description": "Run pre-ranked gene set enrichment on the complete DESeq2 result from T1S2 rather than a thresholded list, because at n=6 per arm the per-gene FDR list may be short and a ranked test uses the whole signal. Rank all tested genes by the statistic T1S2 declared (Wald statistic or shrunken LFC), break ties deterministically, and run fgsea with minSize 15, maxSize 500 and an adequate eps setting. Test against human gene set collections resolved from the environment's reference store, matched to Homo sapiens and HGNC symbols to match the counts.csv identifier space: the hallmark collection, the GO biological process collection, and the human WikiPathways collection (whose GMT encodes its set name in a '%'-delimited first field that must be split to recover a readable name). Report NES, FDR and leading-edge genes for every set at padj<0.05, with an enrichment barplot per collection and enrichment curves for the top 5 up and top 5 down sets. Because heart total-RNA libraries are dominated by mitochondrial, sarcomeric and structural transcripts, explicitly report whether significant sets are driven by leading-edge genes overlapping the high-abundance or rRNA/MT gene groups quantified in T1S1 — a mitochondrial or ribosomal set topping the list in libraries with condition-associated complexity differences is a normalisation artefact until shown otherwise and must be labelled as such. If a collection is absent from the reference store at run time, name it and continue with those present, basing conclusions only on collections actually loaded. Also run the same fgsea on the edgeR-ranked list from T1S3 and report whether the top pathways are stable across rankings.",
+              "context": "Interpretation layer for the primary contrast. Reference collections confirmed present for human with HGNC symbols: MSigDB hallmark (50 sets), MSigDB GO biological process (~7,538 sets) and human WikiPathways. GO:BP is a nested hierarchy, so parent and child sets overlap heavily and hits arrive in correlated blocks that must be collapsed before any count is reported. Input identifiers are gene symbols, so no ID mapping is needed beyond case/synonym reconciliation; report the fraction of ranked genes failing to match any set.",
+              "acceptance_criteria": [
+                "fgsea run on the full ranked gene list from T1S2 against each human collection that resolves in the reference store",
+                "Species and identifier space of every collection used confirmed as human/HGNC and stated in the output",
+                "Per-collection results table written with pathway, NES, pvalue, padj, size and leading-edge genes",
+                "Redundant GO:BP hits collapsed by leading-edge overlap or ancestry before any hit count is reported",
+                "Significant sets whose leading edge is dominated by mitochondrial, ribosomal or very-high-abundance genes flagged in T1S1 explicitly labelled as possible composition/normalisation artefacts",
+                "Stability of top pathways between the DESeq2-ranked and edgeR-ranked inputs reported",
+                "Any absent expected collection named, with the step proceeding on the rest"
+              ],
+              "constraints": [
+                "Use the pre-ranked GSEA approach on all tested genes — do NOT use over-representation analysis on a thresholded list as the primary readout",
+                "Use human gene set collections only; do not substitute mouse or rat collections",
+                "Rank by a single stated statistic applied consistently; do not silently re-rank between collections",
+                "Report the number and fraction of ranked genes matching at least one set in each collection"
+              ],
+              "caveats": [
+                "Only genes surviving the T1S1 filter enter the ranking, so gene-set coverage is reduced relative to a full transcriptome; state the universe used",
+                "A strong NES is a coordinated shift, not evidence of mechanism; the 6v6 unpaired single-batch design supports association only",
+                "GO:BP FDR across ~7,500 nested sets is severe and produces correlated blocks; a raw count of significant sets overstates the finding"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "data.table",
+                "ggplot2",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

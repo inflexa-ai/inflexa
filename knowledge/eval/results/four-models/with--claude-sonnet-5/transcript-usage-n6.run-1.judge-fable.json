@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 0,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 3
+  },
+  "rationale": "The planner correctly recognized that a gene-level count matrix cannot answer a transcript usage question and stopped to ask for transcript-level quantifications, which is the outcome the reference requires, so the core design judgment is right. It falls short of the reference by not requesting the specific artifacts (per-sample Salmon quant.sf with effective lengths, the transcript-to-gene map and annotation version) and by not sketching the method of record (tximport scaledTPM, DRIMSeq or DEXSeq, dmFilter, stageR at overall FDR 0.05, a policy for the shallow sample_01), and it offers a gene-level DE fallback that would not answer the question. No plan was submitted, so QC, filtering, normalization, design formula, and multiple-testing criteria are absent. Enrichment is correctly not proposed, though by default rather than by stated judgment, and the clarification itself is clear about the data state and why it blocks the analysis."
+}

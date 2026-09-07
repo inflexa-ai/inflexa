@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 7,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw counts with ~condition and chow as explicit reference, a full QC step (library sizes, size factors, VST PCA, correlation heatmap) that keeps sample_01 by default and adds a pre-registered sensitivity analysis, apeglm shrinkage with BH at 0.05, and fgsea preranked on the unshrunken Wald stat against a mouse Hallmark collection (MSigDB 2026.1, MGI symbols) with an explicit symbol-overlap diagnostic and a prohibition on silently using human sets. Deductions: the pre-filter states 'a minimum count in at least 6 samples' without giving the count threshold; the |log2FC|>1 cut is applied post hoc rather than via lfcThreshold in the test; the GSEA step omits a set-size window (15-500); and software versions are not explicitly requested in the report."
+}

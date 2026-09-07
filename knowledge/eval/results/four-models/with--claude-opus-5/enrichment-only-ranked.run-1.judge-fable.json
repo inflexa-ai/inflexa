@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly refrains from redoing the delivered DESeq2 test and runs fgsea preranked GSEA on the full ranked list using the Wald statistic, explicitly rejecting a padj cutoff, an unshrunken-LFC ranking, and any ORA; it states the tested-gene universe, the 15-500 window, MSigDB 2026.1 Hallmark, a seed, BH at 0.05, leading-edge reporting, and redundancy collapse. QC is design-specific: blind VST PCA and distance heatmap coloured by condition with an explicit keep-and-report policy for the shallow sample_01. Count filtering, normalization, and model formula are not re-done here by design, which the plan handles well by stating it inherits the delivered table's filtering, reporting NA-stat drops, and verifying contrast direction from column names; the only small gap is not naming the adaptive permutation scheme (fgseaMultilevel) explicitly. Reporting requirements are complete, including fgsea version, collection release, metric, gene counts, and caveats."
+}

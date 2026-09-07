@@ -1,0 +1,908 @@
+{
+  "campaign": "four-models",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "de-plus-tf-activity-n6",
+  "run": 1,
+  "startedAt": "2026-09-06T23:43:15.079Z",
+  "elapsedMs": 144090,
+  "outcome": "plan_submitted",
+  "planId": "pln-50720253",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 replicates per group a single outlier moves the dispersion fit noticeably — flag it rather than assuming it is harmless",
+          "The first column of counts.csv is the gene symbol and must become the row name, not a data column"
+        ],
+        "context": "Single batch, unpaired, 6 vs 6. The metadata carries only a condition column, so condition is the only annotation available to colour by; do not invent a batch variable.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 12 human kidney samples separate by condition (6 aldosterone-treated vs 6 vehicle control), and does any single sample depart from its group before the model is fitted?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Raw counts, 6v6 two-group design: sample structure QC with blind VST, PCA on top 500 variable genes and a sample distance heatmap per R-0033@40bf.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+          "Do not drop any sample in this step; flag only. Removal is a decision for the report, stated with its reason."
+        ],
+        "description": "Load /eval-four-models-with-de-plus-tf-activity-n6-1/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw integer counts) and /eval-four-models-with-de-plus-tf-activity-n6-1/data/inputs/metadata/metadata.csv (12 rows, condition column). Verify the sample columns of the count matrix match the metadata rows exactly (same set, and reorder rather than assume). Build a DESeqDataSet with design ~condition, apply the variance stabilizing transformation blind to the design, run PCA on the 500 most variable genes, draw a Euclidean sample-distance heatmap, and plot per-sample library sizes and detected-gene counts. Colour every plot by condition. Report the percentage of variance on PC1 and PC2 and name any sample that sits with the wrong group or has a library size far from the median.",
+        "acceptance_criteria": [
+          "Count matrix columns and metadata rows are confirmed matched by name, with the count of matched samples stated (expected 12)",
+          "PCA plot on the top 500 variable genes of the blind VST values, with PC1/PC2 percent variance reported and points coloured by condition",
+          "Sample-to-sample Euclidean distance heatmap and a per-sample library size / detected-gene table are produced",
+          "Any outlying sample is named explicitly, or the report states that no sample departs from its group",
+          "The VST here is blind to the design and is used for QC only, never as input to the differential test"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test with apeglm shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The counts arrive as a pre-summarised CSV, not as Salmon quant.sf files, so tximport average-transcript-length offsets cannot be applied — state this limitation, and note that a gene whose isoform usage shifts can therefore be mis-called",
+          "With 6 replicates per condition cell DESeq2 flags Cook's-distance outliers and sets p to NA rather than replacing the count; do not mistake these NAs for filtered genes",
+          "Gene symbols may be duplicated in the first column — resolve duplicates explicitly (state the rule used) rather than letting the reader coerce them"
+        ],
+        "context": "12,000 genes x 12 samples of raw integer gene-level counts, human kidney, aldosterone vs vehicle, single batch, unpaired. The full Wald statistic vector for every tested gene is a required output — the TF activity step consumes it.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "Which genes differ in expression between aldosterone-treated and vehicle control human kidney samples (contrast: condition, treated vs control), at BH-adjusted p < 0.05?",
+        "grounding": {
+          "claims": [
+            "R-0029@fa6d",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0018@a472",
+            "R-0001@9a17",
+            "R-0039@e17a",
+            "R-0009@f54e",
+            "R-0083@12de",
+            "R-0010@91a5",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "Raw counts, fixed-effects two-group design at 6 replicates per group: DESeq2 Wald with apeglm shrinkage and BH/independent filtering per R-0001@9a17 and R-0009@f54e; length offsets of R-0018@a472 are unavailable because the input is a summarised count CSV, and the step states that.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-deseq2-two-group@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: min_count = 10, min_samples = smallest_group_size = 6 (doi:10.12688/f1000research.7035.1; vignette:DESeq2/1.52.0#pre-filtering)",
+          "filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)",
+          "normalize: size_factors = median_of_ratios, estimated inside the model (doi:10.1186/s13059-014-0550-8)",
+          "model_design: reference_level = explicit; contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)",
+          "differential_expression: test = Wald; count_outlier_policy = flag_and_report_na (doi:10.1186/s13059-014-0550-8; vignette:DESeq2/1.52.0#approach-to-count-outliers)",
+          "shrink_lfc: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)",
+          "multiple_testing: alpha = 0.05, adjustment = BH, independent_filtering = true, filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x; doi:10.1073/pnas.0914005107)",
+          "multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)",
+          "Select DE genes by padj only. Do not select by unadjusted p-value and do not apply a post-hoc fold-change filter; if an effect-size threshold is wanted it must be tested inside the model via lfcThreshold (doi:10.1093/bioinformatics/btp053)."
+        ],
+        "description": "Fit the primary differential expression model on the raw counts. Pre-filter minimally: keep a gene with at least 10 counts in at least 6 samples (the smallest group size). Do not scale, log, or otherwise normalize the counts before the model — DESeq2 estimates median-of-ratios size factors and applies them as offsets inside the negative binomial fit. Set the condition factor's reference level explicitly to the vehicle/control level read from metadata.csv (do not rely on alphabetical ordering) and state the contrast as (condition, treated, control) so a positive log2FoldChange means higher in aldosterone-treated. Run the Wald test. Inspect and save the histogram of unadjusted p-values before adjustment and describe its shape. Call results with alpha = 0.05, BH adjustment and independent filtering on. Produce apeglm-shrunken log2 fold changes for the treated-vs-control coefficient. Emit one results table carrying: gene symbol, baseMean, unshrunken log2FoldChange, lfcSE, Wald statistic, pvalue, padj, and shrunken log2FoldChange. Report the number of genes tested after filtering, the number with padj < 0.05, and separately the number of genes with NA p-values from the Cook's-distance outlier flag versus from independent filtering.",
+        "acceptance_criteria": [
+          "Reference level of the condition factor is set explicitly and both the reference level and the contrast triple (factor, numerator, denominator) are written into the output",
+          "Pre-filter is exactly >=10 counts in >=6 samples, and the number of genes kept out of 12,000 is reported",
+          "Size factors are median-of-ratios estimated inside DESeq2; no pre-normalized or transformed matrix enters the model",
+          "Results table contains gene symbol, baseMean, unshrunken log2FoldChange, lfcSE, Wald stat, pvalue, padj and apeglm-shrunken log2FoldChange for every tested gene",
+          "p-value histogram is saved and its shape described before the adjusted p-values are interpreted",
+          "Counts of genes with padj<0.05, of Cook's-outlier NA genes, and of independent-filter NA genes are reported separately",
+          "A complete gene-by-Wald-statistic vector (all tested genes, unfiltered by significance) is written to disk for downstream use"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "edgeR quasi-likelihood robustness check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This is a robustness check, not a replacement — the primary reported effect sizes remain the apeglm-shrunken DESeq2 values",
+          "Disagreement between the two methods concentrates in low-count genes; describe where the unique calls sit on the expression range"
+        ],
+        "context": "Robustness check requested by the two-method reporting convention; at 6 replicates per group the two tools agree on most genes but disagree at low counts.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "DESeq2"
+        ],
+        "question": "Which of the aldosterone-vs-vehicle calls survive an independent second method, and how large is the overlap between DESeq2 Wald and edgeR quasi-likelihood on the same 6-vs-6 contrast?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0001@9a17"
+          ],
+          "reason": "edgeR quasi-likelihood is the named second method for a 2-11 replicate fixed-effects design (R-0001@9a17); the overlap of the two methods is reported as the high-confidence set per R-0042@54e1. The knowledge check warned that test=QLF differs from the sourced Wald default — accepted deliberately, since this step exists precisely to be the non-Wald second method and the Wald test remains primary in T1S2.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Same design formula, same reference level and same contrast direction as T1S2",
+          "Normalization is TMM inside the edgeR model; do not feed pre-scaled counts",
+          "Selection by BH-adjusted p-value at 0.05, matching T1S2"
+        ],
+        "description": "Re-run the same contrast on the same raw counts and the same design with edgeR: filterByExpr or the identical >=10-counts-in->=6-samples rule (state which, and keep the tested gene set comparable to T1S2), TMM normalization factors, estimateDisp, glmQLFit and glmQLFTest for treated vs control, BH adjustment at 0.05. Then compare against the T1S2 result: report the number of significant genes from each method, the size of the intersection, and list the genes that only one method calls, labelled with that method. Treat the intersection as the high-confidence set. Do not present the union as the result.",
+        "acceptance_criteria": [
+          "edgeR QL fit uses TMM scaling factors and the same ~condition design and same treated-vs-control direction as T1S2",
+          "A comparison table reports n significant for DESeq2, n significant for edgeR, and the size of the intersection",
+          "Method-unique genes are listed as a secondary set, each labelled with the calling method",
+          "The report states that the intersection is the high-confidence set and that the union is not the result",
+          "The gene universes of the two runs are stated; if they differ, the overlap is computed on the shared universe"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "TF activity with decoupleR ulm on CollecTRI",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "An inferred activity is a statement about the coordinated behaviour of a TF's annotated targets, not a measurement of the TF's own expression or protein activity — a TF can score high with unchanged mRNA",
+          "Aldosterone acts through the mineralocorticoid receptor (NR3C2); whether NR3C2 appears depends on its target coverage in the prior, and its absence from the top list is not evidence against it — report its regulon size and score explicitly either way",
+          "The prior network is not kidney-specific"
+        ],
+        "context": "12 samples total. This is far too few to infer a regulatory network from the expression matrix itself, so the regulons must come entirely from prior knowledge. VIPER and ARACNe are not available in this environment; decoupleR on a prior network is the substitute.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupleR",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Which transcription factors show altered inferred activity behind the aldosterone-vs-vehicle expression changes in human kidney?",
+        "grounding": {
+          "claims": [
+            "R-0111@b668",
+            "R-0113@7a4d",
+            "R-0114@9db7",
+            "R-0121@5f27"
+          ],
+          "reason": "TF activity from a contrast at 12 samples: decoupleR ulm on signed CollecTRI regulons using the Wald statistic of all tested genes (R-0111@b668); prior network only because the cohort cannot support network inference (R-0121@5f27) and VIPER/ARACNe are absent (R-0114@9db7).",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+          "template": "tpl-decoupler-tf-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "activity",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "tf_activity: activity_method = ulm (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: activity_input = contrast_statistic_all_tested_genes (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: regulon_preference = collectri_first, alternative = dorothea_confidence_A_to_C (doi:10.1093/nar/gkad841; doi:10.1101/gr.240663.118)",
+          "tf_activity: edge_sign = keep_mode_of_regulation (doi:10.1093/nar/gkad841)",
+          "tf_activity: min_regulon_size = 5 (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: network_source = prior_knowledge_network_only — do not infer a regulatory network from this 12-sample expression matrix (doi:10.1093/bioinformatics/btw216)",
+          "Match TF and target identifiers to the gene-symbol space of the count matrix; report the share of statistic genes that failed to match the network"
+        ],
+        "description": "Infer transcription factor activity from the contrast statistic, not from the significant gene list. Take the full gene-by-Wald-statistic vector from T1S2 (every tested gene) and run decoupleR's univariate linear model (ulm) against a signed human TF-target regulon prior — a literature-curated signed collection is the first choice, with a confidence-filtered (levels A to C) regulon collection as the named alternative. Keep the sign / mode of regulation on each edge so that a target of a repressor lowers rather than raises the score. Test a regulator only when at least 5 of its targets are present among the tested genes, and report how many regulators entered the test and how many were dropped for insufficient target coverage. Output a table of TF, activity score, p-value, BH-adjusted p-value and number of targets used, sorted by absolute score, and a barplot of the top regulators in each direction. For the top regulators, list which of their targets are among the DE genes from T1S2 and in which direction, so the reader can see what drives each score. Resolve the regulon resource from the environment's reference store by what it is (a signed human TF-target regulon network); the store currently reports both a human CollecTRI network and human DoRothEA regulons. Confirm the organism is human before use.",
+        "acceptance_criteria": [
+          "Input to the activity model is the Wald statistic of every tested gene from T1S2, not a thresholded gene list",
+          "The regulon prior is human and signed, and its name and version are recorded in the output",
+          "Regulators with fewer than 5 targets among the tested genes are excluded, and the counts of tested and excluded regulators are reported",
+          "Output table has TF, activity score, p-value, BH-adjusted p-value and n targets, with the top regulators in both directions shown",
+          "For each top regulator, its DE target genes and their directions are listed",
+          "The report states that a prior network is tissue-agnostic: a kidney-specific regulator can be missed and a target silent in kidney adds noise, and that an inferred activity is not a measurement of TF protein activity"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Promoter motif enrichment complement",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "This step is discretionary: its loss costs an annotation, not the answer to the research question",
+          "A motif hit near a TSS is evidence of possible binding, not of regulation, and must not be reported as TF activity",
+          "Symbol-to-coordinate mapping is lossy across annotation releases"
+        ],
+        "context": "The counts carry gene symbols only, so promoter coordinates must be derived through an annotation lookup; symbol-to-TSS mapping loss is expected and must be quantified.",
+        "maxSteps": 200,
+        "packages": [
+          "TFBSTools",
+          "JASPAR2020",
+          "BSgenome.Hsapiens.UCSC.hg38",
+          "GenomicRanges",
+          "GenomicFeatures"
+        ],
+        "question": "Do the promoters of the aldosterone-responsive DE genes carry an excess of any TF binding motif relative to the promoters of the other tested genes?",
+        "grounding": {
+          "claims": [
+            "R-0120@7639"
+          ],
+          "reason": "Human dataset: promoter motif enrichment with TFBSTools and JASPAR on hg38, against a background of the tested genes, is the named sequence-level complement to the regulon inference per R-0120@7639.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 16
+        },
+        "step_type": "activity",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "tf_activity: motif_complement = TFBSTools with a JASPAR vertebrate collection on hg38 promoters (doi:10.1093/bioinformatics/btw024)",
+          "tf_activity: motif_background = promoters_of_tested_genes (rule:R-0120)",
+          "Human resources only — do not fall back to a non-human genome or motif set"
+        ],
+        "description": "Optional sequence-level complement to the regulon inference. Take the DE genes from T1S2 (padj < 0.05) and the remaining tested genes as background. Resolve gene symbols to hg38 promoter windows using a human genome annotation and genome sequence from the environment, scan the windows with the JASPAR vertebrate matrices via TFBSTools, and test each motif's hit frequency in DE promoters against the background of the other tested genes' promoters. Adjust p-values with BH. Report the motif release used and the promoter window size. Read the result beside the T2S1 regulon result: a motif hit is a binding possibility, an activity score is an inference from target behaviour, and they answer different questions. This step needs a human genome sequence, a matching gene annotation for TSS coordinates and a JASPAR motif collection; if any of those cannot be resolved in this environment, or if too few gene symbols map to TSS coordinates to give a usable background, report that plainly and skip the scan — the TF question is already answered by T2S1 and this step is an annotation on top of it.",
+        "acceptance_criteria": [
+          "Background is the promoters of the other tested genes, never the whole genome",
+          "Promoter window size, genome build and motif collection release are stated",
+          "The number of DE genes and background genes that resolved to TSS coordinates is reported, along with the unmapped share",
+          "Motif results carry BH-adjusted p-values",
+          "If a required resource (genome sequence, TSS annotation, or motif collection) is unavailable, the step reports exactly which one and produces no scan rather than substituting a different background or organism"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Consolidated report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "If T2S2 was skipped for a missing resource, say so explicitly rather than omitting it silently",
+          "Do not describe a TF activity score as evidence of mechanism; it is a hypothesis generated from annotated target behaviour"
+        ],
+        "context": "Final synthesis. Everything it reports must come from the upstream steps; it computes no new statistics.",
+        "maxSteps": 200,
+        "packages": [
+          "rmarkdown",
+          "knitr",
+          "ggplot2",
+          "DESeq2"
+        ],
+        "question": "What are the aldosterone-vs-vehicle differentially expressed genes and the transcription factors behind them, with the method, thresholds and limitations stated so the analysis can be reproduced?",
+        "grounding": {
+          "claims": [
+            "R-0042@54e1",
+            "R-0085@c24d",
+            "R-0087@c53d",
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "Report contents, fit diagnostics, effect columns and the reproducibility record follow R-0041@059a, R-0085@c24d, R-0087@c53d, R-0086@becf, with the two-method overlap per R-0042@54e1.",
+          "status": "grounded",
+          "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+          "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+          "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)",
+          "report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)",
+          "report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)",
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+          "Do not compute new statistics here and do not restate a result that an upstream step did not produce"
+        ],
+        "description": "Assemble the results of T1S1, T1S2, T1S3, T2S1 and T2S2 into one report. State before any gene table: the method and package versions, the design formula, the reference level and the contrast triple (condition, treated, control), the thresholds on adjusted p-value, the number of genes tested after filtering out of the 12,000 input rows, and the number of DE genes. Include the two fit diagnostics — the MA plot with significant genes marked, and the dispersion plot with per-gene estimates, the fitted trend and the shrunken values — placed before the gene tables, each with a sentence saying what it shows. The gene table carries the unshrunken log2FoldChange, the apeglm-shrunken log2FoldChange and lfcSE for each gene; rank and plot on the shrunken value and keep the p-values from the unshrunken fit. Report the DESeq2/edgeR overlap as the high-confidence set. Present the TF activity table beside the DE results, and the motif result beside it if T2S2 produced one. Close with a reproducibility record: sessionInfo, the random seed of any step using randomness, all package versions, and the version of the regulon collection and any annotation release used. State the limitations plainly: n=6 per group, no length offsets available from the summarised count CSV, a tissue-agnostic TF prior, and inferred TF activity being an inference rather than a measurement.",
+        "acceptance_criteria": [
+          "Method, package versions, design, reference level, contrast triple, thresholds, n tested and n DE appear before the gene tables",
+          "MA plot and dispersion plot are both present, before the gene tables, each with a stated reading",
+          "Gene table carries unshrunken log2FoldChange, shrunken log2FoldChange and lfcSE; ranking and plots use the shrunken value and the shrinkage estimator is named in the header",
+          "DESeq2/edgeR intersection is reported as the high-confidence set with the per-method counts",
+          "TF activity results are presented with the regulon collection name and version",
+          "Reproducibility record with sessionInfo, seeds, package versions and collection/annotation versions is included with the results",
+          "Limitations section states the n=6 power constraint, the missing length offsets, and the tissue-agnostic nature of the TF prior"
+        ]
+      }
+    ],
+    "title": "Aldosterone vs vehicle kidney DE + TF activity",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch, unpaired bulk RNA-seq experiment: 12,000 gene-symbol rows x 12 human kidney samples (counts.csv, raw integer gene-level counts summarised from Salmon) with a 12 x 2 sample table (metadata.csv) carrying one condition column, 6 aldosterone-treated vs 6 vehicle control. The research question has exactly two parts — which genes change, and which transcription factors sit behind those changes — so the plan has no unasked enrichment scope beyond what is needed to answer the TF part.\n\nT1S1 runs sample structure QC before any model: blind VST, PCA on the 500 most variable genes, a sample-distance heatmap and library sizes, coloured by condition. With n=6 per group a single outlying sample materially moves the fit, so this must be inspected first and reported rather than silently accepted. T1S2 fits the model DESeq2 asks for at this replicate level: minimal pre-filter (>=10 counts in >=6 samples, the smallest group size), median-of-ratios size factors estimated inside the model on unscaled counts, ~condition with control set explicitly as the reference level, Wald test for the contrast condition treated vs control, apeglm shrinkage for reported/ranked fold changes, BH at alpha 0.05 with independent filtering, and the p-value histogram inspected before the adjustment. A caveat that matters at 6 replicates per cell: DESeq2 flags Cook's-distance count outliers and returns NA p-values rather than replacing counts, so those NAs must be counted separately from the independent-filter NAs. Note the counts arrive as a pre-summarised CSV, not as Salmon quant.sf files, so no tximport length offsets are available — the step must state that limitation rather than pretend to a length-corrected import.\n\nT1S3 re-runs the same contrast with the edgeR quasi-likelihood F-test as an independent second method; the intersection is the high-confidence gene set and the method-unique calls are reported as secondary. This is a robustness check, not a replacement for the primary Wald result.\n\nT2S1 answers the TF half. With 12 samples a network cannot be inferred from this expression matrix — a mutual-information regulon needs roughly a hundred samples — so the regulons must come from prior knowledge. decoupleR's univariate linear model runs on the Wald statistic of every tested gene (not the significant subset) against the signed CollecTRI human regulons, keeping the mode of regulation so repressor targets lower the score, and testing only regulators with at least 5 targets among the tested genes. DoRothEA confidence A-C is the named fallback. The reference store currently holds both a human CollecTRI network and human DoRothEA regulons, so this step is provisioned; VIPER/ARACNe are absent and a prior network is the substitute, which the step must state.\n\nT2S2 is a strictly optional sequence-level complement: motif enrichment in the promoters of the DE genes against a background of the other tested genes. It uses hg38 coordinates and JASPAR2020 matrices, both reported present, but the counts carry only gene symbols so promoter coordinate resolution may fail; if the genome, annotation or motif resource is not resolvable the step reports that and the run loses an annotation, not its answer. T3S1 assembles the report: design, thresholds, package and collection versions, MA and dispersion plots, both fold-change columns with the standard error, the two-method overlap, and a reproducibility record."
+  },
+  "usage": {
+    "inputTokens": 228597,
+    "outputTokens": 11684,
+    "cacheCreationInputTokens": 149884,
+    "cacheReadInputTokens": 78677,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "tf_activity"
+        ]
+      }
+    },
+    {
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      }
+    },
+    {
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "tf_activity"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: blind VST, PCA on top 500 variable genes, sample distance heatmap, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Keep genes with at least 10 counts in at least 6 samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "Median-of-ratios size factors inside the model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~ condition with explicit reference level control; contrast condition treated vs control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with independent filtering, p-value histogram inspected",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "edgeR quasi-likelihood F-test as robustness second method",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "QLF"
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "decoupleR ulm on CollecTRI signed regulons using the DESeq2 Wald statistic of all tested genes",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              },
+              {
+                "name": "edge_sign",
+                "value": "keep_mode_of_regulation"
+              },
+              {
+                "name": "activity_input",
+                "value": "contrast_statistic_all_tested_genes"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Method, versions, design, thresholds, MA and dispersion plots, DESeq2/edgeR overlap, session info",
+            "package": "rmarkdown",
+            "parameters": [
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              },
+              {
+                "name": "robustness",
+                "value": "overlap_of_two_methods"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Aldosterone vs vehicle kidney DE + TF activity",
+          "analytical_narrative": "The input is a single-batch, unpaired bulk RNA-seq experiment: 12,000 gene-symbol rows x 12 human kidney samples (counts.csv, raw integer gene-level counts summarised from Salmon) with a 12 x 2 sample table (metadata.csv) carrying one condition column, 6 aldosterone-treated vs 6 vehicle control. The research question has exactly two parts — which genes change, and which transcription factors sit behind those changes — so the plan has no unasked enrichment scope beyond what is needed to answer the TF part.\n\nT1S1 runs sample structure QC before any model: blind VST, PCA on the 500 most variable genes, a sample-distance heatmap and library sizes, coloured by condition. With n=6 per group a single outlying sample materially moves the fit, so this must be inspected first and reported rather than silently accepted. T1S2 fits the model DESeq2 asks for at this replicate level: minimal pre-filter (>=10 counts in >=6 samples, the smallest group size), median-of-ratios size factors estimated inside the model on unscaled counts, ~condition with control set explicitly as the reference level, Wald test for the contrast condition treated vs control, apeglm shrinkage for reported/ranked fold changes, BH at alpha 0.05 with independent filtering, and the p-value histogram inspected before the adjustment. A caveat that matters at 6 replicates per cell: DESeq2 flags Cook's-distance count outliers and returns NA p-values rather than replacing counts, so those NAs must be counted separately from the independent-filter NAs. Note the counts arrive as a pre-summarised CSV, not as Salmon quant.sf files, so no tximport length offsets are available — the step must state that limitation rather than pretend to a length-corrected import.\n\nT1S3 re-runs the same contrast with the edgeR quasi-likelihood F-test as an independent second method; the intersection is the high-confidence gene set and the method-unique calls are reported as secondary. This is a robustness check, not a replacement for the primary Wald result.\n\nT2S1 answers the TF half. With 12 samples a network cannot be inferred from this expression matrix — a mutual-information regulon needs roughly a hundred samples — so the regulons must come from prior knowledge. decoupleR's univariate linear model runs on the Wald statistic of every tested gene (not the significant subset) against the signed CollecTRI human regulons, keeping the mode of regulation so repressor targets lower the score, and testing only regulators with at least 5 targets among the tested genes. DoRothEA confidence A-C is the named fallback. The reference store currently holds both a human CollecTRI network and human DoRothEA regulons, so this step is provisioned; VIPER/ARACNe are absent and a prior network is the substitute, which the step must state.\n\nT2S2 is a strictly optional sequence-level complement: motif enrichment in the promoters of the DE genes against a background of the other tested genes. It uses hg38 coordinates and JASPAR2020 matrices, both reported present, but the counts carry only gene symbols so promoter coordinate resolution may fail; if the genome, annotation or motif resource is not resolvable the step reports that and the run loses an annotation, not its answer. T3S1 assembles the report: design, thresholds, package and collection versions, MA and dispersion plots, both fold-change columns with the standard error, the two-method overlap, and a reproducibility record.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-07T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 human kidney samples separate by condition (6 aldosterone-treated vs 6 vehicle control), and does any single sample depart from its group before the model is fitted?",
+              "description": "Load /eval-four-models-with-de-plus-tf-activity-n6-1/data/inputs/counts/counts.csv (12,000 gene symbols x 12 samples, raw integer counts) and /eval-four-models-with-de-plus-tf-activity-n6-1/data/inputs/metadata/metadata.csv (12 rows, condition column). Verify the sample columns of the count matrix match the metadata rows exactly (same set, and reorder rather than assume). Build a DESeqDataSet with design ~condition, apply the variance stabilizing transformation blind to the design, run PCA on the 500 most variable genes, draw a Euclidean sample-distance heatmap, and plot per-sample library sizes and detected-gene counts. Colour every plot by condition. Report the percentage of variance on PC1 and PC2 and name any sample that sits with the wrong group or has a library size far from the median.",
+              "context": "Single batch, unpaired, 6 vs 6. The metadata carries only a condition column, so condition is the only annotation available to colour by; do not invent a batch variable.",
+              "question_notes": "",
+              "acceptance_criteria": [
+                "Count matrix columns and metadata rows are confirmed matched by name, with the count of matched samples stated (expected 12)",
+                "PCA plot on the top 500 variable genes of the blind VST values, with PC1/PC2 percent variance reported and points coloured by condition",
+                "Sample-to-sample Euclidean distance heatmap and a per-sample library size / detected-gene table are produced",
+                "Any outlying sample is named explicitly, or the report states that no sample departs from its group",
+                "The VST here is blind to the design and is used for QC only, never as input to the differential test"
+              ],
+              "constraints": [
+                "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+                "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+                "Do not drop any sample in this step; flag only. Removal is a decision for the report, stated with its reason."
+              ],
+              "caveats": [
+                "With 6 replicates per group a single outlier moves the dispersion fit noticeably — flag it rather than assuming it is harmless",
+                "The first column of counts.csv is the gene symbol and must become the row name, not a data column"
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Raw counts, 6v6 two-group design: sample structure QC with blind VST, PCA on top 500 variable genes and a sample distance heatmap per R-0033@40bf."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test with apeglm shrinkage",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes differ in expression between aldosterone-treated and vehicle control human kidney samples (contrast: condition, treated vs control), at BH-adjusted p < 0.05?",
+              "description": "Fit the primary differential expression model on the raw counts. Pre-filter minimally: keep a gene with at least 10 counts in at least 6 samples (the smallest group size). Do not scale, log, or otherwise normalize the counts before the model — DESeq2 estimates median-of-ratios size factors and applies them as offsets inside the negative binomial fit. Set the condition factor's reference level explicitly to the vehicle/control level read from metadata.csv (do not rely on alphabetical ordering) and state the contrast as (condition, treated, control) so a positive log2FoldChange means higher in aldosterone-treated. Run the Wald test. Inspect and save the histogram of unadjusted p-values before adjustment and describe its shape. Call results with alpha = 0.05, BH adjustment and independent filtering on. Produce apeglm-shrunken log2 fold changes for the treated-vs-control coefficient. Emit one results table carrying: gene symbol, baseMean, unshrunken log2FoldChange, lfcSE, Wald statistic, pvalue, padj, and shrunken log2FoldChange. Report the number of genes tested after filtering, the number with padj < 0.05, and separately the number of genes with NA p-values from the Cook's-distance outlier flag versus from independent filtering.",
+              "context": "12,000 genes x 12 samples of raw integer gene-level counts, human kidney, aldosterone vs vehicle, single batch, unpaired. The full Wald statistic vector for every tested gene is a required output — the TF activity step consumes it.",
+              "acceptance_criteria": [
+                "Reference level of the condition factor is set explicitly and both the reference level and the contrast triple (factor, numerator, denominator) are written into the output",
+                "Pre-filter is exactly >=10 counts in >=6 samples, and the number of genes kept out of 12,000 is reported",
+                "Size factors are median-of-ratios estimated inside DESeq2; no pre-normalized or transformed matrix enters the model",
+                "Results table contains gene symbol, baseMean, unshrunken log2FoldChange, lfcSE, Wald stat, pvalue, padj and apeglm-shrunken log2FoldChange for every tested gene",
+                "p-value histogram is saved and its shape described before the adjusted p-values are interpreted",
+                "Counts of genes with padj<0.05, of Cook's-outlier NA genes, and of independent-filter NA genes are reported separately",
+                "A complete gene-by-Wald-statistic vector (all tested genes, unfiltered by significance) is written to disk for downstream use"
+              ],
+              "constraints": [
+                "filter_low_counts: min_count = 10, min_samples = smallest_group_size = 6 (doi:10.12688/f1000research.7035.1; vignette:DESeq2/1.52.0#pre-filtering)",
+                "filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)",
+                "normalize: size_factors = median_of_ratios, estimated inside the model (doi:10.1186/s13059-014-0550-8)",
+                "model_design: reference_level = explicit; contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)",
+                "differential_expression: test = Wald; count_outlier_policy = flag_and_report_na (doi:10.1186/s13059-014-0550-8; vignette:DESeq2/1.52.0#approach-to-count-outliers)",
+                "shrink_lfc: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)",
+                "multiple_testing: alpha = 0.05, adjustment = BH, independent_filtering = true, filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x; doi:10.1073/pnas.0914005107)",
+                "multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)",
+                "Select DE genes by padj only. Do not select by unadjusted p-value and do not apply a post-hoc fold-change filter; if an effect-size threshold is wanted it must be tested inside the model via lfcThreshold (doi:10.1093/bioinformatics/btp053)."
+              ],
+              "caveats": [
+                "The counts arrive as a pre-summarised CSV, not as Salmon quant.sf files, so tximport average-transcript-length offsets cannot be applied — state this limitation, and note that a gene whose isoform usage shifts can therefore be mis-called",
+                "With 6 replicates per condition cell DESeq2 flags Cook's-distance outliers and sets p to NA rather than replacing the count; do not mistake these NAs for filtered genes",
+                "Gene symbols may be duplicated in the first column — resolve duplicates explicitly (state the rule used) rather than letting the reader coerce them"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0029@fa6d",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0018@a472",
+                  "R-0001@9a17",
+                  "R-0039@e17a",
+                  "R-0009@f54e",
+                  "R-0083@12de",
+                  "R-0010@91a5",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "template": "tpl-deseq2-two-group@1.0.0",
+                "reason": "Raw counts, fixed-effects two-group design at 6 replicates per group: DESeq2 Wald with apeglm shrinkage and BH/independent filtering per R-0001@9a17 and R-0009@f54e; length offsets of R-0018@a472 are unavailable because the input is a summarised count CSV, and the step states that."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "edgeR quasi-likelihood robustness check",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the aldosterone-vs-vehicle calls survive an independent second method, and how large is the overlap between DESeq2 Wald and edgeR quasi-likelihood on the same 6-vs-6 contrast?",
+              "description": "Re-run the same contrast on the same raw counts and the same design with edgeR: filterByExpr or the identical >=10-counts-in->=6-samples rule (state which, and keep the tested gene set comparable to T1S2), TMM normalization factors, estimateDisp, glmQLFit and glmQLFTest for treated vs control, BH adjustment at 0.05. Then compare against the T1S2 result: report the number of significant genes from each method, the size of the intersection, and list the genes that only one method calls, labelled with that method. Treat the intersection as the high-confidence set. Do not present the union as the result.",
+              "context": "Robustness check requested by the two-method reporting convention; at 6 replicates per group the two tools agree on most genes but disagree at low counts.",
+              "acceptance_criteria": [
+                "edgeR QL fit uses TMM scaling factors and the same ~condition design and same treated-vs-control direction as T1S2",
+                "A comparison table reports n significant for DESeq2, n significant for edgeR, and the size of the intersection",
+                "Method-unique genes are listed as a secondary set, each labelled with the calling method",
+                "The report states that the intersection is the high-confidence set and that the union is not the result",
+                "The gene universes of the two runs are stated; if they differ, the overlap is computed on the shared universe"
+              ],
+              "constraints": [
+                "Same design formula, same reference level and same contrast direction as T1S2",
+                "Normalization is TMM inside the edgeR model; do not feed pre-scaled counts",
+                "Selection by BH-adjusted p-value at 0.05, matching T1S2"
+              ],
+              "caveats": [
+                "This is a robustness check, not a replacement — the primary reported effect sizes remain the apeglm-shrunken DESeq2 values",
+                "Disagreement between the two methods concentrates in low-count genes; describe where the unique calls sit on the expression range"
+              ],
+              "packages": [
+                "edgeR",
+                "limma",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0001@9a17"
+                ],
+                "reason": "edgeR quasi-likelihood is the named second method for a 2-11 replicate fixed-effects design (R-0001@9a17); the overlap of the two methods is reported as the high-confidence set per R-0042@54e1. The knowledge check warned that test=QLF differs from the sourced Wald default — accepted deliberately, since this step exists precisely to be the non-Wald second method and the Wald test remains primary in T1S2."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "TF activity with decoupleR ulm on CollecTRI",
+              "track": "T2",
+              "step_type": "activity",
+              "question": "Which transcription factors show altered inferred activity behind the aldosterone-vs-vehicle expression changes in human kidney?",
+              "description": "Infer transcription factor activity from the contrast statistic, not from the significant gene list. Take the full gene-by-Wald-statistic vector from T1S2 (every tested gene) and run decoupleR's univariate linear model (ulm) against a signed human TF-target regulon prior — a literature-curated signed collection is the first choice, with a confidence-filtered (levels A to C) regulon collection as the named alternative. Keep the sign / mode of regulation on each edge so that a target of a repressor lowers rather than raises the score. Test a regulator only when at least 5 of its targets are present among the tested genes, and report how many regulators entered the test and how many were dropped for insufficient target coverage. Output a table of TF, activity score, p-value, BH-adjusted p-value and number of targets used, sorted by absolute score, and a barplot of the top regulators in each direction. For the top regulators, list which of their targets are among the DE genes from T1S2 and in which direction, so the reader can see what drives each score. Resolve the regulon resource from the environment's reference store by what it is (a signed human TF-target regulon network); the store currently reports both a human CollecTRI network and human DoRothEA regulons. Confirm the organism is human before use.",
+              "context": "12 samples total. This is far too few to infer a regulatory network from the expression matrix itself, so the regulons must come entirely from prior knowledge. VIPER and ARACNe are not available in this environment; decoupleR on a prior network is the substitute.",
+              "acceptance_criteria": [
+                "Input to the activity model is the Wald statistic of every tested gene from T1S2, not a thresholded gene list",
+                "The regulon prior is human and signed, and its name and version are recorded in the output",
+                "Regulators with fewer than 5 targets among the tested genes are excluded, and the counts of tested and excluded regulators are reported",
+                "Output table has TF, activity score, p-value, BH-adjusted p-value and n targets, with the top regulators in both directions shown",
+                "For each top regulator, its DE target genes and their directions are listed",
+                "The report states that a prior network is tissue-agnostic: a kidney-specific regulator can be missed and a target silent in kidney adds noise, and that an inferred activity is not a measurement of TF protein activity"
+              ],
+              "constraints": [
+                "tf_activity: activity_method = ulm (doi:10.1093/bioadv/vbac016)",
+                "tf_activity: activity_input = contrast_statistic_all_tested_genes (doi:10.1093/bioadv/vbac016)",
+                "tf_activity: regulon_preference = collectri_first, alternative = dorothea_confidence_A_to_C (doi:10.1093/nar/gkad841; doi:10.1101/gr.240663.118)",
+                "tf_activity: edge_sign = keep_mode_of_regulation (doi:10.1093/nar/gkad841)",
+                "tf_activity: min_regulon_size = 5 (doi:10.1093/bioadv/vbac016)",
+                "tf_activity: network_source = prior_knowledge_network_only — do not infer a regulatory network from this 12-sample expression matrix (doi:10.1093/bioinformatics/btw216)",
+                "Match TF and target identifiers to the gene-symbol space of the count matrix; report the share of statistic genes that failed to match the network"
+              ],
+              "caveats": [
+                "An inferred activity is a statement about the coordinated behaviour of a TF's annotated targets, not a measurement of the TF's own expression or protein activity — a TF can score high with unchanged mRNA",
+                "Aldosterone acts through the mineralocorticoid receptor (NR3C2); whether NR3C2 appears depends on its target coverage in the prior, and its absence from the top list is not evidence against it — report its regulon size and score explicitly either way",
+                "The prior network is not kidney-specific"
+              ],
+              "packages": [
+                "decoupleR",
+                "dplyr",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0111@b668",
+                  "R-0113@7a4d",
+                  "R-0114@9db7",
+                  "R-0121@5f27"
+                ],
+                "template": "tpl-decoupler-tf-activity@1.0.0",
+                "reason": "TF activity from a contrast at 12 samples: decoupleR ulm on signed CollecTRI regulons using the Wald statistic of all tested genes (R-0111@b668); prior network only because the cohort cannot support network inference (R-0121@5f27) and VIPER/ARACNe are absent (R-0114@9db7)."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Promoter motif enrichment complement",
+              "track": "T2",
+              "step_type": "activity",
+              "question": "Do the promoters of the aldosterone-responsive DE genes carry an excess of any TF binding motif relative to the promoters of the other tested genes?",
+              "description": "Optional sequence-level complement to the regulon inference. Take the DE genes from T1S2 (padj < 0.05) and the remaining tested genes as background. Resolve gene symbols to hg38 promoter windows using a human genome annotation and genome sequence from the environment, scan the windows with the JASPAR vertebrate matrices via TFBSTools, and test each motif's hit frequency in DE promoters against the background of the other tested genes' promoters. Adjust p-values with BH. Report the motif release used and the promoter window size. Read the result beside the T2S1 regulon result: a motif hit is a binding possibility, an activity score is an inference from target behaviour, and they answer different questions. This step needs a human genome sequence, a matching gene annotation for TSS coordinates and a JASPAR motif collection; if any of those cannot be resolved in this environment, or if too few gene symbols map to TSS coordinates to give a usable background, report that plainly and skip the scan — the TF question is already answered by T2S1 and this step is an annotation on top of it.",
+              "context": "The counts carry gene symbols only, so promoter coordinates must be derived through an annotation lookup; symbol-to-TSS mapping loss is expected and must be quantified.",
+              "acceptance_criteria": [
+                "Background is the promoters of the other tested genes, never the whole genome",
+                "Promoter window size, genome build and motif collection release are stated",
+                "The number of DE genes and background genes that resolved to TSS coordinates is reported, along with the unmapped share",
+                "Motif results carry BH-adjusted p-values",
+                "If a required resource (genome sequence, TSS annotation, or motif collection) is unavailable, the step reports exactly which one and produces no scan rather than substituting a different background or organism"
+              ],
+              "constraints": [
+                "tf_activity: motif_complement = TFBSTools with a JASPAR vertebrate collection on hg38 promoters (doi:10.1093/bioinformatics/btw024)",
+                "tf_activity: motif_background = promoters_of_tested_genes (rule:R-0120)",
+                "Human resources only — do not fall back to a non-human genome or motif set"
+              ],
+              "caveats": [
+                "This step is discretionary: its loss costs an annotation, not the answer to the research question",
+                "A motif hit near a TSS is evidence of possible binding, not of regulation, and must not be reported as TF activity",
+                "Symbol-to-coordinate mapping is lossy across annotation releases"
+              ],
+              "packages": [
+                "TFBSTools",
+                "JASPAR2020",
+                "BSgenome.Hsapiens.UCSC.hg38",
+                "GenomicRanges",
+                "GenomicFeatures"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 16
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0120@7639"
+                ],
+                "reason": "Human dataset: promoter motif enrichment with TFBSTools and JASPAR on hg38, against a background of the tested genes, is the named sequence-level complement to the regulon inference per R-0120@7639."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Consolidated report",
+              "track": "T3",
+              "step_type": "report",
+              "question": "What are the aldosterone-vs-vehicle differentially expressed genes and the transcription factors behind them, with the method, thresholds and limitations stated so the analysis can be reproduced?",
+              "description": "Assemble the results of T1S1, T1S2, T1S3, T2S1 and T2S2 into one report. State before any gene table: the method and package versions, the design formula, the reference level and the contrast triple (condition, treated, control), the thresholds on adjusted p-value, the number of genes tested after filtering out of the 12,000 input rows, and the number of DE genes. Include the two fit diagnostics — the MA plot with significant genes marked, and the dispersion plot with per-gene estimates, the fitted trend and the shrunken values — placed before the gene tables, each with a sentence saying what it shows. The gene table carries the unshrunken log2FoldChange, the apeglm-shrunken log2FoldChange and lfcSE for each gene; rank and plot on the shrunken value and keep the p-values from the unshrunken fit. Report the DESeq2/edgeR overlap as the high-confidence set. Present the TF activity table beside the DE results, and the motif result beside it if T2S2 produced one. Close with a reproducibility record: sessionInfo, the random seed of any step using randomness, all package versions, and the version of the regulon collection and any annotation release used. State the limitations plainly: n=6 per group, no length offsets available from the summarised count CSV, a tissue-agnostic TF prior, and inferred TF activity being an inference rather than a measurement.",
+              "context": "Final synthesis. Everything it reports must come from the upstream steps; it computes no new statistics.",
+              "acceptance_criteria": [
+                "Method, package versions, design, reference level, contrast triple, thresholds, n tested and n DE appear before the gene tables",
+                "MA plot and dispersion plot are both present, before the gene tables, each with a stated reading",
+                "Gene table carries unshrunken log2FoldChange, shrunken log2FoldChange and lfcSE; ranking and plots use the shrunken value and the shrinkage estimator is named in the header",
+                "DESeq2/edgeR intersection is reported as the high-confidence set with the per-method counts",
+                "TF activity results are presented with the regulon collection name and version",
+                "Reproducibility record with sessionInfo, seeds, package versions and collection/annotation versions is included with the results",
+                "Limitations section states the n=6 power constraint, the missing length offsets, and the tissue-agnostic nature of the TF prior"
+              ],
+              "constraints": [
+                "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+                "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+                "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)",
+                "report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)",
+                "report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)",
+                "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+                "Do not compute new statistics here and do not restate a result that an upstream step did not produce"
+              ],
+              "caveats": [
+                "If T2S2 was skipped for a missing resource, say so explicitly rather than omitting it silently",
+                "Do not describe a TF activity score as evidence of mechanism; it is a hypothesis generated from annotated target behaviour"
+              ],
+              "packages": [
+                "rmarkdown",
+                "knitr",
+                "ggplot2",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a",
+                "claims": [
+                  "R-0042@54e1",
+                  "R-0085@c24d",
+                  "R-0087@c53d",
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "Report contents, fit diagnostics, effect columns and the reproducibility record follow R-0041@059a, R-0085@c24d, R-0087@c53d, R-0086@becf, with the two-method overlap per R-0042@54e1."
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  }
+}

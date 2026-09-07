@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the core structure: variancePartition (fitExtractVarPartModel) on voom log-CPM, not raw counts, with condition and sex random and age fixed, framed as a diagnostic not a test, followed by DESeq2 Wald with ~ sex + age_centered + condition, explicit reference level, apeglm shrinkage and BH at 0.05 with independent filtering on. It falls short of the reference in not tabulating sex and age by group to report covariate balance, not listing the genes with the largest condition fraction, and not stating that a near-zero term could be dropped from the DE design; the count filter is a reasonable justified rule but not filterByExpr, and TMM normalization before voom is not stated. QC is thorough (blind VST, PCA, distances, library sizes, colored by condition and sex) but the outlier policy stops at flagging. Enrichment was neither asked nor warranted, so adding fgsea is scope creep, though its specification (full ranked list by Wald stat, tested-gene universe, size window, versioned collections) is correct; the report section covers methods, versions, thresholds, counts and caveats but inherits the missing balance table."
+}

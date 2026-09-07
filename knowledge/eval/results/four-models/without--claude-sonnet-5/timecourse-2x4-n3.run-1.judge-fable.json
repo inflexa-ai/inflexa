@@ -1,0 +1,14 @@
+{
+  "judge": "claude-fable-5-1",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 2,
+    "low_count_filter": 7,
+    "normalization": 5,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the condition-by-time interaction as the target and specifies the DESeq2 LRT with explicit full (~condition + time + condition:time) and reduced (~condition + time) formulas, time as a 4-level factor with t0 reference, a 3-df test, and per-condition trajectory characterization on VST values. Sample-structure QC is essentially absent: only ID alignment and the 24-vs-25 mismatch are checked, with no PCA, sample distances, library sizes, or outlier policy. Normalization is never stated (DESeq2 size factors are implicit but not named), BH at 0.05 is stated but no lfcShrink is planned for the reported interaction fold changes, and the condition reference level is not set. Enrichment is not warranted by the question yet is added without a universe, size window, or clear ORA-vs-GSEA choice; the report lacks package versions."
+}
