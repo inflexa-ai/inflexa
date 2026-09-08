@@ -72,9 +72,12 @@ export const STEP_NON_TASK_FIELDS = [
     "summary",
     "artifactIds",
     "error",
-    // Withheld on purpose: the pre-launch link pass consumes the packages of a
-    // step, and a step agent must not re-litigate them (the
-    // planning-enhancements spec).
+    // Withheld on purpose: every step reaches an agent through a launch, and
+    // the pre-launch link pass consumes the packages of every step it carries —
+    // an ad hoc step as much as a planned one. Thus the set is settled before
+    // the agent reads its task, and a step agent must not re-litigate it. What
+    // the agent does need to know about them — a dropped entry, or a step that
+    // declares none — rides in `caveats`.
     "packages",
 ] as const satisfies readonly (keyof AnalysisStep)[];
 

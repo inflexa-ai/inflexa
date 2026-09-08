@@ -16,8 +16,9 @@ import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorize
 import type { RunLauncher } from "../execution/run-launcher.js";
 import type { ChatProvider } from "../providers/types.js";
 import type { ExecuteAnalysisInput } from "../workflows/execute-analysis.js";
+import type { AdHocRoute } from "./ad-hoc-router.js";
 import type { ToolContext } from "./define-tool.js";
-import { PlanNotFoundError, PlanPackagesMissingError, PlanValidationError, createExecuteAnalysisTool } from "./execute-analysis.js";
+import { PlanNotFoundError, PlanPackagesMissingError, PlanValidationError, buildAdHocPlan, createExecuteAnalysisTool } from "./execute-analysis.js";
 
 /** Records launches; never reaches the durability engine. */
 function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
@@ -109,7 +110,7 @@ function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): Too
     };
 }
 
-function routeProvider(agentId = "single-cell-agent"): { provider: ChatProvider; calls: { count: number } } {
+function routeProvider(agentId = "single-cell-agent", packages?: string[]): { provider: ChatProvider; calls: { count: number } } {
     const calls = { count: 0 };
     return {
         calls,
@@ -129,6 +130,7 @@ function routeProvider(agentId = "single-cell-agent"): { provider: ChatProvider;
                                     agentId,
                                     resources: { cpu: 2, memoryGb: 4 },
                                     rationale: `route-${calls.count}`,
+                                    ...(packages === undefined ? {} : { packages }),
                                 },
                             },
                         ],
@@ -520,6 +522,149 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         expect(second.runId).not.toBe(first.runId);
         expect(launches).toHaveLength(2);
         expect(routing.calls.count).toBe(2);
+    });
+
+    it("links the packages of the routed step before the launch", async () => {
+        const { pool } = statefulAdHocPool();
+        const routing = routeProvider("single-cell-agent", ["scanpy", "python:igraph"]);
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        const seamCalls: Array<{ analysisId: string; queries: Array<{ spelling: string; track?: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            pool,
+            utilityProvider: routing.provider,
+            utilityModel: "utility-model",
+            runAuthorizer: authorizer,
+            runLauncher: launcher,
+            extendAnalysisFarm: async (analysisId, queries) => {
+                seamCalls.push({ analysisId, queries: [...queries] });
+                return queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" }));
+            },
+            executeAnalysisWorkflow: async () => {
+                throw new Error("launch seam should be used");
+            },
+        });
+
+        const result = (
+            await tool.execute({ mode: "adhoc", request: "Cluster these cells and score the markers" }, fakeContext("call-adhoc-packages"))
+        )._unsafeUnwrap() as { status: string };
+
+        expect(seamCalls).toHaveLength(1);
+        expect(seamCalls[0]!.analysisId).toBe(ANALYSIS_ID);
+        expect(seamCalls[0]!.queries).toEqual([{ spelling: "scanpy" }, { spelling: "igraph", track: "python" }]);
+        expect(launches).toHaveLength(1);
+        expect(result.status).toBe("in_progress");
+    });
+
+    it("a bare both-track name refuses the launch with the two prefixed forms, and no run reserves", async () => {
+        const { pool, runs } = statefulAdHocPool();
+        const routing = routeProvider("statistical-modeling-agent", ["xgboost"]);
+        const { launcher, launches } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            pool,
+            utilityProvider: routing.provider,
+            utilityModel: "utility-model",
+            runAuthorizer: throwingAuthorizer,
+            runLauncher: launcher,
+            extendAnalysisFarm: async (_analysisId, queries) =>
+                queries.map((q) => ({
+                    kind: "collision" as const,
+                    spelling: q.spelling,
+                    storeDirs: ["python-dir", "r-dir"] as [string, string],
+                })),
+            executeAnalysisWorkflow: async () => {
+                throw new Error("should not be called");
+            },
+        });
+        const request = "Fit a gradient boosting model on these features";
+
+        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-1"))).rejects.toThrow(PlanPackagesMissingError);
+        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-2"))).rejects.toThrow(/python:xgboost/);
+        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-3"))).rejects.toThrow(/r:xgboost/);
+        expect(launches).toHaveLength(0);
+        expect(runs.size).toBe(0);
+    });
+
+    it("stores an empty package list and its caveat when the route names no package", async () => {
+        const { pool, plans } = statefulAdHocPool();
+        const routing = routeProvider();
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        let seamCalled = false;
+        const tool = createExecuteAnalysisTool({
+            pool,
+            utilityProvider: routing.provider,
+            utilityModel: "utility-model",
+            runAuthorizer: authorizer,
+            runLauncher: launcher,
+            extendAnalysisFarm: async () => {
+                seamCalled = true;
+                return [];
+            },
+            executeAnalysisWorkflow: async () => {
+                throw new Error("launch seam should be used");
+            },
+        });
+
+        (await tool.execute({ mode: "adhoc", request: "Summarize the staged table" }, fakeContext("call-adhoc-no-packages")))._unsafeUnwrap();
+
+        const stored = [...plans.values()][0] as { steps: Array<{ packages: string[]; caveats?: string[] }> };
+        expect(stored.steps[0]!.packages).toEqual([]);
+        // The step agent must learn that nothing was linked for it, because the
+        // link pass is silent when a step declares no package.
+        expect(stored.steps[0]!.caveats).toEqual([expect.stringContaining("declares no packages")]);
+        expect(seamCalled).toBe(false);
+        expect(launches).toHaveLength(1);
+    });
+});
+
+describe("buildAdHocPlan", () => {
+    const route: AdHocRoute = {
+        agentId: "single-cell-agent",
+        resources: { cpu: 2, memoryGb: 4 },
+        rationale: "A targeted comparison.",
+        packages: [],
+        droppedPackages: [],
+    };
+    const CREATED_AT = "2026-01-01T00:00:00Z";
+
+    it("writes the validated packages onto the one step", () => {
+        const plan = buildAdHocPlan("Compare the clusters", { ...route, packages: ["scanpy", "r:Seurat"] }, CREATED_AT);
+
+        expect(plan.steps[0]!.packages).toEqual(["scanpy", "r:Seurat"]);
+        expect(plan.steps[0]!.caveats).toBeUndefined();
+    });
+
+    it("names each dropped entry with its reason, after the routing fallback", () => {
+        const plan = buildAdHocPlan(
+            "Compare the clusters",
+            {
+                ...route,
+                packages: ["scanpy"],
+                droppedPackages: [
+                    { entry: "./wheels/mofa.whl", reason: "unparsable" },
+                    { entry: "MOFA2", reason: "absent" },
+                ],
+                fallbackClass: "timeout",
+            },
+            CREATED_AT,
+        );
+
+        const caveats = plan.steps[0]!.caveats ?? [];
+        expect(caveats[0]).toContain("Automatic routing fallback: timeout");
+        expect(caveats[1]).toContain("./wheels/mofa.whl");
+        expect(caveats[1]).toContain("does not parse");
+        expect(caveats[1]).toContain("MOFA2");
+        expect(caveats[1]).toContain("the pool does not hold it");
+        // The step carries a package, thus the no-packages caveat does not apply.
+        expect(caveats).toHaveLength(2);
+    });
+
+    it("says that a step with no packages was linked nothing", () => {
+        const plan = buildAdHocPlan("Compare the clusters", route, CREATED_AT);
+
+        expect(plan.steps[0]!.packages).toEqual([]);
+        expect(plan.steps[0]!.caveats).toEqual([expect.stringContaining("declares no packages")]);
     });
 });
 

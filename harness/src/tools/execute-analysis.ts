@@ -9,6 +9,7 @@ import type { Pool } from "pg";
 import { z } from "zod";
 
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
+import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import { DEFAULT_SANDBOX_MAX_STEPS } from "../config/resource-limits.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
@@ -24,9 +25,10 @@ import { AnalysisPlanSchema, type AnalysisPlan } from "../schemas/workflow-state
 import { validatePlan } from "../schemas/validate-plan.js";
 import { RunDedupCollisionError, insertRun, loadPlan, queryActiveRun, reserveRunById, updateRunStatus, upsertPlan } from "../state/index.js";
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
-import { routeAdHocRequest, type AdHocRoute } from "./ad-hoc-router.js";
+import { routeAdHocRequest, type AdHocRoute, type AdHocRouterDeps } from "./ad-hoc-router.js";
 import { adHocPlanId, adHocRunId } from "./analysis-invocation.js";
 import { defineTool, type ToolContext } from "./define-tool.js";
+import { queryPackages, readInventorySections, type ListAvailablePackagesDeps } from "./sandbox/list-available-packages.js";
 
 const planIdSchema = z.string().regex(/^pln-[a-f0-9]{8}$/, "planId must be a pln-<8hex> value");
 const inputSchema = z
@@ -46,7 +48,7 @@ const inputSchema = z
 
 type ExecuteAnalysisWorkflow = (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
 
-export interface ExecuteAnalysisToolDeps {
+export interface ExecuteAnalysisToolDeps extends Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile" | "readPoolInventory"> {
     readonly pool: Pool;
     readonly executeAnalysisWorkflow: ExecuteAnalysisWorkflow;
     readonly runAuthorizer: RunAuthorizer;
@@ -121,9 +123,14 @@ export class PlanPackagesMissingError extends Error {
  * run reserves anything. The linked set is the union of the queries of each
  * step. A pool miss and a collision refuse the launch with the spellings.
  * Without a bound seam, the pass returns at once.
+ *
+ * @returns How many queries reached the seam. Zero says that nothing was
+ * checked — an unbound seam, or a plan whose steps declare no package — which
+ * is what the launch record must carry to tell a checked launch from an
+ * unchecked one.
  */
-async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefined, analysisId: string, plan: AnalysisPlan): Promise<void> {
-    if (!extendAnalysisFarm) return;
+async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefined, analysisId: string, plan: AnalysisPlan): Promise<number> {
+    if (!extendAnalysisFarm) return 0;
     // The union dedupes EQUAL queries only: two entries are one ask when their
     // spelling, their track, and their version are equal. A bare entry beside a
     // qualified entry of one spelling stays two asks, because the bare one
@@ -144,7 +151,7 @@ async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefin
         }
     }
     const queries = [...union.values()];
-    if (queries.length === 0) return;
+    if (queries.length === 0) return 0;
     let outcomes: Awaited<ReturnType<ExtendAnalysisFarm>>;
     try {
         outcomes = await extendAnalysisFarm(analysisId, queries);
@@ -188,6 +195,7 @@ async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefin
     if (missing.length > 0 || collisions.length > 0) {
         throw new PlanPackagesMissingError(missing, collisions);
     }
+    return queries.length;
 }
 
 function planSummary(plan: AnalysisPlan): string {
@@ -241,8 +249,35 @@ function adHocTitle(request: string): string {
     return compact.length <= 80 ? compact : `${compact.slice(0, 77)}…`;
 }
 
+/** How a dropped entry reads to the step agent, in the terms of its own reason. */
+const DROP_REASON_TEXT: Record<AdHocRoute["droppedPackages"][number]["reason"], string> = {
+    unparsable: "does not parse",
+    absent: "the pool does not hold it",
+};
+
+/**
+ * What the step agent must know about the packages that it did not choose.
+ * The routing guessed them, and no person reviewed that guess, thus a drop and
+ * an empty list are facts the agent needs before its first import.
+ */
+function adHocCaveats(route: AdHocRoute): string[] {
+    const caveats: string[] = [];
+    if (route.fallbackClass) caveats.push(`Automatic routing fallback: ${route.fallbackClass}`);
+    if (route.droppedPackages.length > 0) {
+        const drops = route.droppedPackages.map((drop) => `\`${drop.entry}\` (${DROP_REASON_TEXT[drop.reason]})`).join(", ");
+        caveats.push(`The routing dropped these package entries: ${drops}.`);
+    }
+    if (route.packages.length === 0) {
+        caveats.push(
+            "This step declares no packages, thus the pre-launch link pass linked nothing. Confirm that each library you intend to use imports before you rely on it.",
+        );
+    }
+    return caveats;
+}
+
 export function buildAdHocPlan(request: string, route: AdHocRoute, createdAt = new Date().toISOString()): AnalysisPlan {
     const meta = SANDBOX_AGENT_META[route.agentId];
+    const caveats = adHocCaveats(route);
     const plan: AnalysisPlan = {
         title: adHocTitle(request),
         analytical_narrative: `Execute one targeted analysis step for the explicit request: ${request}`,
@@ -264,7 +299,8 @@ export function buildAdHocPlan(request: string, route: AdHocRoute, createdAt = n
                     "Persist machine-readable result file(s), even when the answer is a single scalar.",
                     "Provide a direct result summary grounded in the persisted outputs.",
                 ],
-                caveats: route.fallbackClass ? [`Automatic routing fallback: ${route.fallbackClass}`] : undefined,
+                caveats: caveats.length > 0 ? caveats : undefined,
+                packages: [...route.packages],
                 depends_on: [],
                 status: "pending",
                 resources: route.resources,
@@ -276,6 +312,32 @@ export function buildAdHocPlan(request: string, route: AdHocRoute, createdAt = n
     return AnalysisPlanSchema.parse(plan);
 }
 
+/**
+ * The targeted presence check that the router runs over the names it emits,
+ * against the same inventory that `list_available_packages` reads.
+ *
+ * It binds only when the embedder gives an inventory source. The unbound
+ * defaults name a container mountpoint, and a host that mounts nothing there
+ * would pay a file read on every ad hoc launch to learn nothing — while the
+ * router, with no resolution, already keeps every entry that parses.
+ */
+function adHocPackageResolver(deps: ExecuteAnalysisToolDeps): AdHocRouterDeps["resolvePackages"] {
+    if (!deps.farmLockFile && !deps.imagePackagesFile && !deps.readPoolInventory) return undefined;
+    const inventory: ListAvailablePackagesDeps = {
+        ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
+        ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
+        ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
+    };
+    return async (names) => {
+        const read = await readInventorySections(inventory);
+        // An inventory that cannot answer must not drop a name: the router
+        // keeps every parsed entry, and the link pass judges at launch.
+        if (read.kind === "unavailable") return null;
+        const answer = queryPackages(read.sections, { names });
+        return "checked" in answer ? answer.checked : null;
+    };
+}
+
 async function persistedAdHocPlan(
     deps: ExecuteAnalysisToolDeps,
     args: { analysisId: string; request: string; ctx: ToolContext; planId: string },
@@ -283,6 +345,7 @@ async function persistedAdHocPlan(
     const existing = unwrapOrThrow(await loadPlan(deps.pool, args.planId, { analysisId: args.analysisId }));
     if (existing) return validateStoredPlan(existing, args.planId);
 
+    const resolvePackages = adHocPackageResolver(deps);
     const route = await routeAdHocRequest(
         {
             provider: deps.utilityProvider,
@@ -290,6 +353,7 @@ async function persistedAdHocPlan(
             pool: deps.pool,
             resourcePolicy: deps.resourcePolicy,
             logger: deps.logger,
+            ...(resolvePackages ? { resolvePackages } : {}),
         },
         { analysisId: args.analysisId, request: args.request, session: args.ctx.session, signal: args.ctx.signal },
     );
@@ -340,7 +404,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
 
             // The link pass comes before the run reserves anything, thus a pool
             // miss leaves no run row and no revoked authorization behind.
-            await linkPlanPackages(deps.extendAnalysisFarm, analysisId, plan);
+            const packageQueries = await linkPlanPackages(deps.extendAnalysisFarm, analysisId, plan);
 
             const runId = input.mode === "plan" ? randomUUID() : adHocRunId(analysisId, ctx.invocationId);
             if (input.mode === "plan") {
@@ -415,7 +479,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
                 throw error;
             }
 
-            logger.info("analysis launched", { analysisId, runId, planId, mode: input.mode });
+            logger.info("analysis launched", { analysisId, runId, planId, mode: input.mode, packageQueries });
             await emitRunCard(runId);
             return ok({ runId, status: "in_progress" as const });
         },

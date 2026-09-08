@@ -28,6 +28,28 @@ need 18 GB of RAM.`;
   naming the resource shortfall as the reason.`;
 }
 
+/** The one grammar of a `packages` entry. Every surface that asks a model for
+ *  that array teaches it from here: two texts of one grammar drift, and a
+ *  spelling rule that only one surface states is a launch refusal on the other. */
+export function packagesSection(): string {
+    return `### The Packages of Each Step
+Every step carries a \`packages\` array — the packages its scripts import.
+
+- Name each package as a requirement: a bare name (\`"scanpy"\`), or a name with
+  one exact version (\`"numpy==1.26.4"\`). Never a path, a URL, or a store
+  directory — a location is an installer detail, and validation refuses it.
+- An empty array is valid: the step needs nothing beyond the baked toolchain.
+- When the package census shows one name under a Python section AND under an R
+  section, write the prefixed form the census shows: \`"python:igraph"\` or
+  \`"r:igraph"\`. A bare name that both tracks hold refuses the launch, because
+  the pool cannot tell which package you mean.
+- Write a bare name for every other package. The prefix is for a both-track
+  name only.
+- The set is not a promise of completeness. The execution agent can still link a
+  missing package mid-step. Name what you know the step imports; do not pad the
+  list defensively.`;
+}
+
 export function plannerPrompt(agentCatalog: string, resourcePolicy?: ResourcePolicy): string {
     return `# Analysis Planner
 
@@ -163,22 +185,7 @@ only once the run reaches it, which is the most expensive moment to learn it.
   absent reference: \`request_clarification\`, rather than plan a step that can
   only report failure.
 
-### The Packages of Each Step
-Every step carries a \`packages\` array — the packages its scripts import.
-
-- Name each package as a requirement: a bare name (\`"scanpy"\`), or a name with
-  one exact version (\`"numpy==1.26.4"\`). Never a path, a URL, or a store
-  directory — a location is an installer detail, and validation refuses it.
-- An empty array is valid: the step needs nothing beyond the baked toolchain.
-- When the package census shows one name under a Python section AND under an R
-  section, write the prefixed form the census shows: \`"python:igraph"\` or
-  \`"r:igraph"\`. A bare name that both tracks hold refuses the launch, because
-  the pool cannot tell which package you mean.
-- Write a bare name for every other package. The prefix is for a both-track
-  name only.
-- The set is not a promise of completeness. The execution agent can still link a
-  missing package mid-step. Name what you know the step imports; do not pad the
-  list defensively.
+${packagesSection()}
 
 ### Resource Estimation
 ${resourceEstimationSection(resourcePolicy)}

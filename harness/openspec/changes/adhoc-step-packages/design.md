@@ -102,8 +102,9 @@ entries that parsed. For each entry:
   two rows.
 - `present: false` with a `suggestion`: the spelling of the entry becomes the
   suggestion, and the track and the version stay. The pool holds that
-  spelling, and the link pass would refuse the other one. The log record
-  carries the final list, thus a rewrite is visible.
+  spelling, and the link pass would refuse the other one. Two entries that
+  take one spelling become one entry, the same as two equal entries. The log
+  record carries the final list, thus a rewrite is visible.
 - `present: false` with no suggestion: the entry is dropped as `absent`.
 - a `null` resolution, or no dep: every parsed entry stays, and the link pass
   judges.
@@ -123,12 +124,17 @@ because a person approved the plan.
 `ListAvailablePackagesDeps`: `farmLockFile`, `imagePackagesFile`, and
 `readPoolInventory`. The read of the sections moves out of the `execute` of
 `list_available_packages` into an exported `readInventorySections(deps):
-Promise<readonly Section[] | null>`, and the tool calls it. `persistedAdHocPlan`
-builds `resolvePackages` from it when at least one of the three deps is
-bound: read the sections, and answer `queryPackages(sections, { names }).checked`,
-or `null` when the read gives `null`. Without a bound dep the router gets no
-resolver, because the default paths name a container mount, and a read of
-them on a host is a wasted stat. The conversation agent passes the three deps to the tool, the same as
+Promise<InventoryRead>`, and the tool calls it. An `InventoryRead` is
+`{ kind: "sections"; sections }` or `{ kind: "unavailable"; reason? }`. The
+read keeps the reason, because the `available: false` note of the tool gives
+the reason of the pool to the model.
+
+`persistedAdHocPlan` builds `resolvePackages` from that read when at least one
+of the three deps is bound: read the sections, and answer
+`queryPackages(sections, { names }).checked`, or `null` when the read is
+`unavailable`. Without a bound dep the router gets no
+resolver. The default paths name a container mount, and a read of them on a
+host is a wasted stat. The conversation agent passes the three deps to the tool, the same as
 it does for `generate_plan`.
 
 Alternative: build a `list_available_packages` tool instance inside the

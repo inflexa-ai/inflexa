@@ -475,14 +475,63 @@ export type ListAvailablePackagesDeps = Pick<EnvironmentStorePaths, "farmLockFil
 };
 
 /**
+ * What one inventory read produced: the sections of the bound source, or the
+ * fact that the source cannot answer, with the reason where the source gives
+ * one. There is no empty-on-error shape — an unreadable inventory must stay
+ * distinguishable from an inventory that holds nothing, and a caller that
+ * cannot tell them apart reports a present package as absent.
+ */
+export type InventoryRead = { readonly kind: "sections"; readonly sections: readonly Section[] } | { readonly kind: "unavailable"; readonly reason?: string };
+
+/**
+ * Read the inventory of the bound source: the pool-scope reader when the
+ * embedder binds one (a conversation or planning surface), the first readable
+ * farm `inflexa.lock` otherwise (a sandbox agent). The image record merges
+ * into either report.
+ *
+ * Every caller that resolves a name against the environment reads through
+ * here, thus the census a model sees and the check a launch runs never
+ * disagree about what the source holds.
+ */
+export async function readInventorySections(deps: ListAvailablePackagesDeps): Promise<InventoryRead> {
+    // The image record merges in when the host can read a valid one. An absent
+    // record and an invalid record both merge nothing, and neither is an
+    // error: the record is an enrichment, and the farm or pool inventory stays
+    // whole without it. A store packed before the record existed carries none.
+    // There is no logger here, thus an invalid record cannot be reported — the
+    // schema of the harness refuses it, and the report degrades to the tracks
+    // that it could read.
+    const recordSections: Section[] = readImagePackagesFile(deps.imagePackagesFile ?? DEFAULT_IMAGE_PACKAGES_FILE)
+        .map(imageSections)
+        .unwrapOr([]);
+    if (deps.readPoolInventory) {
+        const pool = await deps.readPoolInventory().catch((cause): PoolInventoryRead => ({
+            kind: "unavailable",
+            reason: cause instanceof Error ? cause.message : String(cause),
+        }));
+        if (pool.kind === "unavailable") return { kind: "unavailable", reason: pool.reason };
+        return { kind: "sections", sections: [...pool.sections, ...recordSections] };
+    }
+    // Both farm container paths are tried when the host injects none, because
+    // the path keys on the declared toolchain and this read carries none.
+    let lock: FarmLock | null = null;
+    for (const candidate of deps.farmLockFile ? [deps.farmLockFile] : DEFAULT_FARM_LOCK_FILES) {
+        lock = readFarmLockFile(candidate).unwrapOr(null);
+        if (lock !== null) break;
+    }
+    // A lock that no candidate path holds is an absence with no reason to
+    // report: the read never got far enough to learn one.
+    if (lock === null) return { kind: "unavailable" };
+    return { kind: "sections", sections: [...lockSections(lock), ...recordSections] };
+}
+
+/**
  * Create the package inventory over the bound source: the pool-scope reader
  * when the embedder binds one (a conversation or planning surface), the
  * host-readable farm `inflexa.lock` otherwise (a sandbox agent). The image
  * record merges into either report.
  */
 export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps = {}) {
-    const lockCandidates = deps.farmLockFile ? [deps.farmLockFile] : DEFAULT_FARM_LOCK_FILES;
-    const imagePackagesFile = deps.imagePackagesFile ?? DEFAULT_IMAGE_PACKAGES_FILE;
     const readPoolInventory = deps.readPoolInventory;
     // The scope decides the framing sentence: a sandbox agent reads what it can
     // import NOW, and a conversation surface reads what the store HOLDS — a
@@ -548,36 +597,18 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
             return "full package list";
         },
         execute: async (input): Promise<Result<PackagesResult, ToolError>> => {
-            // The image record merges in when the host can read a valid one.
-            // An absent record and an invalid record both merge nothing, and
-            // neither is an error: the record is an enrichment, and the farm
-            // or pool inventory stays whole without it. A store packed before
-            // the record existed carries none. The tool holds no logger, thus
-            // an invalid record cannot be reported here — the schema of the
-            // harness refuses it, and the report degrades to the tracks it
-            // could read.
-            const recordSections: Section[] = readImagePackagesFile(imagePackagesFile).map(imageSections).unwrapOr([]);
+            const read = await readInventorySections(deps);
             // An unreadable inventory is an expected environment state — model it as an
             // `available: false` data variant telling the caller the set is UNKNOWN,
             // WITH the reason: without it, a structural fault (a damaged dependency
             // graph) reads as a transient flake, and the caller retries for ever.
-            if (readPoolInventory) {
-                const pool = await readPoolInventory().catch((cause): PoolInventoryRead => ({
-                    kind: "unavailable",
-                    reason: cause instanceof Error ? cause.message : String(cause),
-                }));
-                if (pool.kind === "unavailable") return ok({ available: false, content: `${POOL_UNAVAILABLE_NOTE} The reason: ${pool.reason}.` });
-                return ok(queryPackages([...pool.sections, ...recordSections], input));
+            // The note follows the vantage of the bound source, because a
+            // conversation surface has no runtime to probe.
+            if (read.kind === "unavailable") {
+                const note = readPoolInventory ? POOL_UNAVAILABLE_NOTE : UNAVAILABLE_NOTE;
+                return ok({ available: false, content: read.reason === undefined ? note : `${note} The reason: ${read.reason}.` });
             }
-            let lock: FarmLock | null = null;
-            for (const candidate of lockCandidates) {
-                lock = readFarmLockFile(candidate).unwrapOr(null);
-                if (lock !== null) break;
-            }
-            if (lock === null) {
-                return ok({ available: false, content: UNAVAILABLE_NOTE });
-            }
-            return ok(queryPackages([...lockSections(lock), ...recordSections], input));
+            return ok(queryPackages(read.sections, input));
         },
     });
 }

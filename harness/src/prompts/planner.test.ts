@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { plannerPrompt } from "./planner.js";
+import { packagesSection, plannerPrompt } from "./planner.js";
 
 describe("plannerPrompt — the packages of each step", () => {
     it("the prompt names the prefix", () => {
@@ -13,5 +13,16 @@ describe("plannerPrompt — the packages of each step", () => {
         expect(prompt).toContain('"python:igraph"');
         expect(prompt).toContain('"r:igraph"');
         expect(prompt).toContain("A bare name that both tracks hold refuses the launch");
+    });
+
+    it("the section carries the prefixed form to every surface that asks for the array", () => {
+        // The router prompt teaches the grammar from this one text. A second
+        // text would drift, and a spelling rule that one surface states and
+        // the other omits is a launch refusal on the silent one.
+        const section = packagesSection();
+
+        expect(section).toContain('"python:igraph"');
+        expect(section).toContain('"r:igraph"');
+        expect(plannerPrompt("- agent-a: does a thing")).toContain(section);
     });
 });

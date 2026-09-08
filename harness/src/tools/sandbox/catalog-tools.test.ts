@@ -5,7 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { makeToolContext } from "../__fixtures__/tool-context.js";
-import { createListAvailablePackagesTool, lockSections, queryPackages, type CheckedPackage, type Section } from "./list-available-packages.js";
+import {
+    createListAvailablePackagesTool,
+    lockSections,
+    queryPackages,
+    readInventorySections,
+    type CheckedPackage,
+    type Section,
+} from "./list-available-packages.js";
 import type { FarmLock } from "../../sandbox/farm.js";
 
 // The shape every source is normalized into before `queryPackages` sees it:
@@ -543,6 +550,32 @@ describe("list_available_packages — reading the inventory", () => {
         expect(result.content).toContain("UNKNOWN");
         expect(result.content).toMatch(/probe/i);
         for (const name of ["numpy", "pandas", "scanpy", "DESeq2"]) expect(result.content).not.toContain(name);
+    });
+
+    // The launch path resolves a routed package name through this same read, so
+    // that the census a model sees and the check a launch runs never disagree.
+    it("the inventory read prefers the pool reader, merges the image record, and reports an unreadable pool", async () => {
+        const { farmLockFile, imagePackagesFile } = await makeStore(JSON.stringify(IMAGE_RECORD));
+
+        const read = await readInventorySections({
+            farmLockFile,
+            imagePackagesFile,
+            readPoolInventory: async () =>
+                ({
+                    kind: "sections",
+                    sections: [{ title: "Python (pip)", track: "python", packages: [{ name: "scipy", version: "1.16.3" }] }],
+                }) as const,
+        });
+        const unreadable = await readInventorySections({
+            farmLockFile,
+            readPoolInventory: async () => ({ kind: "unavailable", reason: "the dependency graph names 1 edge(s) that it does not hold" }) as const,
+        });
+
+        // The farm lock holds Seurat and scanpy; a bound pool reader wins, thus
+        // the R section of the lock is absent from the read.
+        expect(read.kind === "sections" ? read.sections.map((section) => section.title) : []).toEqual(["Python (pip)", "System tools (CLI)", "Node (npm)"]);
+        expect(unreadable.kind).toBe("unavailable");
+        expect(unreadable.kind === "unavailable" ? unreadable.reason : undefined).toContain("the dependency graph names 1 edge(s)");
     });
 });
 
