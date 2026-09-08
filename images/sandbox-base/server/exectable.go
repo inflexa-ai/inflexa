@@ -35,6 +35,9 @@ type execResult struct {
 	StderrTotalBytes int64  `json:"stderrTotalBytes,omitempty"`
 	DurationMs       int64  `json:"durationMs"`
 	TimedOut         bool   `json:"timedOut,omitempty"`
+	// Usage is the kernel accounting of the exec. Nil when the command never
+	// spawned, and on a platform that reports no rusage.
+	Usage *resourceUsage `json:"usage,omitempty"`
 }
 
 // ringEvent is one buffered progress event: the exact event-payload bytes plus

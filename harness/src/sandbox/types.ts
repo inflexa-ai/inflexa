@@ -191,6 +191,26 @@ export const ProvenanceFrameSchema = z.object({
 export type ProvenanceFrame = z.infer<typeof ProvenanceFrameSchema>;
 
 /**
+ * What one exec cost the sandbox, as the kernel accounted it at reap time.
+ * Mirrors Go's `resourceUsage` (`images/sandbox-base/server/executor.go`):
+ * the peak resident set of the command and of every descendant it waited for,
+ * and the CPU that same tree burned.
+ *
+ * Every member is tolerant. A sandbox image that predates the frame sends no
+ * `usage` at all, an older or newer one can send a subset, and a malformed
+ * frame falls back to absent rather than failing the parse — telemetry never
+ * costs a caller its exec result.
+ */
+export const ExecUsageSchema = z
+    .object({
+        peakMemoryBytes: z.number().nonnegative().optional(),
+        cpuMillis: z.number().nonnegative().optional(),
+    })
+    .optional()
+    .catch(undefined);
+export type ExecUsage = z.infer<typeof ExecUsageSchema>;
+
+/**
  * Final outcome of a single exec, returned by `awaitExec`. Mirrors the
  * sandbox-server completion payload plus a discriminant for synthetic
  * (watchdog-emitted) failures.
@@ -227,6 +247,12 @@ export const ExecResultSchema = z.object({
      * the recv payload into the durable DBOS step output.
      */
     provenance: ProvenanceFrameSchema.optional(),
+    /**
+     * Kernel accounting of the exec, for the sandbox-sizing histograms. Absent
+     * from a synthetic watchdog failure, from a sandbox image that predates the
+     * frame, and from any exec whose command never spawned.
+     */
+    usage: ExecUsageSchema,
 });
 export type ExecResult = z.infer<typeof ExecResultSchema>;
 

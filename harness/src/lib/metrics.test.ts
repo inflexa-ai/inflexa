@@ -134,4 +134,21 @@ describe("sandbox exec metrics", () => {
             await capture.dispose();
         }
     });
+
+    test("the kernel accounting rides the same record, and an exec that reports none is left out of it", async () => {
+        await provider.shutdown();
+        const capture = captureMetrics();
+        try {
+            recordSandboxExec({ execId: "wf-2:step-a:1", outcome: "ok", durationMs: 4_000, peakMemoryBytes: 3_221_225_472, cpuMillis: 7_500 });
+            // A sandbox image that predates the accounting reports neither member.
+            recordSandboxExec({ execId: "wf-2:step-a:2", outcome: "ok", durationMs: 1_200 });
+
+            expect(await capture.histograms("cortex.sandbox.exec.peak_memory_bytes")).toEqual([[{ outcome: "ok" }, { count: 1, sum: 3_221_225_472 }]]);
+            expect(await capture.histograms("cortex.sandbox.exec.cpu_seconds")).toEqual([[{ outcome: "ok" }, { count: 1, sum: 7.5 }]]);
+            // Both execs are still counted and timed.
+            expect(await capture.sums("cortex.sandbox.execs")).toEqual([[{ outcome: "ok" }, 2]]);
+        } finally {
+            await capture.dispose();
+        }
+    });
 });

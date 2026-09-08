@@ -374,13 +374,21 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
         // and it sees the outcome the caller then folds into a tool result, so
         // one record here counts what a consumer would each have to count for
         // itself. `recordSandboxExec` is idempotent over the exec id, because a
-        // replayed body reaches this line again.
+        // replayed body reaches this line again. `capExecStreams` cuts the
+        // streams and keeps every other field, thus the kernel accounting the
+        // sandbox reported reaches the record intact.
         awaitExec: async (ref, execId, emit, deadline) => {
             const result = capExecStreams(
                 await awaitExec(ref, execId, emit, deadline, composeAwaitOptions(config.awaitOptions, transport, isAlive)),
                 config.execStreamByteCap ?? EXEC_STREAM_BYTE_CAP,
             );
-            recordSandboxExec({ execId, outcome: sandboxExecOutcomeOf(result), durationMs: result.durationMs });
+            recordSandboxExec({
+                execId,
+                outcome: sandboxExecOutcomeOf(result),
+                durationMs: result.durationMs,
+                peakMemoryBytes: result.usage?.peakMemoryBytes,
+                cpuMillis: result.usage?.cpuMillis,
+            });
             noteExecOutcome(ref.sandboxId, summarizeExec(result));
             return result;
         },

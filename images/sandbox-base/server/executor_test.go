@@ -520,3 +520,55 @@ func TestExecHandler_OversizedBodyRejected(t *testing.T) {
 		t.Fatalf("an oversized submit still ran: %d completions", got)
 	}
 }
+
+// The completion payload of a real exec must carry the kernel accounting the
+// host sizes its sandboxes from. A peak of zero, or an absent frame, means the
+// `wait4` rusage did not reach the executor and the whole measurement is dead.
+func TestExecCompletion_CarriesResourceUsage(t *testing.T) {
+	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
+	defer cleanup()
+
+	// A shell arithmetic loop burns CPU the accounting can see, and the shell
+	// itself holds a resident set, so both members must come back positive.
+	submit(t, exe, map[string]any{
+		"command": []string{"i=0; while [ $i -lt 50000 ]; do i=$((i+1)); done"},
+		"execId":  "usage-1",
+	})
+	waitFor(t, func() bool { return rec.completeCount() == 1 }, 30*time.Second)
+
+	var payload completionPayload
+	if err := json.Unmarshal(rec.lastComplete().Body, &payload); err != nil {
+		t.Fatalf("completion did not parse: %v", err)
+	}
+	if payload.Usage == nil {
+		t.Fatalf("completion carries no usage frame")
+	}
+	if payload.Usage.PeakMemoryBytes <= 0 {
+		t.Errorf("peak memory is %d bytes; the rusage high-water mark did not reach the payload", payload.Usage.PeakMemoryBytes)
+	}
+	if payload.Usage.CPUMillis <= 0 {
+		t.Errorf("cpu time is %d ms; a 50000-iteration shell loop must burn more than that", payload.Usage.CPUMillis)
+	}
+}
+
+// A command that never spawns has no accounting. The frame must be absent
+// rather than a zeroed frame, which the host would record as a real
+// measurement of a sandbox that ran nothing.
+func TestExecCompletion_OmitsResourceUsageWhenNothingSpawned(t *testing.T) {
+	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
+	defer cleanup()
+
+	submit(t, exe, map[string]any{
+		// Multi-element, thus `execve` runs directly and `Start` fails; a
+		// single-element command would go through `sh -c` and the shell itself
+		// would spawn.
+		"command": []string{"/nonexistent/binary", "--x"},
+		"execId":  "usage-2",
+	})
+	waitFor(t, func() bool { return rec.completeCount() == 1 }, 30*time.Second)
+
+	body := rec.lastComplete().Body
+	if strings.Contains(string(body), `"usage"`) {
+		t.Fatalf("a failed spawn reported a usage frame: %s", body)
+	}
+}

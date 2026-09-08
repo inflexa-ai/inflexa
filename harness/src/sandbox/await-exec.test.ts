@@ -953,3 +953,35 @@ describe("awaitExec transport dispatch", () => {
         expect(fetchCalled).toBe(false);
     });
 });
+
+// ── The resource-usage frame ────────────────────────────────────────
+
+describe("exec resource usage frame", () => {
+    /** Drives one exec to a terminal poll result and returns it. */
+    async function pollTo(result: Record<string, unknown>): Promise<ExecResult> {
+        return awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+            ...POLL_BASE,
+            fetch: pollFetch([{ status: "completed", events: [], cursor: 0, result }]),
+        });
+    }
+
+    test("a reported frame reaches the caller", async () => {
+        const returned = await pollTo({ ...okResult, usage: { peakMemoryBytes: 3_221_225_472, cpuMillis: 7_500 } });
+        expect(returned.usage).toEqual({ peakMemoryBytes: 3_221_225_472, cpuMillis: 7_500 });
+    });
+
+    // The sandbox image is versioned and promoted apart from Cortex, thus a new
+    // host runs against an image that reports no accounting at all. Such an exec
+    // must still return.
+    test("an image that reports no frame still returns its result", async () => {
+        const returned = await pollTo(okResult);
+        expect(returned.exitCode).toBe(0);
+        expect(returned.usage).toBeUndefined();
+    });
+
+    test("a malformed frame degrades to absent rather than failing the parse", async () => {
+        const returned = await pollTo({ ...okResult, usage: "not-a-frame" });
+        expect(returned.exitCode).toBe(0);
+        expect(returned.usage).toBeUndefined();
+    });
+});

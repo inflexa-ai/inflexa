@@ -69,6 +69,23 @@ type completionPayload struct {
 	DurationMs       int64              `json:"durationMs"`
 	TimedOut         bool               `json:"timedOut,omitempty"`
 	Provenance       *provenancePayload `json:"provenance,omitempty"`
+	Usage            *resourceUsage     `json:"usage,omitempty"`
+}
+
+// resourceUsage is what one exec cost the sandbox, as the kernel accounted it
+// at reap time (`resource_usage_linux.go`). It rides the completion payload and
+// the served terminal result so the host can size its sandboxes from the peak
+// each command actually reached, rather than from per-pod kubelet metrics.
+//
+// The frame is a pointer, thus a command that never spawned carries no frame at
+// all and a genuine zero stays a measurement. Both members are always present
+// inside a frame that is present.
+type resourceUsage struct {
+	// Peak resident set size of the command and of every descendant it waited
+	// for, in bytes.
+	PeakMemoryBytes int64 `json:"peakMemoryBytes"`
+	// User plus system CPU time of that same tree, in milliseconds.
+	CPUMillis int64 `json:"cpuMillis"`
 }
 
 type provenancePayload struct {
@@ -244,6 +261,8 @@ func (e *executor) run(req execSubmitRequest, traceID string) {
 		}
 	}
 
+	usage := execResourceUsage(cmd.ProcessState)
+
 	provResult := provTracker.Stop()
 	prov := &provenancePayload{
 		Disabled: provenanceDisabled,
@@ -273,6 +292,7 @@ func (e *executor) run(req execSubmitRequest, traceID string) {
 		StderrTotalBytes: stderrTotal,
 		DurationMs:       durationMs,
 		TimedOut:         timedOut,
+		Usage:            usage,
 	})
 
 	now := nowRFC3339()
@@ -304,6 +324,7 @@ func (e *executor) run(req execSubmitRequest, traceID string) {
 		DurationMs:       durationMs,
 		TimedOut:         timedOut,
 		Provenance:       prov,
+		Usage:            usage,
 	})
 }
 

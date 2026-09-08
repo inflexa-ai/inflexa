@@ -8,6 +8,8 @@
  *   - cortex.step.duration{status, agent_id}      — histogram, step start to its terminal ledger write
  *   - cortex.sandbox.execs{outcome}               — counter, one per sandbox exec that returned a terminal result
  *   - cortex.sandbox.exec.duration{outcome}       — histogram, the runtime the sandbox reported for that exec
+ *   - cortex.sandbox.exec.peak_memory_bytes{outcome} — histogram, the peak resident set of that exec
+ *   - cortex.sandbox.exec.cpu_seconds{outcome}    — histogram, the CPU time of that exec
  *   - cortex.artifact.reconcile.dropped{agent_id}              — counter for missing manifest entries
  *   - cortex.artifact.reconcile.input_dropped{agent_id, reason} — counter for lineage input drops
  *
@@ -65,6 +67,24 @@ export const RUN_DURATION_BOUNDS_MS: readonly number[] = [30_000, 60_000, 120_00
  */
 export const EXEC_DURATION_BOUNDS_MS: readonly number[] = [1_000, 5_000, 15_000, 30_000, 60_000, 300_000, 900_000, 1_800_000, 3_600_000];
 
+/**
+ * Bucket bounds for the peak resident set of one exec, in bytes: 128 MiB up to
+ * 128 GiB by doubling. The top bound is the largest memory a step can request
+ * (`SANDBOX_MAX_MEMORY_GB`), thus the overflow bucket holds only a sandbox that
+ * outgrew its own ceiling.
+ */
+export const SANDBOX_PEAK_MEMORY_BOUNDS_BYTES: readonly number[] = [
+    134_217_728, 536_870_912, 1_073_741_824, 2_147_483_648, 4_294_967_296, 8_589_934_592, 17_179_869_184, 34_359_738_368, 68_719_476_736, 137_438_953_472,
+];
+
+/**
+ * Bucket bounds for the CPU time of one exec, in seconds: sub-second up to four
+ * hours. Read against `cortex.sandbox.exec.duration` it gives the mean core
+ * count the command held, which is what says whether its CPU request was worth
+ * granting.
+ */
+export const SANDBOX_CPU_SECONDS_BOUNDS: readonly number[] = [0.5, 1, 5, 15, 60, 300, 900, 1_800, 3_600, 14_400];
+
 interface Instruments {
     readonly runCompleted: Counter;
     readonly runDuration: Histogram;
@@ -72,6 +92,8 @@ interface Instruments {
     readonly stepDuration: Histogram;
     readonly sandboxExecs: Counter;
     readonly sandboxExecDuration: Histogram;
+    readonly sandboxExecPeakMemory: Histogram;
+    readonly sandboxExecCpuSeconds: Histogram;
     readonly artifactReconcileDropped: Counter;
     readonly lineageInputDropped: Counter;
 }
@@ -109,6 +131,16 @@ function getInstruments(): Instruments {
                 description: "Runtime the sandbox reported for one exec. Tagged by outcome.",
                 unit: "ms",
                 advice: { explicitBucketBoundaries: [...EXEC_DURATION_BOUNDS_MS] },
+            }),
+            sandboxExecPeakMemory: meter.createHistogram("cortex.sandbox.exec.peak_memory_bytes", {
+                description: "Peak resident set of one sandbox exec and of every descendant it waited for. Tagged by outcome.",
+                unit: "By",
+                advice: { explicitBucketBoundaries: [...SANDBOX_PEAK_MEMORY_BOUNDS_BYTES] },
+            }),
+            sandboxExecCpuSeconds: meter.createHistogram("cortex.sandbox.exec.cpu_seconds", {
+                description: "User plus system CPU time of one sandbox exec. Tagged by outcome.",
+                unit: "s",
+                advice: { explicitBucketBoundaries: [...SANDBOX_CPU_SECONDS_BOUNDS] },
             }),
             artifactReconcileDropped: meter.createCounter("cortex.artifact.reconcile.dropped", {
                 description:
@@ -215,8 +247,19 @@ const MAX_COUNTED_EXECS = 4096;
  * Record one sandbox exec that returned a terminal result. Call it at the one
  * seam where an `ExecResult` crosses from the wire into the process. A result
  * that carries no runtime (a synthetic failure) is counted, not timed.
+ *
+ * `peakMemoryBytes` and `cpuMillis` are the kernel accounting the sandbox
+ * reports for the command. Each one is independent: a sandbox image that
+ * predates the accounting, and an exec whose command never spawned, report
+ * neither, thus a missing member records nothing rather than a zero.
  */
-export function recordSandboxExec(args: { readonly execId: string; readonly outcome: SandboxExecOutcome; readonly durationMs?: number | null }): void {
+export function recordSandboxExec(args: {
+    readonly execId: string;
+    readonly outcome: SandboxExecOutcome;
+    readonly durationMs?: number | null;
+    readonly peakMemoryBytes?: number | undefined;
+    readonly cpuMillis?: number | undefined;
+}): void {
     if (countedExecs.has(args.execId)) return;
     if (countedExecs.size >= MAX_COUNTED_EXECS) {
         const oldest = countedExecs.values().next();
@@ -224,9 +267,11 @@ export function recordSandboxExec(args: { readonly execId: string; readonly outc
     }
     countedExecs.add(args.execId);
     const attributes = { outcome: args.outcome };
-    const { sandboxExecs, sandboxExecDuration } = getInstruments();
+    const { sandboxExecs, sandboxExecDuration, sandboxExecPeakMemory, sandboxExecCpuSeconds } = getInstruments();
     sandboxExecs.add(1, attributes);
     if (args.durationMs !== undefined && args.durationMs !== null) sandboxExecDuration.record(Math.max(0, args.durationMs), attributes);
+    if (args.peakMemoryBytes !== undefined) sandboxExecPeakMemory.record(Math.max(0, args.peakMemoryBytes), attributes);
+    if (args.cpuMillis !== undefined) sandboxExecCpuSeconds.record(Math.max(0, args.cpuMillis) / 1000, attributes);
 }
 
 /** Record one manifest entry dropped at reconcile. */
