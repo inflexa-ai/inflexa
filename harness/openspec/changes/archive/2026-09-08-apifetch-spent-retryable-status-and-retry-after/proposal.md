@@ -24,9 +24,9 @@ package obey it. The review of PR #518 found this.
 - The doc comments of `apiFetch` and `isUnexpectedApiError` state the new
   rule: a 4xx is expected, unless it is a retryable status that outlived the
   retries.
-- Five tests in `api-utils.test.ts` pin the spent 429, the recovered 429, the
-  capped `Retry-After` wait, a `Retry-After` date in the past, and a negative
-  `Retry-After` count that falls to the backoff.
+- Five tests in `api-utils.test.ts` pin the new behavior. The cases are the
+  spent 429, the recovered 429, the capped `Retry-After` wait, a date in the
+  past, and a negative count.
 
 ## Capabilities
 

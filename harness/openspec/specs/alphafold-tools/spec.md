@@ -13,7 +13,9 @@ The tool follows the harness tool-error contract literally. AlphaFold splits
 absence over two status codes. An identifier that does not parse gives 400, and
 a well-formed accession with no model gives 404. `isUnexpectedApiError`
 classifies each `http_status` in the 4xx range as expected, thus both become
-`ok({ found: false, uniprotAccession })` and not a thrown error.
+`ok({ found: false, uniprotAccession })` and not a thrown error. A 429 that
+outlives the retries is the exception. It arrives as `exhausted`, and the
+tool throws.
 
 An unexpected failure throws out of `execute` instead — a 5xx, a timeout, retry
 exhaustion, or a schema mismatch. The agent loop then wraps it as a
@@ -98,6 +100,11 @@ before it makes the request, and the miss MUST echo the trimmed value.
 
 - **WHEN** AlphaFold returns a 5xx after retries are exhausted
 - **THEN** `execute` throws, and the agent loop records the call as `tool_result { is_error: true }`
+
+#### Scenario: A throttle that outlives the retries surfaces as an error tool result
+
+- **WHEN** AlphaFold returns 429 on every attempt
+- **THEN** `execute` throws, and the agent loop records the call as `tool_result { is_error: true }`, not `ok({ found: false })`
 
 ### Requirement: describeCall names the queried accession
 
